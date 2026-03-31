@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { PlexoConnectionStatus } from '@/components/plexo/PlexoConnectionStatus'
 
 export default function DashboardLayout({
   children,
@@ -24,7 +25,7 @@ export default function DashboardLayout({
         </nav>
 
         <div className="border-t border-border px-3 py-3">
-          {/* Sidebar footer — PlexoConnectionStatus goes here */}
+          <PlexoConnectionStatus />
         </div>
       </aside>
 
