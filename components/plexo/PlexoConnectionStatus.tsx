@@ -72,12 +72,10 @@ export function PlexoConnectionStatus() {
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <button className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-muted">
-          {statusDot(status)}
-          <span>[ j ]</span>
-          <span>{statusLabel(status)}</span>
-        </button>
+      <PopoverTrigger className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-muted">
+        {statusDot(status)}
+        <span>[ j ]</span>
+        <span>{statusLabel(status)}</span>
       </PopoverTrigger>
       <PopoverContent side="top" align="start" className="w-72 text-xs space-y-3">
         <div className="flex items-center gap-2">
