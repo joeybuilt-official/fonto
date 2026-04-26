@@ -206,7 +206,31 @@ export default function DashboardPage() {
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading assets…</p>
       ) : assets.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No assets yet. Upload something to get started.</p>
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-8 text-center space-y-4">
+          <div className="text-4xl">👋</div>
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Welcome to Fonto!</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Your personal archive for photos, documents, and everything else.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-left mt-4">
+            {[
+              { step: "1", title: "Upload anything", body: "Drag files, click to browse, or paste from clipboard." },
+              { step: "2", title: "Auto-organize", body: "AI classifies and describes your assets automatically." },
+              { step: "3", title: "Find anything", body: "Search by name, description, or extracted text." },
+            ].map((s) => (
+              <div key={s.step} className="rounded-lg border border-border bg-card p-4">
+                <div className="text-xs font-bold text-primary mb-1">Step {s.step}</div>
+                <p className="text-sm font-medium text-foreground">{s.title}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{s.body}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground pt-2">
+            Start by dropping files in the upload zone above ↑
+          </p>
+        </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {assets.map((asset) => (

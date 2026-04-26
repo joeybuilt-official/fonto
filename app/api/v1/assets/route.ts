@@ -69,6 +69,9 @@ export async function GET(request: NextRequest) {
   const workspaceId = workspaces[0].id;
   const { searchParams } = request.nextUrl;
   const mimeFilter = searchParams.get("mime");
+  const lifecycle = searchParams.get("lifecycle") ?? "active";
+  const validLifecycles = ["active", "archivable", "archived", "trashed"];
+  const lifecycleFilter = validLifecycles.includes(lifecycle) ? lifecycle : "active";
 
   const rows = await db
     .select()
@@ -76,7 +79,7 @@ export async function GET(request: NextRequest) {
     .where(
       and(
         eq(schema.assets.workspaceId, workspaceId),
-        eq(schema.assets.lifecycleState, "active")
+        eq(schema.assets.lifecycleState, lifecycleFilter)
       )
     )
     .orderBy(desc(schema.assets.createdAt));
