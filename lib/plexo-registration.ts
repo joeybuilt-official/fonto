@@ -3,7 +3,7 @@
  *
  * Called once at boot (via instrumentation.ts) when PLEXO_URL is configured.
  * Idempotent — Plexo Core upserts on appId, so re-starting never duplicates.
- * If Plexo is unreachable, logs a warning and continues in standalone mode.
+ * Tool ids must align with @joeybuilt/fonto-bridge tool surface.
  */
 
 const PLEXO_URL = process.env.PLEXO_URL?.replace(/\/$/, "") ?? ""
@@ -17,48 +17,18 @@ const PROFILE = {
   domain: "myfonto.com",
 
   extensions: [
-    {
-      id: "fonto.asset.list",
-      type: "tool" as const,
-      name: "List Assets",
-      config: {
-        description: "List uploaded assets with filters by subtype",
-        bridge: "@joeybuilt/fonto-bridge",
-      },
-    },
-    {
-      id: "fonto.asset.search",
-      type: "tool" as const,
-      name: "Search Assets",
-      config: {
-        description: "Search assets by filename, subtype, or AI description",
-        bridge: "@joeybuilt/fonto-bridge",
-      },
-    },
-    {
-      id: "fonto.asset.classify",
-      type: "tool" as const,
-      name: "Classify Asset",
-      config: {
-        description: "AI classification of an asset into image/document subtypes",
-        bridge: "@joeybuilt/fonto-bridge",
-      },
-    },
-    {
-      id: "fonto.asset.upload_url",
-      type: "tool" as const,
-      name: "Get Upload URL",
-      config: {
-        description: "Get a presigned URL for uploading an asset to R2 storage",
-        bridge: "@joeybuilt/fonto-bridge",
-      },
-    },
+    { id: "fonto.asset.list",      type: "tool" as const, name: "List Assets",     config: { description: "List assets in the Fonto workspace, optionally filtered by classification.",  bridge: "@joeybuilt/fonto-bridge" } },
+    { id: "fonto.asset.search",    type: "tool" as const, name: "Search Assets",   config: { description: "Search assets by filename, AI description, or extracted text.",            bridge: "@joeybuilt/fonto-bridge" } },
+    { id: "fonto.collection.list", type: "tool" as const, name: "List Collections",config: { description: "List curated asset groups (collections) in the workspace.",               bridge: "@joeybuilt/fonto-bridge" } },
+    { id: "fonto.tag.list",        type: "tool" as const, name: "List Tags",       config: { description: "List tags (labels) in the Fonto workspace.",                              bridge: "@joeybuilt/fonto-bridge" } },
+    { id: "fonto.tag.create",      type: "tool" as const, name: "Create Tag",      config: { description: "Create a new tag in the Fonto workspace.",                                bridge: "@joeybuilt/fonto-bridge" } },
   ],
 
   eventContracts: [
     "fonto.asset.uploaded",
     "fonto.asset.classified",
     "fonto.asset.deleted",
+    "fonto.tag.created",
   ],
 }
 
@@ -91,9 +61,7 @@ async function attemptRegistration(): Promise<boolean> {
 
 export async function registerWithPlexoCore(): Promise<void> {
   if (!PLEXO_URL || !PLEXO_SERVICE_KEY) {
-    console.warn(
-      "[plexo] PLEXO_URL or PLEXO_SERVICE_KEY not set — running without Core (standalone mode)"
-    )
+    console.warn("[plexo] PLEXO_URL or PLEXO_SERVICE_KEY not set — running without Core (standalone mode)")
     return
   }
 
