@@ -45,8 +45,11 @@ export default function LoginPage() {
     <div className="flex flex-1 items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
-          <Link href="/" className="text-2xl font-bold text-foreground">
-            Fonto
+          <Link
+            href="/"
+            className="font-heading text-2xl font-semibold tracking-tight text-foreground"
+          >
+            <span className="text-primary">_</span>fonto
           </Link>
           <p className="mt-2 text-sm text-muted-foreground">
             {isSignUp ? "Create your account" : "Sign in to your account"}
@@ -60,7 +63,7 @@ export default function LoginPage() {
               placeholder="Name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             />
           )}
           <input
@@ -69,7 +72,7 @@ export default function LoginPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="w-full rounded border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
           />
           <input
             type="password"
@@ -78,7 +81,7 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
             minLength={8}
-            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="w-full rounded border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
           />
 
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -86,7 +89,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            className="w-full rounded bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-[#1D9089] disabled:opacity-50"
           >
             {loading ? "Loading..." : isSignUp ? "Create Account" : "Sign In"}
           </button>
@@ -100,7 +103,7 @@ export default function LoginPage() {
               setIsSignUp(!isSignUp);
               setError("");
             }}
-            className="font-medium text-foreground hover:underline"
+            className="font-medium text-primary hover:underline"
           >
             {isSignUp ? "Sign in" : "Sign up"}
           </button>

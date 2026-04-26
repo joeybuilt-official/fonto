@@ -25,10 +25,13 @@ export function AppSidebar({ user }: { user: User }) {
   }
 
   return (
-    <aside className="flex w-56 flex-col border-r border-border bg-muted/40">
+    <aside className="flex w-56 flex-col border-r border-border bg-sidebar">
       <div className="flex h-14 items-center border-b border-border px-4">
-        <Link href="/app/dashboard" className="text-sm font-semibold">
-          Fonto
+        <Link
+          href="/app/dashboard"
+          className="font-heading text-sm font-semibold tracking-tight"
+        >
+          <span className="text-primary">_</span>fonto
         </Link>
       </div>
 
@@ -39,10 +42,10 @@ export function AppSidebar({ user }: { user: User }) {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              className={`flex items-center gap-2 rounded px-3 py-2 text-sm font-medium transition-colors ${
                 active
-                  ? "bg-muted text-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  ? "bg-sidebar-accent text-foreground"
+                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
               }`}
             >
               <item.icon className="h-4 w-4" />
