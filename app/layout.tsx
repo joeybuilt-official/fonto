@@ -22,6 +22,13 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Fonto",
   description: "Everything flows here. Photos and documents, unified.",
+  manifest: "/manifest.json",
+  themeColor: "#6366f1",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Fonto",
+  },
 };
 
 export default function RootLayout({

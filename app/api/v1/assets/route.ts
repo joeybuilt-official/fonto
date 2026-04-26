@@ -4,8 +4,60 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
+import {
+  plexoAvailable,
+  plexoEnsureWorkspace,
+  plexoClassifyAsset,
+  plexoDescribeImage,
+} from "@/lib/plexo";
+
+async function processAsset(
+  assetId: string,
+  userId: string,
+  email: string | undefined,
+  filename: string,
+  mimeType: string,
+  extractedText: string | null
+) {
+  try {
+    await db
+      .update(schema.assets)
+      .set({ processingState: "classified" })
+      .where(eq(schema.assets.id, assetId));
+
+    let classification: string;
+    let description: string | null = null;
+
+    if (plexoAvailable()) {
+      const wid = await plexoEnsureWorkspace(userId, email);
+      classification = await plexoClassifyAsset(wid, filename, mimeType, extractedText ?? undefined);
+
+      if (mimeType.startsWith("image/")) {
+        description = await plexoDescribeImage(wid, filename, mimeType);
+      }
+    } else {
+      classification = mimeType.startsWith("image/") ? "photo" : "document";
+    }
+
+    await db
+      .update(schema.assets)
+      .set({ processingState: "extracted", classification, description })
+      .where(eq(schema.assets.id, assetId));
+
+    await db
+      .update(schema.assets)
+      .set({ processingState: "ready" })
+      .where(eq(schema.assets.id, assetId));
+  } catch (err) {
+    console.error("processAsset error:", err);
+    await db
+      .update(schema.assets)
+      .set({ processingState: "captured" })
+      .where(eq(schema.assets.id, assetId));
+  }
+}
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -27,7 +79,7 @@ export async function GET(request: NextRequest) {
         eq(schema.assets.lifecycleState, "active")
       )
     )
-    .orderBy(schema.assets.createdAt);
+    .orderBy(desc(schema.assets.createdAt));
 
   const filtered = mimeFilter
     ? rows.filter((a) => a.mimeType.startsWith(mimeFilter))
@@ -56,6 +108,12 @@ export async function POST(request: NextRequest) {
   const buffer = Buffer.from(await file.arrayBuffer());
   const sha256 = createHash("sha256").update(buffer).digest("hex");
 
+  // Extract text from text/* files immediately
+  let extractedText: string | null = null;
+  if (file.type.startsWith("text/") && buffer.length < 500_000) {
+    extractedText = buffer.toString("utf-8").slice(0, 10_000);
+  }
+
   const [asset] = await db
     .insert(schema.assets)
     .values({
@@ -68,6 +126,7 @@ export async function POST(request: NextRequest) {
       processingState: "captured",
       lifecycleState: "active",
       source,
+      extractedText,
       capturedAt: new Date(),
     })
     .returning();
@@ -90,6 +149,11 @@ export async function POST(request: NextRequest) {
       .update(schema.assets)
       .set({ syncState: "synced" })
       .where(eq(schema.assets.id, asset.id));
+
+    // Fire-and-forget processing pipeline
+    processAsset(asset.id, user.id, user.email, file.name, file.type, extractedText).catch(
+      console.error
+    );
 
     return NextResponse.json({ asset: { ...asset, syncState: "synced" } }, { status: 201 });
   } catch (err) {

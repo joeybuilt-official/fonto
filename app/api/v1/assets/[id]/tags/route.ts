@@ -1,0 +1,84 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getAuthUser } from "@/lib/auth/server";
+import { getUserWorkspaces } from "@/lib/workspace";
+import { db, schema } from "@/lib/db";
+import { eq, and, inArray } from "drizzle-orm";
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: assetId } = await params;
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rows = await db
+    .select({ tag: schema.tags })
+    .from(schema.assetTags)
+    .innerJoin(schema.tags, eq(schema.assetTags.tagId, schema.tags.id))
+    .where(eq(schema.assetTags.assetId, assetId));
+
+  return NextResponse.json({ tags: rows.map((r) => r.tag) });
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: assetId } = await params;
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const workspaces = await getUserWorkspaces(user.id);
+  if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
+  const workspaceIds = workspaces.map((w) => w.id);
+
+  // Ensure asset belongs to user's workspace
+  const [asset] = await db
+    .select({ id: schema.assets.id })
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.id, assetId),
+        inArray(schema.assets.workspaceId, workspaceIds)
+      )
+    )
+    .limit(1);
+
+  if (!asset) return NextResponse.json({ error: "Asset not found" }, { status: 404 });
+
+  const body = (await request.json()) as { tagId: string };
+  if (!body.tagId) return NextResponse.json({ error: "tagId required" }, { status: 400 });
+
+  const [link] = await db
+    .insert(schema.assetTags)
+    .values({ assetId, tagId: body.tagId })
+    .onConflictDoNothing()
+    .returning();
+
+  return NextResponse.json({ link }, { status: 201 });
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: assetId } = await params;
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { searchParams } = request.nextUrl;
+  const tagId = searchParams.get("tagId");
+  if (!tagId) return NextResponse.json({ error: "tagId required" }, { status: 400 });
+
+  await db
+    .delete(schema.assetTags)
+    .where(
+      and(
+        eq(schema.assetTags.assetId, assetId),
+        eq(schema.assetTags.tagId, tagId)
+      )
+    );
+
+  return NextResponse.json({ removed: true });
+}
