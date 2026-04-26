@@ -1,7 +1,7 @@
 export async function GET() {
   return Response.json({
     ok: true,
-    appId: 'base',
+    appId: 'fonto',
     schemaNamespace: process.env.APP_SCHEMA_NAMESPACE ?? null,
     plexoConnected: !!process.env.PLEXO_URL,
     plexoUrl: process.env.PLEXO_URL ?? null,
