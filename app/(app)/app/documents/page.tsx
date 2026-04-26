@@ -3,6 +3,30 @@
 import { useEffect, useState } from "react";
 import { FileText, X, ExternalLink, Loader2 } from "lucide-react";
 
+const DOC_SUBTYPES = ["receipt", "contract", "letter", "report", "form", "document", "scan"] as const;
+const SUBTYPE_LABELS: Record<string, string> = {
+  receipt: "Receipt", contract: "Contract", letter: "Letter",
+  report: "Report", form: "Form", document: "Document", scan: "Scan",
+};
+const SUBTYPE_COLORS: Record<string, string> = {
+  receipt: "bg-green-500/10 text-green-600 dark:text-green-400",
+  contract: "bg-slate-500/10 text-slate-600 dark:text-slate-400",
+  letter: "bg-pink-500/10 text-pink-600 dark:text-pink-400",
+  report: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  form: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
+  document: "bg-muted text-muted-foreground",
+  scan: "bg-muted text-muted-foreground",
+};
+
+function SubtypeBadge({ classification }: { classification: string | null }) {
+  if (!classification) return null;
+  const label = SUBTYPE_LABELS[classification] ?? classification;
+  const color = SUBTYPE_COLORS[classification] ?? "bg-muted text-muted-foreground";
+  return (
+    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${color}`}>{label}</span>
+  );
+}
+
 interface Asset {
   id: string;
   filename: string;
@@ -119,22 +143,25 @@ export default function DocumentsPage() {
   const [docs, setDocs] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [preview, setPreview] = useState<Asset | null>(null);
+  const [subtypeFilter, setSubtypeFilter] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/v1/assets")
+    setLoading(true);
+    const url = subtypeFilter ? `/api/v1/assets?subtype=${subtypeFilter}` : "/api/v1/assets";
+    fetch(url)
       .then((r) => r.json())
       .then((d) => {
         const assets: Asset[] = d.assets ?? [];
         setDocs(
-          assets.filter(
-            (a) =>
-              DOC_MIME_TYPES.includes(a.mimeType) ||
-              a.mimeType.startsWith("text/")
-          )
+          subtypeFilter
+            ? assets
+            : assets.filter(
+                (a) => DOC_MIME_TYPES.includes(a.mimeType) || a.mimeType.startsWith("text/")
+              )
         );
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [subtypeFilter]);
 
   return (
     <div className="space-y-6">
@@ -142,6 +169,32 @@ export default function DocumentsPage() {
         <h1 className="text-2xl font-semibold text-foreground">Documents</h1>
         <p className="text-sm text-muted-foreground mt-1">PDFs, text files, and documents</p>
       </div>
+
+      {!loading && (
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => setSubtypeFilter(null)}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+              !subtypeFilter ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All
+          </button>
+          {DOC_SUBTYPES.map((subtype) => (
+            <button
+              key={subtype}
+              onClick={() => setSubtypeFilter(subtypeFilter === subtype ? null : subtype)}
+              className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                subtypeFilter === subtype
+                  ? "bg-primary text-primary-foreground"
+                  : `${SUBTYPE_COLORS[subtype] ?? "bg-muted text-muted-foreground"} hover:opacity-80`
+              }`}
+            >
+              {SUBTYPE_LABELS[subtype]}
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading documents…</p>
@@ -162,9 +215,12 @@ export default function DocumentsPage() {
             >
               <FileText className="h-5 w-5 shrink-0 text-orange-400" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">{doc.filename}</p>
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-sm font-medium text-foreground">{doc.filename}</p>
+                  <SubtypeBadge classification={doc.classification} />
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  {doc.classification ?? doc.mimeType} · {formatBytes(doc.sizeBytes)}
+                  {formatBytes(doc.sizeBytes)}
                   {doc.description && ` · ${doc.description}`}
                 </p>
               </div>

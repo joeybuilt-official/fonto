@@ -3,6 +3,27 @@
 import { useEffect, useState, useCallback } from "react";
 import { Image as ImageIcon, X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 
+const IMAGE_SUBTYPES = ["photo", "screenshot", "mockup", "logo", "icon"] as const;
+const SUBTYPE_LABELS: Record<string, string> = {
+  photo: "Photo", screenshot: "Screenshot", mockup: "Mockup", logo: "Logo", icon: "Icon",
+};
+const SUBTYPE_COLORS: Record<string, string> = {
+  photo: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+  screenshot: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+  mockup: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+  logo: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+  icon: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+};
+
+function SubtypeBadge({ classification }: { classification: string | null }) {
+  if (!classification) return null;
+  const label = SUBTYPE_LABELS[classification] ?? classification;
+  const color = SUBTYPE_COLORS[classification] ?? "bg-muted text-muted-foreground";
+  return (
+    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${color}`}>{label}</span>
+  );
+}
+
 interface Asset {
   id: string;
   filename: string;
@@ -56,7 +77,10 @@ function PhotoCard({ asset, onClick }: { asset: Asset; onClick: () => void }) {
         <p className="truncate text-xs font-medium text-foreground" title={asset.filename}>
           {asset.filename}
         </p>
-        <p className="text-[10px] text-muted-foreground">{formatBytes(asset.sizeBytes)}</p>
+        <div className="mt-1 flex items-center justify-between gap-1">
+          <p className="text-[10px] text-muted-foreground">{formatBytes(asset.sizeBytes)}</p>
+          <SubtypeBadge classification={asset.classification} />
+        </div>
       </div>
     </div>
   );
@@ -149,13 +173,18 @@ export default function PhotosPage() {
   const [loading, setLoading] = useState(true);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [subtypeFilter, setSubtypeFilter] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/v1/assets?mime=image/")
+    setLoading(true);
+    const url = subtypeFilter
+      ? `/api/v1/assets?mime=image/&subtype=${subtypeFilter}`
+      : "/api/v1/assets?mime=image/";
+    fetch(url)
       .then((r) => r.json())
       .then((d) => setPhotos(d.assets ?? []))
       .finally(() => setLoading(false));
-  }, []);
+  }, [subtypeFilter]);
 
   const openLightbox = useCallback(
     async (index: number) => {
@@ -186,6 +215,32 @@ export default function PhotosPage() {
           {photos.length} image{photos.length !== 1 ? "s" : ""}
         </p>
       </div>
+
+      {!loading && (
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => setSubtypeFilter(null)}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+              !subtypeFilter ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All
+          </button>
+          {IMAGE_SUBTYPES.map((subtype) => (
+            <button
+              key={subtype}
+              onClick={() => setSubtypeFilter(subtypeFilter === subtype ? null : subtype)}
+              className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                subtypeFilter === subtype
+                  ? "bg-primary text-primary-foreground"
+                  : `${SUBTYPE_COLORS[subtype] ?? "bg-muted text-muted-foreground"} hover:opacity-80`
+              }`}
+            >
+              {SUBTYPE_LABELS[subtype]}
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading photos…</p>
