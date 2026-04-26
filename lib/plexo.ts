@@ -42,26 +42,36 @@ export async function plexoAiComplete(
   return data.text;
 }
 
+export const IMAGE_SUBTYPES = ["photo", "screenshot", "mockup", "logo", "icon"] as const;
+export const DOCUMENT_SUBTYPES = ["receipt", "contract", "letter", "report", "form", "document", "scan"] as const;
+export const ALL_SUBTYPES = [...IMAGE_SUBTYPES, ...DOCUMENT_SUBTYPES] as const;
+export type AssetSubtype = typeof ALL_SUBTYPES[number];
+
 export async function plexoClassifyAsset(
   plexoWorkspaceId: string,
   filename: string,
   mimeType: string,
   textSnippet?: string
 ): Promise<string> {
+  const isImage = mimeType.startsWith("image/");
+  const validForType = isImage
+    ? IMAGE_SUBTYPES.join(", ")
+    : DOCUMENT_SUBTYPES.join(", ");
   const hint = textSnippet ? `\nContent preview: ${textSnippet.slice(0, 300)}` : "";
   const text = await plexoAiComplete(
     plexoWorkspaceId,
     [
       {
         role: "user",
-        content: `Classify this file into exactly one category. Reply with ONE word only, no punctuation:\nphoto, screenshot, document, receipt, scan\n\nFilename: ${filename}\nMIME type: ${mimeType}${hint}`,
+        content: `Classify this ${isImage ? "image" : "document"} into exactly one category. Reply with ONE word only, no punctuation:\n${validForType}\n\nFilename: ${filename}\nMIME type: ${mimeType}${hint}`,
       },
     ],
     10
   );
-  const word = text.trim().toLowerCase().replace(/[^a-z]/g, "");
-  const valid = ["photo", "screenshot", "document", "receipt", "scan"];
-  return valid.includes(word) ? word : mimeType.startsWith("image/") ? "photo" : "document";
+  const word = text.trim().toLowerCase().replace(/[^a-z]/g, "") as AssetSubtype;
+  return (ALL_SUBTYPES as readonly string[]).includes(word)
+    ? word
+    : isImage ? "photo" : "document";
 }
 
 export async function plexoDescribeImage(

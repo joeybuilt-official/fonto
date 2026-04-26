@@ -4,6 +4,47 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Upload, File, Image as ImageIcon, FileText, CheckCircle, XCircle, Loader2, Clipboard } from "lucide-react";
 import Link from "next/link";
 
+const SUBTYPE_LABELS: Record<string, string> = {
+  photo: "Photo",
+  screenshot: "Screenshot",
+  mockup: "Mockup",
+  logo: "Logo",
+  icon: "Icon",
+  receipt: "Receipt",
+  contract: "Contract",
+  letter: "Letter",
+  report: "Report",
+  form: "Form",
+  document: "Document",
+  scan: "Scan",
+};
+
+const SUBTYPE_COLORS: Record<string, string> = {
+  photo: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+  screenshot: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+  mockup: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+  logo: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+  icon: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  receipt: "bg-green-500/10 text-green-600 dark:text-green-400",
+  contract: "bg-slate-500/10 text-slate-600 dark:text-slate-400",
+  letter: "bg-pink-500/10 text-pink-600 dark:text-pink-400",
+  report: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  form: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
+  document: "bg-muted text-muted-foreground",
+  scan: "bg-muted text-muted-foreground",
+};
+
+function ClassificationBadge({ classification }: { classification: string | null }) {
+  if (!classification) return null;
+  const label = SUBTYPE_LABELS[classification] ?? classification;
+  const color = SUBTYPE_COLORS[classification] ?? "bg-muted text-muted-foreground";
+  return (
+    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${color}`}>
+      {label}
+    </span>
+  );
+}
+
 interface Asset {
   id: string;
   filename: string;
@@ -11,6 +52,7 @@ interface Asset {
   sizeBytes: number;
   syncState: string;
   processingState: string;
+  classification: string | null;
   capturedAt?: string;
   createdAt: string;
 }
@@ -49,11 +91,13 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [dragOver, setDragOver] = useState(false);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
+  const [subtypeFilter, setSubtypeFilter] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function fetchAssets() {
     try {
-      const res = await fetch("/api/v1/assets");
+      const url = subtypeFilter ? `/api/v1/assets?subtype=${subtypeFilter}` : "/api/v1/assets";
+      const res = await fetch(url);
       if (res.ok) {
         const data = (await res.json()) as { assets: Asset[] };
         setAssets(data.assets ?? []);
@@ -63,7 +107,7 @@ export default function DashboardPage() {
     }
   }
 
-  useEffect(() => { fetchAssets(); }, []);
+  useEffect(() => { fetchAssets(); }, [subtypeFilter]);
 
   // Paste from clipboard
   useEffect(() => {
@@ -202,6 +246,33 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Subtype filter */}
+      {!loading && assets.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => setSubtypeFilter(null)}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+              !subtypeFilter ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All
+          </button>
+          {Object.keys(SUBTYPE_LABELS).map((subtype) => (
+            <button
+              key={subtype}
+              onClick={() => setSubtypeFilter(subtypeFilter === subtype ? null : subtype)}
+              className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                subtypeFilter === subtype
+                  ? "bg-primary text-primary-foreground"
+                  : `${SUBTYPE_COLORS[subtype] ?? "bg-muted text-muted-foreground"} hover:opacity-80`
+              }`}
+            >
+              {SUBTYPE_LABELS[subtype]}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Asset grid */}
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading assets…</p>
@@ -246,9 +317,12 @@ export default function DashboardPage() {
                 {asset.filename}
               </p>
               <p className="text-xs text-muted-foreground">{formatBytes(asset.sizeBytes)}</p>
+              {asset.classification && (
+                <ClassificationBadge classification={asset.classification} />
+              )}
               <div className="flex items-center gap-1">
                 <SyncBadge state={asset.syncState} />
-                {asset.processingState !== "captured" && (
+                {asset.processingState !== "captured" && asset.processingState !== "ready" && (
                   <span className="text-[10px] text-muted-foreground">{asset.processingState}</span>
                 )}
               </div>

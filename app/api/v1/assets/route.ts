@@ -69,6 +69,7 @@ export async function GET(request: NextRequest) {
   const workspaceId = workspaces[0].id;
   const { searchParams } = request.nextUrl;
   const mimeFilter = searchParams.get("mime");
+  const subtypeFilter = searchParams.get("subtype");
   const lifecycle = searchParams.get("lifecycle") ?? "active";
   const validLifecycles = ["active", "archivable", "archived", "trashed"];
   const lifecycleFilter = validLifecycles.includes(lifecycle) ? lifecycle : "active";
@@ -84,9 +85,9 @@ export async function GET(request: NextRequest) {
     )
     .orderBy(desc(schema.assets.createdAt));
 
-  const filtered = mimeFilter
-    ? rows.filter((a) => a.mimeType.startsWith(mimeFilter))
-    : rows;
+  const filtered = rows
+    .filter((a) => !mimeFilter || a.mimeType.startsWith(mimeFilter))
+    .filter((a) => !subtypeFilter || a.classification === subtypeFilter);
 
   return NextResponse.json({ assets: filtered });
 }
