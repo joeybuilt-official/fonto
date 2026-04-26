@@ -51,6 +51,7 @@ export async function POST(request: NextRequest) {
   if (!file || !(file instanceof File)) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
   }
+  const source = (formData.get("source") as string | null) ?? "web-upload";
 
   const buffer = Buffer.from(await file.arrayBuffer());
   const sha256 = createHash("sha256").update(buffer).digest("hex");
@@ -64,7 +65,9 @@ export async function POST(request: NextRequest) {
       sizeBytes: file.size,
       sha256,
       syncState: "syncing",
+      processingState: "captured",
       lifecycleState: "active",
+      source,
       capturedAt: new Date(),
     })
     .returning();
