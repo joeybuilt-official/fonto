@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Download,
 } from "lucide-react";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const features = [
   {
@@ -77,12 +78,15 @@ export default function MarketingPage() {
           <Link href="/" className="font-heading text-lg font-semibold tracking-tight text-foreground">
             <span className="text-primary">_</span>fonto
           </Link>
-          <Link
-            href="/login"
-            className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-          >
-            Sign in
-          </Link>
+          <div className="flex items-center gap-3">
+            <ThemeToggle />
+            <Link
+              href="/login"
+              className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Sign in
+            </Link>
+          </div>
         </div>
       </header>
 

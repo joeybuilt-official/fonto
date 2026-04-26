@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2 } from "lucide-react";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import { useRouter } from "next/navigation";
 import type { User } from "@/lib/auth/types";
@@ -58,7 +59,8 @@ export function AppSidebar({ user }: { user: User }) {
         })}
       </nav>
 
-      <div className="border-t border-border px-3 py-3">
+      <div className="border-t border-border px-3 py-3 space-y-2">
+        <ThemeToggle />
         <div className="flex items-center justify-between">
           <span className="truncate text-xs text-muted-foreground">
             {user.email}
