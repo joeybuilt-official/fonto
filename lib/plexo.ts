@@ -156,6 +156,29 @@ export async function plexoSuggestTags(
   }
 }
 
+export async function plexoMemorySearch(
+  plexoWorkspaceId: string,
+  query: string
+): Promise<Array<{ id: string; score?: number }>> {
+  if (!plexoAvailable()) return [];
+  try {
+    const PLEXO_URL = process.env.PLEXO_URL ?? "";
+    const PLEXO_SERVICE_KEY = process.env.PLEXO_SERVICE_KEY ?? "";
+    const res = await fetch(
+      `${PLEXO_URL}/api/memory/search?workspaceId=${encodeURIComponent(plexoWorkspaceId)}&q=${encodeURIComponent(query)}&limit=20`,
+      {
+        headers: { Authorization: `Bearer ${PLEXO_SERVICE_KEY}`, "X-App-Id": "fonto" },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as { results?: Array<{ id: string; score?: number }> };
+    return data.results ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function plexoDescribeImage(
   plexoWorkspaceId: string,
   filename: string,

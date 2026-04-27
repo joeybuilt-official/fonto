@@ -8,6 +8,7 @@ import {
   boolean,
   jsonb,
   uniqueIndex,
+  integer,
 } from "drizzle-orm/pg-core";
 
 export const fontoSchema = pgSchema("fonto");
@@ -42,11 +43,14 @@ export const assets = fontoSchema.table(
     classification: text("classification"),
     description: text("description"),
     extractedText: text("extracted_text"),
+    correspondentId: uuid("correspondent_id"),
+    documentTypeId: uuid("document_type_id"),
     capturedAt: timestamp("captured_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     purgedAt: timestamp("purged_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
@@ -64,10 +68,15 @@ export const collections = fontoSchema.table(
     userId: text("user_id").notNull(),
     name: text("name").notNull(),
     description: text("description").notNull().default(""),
+    projectId: uuid("project_id"),
+    sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index("collections_workspace_id_idx").on(table.workspaceId)]
+  (table) => [
+    index("collections_workspace_id_idx").on(table.workspaceId),
+    index("collections_project_id_idx").on(table.projectId),
+  ]
 );
 
 export const collectionAssets = fontoSchema.table(
@@ -140,4 +149,43 @@ export const smartCollections = fontoSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [index("smart_collections_workspace_id_idx").on(table.workspaceId)]
+);
+
+export const projects = fontoSchema.table(
+  "projects",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    color: text("color").notNull().default("#6366f1"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("projects_workspace_id_idx").on(table.workspaceId)]
+);
+
+export const correspondents = fontoSchema.table(
+  "correspondents",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: text("name").notNull(),
+    matchPattern: text("match_pattern"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("correspondents_workspace_id_idx").on(table.workspaceId)]
+);
+
+export const documentTypes = fontoSchema.table(
+  "document_types",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: text("name").notNull(),
+    matchPattern: text("match_pattern"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("document_types_workspace_id_idx").on(table.workspaceId)]
 );

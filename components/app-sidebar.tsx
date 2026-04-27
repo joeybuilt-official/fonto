@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X } from "lucide-react";
+import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, Zap } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import { useRouter } from "next/navigation";
@@ -13,7 +13,9 @@ const navItems = [
   { href: "/app/timeline", label: "Timeline", icon: Clock },
   { href: "/app/photos", label: "Photos", icon: Image },
   { href: "/app/documents", label: "Documents", icon: FileText },
-  { href: "/app/collections", label: "Collections", icon: FolderOpen },
+  { href: "/app/collections", label: "Albums", icon: FolderOpen },
+  { href: "/app/projects", label: "Projects", icon: Folder },
+  { href: "/app/smart-collections", label: "Smart Collections", icon: Zap },
   { href: "/app/search", label: "Search", icon: Search },
   { href: "/app/trash", label: "Trash", icon: Trash2 },
   { href: "/app/settings", label: "Settings", icon: Settings },

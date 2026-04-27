@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-import { useState, useCallback } from "react";
-import { Search, File, Image as ImageIcon, FileText, Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useState, useCallback, useEffect, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { Search, File, Image as ImageIcon, FileText, Loader2, SlidersHorizontal, X, Sparkles } from "lucide-react";
+import { DocumentViewer } from "@/components/document-viewer";
 
 interface Asset {
   id: string;
@@ -12,9 +14,12 @@ interface Asset {
   source: string | null;
   classification: string | null;
   description: string | null;
+  extractedText: string | null;
   capturedAt: string | null;
   createdAt: string;
 }
+
+interface Tag { id: string; name: string; color: string }
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -29,23 +34,74 @@ function AssetIcon({ mimeType }: { mimeType: string }) {
   return <File className="h-5 w-5 text-muted-foreground" />;
 }
 
-export default function SearchPage() {
+const CLASSIFICATION_OPTIONS = [
+  "photo", "screenshot", "mockup", "logo", "icon",
+  "receipt", "contract", "letter", "report", "form", "document", "scan",
+];
+
+function SearchInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const smartCollectionId = searchParams.get("smartCollection") ?? "";
+
   const [query, setQuery] = useState("");
-  const [mimeFilter, setMimeFilter] = useState("");
   const [results, setResults] = useState<Asset[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
+  const [showFilters, setShowFilters] = useState(false);
+  const [semantic, setSemantic] = useState(false);
 
-  const doSearch = useCallback(async (q: string, mime: string) => {
-    if (!q.trim() && !mime) {
-      setResults(null);
-      return;
-    }
+  // Filter state
+  const [classification, setClassification] = useState("");
+  const [tagId, setTagId] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [tags, setTags] = useState<Tag[]>([]);
+
+  // Document viewer
+  const [viewerAsset, setViewerAsset] = useState<Asset | null>(null);
+
+  useEffect(() => {
+    fetch("/api/v1/tags")
+      .then((r) => r.json())
+      .then((d) => setTags(d.tags ?? []))
+      .catch(() => {});
+  }, []);
+
+  const doSearch = useCallback(async (opts?: {
+    q?: string; cl?: string; tid?: string; df?: string; dt?: string; sem?: boolean; scId?: string;
+  }) => {
+    const q = opts?.q ?? query;
+    const cl = opts?.cl ?? classification;
+    const tid = opts?.tid ?? tagId;
+    const df = opts?.df ?? dateFrom;
+    const dt = opts?.dt ?? dateTo;
+    const sem = opts?.sem ?? semantic;
+    const scId = opts?.scId ?? smartCollectionId;
+
     setLoading(true);
     try {
+      if (scId) {
+        const res = await fetch(`/api/v1/smart-collections/${scId}/assets`);
+        if (res.ok) {
+          const data = await res.json();
+          setResults(data.assets ?? []);
+        }
+        return;
+      }
+
+      if (!q.trim() && !cl && !tid && !df && !dt) {
+        setResults(null);
+        return;
+      }
+
       const params = new URLSearchParams();
       if (q.trim()) params.set("q", q.trim());
-      if (mime) params.set("mime", mime);
+      if (cl) params.set("classification", cl);
+      if (tid) params.set("tagId", tid);
+      if (df) params.set("dateFrom", df);
+      if (dt) params.set("dateTo", dt);
+      if (sem) params.set("semantic", "true");
+
       const res = await fetch(`/api/v1/search?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
@@ -54,17 +110,21 @@ export default function SearchPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [query, classification, tagId, dateFrom, dateTo, semantic, smartCollectionId]);
 
-  function handleQueryChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const val = e.target.value;
-    setQuery(val);
-    doSearch(val, mimeFilter);
-  }
+  // Execute smart collection query on mount if smartCollectionId present
+  useEffect(() => {
+    if (smartCollectionId) doSearch({ scId: smartCollectionId });
+  }, [smartCollectionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleMimeChange(mime: string) {
-    setMimeFilter(mime);
-    doSearch(query, mime);
+  const hasFilters = classification || tagId || dateFrom || dateTo;
+
+  function clearFilters() {
+    setClassification("");
+    setTagId("");
+    setDateFrom("");
+    setDateTo("");
+    doSearch({ cl: "", tid: "", df: "", dt: "" });
   }
 
   return (
@@ -72,62 +132,122 @@ export default function SearchPage() {
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Search</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Search by filename, description, extracted text, or classification
+          {smartCollectionId ? "Smart collection results" : "Search by filename, description, extracted text, or classification"}
         </p>
       </div>
 
-      <div className="flex gap-3 items-center">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            type="text"
-            value={query}
-            onChange={handleQueryChange}
-            placeholder="Search assets…"
-            autoFocus
-            className="w-full rounded-lg border border-border bg-background pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
-        {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-      </div>
-
-      {/* Mime type filters */}
-      <div className="flex gap-2 flex-wrap">
-        {[
-          { label: "All", value: "" },
-          { label: "Photos", value: "image/" },
-          { label: "PDF", value: "application/pdf" },
-          { label: "Text", value: "text/" },
-        ].map(({ label, value }) => (
+      {!smartCollectionId && (
+        <div className="flex gap-2 items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); doSearch({ q: e.target.value }); }}
+              placeholder="Search assets…"
+              autoFocus
+              className="w-full rounded-lg border border-border bg-background pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
           <button
-            key={value}
-            onClick={() => handleMimeChange(value)}
-            className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
-              mimeFilter === value
-                ? "bg-foreground text-background border-foreground"
-                : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"
-            }`}
+            onClick={() => setShowFilters((f) => !f)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors ${hasFilters || showFilters ? "border-foreground text-foreground" : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"}`}
           >
-            {label}
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Filters
+            {hasFilters && <span className="rounded-full bg-foreground text-background text-xs w-4 h-4 flex items-center justify-center">!</span>}
           </button>
-        ))}
-      </div>
+          <button
+            onClick={() => { setSemantic((s) => !s); doSearch({ sem: !semantic }); }}
+            title="Semantic search via Plexo AI"
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors ${semantic ? "border-amber-400 text-amber-400" : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"}`}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+          </button>
+          {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0" />}
+        </div>
+      )}
 
-      {results === null ? (
-        <p className="text-sm text-muted-foreground text-center py-8">
-          Type to search your assets
-        </p>
-      ) : results.length === 0 ? (
+      {showFilters && !smartCollectionId && (
+        <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-foreground">Filters</p>
+            {hasFilters && (
+              <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                <X className="h-3 w-3" /> Clear all
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Classification</label>
+              <select
+                value={classification}
+                onChange={(e) => { setClassification(e.target.value); doSearch({ cl: e.target.value }); }}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">Any</option>
+                {CLASSIFICATION_OPTIONS.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            {tags.length > 0 && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Tag</label>
+                <select
+                  value={tagId}
+                  onChange={(e) => { setTagId(e.target.value); doSearch({ tid: e.target.value }); }}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">Any tag</option>
+                  {tags.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">From</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => { setDateFrom(e.target.value); doSearch({ df: e.target.value }); }}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">To</label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => { setDateTo(e.target.value); doSearch({ dt: e.target.value }); }}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {results === null && !smartCollectionId ? (
+        <p className="text-sm text-muted-foreground text-center py-8">Type to search your assets</p>
+      ) : results?.length === 0 ? (
         <p className="text-sm text-muted-foreground text-center py-8">No assets found.</p>
-      ) : (
+      ) : results ? (
         <div className="space-y-1.5">
           <p className="text-xs text-muted-foreground">{results.length} result{results.length !== 1 ? "s" : ""}</p>
           {results.map((asset) => (
             <button
               key={asset.id}
               onClick={() => {
-                if (asset.mimeType.startsWith("image/")) router.push("/app/photos");
-                else router.push("/app/documents");
+                const isDoc = !asset.mimeType.startsWith("image/");
+                if (isDoc && (asset.mimeType === "application/pdf" || asset.extractedText)) {
+                  setViewerAsset(asset);
+                } else if (asset.mimeType.startsWith("image/")) {
+                  router.push("/app/photos");
+                } else {
+                  router.push("/app/documents");
+                }
               }}
               className="flex w-full items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted/40 transition-colors"
             >
@@ -147,7 +267,25 @@ export default function SearchPage() {
             </button>
           ))}
         </div>
+      ) : null}
+
+      {viewerAsset && (
+        <DocumentViewer
+          assetId={viewerAsset.id}
+          filename={viewerAsset.filename}
+          mimeType={viewerAsset.mimeType}
+          extractedText={viewerAsset.extractedText}
+          onClose={() => setViewerAsset(null)}
+        />
       )}
     </div>
+  );
+}
+
+export default function SearchPage() {
+  return (
+    <Suspense>
+      <SearchInner />
+    </Suspense>
   );
 }
