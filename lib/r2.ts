@@ -17,5 +17,10 @@ export function getS3Client(): S3Client {
 }
 
 export function assetStorageKey(workspaceId: string, assetId: string, filename: string): string {
+  return `fonto/${workspaceId}/${assetId}/${filename}`;
+}
+
+// Legacy key format — used only for migration fallback during R2 key migration
+export function assetStorageKeyLegacy(workspaceId: string, assetId: string, filename: string): string {
   return `${workspaceId}/${assetId}/${filename}`;
 }

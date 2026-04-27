@@ -7,6 +7,7 @@ import {
   index,
   boolean,
   jsonb,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const fontoSchema = pgSchema("fonto");
@@ -43,6 +44,8 @@ export const assets = fontoSchema.table(
     extractedText: text("extracted_text"),
     capturedAt: timestamp("captured_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    purgedAt: timestamp("purged_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
@@ -105,6 +108,24 @@ export const assetTags = fontoSchema.table(
   (table) => [
     index("asset_tags_asset_id_idx").on(table.assetId),
     index("asset_tags_tag_id_idx").on(table.tagId),
+  ]
+);
+
+export const uploadSessions = fontoSchema.table(
+  "upload_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    uploadId: text("upload_id").notNull(),
+    userId: text("user_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    assetId: uuid("asset_id"),
+    state: text("state").notNull().default("open"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("upload_sessions_upload_id_idx").on(table.uploadId),
+    index("upload_sessions_user_id_idx").on(table.userId),
   ]
 );
 

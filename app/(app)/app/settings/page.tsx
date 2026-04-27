@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSession } from "@/lib/auth/client";
 import Link from "next/link";
+import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 
 interface StorageInfo {
   totalBytes: number;
@@ -71,6 +72,33 @@ export default function SettingsPage() {
         ) : (
           <p className="text-sm text-muted-foreground">Loading storage info…</p>
         )}
+      </div>
+
+      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-foreground">Plexo AI</h2>
+          <PlexoConnectionStatus />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Plexo powers AI classification, auto-tagging, and cross-app intelligence for your assets.
+        </p>
+        <div className="space-y-3 pt-1">
+          {[
+            { id: "google-drive", label: "Google Drive", desc: "Import assets from Google Drive" },
+            { id: "dropbox", label: "Dropbox", desc: "Sync assets from Dropbox" },
+            { id: "icloud-drive", label: "iCloud Drive", desc: "Import from iCloud Drive" },
+          ].map((conn) => (
+            <div key={conn.id} className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-foreground">{conn.label}</p>
+                <p className="text-xs text-muted-foreground">{conn.desc}</p>
+              </div>
+              <span className="text-xs text-muted-foreground rounded-md border border-border px-2 py-1">
+                Coming soon
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="rounded-lg border border-border bg-card p-6 space-y-4">

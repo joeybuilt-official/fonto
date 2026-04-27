@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Menu } from "lucide-react";
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
+import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 import type { User } from "@/lib/auth/types";
 
 export function AppShell({ user, children }: { user: User; children: React.ReactNode }) {
@@ -43,6 +44,9 @@ export function AppShell({ user, children }: { user: User; children: React.React
             <span className="text-primary">_</span>fonto
           </Link>
         </header>
+        <div className="flex items-center justify-end px-4 py-1.5 border-b border-border/50 md:hidden">
+          <PlexoConnectionStatus />
+        </div>
         <main className="flex-1 overflow-y-auto p-4 md:p-6">{children}</main>
       </div>
     </div>

@@ -74,6 +74,88 @@ export async function plexoClassifyAsset(
     : isImage ? "photo" : "document";
 }
 
+export async function plexoPublishEvent(
+  eventType: string,
+  payload: Record<string, unknown>,
+  workspaceId?: string
+): Promise<void> {
+  if (!plexoAvailable()) return;
+  try {
+    await fetch(`${PLEXO_URL}/api/v1/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${PLEXO_SERVICE_KEY}`,
+        "X-App-Id": "fonto",
+      },
+      body: JSON.stringify({ eventType, payload, workspaceId }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    // Non-fatal: events are best-effort
+  }
+}
+
+export async function plexoStoreMemory(
+  plexoWorkspaceId: string,
+  content: string,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  if (!plexoAvailable()) return;
+  try {
+    await fetch(`${PLEXO_URL}/api/memory/entries`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${PLEXO_SERVICE_KEY}`,
+        "X-App-Id": "fonto",
+      },
+      body: JSON.stringify({
+        workspaceId: plexoWorkspaceId,
+        content,
+        type: "pattern",
+        metadata,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+export async function plexoSuggestTags(
+  plexoWorkspaceId: string,
+  filename: string,
+  classification: string,
+  description: string | null
+): Promise<string[]> {
+  try {
+    const hint = description ? `\nDescription: ${description}` : "";
+    const text = await plexoAiComplete(
+      plexoWorkspaceId,
+      [
+        {
+          role: "user",
+          content: `Suggest 3-5 short tags for this asset. Reply with a JSON array of strings only, no explanation.\n\nFilename: ${filename}\nClassification: ${classification}${hint}`,
+        },
+      ],
+      64
+    );
+    const trimmed = text.trim().replace(/^```json\s*|\s*```$/g, "");
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) {
+      return (parsed as unknown[])
+        .filter((t): t is string => typeof t === "string")
+        .map((t) => t.toLowerCase().trim().slice(0, 32))
+        .filter(Boolean)
+        .slice(0, 5);
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 export async function plexoDescribeImage(
   plexoWorkspaceId: string,
   filename: string,

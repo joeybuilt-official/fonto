@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
@@ -11,7 +12,13 @@ import {
   plexoEnsureWorkspace,
   plexoClassifyAsset,
   plexoDescribeImage,
+  plexoPublishEvent,
+  plexoStoreMemory,
+  plexoSuggestTags,
 } from "@/lib/plexo";
+
+const DOCUMENT_CLASSIFICATIONS = new Set(["document", "receipt", "scan", "report", "form", "contract", "letter"]);
+const DOCUMENT_TRIGGER_MIME = ["application/pdf", "text/", "image/tiff"];
 
 async function processAsset(
   assetId: string,
@@ -29,13 +36,19 @@ async function processAsset(
 
     let classification: string;
     let description: string | null = null;
+    let plexoWorkspaceId: string | null = null;
 
     if (plexoAvailable()) {
-      const wid = await plexoEnsureWorkspace(userId, email);
-      classification = await plexoClassifyAsset(wid, filename, mimeType, extractedText ?? undefined);
+      plexoWorkspaceId = await plexoEnsureWorkspace(userId, email);
+      classification = await plexoClassifyAsset(
+        plexoWorkspaceId,
+        filename,
+        mimeType,
+        extractedText ?? undefined
+      );
 
       if (mimeType.startsWith("image/")) {
-        description = await plexoDescribeImage(wid, filename, mimeType);
+        description = await plexoDescribeImage(plexoWorkspaceId, filename, mimeType);
       }
     } else {
       classification = mimeType.startsWith("image/") ? "photo" : "document";
@@ -50,8 +63,101 @@ async function processAsset(
       .update(schema.assets)
       .set({ processingState: "ready" })
       .where(eq(schema.assets.id, assetId));
+
+    const assetPayload = {
+      assetId,
+      filename,
+      mimeType,
+      classification,
+      description,
+    };
+
+    // Emit ext.fonto.asset.processed
+    void plexoPublishEvent("ext.fonto.asset.processed", assetPayload);
+
+    // Emit ext.fonto.document.processed for document-class assets
+    const isDocClassification = DOCUMENT_CLASSIFICATIONS.has(classification);
+    const isDocMime = DOCUMENT_TRIGGER_MIME.some((p) => mimeType.startsWith(p));
+    if (isDocClassification || isDocMime) {
+      void plexoPublishEvent("ext.fonto.document.processed", assetPayload);
+    }
+
+    // Emit ext.fonto.receipt.detected with extraction hint
+    if (classification === "receipt") {
+      void plexoPublishEvent("ext.fonto.receipt.detected", {
+        ...assetPayload,
+        extractedText: extractedText?.slice(0, 500) ?? null,
+      });
+    }
+
+    // memory.write with asset metadata
+    if (plexoWorkspaceId) {
+      const memContent = [
+        `[Fonto asset] ${filename}`,
+        `Type: ${mimeType} | Classification: ${classification}`,
+        description ? `Description: ${description}` : null,
+        extractedText ? `Content: ${extractedText.slice(0, 800)}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      void plexoStoreMemory(plexoWorkspaceId, memContent, {
+        source: "fonto",
+        assetId,
+        classification,
+        mimeType,
+      });
+
+      // Auto-tagging
+      const suggestedNames = await plexoSuggestTags(
+        plexoWorkspaceId,
+        filename,
+        classification,
+        description
+      );
+      const [asset] = await db
+        .select({ workspaceId: schema.assets.workspaceId })
+        .from(schema.assets)
+        .where(eq(schema.assets.id, assetId))
+        .limit(1);
+
+      if (asset && suggestedNames.length > 0) {
+        for (const name of suggestedNames) {
+          const existing = await db
+            .select({ id: schema.tags.id })
+            .from(schema.tags)
+            .where(
+              and(
+                eq(schema.tags.workspaceId, asset.workspaceId),
+                eq(schema.tags.name, name)
+              )
+            )
+            .limit(1);
+
+          let tagId: string;
+          if (existing[0]) {
+            tagId = existing[0].id;
+          } else {
+            const [newTag] = await db
+              .insert(schema.tags)
+              .values({
+                workspaceId: asset.workspaceId,
+                name,
+                aiSuggested: true,
+              })
+              .returning({ id: schema.tags.id });
+            tagId = newTag.id;
+          }
+
+          await db
+            .insert(schema.assetTags)
+            .values({ assetId, tagId })
+            .onConflictDoNothing();
+        }
+      }
+    }
   } catch (err) {
-    console.error("processAsset error:", err);
+    console.error("[fonto] processAsset error:", err);
     await db
       .update(schema.assets)
       .set({ processingState: "captured" })
@@ -102,6 +208,32 @@ export async function POST(request: NextRequest) {
   }
   const workspaceId = workspaces[0].id;
 
+  // Idempotency: check X-Upload-Id header
+  const uploadId = request.headers.get("X-Upload-Id");
+  if (uploadId) {
+    const [existingSession] = await db
+      .select()
+      .from(schema.uploadSessions)
+      .where(
+        and(
+          eq(schema.uploadSessions.uploadId, uploadId),
+          eq(schema.uploadSessions.userId, user.id)
+        )
+      )
+      .limit(1);
+
+    if (existingSession?.state === "completed" && existingSession.assetId) {
+      const [existingAsset] = await db
+        .select()
+        .from(schema.assets)
+        .where(eq(schema.assets.id, existingSession.assetId))
+        .limit(1);
+      if (existingAsset) {
+        return NextResponse.json({ asset: existingAsset }, { status: 200 });
+      }
+    }
+  }
+
   const formData = await request.formData();
   const file = formData.get("file");
   if (!file || !(file instanceof File)) {
@@ -111,16 +243,48 @@ export async function POST(request: NextRequest) {
 
   const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
   if (file.size > MAX_UPLOAD_BYTES) {
-    return NextResponse.json({ error: "File too large. Maximum upload size is 50 MB." }, { status: 413 });
+    return NextResponse.json(
+      { error: "File too large. Maximum upload size is 50 MB." },
+      { status: 413 }
+    );
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
   const sha256 = createHash("sha256").update(buffer).digest("hex");
 
+  // SHA-256 dedup: return existing non-purged asset if hash matches
+  const [duplicate] = await db
+    .select()
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.workspaceId, workspaceId),
+        eq(schema.assets.sha256, sha256),
+        eq(schema.assets.lifecycleState, "active")
+      )
+    )
+    .limit(1);
+
+  if (duplicate) {
+    return NextResponse.json({ asset: duplicate, deduplicated: true }, { status: 200 });
+  }
+
   // Extract text from text/* files immediately
   let extractedText: string | null = null;
   if (file.type.startsWith("text/") && buffer.length < 500_000) {
     extractedText = buffer.toString("utf-8").slice(0, 10_000);
+  }
+
+  // Open upload session for idempotency tracking
+  let sessionId: string | null = null;
+  if (uploadId) {
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const [session] = await db
+      .insert(schema.uploadSessions)
+      .values({ uploadId, userId: user.id, workspaceId, expiresAt })
+      .onConflictDoNothing()
+      .returning({ id: schema.uploadSessions.id });
+    sessionId = session?.id ?? null;
   }
 
   const [asset] = await db
@@ -144,6 +308,7 @@ export async function POST(request: NextRequest) {
   const bucket = process.env.R2_BUCKET!;
 
   try {
+    // Block 201 until R2 confirms — no fire-and-forget on upload
     await getS3Client().send(
       new PutObjectCommand({
         Bucket: bucket,
@@ -159,14 +324,32 @@ export async function POST(request: NextRequest) {
       .set({ syncState: "synced" })
       .where(eq(schema.assets.id, asset.id));
 
-    // Fire-and-forget processing pipeline
+    // Mark upload session completed
+    if (sessionId) {
+      await db
+        .update(schema.uploadSessions)
+        .set({ state: "completed", assetId: asset.id })
+        .where(eq(schema.uploadSessions.id, sessionId));
+    }
+
+    // Emit ext.fonto.asset.uploaded (non-blocking)
+    void plexoPublishEvent("ext.fonto.asset.uploaded", {
+      assetId: asset.id,
+      filename: file.name,
+      mimeType: file.type || "application/octet-stream",
+      sizeBytes: file.size,
+      sha256,
+      source,
+    });
+
+    // Fire-and-forget processing pipeline (classification, tags, memory)
     processAsset(asset.id, user.id, user.email, file.name, file.type, extractedText).catch(
       console.error
     );
 
     return NextResponse.json({ asset: { ...asset, syncState: "synced" } }, { status: 201 });
   } catch (err) {
-    console.error("R2 upload failed:", err);
+    console.error("[fonto] R2 upload failed:", err);
     await db
       .update(schema.assets)
       .set({ syncState: "error" })

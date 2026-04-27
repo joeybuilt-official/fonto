@@ -38,8 +38,14 @@ const PROFILE = {
 
   eventContracts: [
     "fonto.asset.uploaded",
+    "fonto.asset.processed",
     "fonto.asset.classified",
+    "fonto.document.processed",
+    "fonto.receipt.detected",
     "fonto.asset.deleted",
+    "fonto.asset.archivable",
+    "fonto.asset.archived",
+    "fonto.asset.purged",
     "fonto.tag.created",
   ],
 }
