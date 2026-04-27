@@ -83,7 +83,7 @@ export default function TimelinePage() {
           <h1 className="text-2xl font-semibold text-foreground">Timeline</h1>
           <p className="text-sm text-muted-foreground mt-1">Chronological view of all assets</p>
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           {(["", "image/", "application/pdf", "text/"] as const).map((filter) => (
             <button
               key={filter}
@@ -117,7 +117,7 @@ export default function TimelinePage() {
             return (
               <div key={monthKey}>
                 {/* Sticky month header */}
-                <div className="sticky top-0 z-10 -mx-6 mb-3 flex items-center gap-3 bg-background/90 backdrop-blur-sm px-6 py-2 border-b border-border">
+                <div className="sticky top-0 z-10 -mx-4 md:-mx-6 mb-3 flex items-center gap-3 bg-background/90 backdrop-blur-sm px-4 md:px-6 py-2 border-b border-border">
                   <span className="text-xs font-bold uppercase tracking-widest text-foreground">
                     {formatMonthLabel(monthKey)}
                   </span>

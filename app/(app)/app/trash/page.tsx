@@ -73,7 +73,7 @@ export default function TrashPage() {
           {items.map((asset) => (
             <div
               key={asset.id}
-              className="flex items-center gap-4 rounded-lg border border-border bg-card px-4 py-3 opacity-70 hover:opacity-100 transition-opacity"
+              className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-card px-4 py-3 opacity-70 hover:opacity-100 transition-opacity"
             >
               <AssetIcon mimeType={asset.mimeType} />
               <div className="min-w-0 flex-1">
