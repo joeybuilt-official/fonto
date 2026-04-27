@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Trash2, RotateCcw, File, Image as ImageIcon, FileText } from "lucide-react";
+import { ConfirmButton } from "@/components/confirm-button";
 
 interface Asset {
   id: string;
@@ -47,7 +48,6 @@ export default function TrashPage() {
   }
 
   async function deletePermanently(assetId: string) {
-    if (!confirm("Permanently delete this asset? This cannot be undone.")) return;
     await fetch(`/api/v1/assets/${assetId}`, { method: "DELETE" });
     setItems((prev) => prev.filter((a) => a.id !== assetId));
   }
@@ -91,13 +91,20 @@ export default function TrashPage() {
                   <RotateCcw className="h-3.5 w-3.5" />
                   Restore
                 </button>
-                <button
-                  onClick={() => deletePermanently(asset.id)}
+                <ConfirmButton
+                  onConfirm={() => deletePermanently(asset.id)}
                   className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium border border-red-500/50 text-red-500 hover:bg-red-500/10 transition-colors"
+                  armedClassName="bg-red-500/15 ring-1 ring-red-500"
+                  confirmLabel={
+                    <span className="flex items-center gap-1 font-bold">
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete forever?
+                    </span>
+                  }
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                   Delete
-                </button>
+                </ConfirmButton>
               </div>
             </div>
           ))}

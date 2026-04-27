@@ -6,6 +6,7 @@ import {
   Trash2, Plus, Loader2
 } from "lucide-react";
 import type { Asset } from "./photo-card";
+import { ConfirmButton } from "@/components/confirm-button";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -224,13 +225,20 @@ function MetadataPanel({
               <Download className="h-3.5 w-3.5 text-muted-foreground" />
               Download
             </button>
-            <button
-              onClick={onTrash}
+            <ConfirmButton
+              onConfirm={() => onTrash?.()}
               className="flex w-full items-center gap-2 rounded-md border border-destructive/30 bg-background px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
+              armedClassName="bg-destructive/15 ring-1 ring-destructive"
+              confirmLabel={
+                <span className="flex items-center gap-2 font-bold">
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Confirm move to trash
+                </span>
+              }
             >
               <Trash2 className="h-3.5 w-3.5" />
               Move to Trash
-            </button>
+            </ConfirmButton>
           </div>
         </div>
       </div>
