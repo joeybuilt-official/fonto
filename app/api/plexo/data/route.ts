@@ -39,6 +39,28 @@ export async function GET(request: NextRequest) {
   if (!workspaceId) return NextResponse.json({ error: "No Fonto workspace for user" }, { status: 404 })
 
   if (entity === "asset") {
+    const id = searchParams.get("id")
+
+    if (id) {
+      const [asset] = await db.select({
+        id: schema.assets.id,
+        filename: schema.assets.filename,
+        mimeType: schema.assets.mimeType,
+        sizeBytes: schema.assets.sizeBytes,
+        classification: schema.assets.classification,
+        description: schema.assets.description,
+        extractedText: schema.assets.extractedText,
+        capturedAt: schema.assets.capturedAt,
+        createdAt: schema.assets.createdAt,
+        lifecycleState: schema.assets.lifecycleState,
+      })
+        .from(schema.assets)
+        .where(and(eq(schema.assets.workspaceId, workspaceId), eq(schema.assets.id, id)))
+        .limit(1)
+      if (!asset) return NextResponse.json({ error: "Asset not found" }, { status: 404 })
+      return NextResponse.json({ asset })
+    }
+
     const subtype = searchParams.get("subtype")
     const collectionId = searchParams.get("collectionId")
     const tagId = searchParams.get("tagId")
@@ -129,6 +151,22 @@ export async function GET(request: NextRequest) {
   }
 
   if (entity === "collection") {
+    const id = searchParams.get("id")
+
+    if (id) {
+      const [collection] = await db.select({
+        id: schema.collections.id,
+        name: schema.collections.name,
+        description: schema.collections.description,
+        createdAt: schema.collections.createdAt,
+      })
+        .from(schema.collections)
+        .where(and(eq(schema.collections.workspaceId, workspaceId), eq(schema.collections.id, id)))
+        .limit(1)
+      if (!collection) return NextResponse.json({ error: "Collection not found" }, { status: 404 })
+      return NextResponse.json({ collection })
+    }
+
     const collections = await db.select({
       id: schema.collections.id,
       name: schema.collections.name,
@@ -188,6 +226,45 @@ const collectionAssetSchema = z.object({
   userId: z.string().min(1),
   collectionId: z.string().uuid(),
   assetId: z.string().uuid(),
+})
+
+const assetDeleteSchema = z.object({
+  entity: z.literal("asset"),
+  action: z.literal("delete"),
+  userId: z.string().min(1),
+  id: z.string().uuid(),
+})
+
+const collectionUpdateSchema = z.object({
+  entity: z.literal("collection"),
+  action: z.literal("update"),
+  userId: z.string().min(1),
+  id: z.string().uuid(),
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(1000).optional(),
+})
+
+const collectionDeleteSchema = z.object({
+  entity: z.literal("collection"),
+  action: z.literal("delete"),
+  userId: z.string().min(1),
+  id: z.string().uuid(),
+})
+
+const tagUpdateSchema = z.object({
+  entity: z.literal("tag"),
+  action: z.literal("update"),
+  userId: z.string().min(1),
+  id: z.string().uuid(),
+  name: z.string().min(1).max(100).optional(),
+  color: z.string().max(20).optional(),
+})
+
+const tagDeleteSchema = z.object({
+  entity: z.literal("tag"),
+  action: z.literal("delete"),
+  userId: z.string().min(1),
+  id: z.string().uuid(),
 })
 
 export async function POST(request: NextRequest) {
@@ -278,6 +355,104 @@ export async function POST(request: NextRequest) {
         .where(and(eq(schema.collectionAssets.collectionId, v.data.collectionId), eq(schema.collectionAssets.assetId, v.data.assetId)))
       return NextResponse.json({ removed: true })
     }
+  }
+
+  if (baseEntity === "asset" && action === "delete") {
+    const v = assetDeleteSchema.safeParse(body)
+    if (!v.success) return NextResponse.json({ error: "Invalid request", details: v.error.flatten() }, { status: 400 })
+
+    const workspaceId = await resolveWorkspaceId(v.data.userId)
+    if (!workspaceId) return NextResponse.json({ error: "No Fonto workspace for user" }, { status: 404 })
+
+    const [asset] = await db.update(schema.assets)
+      .set({ lifecycleState: "deleted" })
+      .where(and(eq(schema.assets.id, v.data.id), eq(schema.assets.workspaceId, workspaceId)))
+      .returning({ id: schema.assets.id, filename: schema.assets.filename })
+
+    if (!asset) return NextResponse.json({ error: "Asset not found" }, { status: 404 })
+    return NextResponse.json({ deleted: true, asset })
+  }
+
+  if (baseEntity === "collection" && action === "update") {
+    const v = collectionUpdateSchema.safeParse(body)
+    if (!v.success) return NextResponse.json({ error: "Invalid request", details: v.error.flatten() }, { status: 400 })
+
+    const workspaceId = await resolveWorkspaceId(v.data.userId)
+    if (!workspaceId) return NextResponse.json({ error: "No Fonto workspace for user" }, { status: 404 })
+
+    const updates: Record<string, unknown> = {}
+    if (v.data.name !== undefined) updates.name = v.data.name.trim()
+    if (v.data.description !== undefined) updates.description = v.data.description
+
+    if (!Object.keys(updates).length) return NextResponse.json({ error: "No fields to update" }, { status: 400 })
+
+    const [collection] = await db.update(schema.collections)
+      .set(updates)
+      .where(and(eq(schema.collections.id, v.data.id), eq(schema.collections.workspaceId, workspaceId)))
+      .returning({ id: schema.collections.id, name: schema.collections.name })
+
+    if (!collection) return NextResponse.json({ error: "Collection not found" }, { status: 404 })
+    return NextResponse.json({ collection })
+  }
+
+  if (baseEntity === "collection" && action === "delete") {
+    const v = collectionDeleteSchema.safeParse(body)
+    if (!v.success) return NextResponse.json({ error: "Invalid request", details: v.error.flatten() }, { status: 400 })
+
+    const workspaceId = await resolveWorkspaceId(v.data.userId)
+    if (!workspaceId) return NextResponse.json({ error: "No Fonto workspace for user" }, { status: 404 })
+
+    const [existing] = await db.select({ id: schema.collections.id })
+      .from(schema.collections)
+      .where(and(eq(schema.collections.id, v.data.id), eq(schema.collections.workspaceId, workspaceId)))
+      .limit(1)
+    if (!existing) return NextResponse.json({ error: "Collection not found" }, { status: 404 })
+
+    await db.delete(schema.collectionAssets).where(eq(schema.collectionAssets.collectionId, v.data.id))
+    await db.delete(schema.collections).where(eq(schema.collections.id, v.data.id))
+
+    return NextResponse.json({ deleted: true })
+  }
+
+  if (baseEntity === "tag" && action === "update") {
+    const v = tagUpdateSchema.safeParse(body)
+    if (!v.success) return NextResponse.json({ error: "Invalid request", details: v.error.flatten() }, { status: 400 })
+
+    const workspaceId = await resolveWorkspaceId(v.data.userId)
+    if (!workspaceId) return NextResponse.json({ error: "No Fonto workspace for user" }, { status: 404 })
+
+    const updates: Record<string, unknown> = {}
+    if (v.data.name !== undefined) updates.name = v.data.name.trim()
+    if (v.data.color !== undefined) updates.color = v.data.color
+
+    if (!Object.keys(updates).length) return NextResponse.json({ error: "No fields to update" }, { status: 400 })
+
+    const [tag] = await db.update(schema.tags)
+      .set(updates)
+      .where(and(eq(schema.tags.id, v.data.id), eq(schema.tags.workspaceId, workspaceId)))
+      .returning({ id: schema.tags.id, name: schema.tags.name })
+
+    if (!tag) return NextResponse.json({ error: "Tag not found" }, { status: 404 })
+    return NextResponse.json({ tag })
+  }
+
+  if (baseEntity === "tag" && action === "delete") {
+    const v = tagDeleteSchema.safeParse(body)
+    if (!v.success) return NextResponse.json({ error: "Invalid request", details: v.error.flatten() }, { status: 400 })
+
+    const workspaceId = await resolveWorkspaceId(v.data.userId)
+    if (!workspaceId) return NextResponse.json({ error: "No Fonto workspace for user" }, { status: 404 })
+
+    const [existing] = await db.select({ id: schema.tags.id })
+      .from(schema.tags)
+      .where(and(eq(schema.tags.id, v.data.id), eq(schema.tags.workspaceId, workspaceId)))
+      .limit(1)
+    if (!existing) return NextResponse.json({ error: "Tag not found" }, { status: 404 })
+
+    await db.delete(schema.assetTags).where(eq(schema.assetTags.tagId, v.data.id))
+    await db.delete(schema.tags).where(eq(schema.tags.id, v.data.id))
+
+    return NextResponse.json({ deleted: true })
   }
 
   return NextResponse.json({ error: "Unsupported entity or action" }, { status: 400 })
