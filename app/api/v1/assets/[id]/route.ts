@@ -3,6 +3,8 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
+import { getS3Client, assetStorageKey } from "@/lib/r2";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 export async function PATCH(
   request: NextRequest,
@@ -69,17 +71,26 @@ export async function DELETE(
   if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
   const workspaceIds = workspaces.map((w) => w.id);
 
-  // Permanent delete from DB only (R2 cleanup can be a background job)
-  const [deleted] = await db
-    .delete(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.id, id),
-        inArray(schema.assets.workspaceId, workspaceIds)
-      )
-    )
-    .returning();
+  const [asset] = await db
+    .select()
+    .from(schema.assets)
+    .where(and(eq(schema.assets.id, id), inArray(schema.assets.workspaceId, workspaceIds)))
+    .limit(1);
 
-  if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const key = assetStorageKey(asset.workspaceId, asset.id, asset.filename);
+  try {
+    await getS3Client().send(
+      new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: key })
+    );
+  } catch (err) {
+    console.error("[fonto] R2 delete failed, proceeding with DB delete:", err);
+  }
+
+  await db
+    .delete(schema.assets)
+    .where(and(eq(schema.assets.id, id), inArray(schema.assets.workspaceId, workspaceIds)));
+
   return NextResponse.json({ deleted: true });
 }

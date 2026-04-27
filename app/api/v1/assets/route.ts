@@ -109,6 +109,11 @@ export async function POST(request: NextRequest) {
   }
   const source = (formData.get("source") as string | null) ?? "web-upload";
 
+  const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return NextResponse.json({ error: "File too large. Maximum upload size is 50 MB." }, { status: 413 });
+  }
+
   const buffer = Buffer.from(await file.arrayBuffer());
   const sha256 = createHash("sha256").update(buffer).digest("hex");
 
