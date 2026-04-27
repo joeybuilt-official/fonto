@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Upload, File, Image as ImageIcon, FileText, CheckCircle, XCircle, Loader2, Clipboard } from "lucide-react";
+import {
+  Upload, File, Image as ImageIcon, FileText, CheckCircle,
+  XCircle, Loader2, Clipboard, Check
+} from "lucide-react";
 import Link from "next/link";
 
 const SUBTYPE_LABELS: Record<string, string> = {
@@ -65,6 +68,12 @@ interface UploadItem {
   assetId?: string;
 }
 
+interface Toast {
+  id: string;
+  message: string;
+  type: "success" | "error";
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -86,13 +95,73 @@ function SyncBadge({ state }: { state: string }) {
   return <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-label="Syncing" />;
 }
 
+// Simple thumbnail that lazy-fetches URL for image assets
+function AssetThumbnail({ asset }: { asset: Asset }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!asset.mimeType.startsWith("image/")) return;
+    fetch(`/api/v1/assets/${asset.id}/url`)
+      .then((r) => r.json())
+      .then((d) => setUrl(d.url ?? null))
+      .catch(() => {});
+  }, [asset.id, asset.mimeType]);
+
+  return (
+    <div className="aspect-square overflow-hidden rounded-lg bg-muted/30 flex items-center justify-center">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt={asset.filename} className="h-full w-full object-cover" loading="lazy" />
+      ) : (
+        <AssetIcon mimeType={asset.mimeType} />
+      )}
+    </div>
+  );
+}
+
+// Toast container
+function ToastContainer({ toasts }: { toasts: Toast[] }) {
+  if (toasts.length === 0) return null;
+  return (
+    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm shadow-lg pointer-events-auto transition-all ${
+            toast.type === "success"
+              ? "border-green-500/30 bg-card text-foreground"
+              : "border-destructive/30 bg-card text-destructive"
+          }`}
+        >
+          {toast.type === "success" ? (
+            <Check className="h-4 w-4 text-green-500 shrink-0" />
+          ) : (
+            <XCircle className="h-4 w-4 text-destructive shrink-0" />
+          )}
+          {toast.message}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [recentUploads, setRecentUploads] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [dragOver, setDragOver] = useState(false);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [subtypeFilter, setSubtypeFilter] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function showToast(message: string, type: "success" | "error" = "success") {
+    const id = `${Date.now()}-${Math.random()}`;
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3000);
+  }
 
   async function fetchAssets() {
     try {
@@ -107,7 +176,20 @@ export default function DashboardPage() {
     }
   }
 
-  useEffect(() => { fetchAssets(); }, [subtypeFilter]);
+  async function fetchRecentUploads() {
+    try {
+      const res = await fetch("/api/v1/assets?sort=newest");
+      if (res.ok) {
+        const data = (await res.json()) as { assets: Asset[] };
+        setRecentUploads((data.assets ?? []).slice(0, 8));
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => { fetchAssets(); }, [subtypeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchRecentUploads(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Paste from clipboard
   useEffect(() => {
@@ -125,7 +207,7 @@ export default function DashboardPage() {
     }
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function uploadFile(file: File, source: string): Promise<Asset | null> {
     const itemId = `${Date.now()}-${Math.random()}`;
@@ -165,6 +247,17 @@ export default function DashboardPage() {
     const uploaded = results.filter(Boolean) as Asset[];
     if (uploaded.length > 0) {
       setAssets((prev) => [...uploaded, ...prev]);
+      setRecentUploads((prev) => [...uploaded, ...prev].slice(0, 8));
+      showToast(
+        uploaded.length === 1
+          ? `${uploaded[0].filename} uploaded successfully`
+          : `${uploaded.length} files uploaded successfully`,
+        "success"
+      );
+    }
+    const failed = results.filter((r) => r === null).length;
+    if (failed > 0) {
+      showToast(`${failed} file${failed > 1 ? "s" : ""} failed to upload`, "error");
     }
   }
 
@@ -174,7 +267,7 @@ export default function DashboardPage() {
       setDragOver(false);
       if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files, "drag-drop");
     },
-    []
+    [] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const activeUploads = uploadItems.filter((i) => i.state === "uploading");
@@ -243,6 +336,23 @@ export default function DashboardPage() {
               </span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Recent uploads thumbnails */}
+      {recentUploads.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Recent Uploads</p>
+            <Link href="/app/photos" className="text-xs text-primary hover:underline">
+              View all
+            </Link>
+          </div>
+          <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-8">
+            {recentUploads.map((asset) => (
+              <AssetThumbnail key={asset.id} asset={asset} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -330,6 +440,9 @@ export default function DashboardPage() {
           ))}
         </div>
       )}
+
+      {/* Toast notifications */}
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }

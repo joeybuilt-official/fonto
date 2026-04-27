@@ -1,227 +1,314 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { Image as ImageIcon, X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Image as ImageIcon, MousePointer2, X, FolderPlus, Download, Trash2, CheckSquare, Loader2 } from "lucide-react";
+import { Suspense } from "react";
+import { PhotoCard, type Asset } from "../_components/photo-card";
+import { PhotoLightbox } from "../_components/photo-lightbox";
 
 const IMAGE_SUBTYPES = ["photo", "screenshot", "mockup", "logo", "icon"] as const;
 const SUBTYPE_LABELS: Record<string, string> = {
-  photo: "Photo", screenshot: "Screenshot", mockup: "Mockup", logo: "Logo", icon: "Icon",
-};
-const SUBTYPE_COLORS: Record<string, string> = {
-  photo: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  screenshot: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  mockup: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
-  logo: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
-  icon: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  photo: "Photos",
+  screenshot: "Screenshots",
+  mockup: "Mockups",
+  logo: "Logos",
+  icon: "Icons",
 };
 
-function SubtypeBadge({ classification }: { classification: string | null }) {
-  if (!classification) return null;
-  const label = SUBTYPE_LABELS[classification] ?? classification;
-  const color = SUBTYPE_COLORS[classification] ?? "bg-muted text-muted-foreground";
-  return (
-    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${color}`}>{label}</span>
-  );
-}
+const SORT_OPTIONS = [
+  { value: "newest", label: "Newest" },
+  { value: "oldest", label: "Oldest" },
+] as const;
 
-interface Asset {
+interface Collection {
   id: string;
-  filename: string;
-  mimeType: string;
-  sizeBytes: number;
-  description: string | null;
-  classification: string | null;
-  capturedAt: string | null;
-  createdAt: string;
+  name: string;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function PhotoCard({ asset, onClick }: { asset: Asset; onClick: () => void }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch(`/api/v1/assets/${asset.id}/url`)
-      .then((r) => r.json())
-      .then((d) => setUrl(d.url ?? null))
-      .catch(() => setUrl(null))
-      .finally(() => setLoading(false));
-  }, [asset.id]);
-
+function BatchActionBar({
+  count: selectedCount,
+  onAddToCollection,
+  onDownload,
+  onTrash,
+  onClear,
+}: {
+  count: number;
+  onAddToCollection: () => void;
+  onDownload: () => void;
+  onTrash: () => void;
+  onClear: () => void;
+}) {
+  if (selectedCount === 0) return null;
   return (
-    <div
-      onClick={onClick}
-      className="cursor-pointer overflow-hidden rounded-lg border border-border bg-card hover:border-primary/50 transition-colors"
-    >
-      <div className="aspect-square bg-muted/30 flex items-center justify-center overflow-hidden">
-        {loading ? (
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        ) : url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={url}
-            alt={asset.description ?? asset.filename}
-            className="h-full w-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <ImageIcon className="h-10 w-10 text-muted-foreground" />
-        )}
-      </div>
-      <div className="p-2">
-        <p className="truncate text-xs font-medium text-foreground" title={asset.filename}>
-          {asset.filename}
-        </p>
-        <div className="mt-1 flex items-center justify-between gap-1">
-          <p className="text-[10px] text-muted-foreground">{formatBytes(asset.sizeBytes)}</p>
-          <SubtypeBadge classification={asset.classification} />
-        </div>
-      </div>
+    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-xl border border-border bg-card/95 backdrop-blur px-4 py-2.5 shadow-xl">
+      <span className="text-sm font-medium text-foreground mr-2">
+        {selectedCount} {selectedCount === 1 ? "photo" : "photos"} selected
+      </span>
+      <button
+        onClick={onAddToCollection}
+        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-primary/10 hover:text-primary transition-colors"
+      >
+        <FolderPlus className="h-3.5 w-3.5" />
+        Add to collection
+      </button>
+      <button
+        onClick={onDownload}
+        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/80 transition-colors"
+      >
+        <Download className="h-3.5 w-3.5" />
+        Download
+      </button>
+      <button
+        onClick={onTrash}
+        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        Move to trash
+      </button>
+      <button
+        onClick={onClear}
+        className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        title="Clear selection"
+      >
+        <X className="h-4 w-4" />
+      </button>
     </div>
   );
 }
 
-function Lightbox({
-  asset,
-  url,
+function AddToCollectionModal({
+  collections,
+  onSelect,
   onClose,
-  onPrev,
-  onNext,
-  hasPrev,
-  hasNext,
 }: {
-  asset: Asset;
-  url: string | null;
+  collections: Collection[];
+  onSelect: (collectionId: string) => void;
   onClose: () => void;
-  onPrev: () => void;
-  onNext: () => void;
-  hasPrev: boolean;
-  hasNext: boolean;
 }) {
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-      if (e.key === "ArrowLeft" && hasPrev) onPrev();
-      if (e.key === "ArrowRight" && hasNext) onNext();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, onPrev, onNext, hasPrev, hasNext]);
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 rounded-full p-2 bg-white/10 text-white hover:bg-white/20"
-      >
-        <X className="h-5 w-5" />
-      </button>
-
-      {hasPrev && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onPrev(); }}
-          className="absolute left-4 rounded-full p-2 bg-white/10 text-white hover:bg-white/20"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </button>
-      )}
-
-      {hasNext && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onNext(); }}
-          className="absolute right-4 rounded-full p-2 bg-white/10 text-white hover:bg-white/20"
-        >
-          <ChevronRight className="h-5 w-5" />
-        </button>
-      )}
-
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="max-h-[90vh] max-w-[90vw] flex flex-col gap-2"
+        className="w-80 rounded-xl border border-border bg-card shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={url}
-            alt={asset.description ?? asset.filename}
-            className="max-h-[80vh] max-w-[85vw] rounded-lg object-contain"
-          />
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <p className="text-sm font-semibold text-foreground">Add to Collection</p>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {collections.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-muted-foreground">No collections yet.</p>
         ) : (
-          <div className="flex h-64 w-64 items-center justify-center rounded-lg bg-muted">
-            <ImageIcon className="h-16 w-16 text-muted-foreground" />
+          <div className="max-h-64 overflow-y-auto py-1">
+            {collections.map((col) => (
+              <button
+                key={col.id}
+                onClick={() => onSelect(col.id)}
+                className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors"
+              >
+                <FolderPlus className="h-4 w-4 text-muted-foreground" />
+                {col.name}
+              </button>
+            ))}
           </div>
         )}
-        <div className="text-center text-sm text-white/80">
-          <p className="font-medium">{asset.filename}</p>
-          {asset.description && <p className="text-xs text-white/60">{asset.description}</p>}
-        </div>
       </div>
     </div>
   );
 }
 
-export default function PhotosPage() {
+function PhotosContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const typeParam = searchParams.get("type") ?? "";
+  const sortParam = (searchParams.get("sort") ?? "newest") as "newest" | "oldest";
+
   const [photos, setPhotos] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
-  const [subtypeFilter, setSubtypeFilter] = useState<string | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [showCollectionModal, setShowCollectionModal] = useState(false);
+  const lastClickedIndex = useRef<number | null>(null);
+
+  useEffect(() => {
+    fetch("/api/v1/collections")
+      .then((r) => r.json())
+      .then((d) => setCollections(d.collections ?? []));
+  }, []);
 
   useEffect(() => {
     setLoading(true);
-    const url = subtypeFilter
-      ? `/api/v1/assets?mime=image/&subtype=${subtypeFilter}`
+    const url = typeParam
+      ? `/api/v1/assets?mime=image/&subtype=${typeParam}`
       : "/api/v1/assets?mime=image/";
     fetch(url)
       .then((r) => r.json())
-      .then((d) => setPhotos(d.assets ?? []))
+      .then((d) => {
+        let list = (d.assets ?? []) as Asset[];
+        if (sortParam === "oldest") {
+          list = [...list].sort(
+            (a, b) =>
+              new Date(a.capturedAt ?? a.createdAt).getTime() -
+              new Date(b.capturedAt ?? b.createdAt).getTime()
+          );
+        }
+        setPhotos(list);
+      })
       .finally(() => setLoading(false));
-  }, [subtypeFilter]);
+  }, [typeParam, sortParam]);
 
-  const openLightbox = useCallback(
-    async (index: number) => {
-      setLightboxIndex(index);
-      setLightboxUrl(null);
-      const res = await fetch(`/api/v1/assets/${photos[index].id}/url`);
-      if (res.ok) {
-        const data = await res.json();
-        setLightboxUrl(data.url);
-      }
-    },
-    [photos]
-  );
+  function setFilter(type: string | null, sort?: string) {
+    const params = new URLSearchParams();
+    if (type) params.set("type", type);
+    if (sort ?? sortParam) params.set("sort", sort ?? sortParam);
+    router.replace(`/app/photos?${params.toString()}`);
+  }
 
-  async function navLightbox(delta: number) {
+  function setSort(sort: string) {
+    const params = new URLSearchParams();
+    if (typeParam) params.set("type", typeParam);
+    params.set("sort", sort);
+    router.replace(`/app/photos?${params.toString()}`);
+  }
+
+  const openLightbox = useCallback((index: number) => {
+    setLightboxIndex(index);
+  }, []);
+
+  function navLightbox(delta: number) {
     if (lightboxIndex === null) return;
     const next = lightboxIndex + delta;
-    if (next >= 0 && next < photos.length) {
-      await openLightbox(next);
+    if (next >= 0 && next < photos.length) setLightboxIndex(next);
+  }
+
+  function handleCardClick(index: number, e: React.MouseEvent) {
+    if (selectMode) {
+      if (e.shiftKey && lastClickedIndex.current !== null) {
+        // Range select
+        const from = Math.min(lastClickedIndex.current, index);
+        const to = Math.max(lastClickedIndex.current, index);
+        setSelected((prev) => {
+          const next = new Set(prev);
+          for (let i = from; i <= to; i++) next.add(photos[i].id);
+          return next;
+        });
+      } else {
+        setSelected((prev) => {
+          const next = new Set(prev);
+          if (next.has(photos[index].id)) next.delete(photos[index].id);
+          else next.add(photos[index].id);
+          return next;
+        });
+      }
+      lastClickedIndex.current = index;
+    } else {
+      openLightbox(index);
     }
   }
 
+  function handleToggleSelectMode() {
+    setSelectMode((v) => !v);
+    setSelected(new Set());
+  }
+
+  async function handleBatchAddToCollection(collectionId: string) {
+    await Promise.all(
+      Array.from(selected).map((assetId) =>
+        fetch(`/api/v1/collections/${collectionId}/assets`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assetId }),
+        })
+      )
+    );
+    setShowCollectionModal(false);
+    setSelected(new Set());
+  }
+
+  async function handleBatchDownload() {
+    // Download each selected photo individually
+    for (const assetId of selected) {
+      const asset = photos.find((p) => p.id === assetId);
+      if (!asset) continue;
+      const res = await fetch(`/api/v1/assets/${assetId}/url`);
+      if (res.ok) {
+        const d = await res.json();
+        if (d.url) {
+          const a = document.createElement("a");
+          a.href = d.url;
+          a.download = asset.filename;
+          a.click();
+          // small delay to avoid browser blocking multiple downloads
+          await new Promise((r) => setTimeout(r, 200));
+        }
+      }
+    }
+  }
+
+  async function handleBatchTrash() {
+    await Promise.all(
+      Array.from(selected).map((assetId) =>
+        fetch(`/api/v1/assets/${assetId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ trash: true }),
+        })
+      )
+    );
+    setPhotos((prev) => prev.filter((p) => !selected.has(p.id)));
+    setSelected(new Set());
+  }
+
+  function handleLightboxTrash(assetId: string) {
+    setPhotos((prev) => prev.filter((p) => p.id !== assetId));
+    setLightboxIndex(null);
+  }
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Photos</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {photos.length} image{photos.length !== 1 ? "s" : ""}
-        </p>
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">Photos</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {photos.length} image{photos.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+        <button
+          onClick={handleToggleSelectMode}
+          className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+            selectMode
+              ? "bg-primary text-primary-foreground"
+              : "border border-border text-muted-foreground hover:text-foreground hover:border-foreground"
+          }`}
+        >
+          {selectMode ? (
+            <>
+              <X className="h-3.5 w-3.5" />
+              Cancel
+            </>
+          ) : (
+            <>
+              <CheckSquare className="h-3.5 w-3.5" />
+              Select
+            </>
+          )}
+        </button>
       </div>
 
+      {/* Filter bar */}
       {!loading && (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
-            onClick={() => setSubtypeFilter(null)}
+            onClick={() => setFilter(null)}
             className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-              !subtypeFilter ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
+              !typeParam
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:text-foreground"
             }`}
           >
             All
@@ -229,48 +316,108 @@ export default function PhotosPage() {
           {IMAGE_SUBTYPES.map((subtype) => (
             <button
               key={subtype}
-              onClick={() => setSubtypeFilter(subtypeFilter === subtype ? null : subtype)}
+              onClick={() => setFilter(typeParam === subtype ? null : subtype)}
               className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-                subtypeFilter === subtype
+                typeParam === subtype
                   ? "bg-primary text-primary-foreground"
-                  : `${SUBTYPE_COLORS[subtype] ?? "bg-muted text-muted-foreground"} hover:opacity-80`
+                  : "bg-muted text-muted-foreground hover:text-foreground"
               }`}
             >
               {SUBTYPE_LABELS[subtype]}
             </button>
           ))}
+          <div className="ml-auto">
+            <select
+              value={sortParam}
+              onChange={(e) => setSort(e.target.value)}
+              className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 
+      {/* Grid */}
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading photos…</p>
+        <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading photos...
+        </div>
       ) : photos.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
           <ImageIcon className="h-10 w-10 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">No photos yet. Upload images from the Dashboard.</p>
         </div>
       ) : (
-        <div
-          className="grid gap-3"
-          style={{ gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}
-        >
+        <div className="grid grid-cols-2 gap-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {photos.map((photo, index) => (
-            <PhotoCard key={photo.id} asset={photo} onClick={() => openLightbox(index)} />
+            <div key={photo.id} onClick={(e) => handleCardClick(index, e)}>
+              <PhotoCard
+                asset={photo}
+                selected={selected.has(photo.id)}
+                onSelect={() => {
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(photo.id)) next.delete(photo.id);
+                    else next.add(photo.id);
+                    return next;
+                  });
+                }}
+                selectMode={selectMode}
+                showQuickActions={!selectMode}
+                onAddToCollection={(assetId) => {
+                  setSelected(new Set([assetId]));
+                  setShowCollectionModal(true);
+                }}
+              />
+            </div>
           ))}
         </div>
       )}
 
+      {/* Lightbox */}
       {lightboxIndex !== null && (
-        <Lightbox
+        <PhotoLightbox
           asset={photos[lightboxIndex]}
-          url={lightboxUrl}
           onClose={() => setLightboxIndex(null)}
           onPrev={() => navLightbox(-1)}
           onNext={() => navLightbox(1)}
           hasPrev={lightboxIndex > 0}
           hasNext={lightboxIndex < photos.length - 1}
+          onTrash={handleLightboxTrash}
+        />
+      )}
+
+      {/* Batch action bar */}
+      <BatchActionBar
+        count={selected.size}
+        onAddToCollection={() => setShowCollectionModal(true)}
+        onDownload={handleBatchDownload}
+        onTrash={handleBatchTrash}
+        onClear={() => setSelected(new Set())}
+      />
+
+      {/* Add to collection modal */}
+      {showCollectionModal && (
+        <AddToCollectionModal
+          collections={collections}
+          onSelect={handleBatchAddToCollection}
+          onClose={() => setShowCollectionModal(false)}
         />
       )}
     </div>
+  );
+}
+
+export default function PhotosPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading...</div>}>
+      <PhotosContent />
+    </Suspense>
   );
 }
