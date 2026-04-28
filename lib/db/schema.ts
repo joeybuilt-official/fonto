@@ -189,3 +189,24 @@ export const documentTypes = fontoSchema.table(
   },
   (table) => [index("document_types_workspace_id_idx").on(table.workspaceId)]
 );
+
+// Public, time-bounded share tokens for individual assets.
+// `token` is a URL-safe random string. `expiresAt` is enforced at access time;
+// `revokedAt` lets owners kill a link without waiting for expiry.
+export const shareLinks = fontoSchema.table(
+  "share_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    assetId: uuid("asset_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    token: text("token").notNull().unique(),
+    createdBy: text("created_by").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("share_links_token_idx").on(table.token),
+    index("share_links_asset_id_idx").on(table.assetId),
+  ]
+);
