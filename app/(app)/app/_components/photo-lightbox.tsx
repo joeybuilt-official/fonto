@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
-  Trash2, Plus, Loader2
+  Trash2, Plus, Loader2, Share2, Check, Copy
 } from "lucide-react";
 import type { Asset } from "./photo-card";
 import { ConfirmButton } from "@/components/confirm-button";
@@ -43,6 +43,9 @@ interface MetadataPanelProps {
   onAddToCollection: (collectionId: string) => void;
   onDownload: () => void;
   onTrash: () => void;
+  onShare: () => Promise<void>;
+  shareState: { url: string | null; copied: boolean; loading: boolean };
+  onRevokeShare: () => Promise<void>;
 }
 
 function MetadataPanel({
@@ -56,6 +59,9 @@ function MetadataPanel({
   onAddToCollection,
   onDownload,
   onTrash,
+  onShare,
+  shareState,
+  onRevokeShare,
 }: MetadataPanelProps) {
   const [addingTag, setAddingTag] = useState(false);
   const [tagInput, setTagInput] = useState("");
@@ -225,6 +231,46 @@ function MetadataPanel({
               <Download className="h-3.5 w-3.5 text-muted-foreground" />
               Download
             </button>
+            {/* Share */}
+            <button
+              onClick={onShare}
+              disabled={shareState.loading}
+              className="flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              {shareState.copied ? (
+                <Check className="h-3.5 w-3.5 text-green-500" />
+              ) : (
+                <Share2 className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+              {shareState.copied
+                ? "Link copied"
+                : shareState.url
+                ? "Copy share link"
+                : shareState.loading
+                ? "Generating…"
+                : "Share (24h link)"}
+            </button>
+            {shareState.url && (
+              <div className="flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-[10px]">
+                <code className="flex-1 truncate font-mono text-muted-foreground">
+                  {shareState.url}
+                </code>
+                <button
+                  onClick={onShare}
+                  className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                  title="Copy"
+                >
+                  {shareState.copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                </button>
+                <button
+                  onClick={onRevokeShare}
+                  className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                  title="Revoke link"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
             <ConfirmButton
               onConfirm={() => onTrash?.()}
               className="flex w-full items-center gap-2 rounded-md border border-destructive/30 bg-background px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
@@ -271,6 +317,9 @@ export function PhotoLightbox({
   const [tags, setTags] = useState<TagItem[]>([]);
   const [allTags, setAllTags] = useState<TagItem[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
 
   useEffect(() => {
     setUrl(null);
@@ -292,6 +341,20 @@ export function PhotoLightbox({
     fetch("/api/v1/collections")
       .then((r) => r.json())
       .then((d) => setCollections(d.collections ?? []));
+    // Reset share state per asset; surface most recent active link
+    setShareUrl(null);
+    setShareCopied(false);
+    fetch(`/api/v1/assets/${asset.id}/share`)
+      .then((r) => (r.ok ? r.json() : { links: [] }))
+      .then((d: { links?: Array<{ token: string }> }) => {
+        const first = d.links?.[0];
+        if (first) {
+          setShareUrl(`${window.location.origin}/share/${first.token}`);
+        }
+      })
+      .catch(() => {
+        /* ignore */
+      });
   }, [asset.id]);
 
   useEffect(() => {
@@ -368,6 +431,44 @@ export function PhotoLightbox({
     onClose();
   }
 
+  async function handleShare() {
+    // If link exists, copy it; otherwise generate.
+    if (shareUrl) {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setShareCopied(true);
+        setTimeout(() => setShareCopied(false), 2000);
+      } catch {
+        /* clipboard unavailable */
+      }
+      return;
+    }
+    setShareLoading(true);
+    try {
+      const res = await fetch(`/api/v1/assets/${asset.id}/share`, { method: "POST" });
+      if (res.ok) {
+        const data = (await res.json()) as { url: string };
+        const fullUrl = `${window.location.origin}${data.url}`;
+        setShareUrl(fullUrl);
+        try {
+          await navigator.clipboard.writeText(fullUrl);
+          setShareCopied(true);
+          setTimeout(() => setShareCopied(false), 2000);
+        } catch {
+          /* clipboard unavailable */
+        }
+      }
+    } finally {
+      setShareLoading(false);
+    }
+  }
+
+  async function handleRevokeShare() {
+    await fetch(`/api/v1/assets/${asset.id}/share`, { method: "DELETE" });
+    setShareUrl(null);
+    setShareCopied(false);
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/95">
       {/* Top bar */}
@@ -439,6 +540,9 @@ export function PhotoLightbox({
             onAddToCollection={handleAddToCollection}
             onDownload={handleDownload}
             onTrash={handleTrash}
+            onShare={handleShare}
+            shareState={{ url: shareUrl, copied: shareCopied, loading: shareLoading }}
+            onRevokeShare={handleRevokeShare}
           />
         )}
       </div>
