@@ -49,6 +49,16 @@ export const assets = fontoSchema.table(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     purgedAt: timestamp("purged_at", { withTimezone: true }),
+    // 64-bit perceptual hash (sign-of-DCT-coefficients). NULL until computed.
+    // Stored as bigint mode 'bigint' to preserve the high bit.
+    phash: bigint("phash", { mode: "bigint" }),
+    // Dominant color palette: [{ hex: "#rrggbb", weight: 0.0..1.0 }, ...]
+    // (sorted by weight desc, up to 8 entries). NULL until computed.
+    colors: jsonb("colors"),
+    // OCR-extracted text for image assets. NULL until OCR succeeds.
+    ocrText: text("ocr_text"),
+    // OCR pipeline state: pending | ready | failed | skipped (non-image).
+    ocrState: text("ocr_state").notNull().default("pending"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -57,6 +67,8 @@ export const assets = fontoSchema.table(
     index("assets_mime_type_idx").on(table.mimeType),
     index("assets_lifecycle_state_idx").on(table.lifecycleState),
     index("assets_processing_state_idx").on(table.processingState),
+    index("assets_ocr_state_idx").on(table.ocrState),
+    index("assets_phash_idx").on(table.phash),
   ]
 );
 

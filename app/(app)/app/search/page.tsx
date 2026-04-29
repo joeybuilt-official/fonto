@@ -1,10 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-import { useState, useCallback, useEffect, Suspense } from "react";
+import { useState, useCallback, useEffect, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Search, File, Image as ImageIcon, FileText, Loader2, SlidersHorizontal, X, Sparkles } from "lucide-react";
+import { Search, File, Image as ImageIcon, FileText, Loader2, SlidersHorizontal, X, Sparkles, ScanText, Palette } from "lucide-react";
 import { DocumentViewer } from "@/components/document-viewer";
+
+// 12 representative quick-pick colors for the palette filter. Chosen to span
+// the hue wheel + neutrals so the user can land on the right family in one tap.
+const QUICK_COLORS = [
+  "#ef4444", // red
+  "#f97316", // orange
+  "#f59e0b", // amber
+  "#eab308", // yellow
+  "#84cc16", // lime
+  "#22c55e", // green
+  "#14b8a6", // teal
+  "#06b6d4", // cyan
+  "#3b82f6", // blue
+  "#8b5cf6", // violet
+  "#ec4899", // pink
+  "#000000", // black (catches dark photos)
+];
 
 interface Asset {
   id: string;
@@ -49,13 +66,17 @@ function SearchInner() {
   const [loading, setLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [semantic, setSemantic] = useState(false);
+  const [ocrOnly, setOcrOnly] = useState(false);
 
   // Filter state
   const [classification, setClassification] = useState("");
   const [tagId, setTagId] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [color, setColor] = useState("");
+  const [showColorPicker, setShowColorPicker] = useState(false);
   const [tags, setTags] = useState<Tag[]>([]);
+  const colorPickerRef = useRef<HTMLDivElement>(null);
 
   // Document viewer
   const [viewerAsset, setViewerAsset] = useState<Asset | null>(null);
@@ -67,8 +88,21 @@ function SearchInner() {
       .catch(() => {});
   }, []);
 
+  // Close color picker on outside click.
+  useEffect(() => {
+    if (!showColorPicker) return;
+    function onClick(e: MouseEvent) {
+      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
+        setShowColorPicker(false);
+      }
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [showColorPicker]);
+
   const doSearch = useCallback(async (opts?: {
     q?: string; cl?: string; tid?: string; df?: string; dt?: string; sem?: boolean; scId?: string;
+    ocr?: boolean; col?: string;
   }) => {
     const q = opts?.q ?? query;
     const cl = opts?.cl ?? classification;
@@ -76,6 +110,8 @@ function SearchInner() {
     const df = opts?.df ?? dateFrom;
     const dt = opts?.dt ?? dateTo;
     const sem = opts?.sem ?? semantic;
+    const ocr = opts?.ocr ?? ocrOnly;
+    const col = opts?.col ?? color;
     const scId = opts?.scId ?? smartCollectionId;
 
     setLoading(true);
@@ -89,7 +125,7 @@ function SearchInner() {
         return;
       }
 
-      if (!q.trim() && !cl && !tid && !df && !dt) {
+      if (!q.trim() && !cl && !tid && !df && !dt && !ocr && !col) {
         setResults(null);
         return;
       }
@@ -101,6 +137,8 @@ function SearchInner() {
       if (df) params.set("dateFrom", df);
       if (dt) params.set("dateTo", dt);
       if (sem) params.set("semantic", "true");
+      if (ocr) params.set("ocrOnly", "true");
+      if (col) params.set("color", col);
 
       const res = await fetch(`/api/v1/search?${params.toString()}`);
       if (res.ok) {
@@ -110,21 +148,23 @@ function SearchInner() {
     } finally {
       setLoading(false);
     }
-  }, [query, classification, tagId, dateFrom, dateTo, semantic, smartCollectionId]);
+  }, [query, classification, tagId, dateFrom, dateTo, semantic, ocrOnly, color, smartCollectionId]);
 
   // Execute smart collection query on mount if smartCollectionId present
   useEffect(() => {
     if (smartCollectionId) doSearch({ scId: smartCollectionId });
   }, [smartCollectionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const hasFilters = classification || tagId || dateFrom || dateTo;
+  const hasFilters = classification || tagId || dateFrom || dateTo || color || ocrOnly;
 
   function clearFilters() {
     setClassification("");
     setTagId("");
     setDateFrom("");
     setDateTo("");
-    doSearch({ cl: "", tid: "", df: "", dt: "" });
+    setColor("");
+    setOcrOnly(false);
+    doSearch({ cl: "", tid: "", df: "", dt: "", col: "", ocr: false });
   }
 
   return (
@@ -157,6 +197,67 @@ function SearchInner() {
             Filters
             {hasFilters && <span className="rounded-full bg-foreground text-background text-xs w-4 h-4 flex items-center justify-center">!</span>}
           </button>
+          <button
+            onClick={() => { setOcrOnly((o) => !o); doSearch({ ocr: !ocrOnly }); }}
+            title="Search OCR text only — matches words extracted from image content"
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors ${ocrOnly ? "border-foreground text-foreground" : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"}`}
+          >
+            <ScanText className="h-3.5 w-3.5" />
+          </button>
+          <div ref={colorPickerRef} className="relative">
+            <button
+              onClick={() => setShowColorPicker((v) => !v)}
+              title="Filter by dominant color"
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors ${color ? "border-foreground text-foreground" : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"}`}
+            >
+              {color ? (
+                <span className="h-3.5 w-3.5 rounded-sm border border-border" style={{ backgroundColor: color }} />
+              ) : (
+                <Palette className="h-3.5 w-3.5" />
+              )}
+            </button>
+            {showColorPicker && (
+              <div className="absolute right-0 top-full mt-2 z-30 w-56 rounded-lg border border-border bg-popover p-3 shadow-lg">
+                <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Color</p>
+                <div className="grid grid-cols-6 gap-1.5">
+                  {QUICK_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => { setColor(c); setShowColorPicker(false); doSearch({ col: c }); }}
+                      className={`h-7 w-7 rounded-md border-2 transition-all ${color === c ? "border-foreground scale-110" : "border-transparent hover:border-border"}`}
+                      style={{ backgroundColor: c }}
+                      title={c}
+                      aria-label={`Filter by ${c}`}
+                    />
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={color}
+                    onChange={(e) => setColor(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && /^#?[0-9a-f]{3,6}$/i.test(color)) {
+                        const norm = color.startsWith("#") ? color : `#${color}`;
+                        setColor(norm); setShowColorPicker(false); doSearch({ col: norm });
+                      }
+                    }}
+                    placeholder="#rrggbb"
+                    className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  {color && (
+                    <button
+                      onClick={() => { setColor(""); setShowColorPicker(false); doSearch({ col: "" }); }}
+                      className="rounded p-1 text-muted-foreground hover:text-foreground"
+                      title="Clear color filter"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <button
             onClick={() => { setSemantic((s) => !s); doSearch({ sem: !semantic }); }}
             title="Semantic search via Plexo AI"
