@@ -196,3 +196,41 @@ export async function plexoDescribeImage(
   );
   return text.trim();
 }
+
+/**
+ * OCR an image via Plexo's vision endpoint. The image must be reachable
+ * from Plexo (signed R2 URL works). Returns the extracted text plus a
+ * coarse confidence proxy. Resolves null on any failure (so the caller
+ * can mark the asset as `failed` and retry on the next cron pass).
+ */
+export async function plexoVisionOcr(
+  plexoWorkspaceId: string,
+  imageUrl: string
+): Promise<{ text: string; confidence: number; model: string } | null> {
+  if (!plexoAvailable()) return null;
+  try {
+    const res = await fetch(`${PLEXO_URL}/api/v1/vision/ocr`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${PLEXO_SERVICE_KEY}`,
+        "X-App-Id": "fonto",
+      },
+      body: JSON.stringify({ workspaceId: plexoWorkspaceId, imageUrl }),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      text?: string;
+      confidence?: number;
+      model?: string;
+    };
+    return {
+      text: data.text ?? "",
+      confidence: typeof data.confidence === "number" ? data.confidence : 0,
+      model: data.model ?? "unknown",
+    };
+  } catch {
+    return null;
+  }
+}

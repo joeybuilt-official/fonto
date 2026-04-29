@@ -145,6 +145,18 @@ function ToastContainer({ toasts }: { toasts: Toast[] }) {
   );
 }
 
+interface DuplicatePrompt {
+  newAsset: Asset;
+  match: {
+    assetId: string;
+    filename: string;
+    capturedAt: string | null;
+    createdAt: string;
+    distance: number;
+    thumbUrl: string;
+  };
+}
+
 export default function DashboardPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [recentUploads, setRecentUploads] = useState<Asset[]>([]);
@@ -153,6 +165,7 @@ export default function DashboardPage() {
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [subtypeFilter, setSubtypeFilter] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [duplicatePrompts, setDuplicatePrompts] = useState<DuplicatePrompt[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function showToast(message: string, type: "success" | "error" = "success") {
@@ -223,10 +236,29 @@ export default function DashboardPage() {
     try {
       const res = await fetch("/api/v1/assets", { method: "POST", body: form });
       if (res.ok) {
-        const data = (await res.json()) as { asset: Asset };
+        const data = (await res.json()) as {
+          asset: Asset;
+          possibleDuplicate?: {
+            assetId: string;
+            filename: string;
+            capturedAt: string | null;
+            createdAt: string;
+            distance: number;
+            thumbUrl: string;
+          };
+        };
         setUploadItems((prev) =>
           prev.map((i) => (i.id === itemId ? { ...i, state: "done", assetId: data.asset.id } : i))
         );
+        // Surface a near-duplicate prompt if the server flagged one. The new
+        // asset is already persisted; the user picks Keep both / Replace existing
+        // (= trash existing) / Cancel upload (= trash the new one).
+        if (data.possibleDuplicate) {
+          setDuplicatePrompts((prev) => [
+            ...prev,
+            { newAsset: data.asset, match: data.possibleDuplicate! },
+          ]);
+        }
         return data.asset;
       } else {
         setUploadItems((prev) =>
@@ -443,6 +475,152 @@ export default function DashboardPage() {
 
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} />
+
+      {/* Perceptual duplicate prompts */}
+      {duplicatePrompts.length > 0 && (
+        <DuplicatePromptStack
+          prompts={duplicatePrompts}
+          onDismiss={(idx) => {
+            setDuplicatePrompts((prev) => prev.filter((_, i) => i !== idx));
+          }}
+          onTrashAsset={async (assetId) => {
+            await fetch(`/api/v1/assets/${assetId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trash: true }),
+            });
+            setAssets((prev) => prev.filter((a) => a.id !== assetId));
+            setRecentUploads((prev) => prev.filter((a) => a.id !== assetId));
+          }}
+          showToast={showToast}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Modal stack for "possible duplicate" prompts surfaced after upload. Each
+ * card shows the existing asset's thumbnail + capture date and offers three
+ * resolutions: Keep both, Replace existing (trash existing), Cancel upload
+ * (trash the new asset).
+ */
+function DuplicatePromptStack({
+  prompts,
+  onDismiss,
+  onTrashAsset,
+  showToast,
+}: {
+  prompts: DuplicatePrompt[];
+  onDismiss: (index: number) => void;
+  onTrashAsset: (assetId: string) => Promise<void>;
+  showToast: (message: string, type?: "success" | "error") => void;
+}) {
+  return (
+    <div className="fixed inset-x-0 bottom-24 z-40 flex flex-col items-center gap-2 px-4 pointer-events-none">
+      {prompts.map((p, idx) => (
+        <DuplicatePromptCard
+          key={p.newAsset.id}
+          prompt={p}
+          onDismiss={() => onDismiss(idx)}
+          onTrashAsset={onTrashAsset}
+          showToast={showToast}
+        />
+      ))}
+    </div>
+  );
+}
+
+function DuplicatePromptCard({
+  prompt,
+  onDismiss,
+  onTrashAsset,
+  showToast,
+}: {
+  prompt: DuplicatePrompt;
+  onDismiss: () => void;
+  onTrashAsset: (assetId: string) => Promise<void>;
+  showToast: (message: string, type?: "success" | "error") => void;
+}) {
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    fetch(prompt.match.thumbUrl)
+      .then((r) => (r.ok ? r.json() : { url: null }))
+      .then((d: { url?: string }) => setThumbUrl(d.url ?? null))
+      .catch(() => setThumbUrl(null));
+  }, [prompt.match.thumbUrl]);
+
+  async function handleKeepBoth() {
+    onDismiss();
+  }
+  async function handleReplaceExisting() {
+    setBusy(true);
+    try {
+      await onTrashAsset(prompt.match.assetId);
+      showToast(`Replaced “${prompt.match.filename}”`, "success");
+      onDismiss();
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function handleCancelUpload() {
+    setBusy(true);
+    try {
+      await onTrashAsset(prompt.newAsset.id);
+      showToast("Upload cancelled — duplicate avoided", "success");
+      onDismiss();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const dateLabel = prompt.match.capturedAt
+    ? new Date(prompt.match.capturedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+    : new Date(prompt.match.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+  return (
+    <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 shadow-lg">
+      <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-muted/30 flex items-center justify-center">
+        {thumbUrl ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <ImageIcon className="h-5 w-5 text-muted-foreground" />
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-foreground">Possible duplicate of</p>
+        <p className="truncate text-xs text-muted-foreground" title={prompt.match.filename}>
+          {prompt.match.filename}
+          <span className="ml-1">· {dateLabel}</span>
+          <span className="ml-1">· d{prompt.match.distance}</span>
+        </p>
+      </div>
+      <div className="flex flex-shrink-0 items-center gap-1">
+        <button
+          onClick={handleKeepBoth}
+          disabled={busy}
+          className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+        >
+          Keep both
+        </button>
+        <button
+          onClick={handleReplaceExisting}
+          disabled={busy}
+          className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+        >
+          Replace
+        </button>
+        <button
+          onClick={handleCancelUpload}
+          disabled={busy}
+          className="rounded-md border border-destructive/30 bg-background px-2 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
