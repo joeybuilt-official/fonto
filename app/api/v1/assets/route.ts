@@ -24,6 +24,11 @@ import {
   hammingDistance,
   type PaletteColor,
 } from "@/lib/perceptual";
+import {
+  findNearestAssetByPhashGraph,
+  fontoGraphConfigured,
+  mirrorAssetToGraph,
+} from "@/lib/fonto-graph";
 
 const DOCUMENT_CLASSIFICATIONS = new Set(["document", "receipt", "scan", "report", "form", "contract", "letter"]);
 const DOCUMENT_TRIGGER_MIME = ["application/pdf", "text/", "image/tiff"];
@@ -488,6 +493,32 @@ export async function POST(request: NextRequest) {
         thumbUrl: `/api/v1/assets/${match.id}/url`,
       };
     }
+    // Phase D-Fonto-1 (ADR 0027) shadow mode — run the same lookup against
+    // the FalkorDB vector index and log any disagreement. Read-only; the
+    // possibleDuplicate surface still drives off the postgres scan.
+    if (fontoGraphConfigured()) {
+      void (async () => {
+        try {
+          const graphMatch = await findNearestAssetByPhashGraph({
+            workspaceId,
+            phash,
+            scoreThreshold: Math.sqrt(PHASH_DUPLICATE_THRESHOLD),
+          });
+          const pgId = match?.id ?? null;
+          const gId = graphMatch?.assetId ?? null;
+          if (pgId !== gId) {
+            console.warn("[fonto-graph] phash NN disagreement", {
+              workspaceId,
+              postgres: pgId,
+              graph: gId,
+              graphScore: graphMatch?.score,
+            });
+          }
+        } catch (err) {
+          console.warn("[fonto-graph] shadow phash NN failed:", err);
+        }
+      })();
+    }
   }
 
   // Open upload session for idempotency tracking
@@ -564,6 +595,20 @@ export async function POST(request: NextRequest) {
     processAsset(asset.id, user.id, user.email, file.name, file.type, extractedText).catch(
       console.error
     );
+
+    // Phase D-Fonto-1 (ADR 0027) — mirror the new Asset to the workspace
+    // fonto graph so subsequent uploads have a populated vector index to
+    // query against. Fire-and-forget; failures stay shadow until cutover.
+    if (phash != null && fontoGraphConfigured()) {
+      void mirrorAssetToGraph({
+        workspaceId,
+        assetId: asset.id,
+        filename: file.name,
+        mimeType,
+        lifecycleState: "active",
+        phash,
+      }).catch((err) => console.warn("[fonto-graph] asset mirror failed:", err));
+    }
 
     return NextResponse.json(
       {
