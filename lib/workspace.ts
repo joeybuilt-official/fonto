@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Joeybuilt LLC
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 

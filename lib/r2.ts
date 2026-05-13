@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Joeybuilt LLC
 import { S3Client } from "@aws-sdk/client-s3";
 
 let _s3: S3Client | null = null;

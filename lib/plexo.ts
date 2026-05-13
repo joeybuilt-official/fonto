@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Joeybuilt LLC
 /**
  * Fonto Plexo facade — delegates HTTP to @joeybuilt/plexo-sdk and keeps
  * fonto-specific domain helpers (classifyAsset, suggestTags, describeImage)
