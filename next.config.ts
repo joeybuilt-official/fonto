@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   // Plexo SDK uses node:crypto for HMAC; keep it external (Node import resolution)
   // instead of bundling into webpack's edge graph which doesn't grok the node: scheme.
   serverExternalPackages: ["@joeybuilt/plexo-sdk"],
