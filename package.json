@@ -12,7 +12,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "backfill:exif": "tsx scripts/backfill-exif.ts"
+    "backfill:exif": "tsx scripts/backfill-exif.ts",
+    "backfill:thumbnails": "tsx scripts/backfill-thumbnails.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.798.0",

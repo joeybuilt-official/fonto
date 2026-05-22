@@ -2,3 +2,4 @@
 // Copyright (C) 2026 Joeybuilt LLC
 export * from "./processAsset";
 export * from "./reapStuckAssets";
+export * from "./generateThumbnails";

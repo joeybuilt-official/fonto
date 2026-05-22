@@ -1,0 +1,21 @@
+{
+  "CORSRules": [
+    {
+      "ID": "fonto-direct-upload",
+      "AllowedOrigins": [
+        "http://localhost:3500",
+        "https://app.getfonto.com"
+      ],
+      "AllowedMethods": ["PUT", "GET", "HEAD"],
+      "AllowedHeaders": [
+        "Content-Type",
+        "Content-Length",
+        "Content-MD5",
+        "x-amz-content-sha256",
+        "x-amz-date"
+      ],
+      "ExposeHeaders": ["ETag"],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+}

@@ -25,14 +25,23 @@ import {
   JobNames,
   closeAllQueues,
   ProcessAssetJobSchema,
+  GenerateThumbnailsJobSchema,
   maintenanceQueue,
   type ProcessAssetJob,
+  type GenerateThumbnailsJob,
 } from "@/lib/queue";
-import { processAsset, reapStuckAssets } from "@/lib/processing";
+import { processAsset, reapStuckAssets, generateThumbnails } from "@/lib/processing";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
 const CONCURRENCY = Math.max(parseInt(process.env.WORKER_CONCURRENCY ?? "4", 10), 1);
+// Phase 1.1 — thumbnails worker is CPU-bound (sharp encode) and competes with
+// the umbrella asset-processing worker for cores. Default lower than the main
+// concurrency to leave headroom for classify/OCR.
+const THUMBNAIL_CONCURRENCY = Math.max(
+  parseInt(process.env.THUMBNAIL_WORKER_CONCURRENCY ?? "2", 10),
+  1
+);
 const METRICS_PORT = Math.max(parseInt(process.env.WORKER_METRICS_PORT ?? "9464", 10), 1);
 
 // Reaper scheduler tick in milliseconds. Default 5 minutes. Configurable so
@@ -188,6 +197,76 @@ function startAssetProcessingWorker(): Worker<ProcessAssetJob> {
 }
 
 /**
+ * Phase 1.1 — thumbnails worker. Consumes `generate-thumbnails` jobs from the
+ * thumbnails queue, downloads the original from R2, encodes 256px + 1080px
+ * WebP derivatives via sharp, uploads them under `derivatives/`, and stamps
+ * the keys onto the assets row. Independent of the asset-processing worker
+ * so a slow Plexo classify call doesn't delay grid thumbnails.
+ */
+function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
+  const w = new Worker<GenerateThumbnailsJob>(
+    QueueNames.Thumbnail,
+    async (job: Job<GenerateThumbnailsJob>) => {
+      const log = logger.child({
+        queue: QueueNames.Thumbnail,
+        jobId: job.id,
+        assetId: job.data?.assetId,
+        attempt: job.attemptsMade + 1,
+      });
+
+      const parsed = GenerateThumbnailsJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid thumbnail payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const data = parsed.data;
+
+      log.info("generating thumbnails");
+      const result = await generateThumbnails({
+        assetId: data.assetId,
+        workspaceId: data.workspaceId,
+      });
+      if (result.skipped) {
+        log.info({ reason: result.reason }, "thumbnail job skipped");
+      } else {
+        log.info(
+          {
+            thumbBytes: result.thumbBytes,
+            previewBytes: result.previewBytes,
+          },
+          "thumbnails generated"
+        );
+      }
+      return result;
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: THUMBNAIL_CONCURRENCY,
+    }
+  );
+
+  w.on("completed", (job) =>
+    logger.info({ queue: QueueNames.Thumbnail, jobId: job.id }, "thumbnail job completed")
+  );
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.Thumbnail,
+        jobId: job?.id,
+        attempt: job?.attemptsMade,
+        err: err.message,
+      },
+      "thumbnail job failed"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.Thumbnail, err: err.message }, "thumbnail worker error")
+  );
+
+  return w;
+}
+
+/**
  * BullMQ marker class to opt out of retries. Re-implemented here to avoid
  * importing the named export by path — the type lives at the package root
  * but has historically shifted between versions.
@@ -297,6 +376,7 @@ async function main(): Promise<void> {
   logger.info(
     {
       concurrency: CONCURRENCY,
+      thumbnailConcurrency: THUMBNAIL_CONCURRENCY,
       metricsPort: METRICS_PORT,
       redisUrl: (process.env.REDIS_URL ?? "redis://valkey:6379").replace(/\/\/[^@]*@/, "//***@"),
     },
@@ -305,6 +385,9 @@ async function main(): Promise<void> {
 
   startMetricsServer();
   workers.push(startAssetProcessingWorker());
+  // Phase 1.1 — thumbnail derivatives. Separate worker so CPU-heavy sharp
+  // encodes don't queue behind the umbrella processAsset pipeline.
+  workers.push(startThumbnailWorker());
 
   // Maintenance worker + recurring reaper schedule. Registered after the
   // primary worker so a boot-time failure here doesn't block asset

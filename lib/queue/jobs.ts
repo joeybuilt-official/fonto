@@ -31,6 +31,14 @@ export const ThumbnailJobSchema = z.object({
 });
 export type ThumbnailJob = z.infer<typeof ThumbnailJobSchema>;
 
+// Phase 1.1 — thumbnail generation job payload. Currently shaped identically
+// to `ThumbnailJobSchema` (re-exported as the canonical Phase 1.1 alias) so
+// producers and the worker agree on the same struct. Kept as its own export
+// so future variant lists / regeneration flags can extend it without touching
+// other consumers.
+export const GenerateThumbnailsJobSchema = ThumbnailJobSchema;
+export type GenerateThumbnailsJob = z.infer<typeof GenerateThumbnailsJobSchema>;
+
 export const ClassifyJobSchema = z.object({
   assetId: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -48,6 +56,11 @@ export const JobNames = {
   ProcessAsset: "process-asset",
   Ocr: "ocr",
   Thumbnail: "thumbnail",
+  // Phase 1.1 — explicit name for the multi-resolution derivative pipeline.
+  // Distinct from the legacy `Thumbnail` placeholder so future variants
+  // (e.g. animated WebP, video posterframe) can land on the same queue
+  // without ambiguity. Producers should use this name going forward.
+  GenerateThumbnails: "generate-thumbnails",
   Classify: "classify",
   ReapStuckAssets: "reap-stuck-assets",
 } as const;

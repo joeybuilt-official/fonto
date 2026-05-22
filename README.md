@@ -49,6 +49,29 @@ Open [http://localhost:3500](http://localhost:3500).
 
 **Storage requires R2 or S3-compatible.** Fonto uses presigned URLs for direct browser uploads. Any S3-compatible provider works — Cloudflare R2 is recommended (zero egress fees).
 
+## Direct-to-R2 Uploads
+
+Fonto supports two upload paths. The legacy one (`POST /api/v1/assets` with a multipart body) buffers the whole file in the Next.js server and caps at 50 MB. The Phase 1.2 path streams direct to R2 and supports much larger files (default 500 MB, configurable via `MAX_UPLOAD_BYTES`).
+
+The direct path is two requests:
+
+1. `POST /api/v1/assets/init` with `{ filename, mimeType, sizeBytes, clientChecksum? }` — returns `{ uploadId, presignedUrl, headers, expiresIn }`. The presigned URL is valid for 15 minutes.
+2. The client `PUT`s the file body straight to `presignedUrl` using the exact `headers` returned. The server never sees the bytes here.
+3. `POST /api/v1/assets/{uploadId}/complete` — the server `HEAD`s R2 to confirm size, stream-hashes the object for SHA-256 dedup, runs EXIF / pHash / queue enqueue, and returns the same `{ asset, possibleDuplicate? }` shape as the legacy POST.
+
+The web client implementation is in `lib/upload-client.ts` (`uploadDirect(file, ...)`). Set `NEXT_PUBLIC_DIRECT_UPLOAD=true` to flip the dashboard onto the new path.
+
+### R2 CORS setup
+
+The browser PUT requires CORS on the R2 bucket. A starter policy lives at `docs/r2-cors.json` (edit `AllowedOrigins` to match your deployment). Apply via Cloudflare dashboard, or with the AWS CLI pointed at the R2 endpoint:
+
+```bash
+aws s3api put-bucket-cors \
+  --endpoint-url "$R2_ENDPOINT" \
+  --bucket "$R2_BUCKET" \
+  --cors-configuration file://docs/r2-cors.json
+```
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -72,6 +95,12 @@ separate worker container drains. A restart no longer drops in-flight work.
 **Env vars:**
 - `REDIS_URL` — defaults to `redis://valkey:6379`
 - `WORKER_CONCURRENCY` — worker only, defaults to `4`
+- `THUMBNAIL_WORKER_CONCURRENCY` — worker only, defaults to `2`. Concurrency
+  for the Phase 1.1 thumbnails worker (sharp encode + R2 PUT). CPU-bound;
+  keep lower than `WORKER_CONCURRENCY` so the umbrella processAsset pipeline
+  isn't starved on small boxes. Note: each generated asset adds roughly
+  **~30%** to R2 storage (256px thumb + 1080px preview, both WebP) — plan
+  bucket capacity accordingly. Backfill with `pnpm backfill:thumbnails`.
 - `LOG_LEVEL` — `info` (default), `debug`, `warn`, `error`
 - `REAPER_STUCK_THRESHOLD_MINUTES` — worker only, defaults to `60`. Rows in
   `processing_state='processing'` whose `updated_at` is older than this are

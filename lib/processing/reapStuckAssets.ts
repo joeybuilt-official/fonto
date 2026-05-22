@@ -33,7 +33,7 @@
 import { and, eq, lt, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { assetProcessingQueue } from "@/lib/queue/queues";
+import { assetProcessingQueue, thumbnailQueue } from "@/lib/queue/queues";
 import { JobNames, type ProcessAssetJob } from "@/lib/queue/jobs";
 
 export const REAPER_MAX_ATTEMPTS = 5;
@@ -79,6 +79,7 @@ export async function reapStuckAssets(): Promise<ReapResult> {
       mimeType: schema.assets.mimeType,
       extractedText: schema.assets.extractedText,
       processingAttempts: schema.assets.processingAttempts,
+      thumbnailKey: schema.assets.thumbnailKey,
       updatedAt: schema.assets.updatedAt,
     })
     .from(schema.assets)
@@ -162,6 +163,28 @@ export async function reapStuckAssets(): Promise<ReapResult> {
 
     try {
       await assetProcessingQueue().add(JobNames.ProcessAsset, payload);
+      // Phase 1.1 — if the row never got its derivatives generated (e.g. the
+      // worker died before the thumbnail job landed, or the thumbnail queue
+      // was empty when the row was first enqueued), re-fan that job out now.
+      // Cheap to re-run; non-image rows are guarded the same way the
+      // producer does it.
+      if (row.thumbnailKey == null && row.mimeType.startsWith("image/")) {
+        try {
+          await thumbnailQueue().add(JobNames.GenerateThumbnails, {
+            assetId: row.id,
+            workspaceId: row.workspaceId,
+          });
+        } catch (err) {
+          log.warn(
+            {
+              event: "reaper.thumb_enqueue_failed",
+              assetId: row.id,
+              err: err instanceof Error ? err.message : String(err),
+            },
+            "thumbnail re-enqueue failed"
+          );
+        }
+      }
       log.info(
         {
           event: "reaper.reenqueue",

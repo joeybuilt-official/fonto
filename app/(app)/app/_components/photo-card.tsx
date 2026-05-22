@@ -145,7 +145,11 @@ export function PhotoCard({
       setLoading(false);
       return;
     }
-    fetch(`/api/v1/assets/${asset.id}/url`)
+    // Phase 1.1 — grid cells request the 256px thumb variant. The URL route
+    // transparently falls back to the original if the derivative hasn't been
+    // generated yet (legacy assets, in-flight backfill), so unbackfilled
+    // rows still render — just slowly, like before.
+    fetch(`/api/v1/assets/${asset.id}/url?variant=thumb`)
       .then((r) => r.json())
       .then((d) => setUrl(d.url ?? null))
       .catch(() => setUrl(null))

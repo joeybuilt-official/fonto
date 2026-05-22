@@ -8,6 +8,7 @@ import {
   XCircle, Loader2, Clipboard, Check
 } from "lucide-react";
 import Link from "next/link";
+import { directUploadEnabled, uploadDirect } from "@/lib/upload-client";
 
 const SUBTYPE_LABELS: Record<string, string> = {
   photo: "Photo",
@@ -231,37 +232,50 @@ export default function DashboardPage() {
       { id: itemId, filename: file.name, sizeBytes: file.size, state: "uploading" },
     ]);
 
-    const form = new FormData();
-    form.append("file", file);
-    form.append("source", source);
-
     try {
-      const res = await fetch("/api/v1/assets", { method: "POST", body: form });
-      if (res.ok) {
-        const data = (await res.json()) as {
-          asset: Asset;
-          possibleDuplicate?: {
-            assetId: string;
-            filename: string;
-            capturedAt: string | null;
-            createdAt: string;
-            distance: number;
-            thumbUrl: string;
-          };
+      type UploadData = {
+        asset: Asset;
+        possibleDuplicate?: {
+          assetId: string;
+          filename: string;
+          capturedAt: string | null;
+          createdAt: string;
+          distance: number;
+          thumbUrl: string;
         };
+      };
+      let data: UploadData | null = null;
+
+      if (directUploadEnabled()) {
+        // Phase 1.2: presigned PUT direct to R2.
+        const res = await uploadDirect(file, { source });
+        data = res as unknown as UploadData;
+      } else {
+        // Legacy multipart POST.
+        const form = new FormData();
+        form.append("file", file);
+        form.append("source", source);
+        const res = await fetch("/api/v1/assets", { method: "POST", body: form });
+        if (res.ok) {
+          data = (await res.json()) as UploadData;
+        }
+      }
+
+      if (data) {
+        const result = data;
         setUploadItems((prev) =>
-          prev.map((i) => (i.id === itemId ? { ...i, state: "done", assetId: data.asset.id } : i))
+          prev.map((i) => (i.id === itemId ? { ...i, state: "done", assetId: result.asset.id } : i))
         );
         // Surface a near-duplicate prompt if the server flagged one. The new
         // asset is already persisted; the user picks Keep both / Replace existing
         // (= trash existing) / Cancel upload (= trash the new one).
-        if (data.possibleDuplicate) {
+        if (result.possibleDuplicate) {
           setDuplicatePrompts((prev) => [
             ...prev,
-            { newAsset: data.asset, match: data.possibleDuplicate! },
+            { newAsset: result.asset, match: result.possibleDuplicate! },
           ]);
         }
-        return data.asset;
+        return result.asset;
       } else {
         setUploadItems((prev) =>
           prev.map((i) => (i.id === itemId ? { ...i, state: "error" } : i))

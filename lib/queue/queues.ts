@@ -12,7 +12,9 @@ import type { ProcessAssetJob, OcrJob, ThumbnailJob, ClassifyJob } from "./jobs"
 export const QueueNames = {
   AssetProcessing: "asset-processing",
   Ocr: "ocr",
-  Thumbnail: "thumbnail",
+  // Phase 1.1 — queue name is plural ("thumbnails") so BullMQ's per-queue
+  // Redis key prefix doesn't collide with the legacy singular handle.
+  Thumbnail: "thumbnails",
   Classify: "classify",
   // Maintenance queue hosts low-frequency housekeeping jobs (e.g. the
   // reap-stuck-assets sweep). Kept on its own queue so its single-concurrency

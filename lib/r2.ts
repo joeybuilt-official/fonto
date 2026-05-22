@@ -26,3 +26,26 @@ export function assetStorageKey(workspaceId: string, assetId: string, filename: 
 export function assetStorageKeyLegacy(workspaceId: string, assetId: string, filename: string): string {
   return `${workspaceId}/${assetId}/${filename}`;
 }
+
+/**
+ * Phase 1.1 — multi-resolution derivative key.
+ *
+ * Derivatives (256px thumb, 1080px preview) live alongside the original
+ * under a `derivatives/` subkey. Always WebP, always lowercase variant name.
+ *
+ * Examples:
+ *   thumb   → fonto/{ws}/{asset}/derivatives/thumb.webp
+ *   preview → fonto/{ws}/{asset}/derivatives/preview.webp
+ *
+ * Keep this stable: it's stored in `assets.thumbnail_key` / `preview_key`
+ * after generation. Changing the layout requires a backfill.
+ */
+export type DerivativeVariant = "thumb" | "preview";
+
+export function assetDerivativeKey(
+  workspaceId: string,
+  assetId: string,
+  variant: DerivativeVariant
+): string {
+  return `fonto/${workspaceId}/${assetId}/derivatives/${variant}.webp`;
+}

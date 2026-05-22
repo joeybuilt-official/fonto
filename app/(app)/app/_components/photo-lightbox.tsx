@@ -326,7 +326,9 @@ export function PhotoLightbox({
   useEffect(() => {
     setUrl(null);
     setUrlLoading(true);
-    fetch(`/api/v1/assets/${asset.id}/url`)
+    // Phase 1.1 — lightbox renders the 1080px preview variant. Falls back to
+    // original on the server side if the derivative is missing.
+    fetch(`/api/v1/assets/${asset.id}/url?variant=preview`)
       .then((r) => r.json())
       .then((d) => setUrl(d.url ?? null))
       .catch(() => setUrl(null))
@@ -414,12 +416,20 @@ export function PhotoLightbox({
     });
   }
 
-  function handleDownload() {
-    if (url) {
+  async function handleDownload() {
+    // Phase 1.1 — the `url` state holds the 1080px preview variant for
+    // on-screen rendering. Downloads must hit the original, so request a
+    // fresh presigned URL explicitly for `variant=original`.
+    try {
+      const res = await fetch(`/api/v1/assets/${asset.id}/url?variant=original`);
+      const data = (await res.json()) as { url?: string };
+      if (!data.url) return;
       const a = document.createElement("a");
-      a.href = url;
+      a.href = data.url;
       a.download = asset.filename;
       a.click();
+    } catch {
+      /* swallow */
     }
   }
 

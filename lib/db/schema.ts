@@ -90,6 +90,15 @@ export const assets = fontoSchema.table(
     // Number of times the BullMQ worker has attempted to process this asset.
     // Incremented each time the worker picks the job up; reset on success.
     processingAttempts: integer("processing_attempts").notNull().default(0),
+    // Phase 1.1 — multi-resolution derivatives. Populated by the thumbnails
+    // worker; NULL until generated (or for non-image assets). Keys are R2
+    // object keys, not full URLs; see `assetDerivativeKey()` in lib/r2.ts.
+    // `thumbnailKey` is the 256px WebP grid thumbnail; `previewKey` is the
+    // 1080px WebP lightbox preview. `thumbnailGeneratedAt` is set on the
+    // last successful generation pass (same value applies to both).
+    thumbnailKey: text("thumbnail_key"),
+    previewKey: text("preview_key"),
+    thumbnailGeneratedAt: timestamp("thumbnail_generated_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -185,6 +194,40 @@ export const uploadSessions = fontoSchema.table(
   (table) => [
     uniqueIndex("upload_sessions_upload_id_idx").on(table.uploadId),
     index("upload_sessions_user_id_idx").on(table.userId),
+  ]
+);
+
+// Presigned direct-to-R2 upload tracking (Phase 1.2).
+// One row per `/assets/init` call: reserves an R2 key and a server-issued
+// presigned PUT URL, then transitions to `completed` (with FK to the new
+// asset row) or `aborted`. Distinct from `upload_sessions` — that table
+// powers idempotency of the legacy multipart POST and stays untouched.
+export const assetUploads = fontoSchema.table(
+  "asset_uploads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    // Optional client-provided SHA-256 (lowercase hex). When present AND
+    // SKIP_SERVER_CHECKSUM is set, /complete trusts it and skips the
+    // server-side stream-hash pass.
+    clientChecksum: text("client_checksum"),
+    // R2 object key reserved at init time. Format matches assetStorageKey().
+    storageKey: text("storage_key").notNull(),
+    // pending | completed | aborted
+    state: text("state").notNull().default("pending"),
+    presignedExpiresAt: timestamp("presigned_expires_at", { withTimezone: true }).notNull(),
+    // Populated when state -> completed. FK to fonto.assets.id (enforced in SQL).
+    assetId: uuid("asset_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("asset_uploads_workspace_state_idx").on(table.workspaceId, table.state),
+    index("asset_uploads_user_state_idx").on(table.userId, table.state),
   ]
 );
 
