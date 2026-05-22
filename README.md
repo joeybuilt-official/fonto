@@ -297,6 +297,51 @@ slash; the SDK appends `/v1/traces` and `/v1/metrics`). Service names default
 to `fonto-web` and `fonto-worker`; override with `OTEL_SERVICE_NAME`.
 Auto-instrumentation covers `http`, `pg`, `ioredis`, and `bullmq`.
 
+## Resumable uploads (tus)
+
+Large originals (4K phone video, RAW photos, DSLR JPEGs over the 50 MB
+`POST /api/v1/assets` limit) go through the tus endpoint at
+`/api/v1/uploads/tus`. tus chunks the file client-side, streams each chunk
+into an R2 multipart upload, and survives flaky networks — a dropped
+connection resumes from the last completed part instead of restarting.
+
+**Defaults:**
+- Chunk size: **8 MiB** (`TUS_PART_SIZE_BYTES`).
+- Max file size: **10 GiB** (`TUS_MAX_FILE_SIZE_BYTES`).
+- Auth: same Better Auth session cookie as the rest of the API. (Phase 2 will
+  add bearer-token PAT auth for the CLI.)
+
+**From the Fonto web app:**
+```ts
+import { uploadTus } from "@/lib/upload-client-tus";
+
+const { assetId } = await uploadTus(file, {
+  onProgress: (loaded, total) => console.log(loaded / total),
+});
+```
+
+**From a third-party `tus-js-client`:**
+```ts
+import * as tus from "tus-js-client";
+
+const upload = new tus.Upload(file, {
+  endpoint: "https://fonto.example.com/api/v1/uploads/tus",
+  chunkSize: 8 * 1024 * 1024,
+  metadata: { filename: file.name, filetype: file.type },
+  onSuccess: () => console.log("done"),
+});
+upload.start();
+```
+
+After the final chunk lands, the server assembles the multipart upload,
+server-side-copies the object to `fonto/{workspaceId}/{assetId}/{filename}`,
+inserts a `fonto.assets` row, and enqueues the same processing pipeline as
+the regular upload path. The new `assetId` is returned to clients in the
+`X-Fonto-Asset-Id` response header on the final PATCH.
+
+The R2 bucket needs the standard tus CORS doc applied (PUT/POST/PATCH/HEAD/
+DELETE on the upload prefix). See `docs/r2-cors.json` (lands with Phase 1.2).
+
 ## Built on Plexo
 
 Fonto is a [Plexo](https://getplexo.com) App Profile. Asset classification, tag suggestions, and image description all route through Plexo's model gateway. Plexo also adds persistent memory — Fonto remembers tag preferences and classification corrections across sessions. See `lib/plexo.ts` and `lib/plexo-registration.ts` for the integration surface.

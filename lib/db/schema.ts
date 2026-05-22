@@ -283,6 +283,45 @@ export const documentTypes = fontoSchema.table(
   (table) => [index("document_types_workspace_id_idx").on(table.workspaceId)]
 );
 
+// Phase 1.4: resumable/chunked uploads via tus.
+//
+// One row per tus upload-id. Tracks the upload through its lifecycle so we
+// can resume across client reconnects and reconcile a finished tus upload
+// with the eventual `assets` row we materialize on completion.
+//
+// This table is intentionally minimal. Phase 1.2 introduces a more general
+// `assetUploads` table that will subsume this — the integration agent will
+// collapse the two; until then the columns here mirror the names Phase 1.2
+// is expected to use so the migration is mechanical.
+export const tusUploads = fontoSchema.table(
+  "tus_uploads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    // The tus-server upload ID (random hex, used as the URL segment).
+    uploadId: text("upload_id").notNull(),
+    userId: text("user_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // Original filename advertised by the client in Upload-Metadata.
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type").notNull(),
+    // Declared total size in bytes (may be null for deferred-length uploads,
+    // though we currently refuse those — declared size is required).
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
+    // open | completed | aborted
+    state: text("state").notNull().default("open"),
+    // Once tus signals POST_FINISH and we materialize an `assets` row, we
+    // stamp the new asset's id here so future HEAD/GET requests can find it.
+    assetId: uuid("asset_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("tus_uploads_upload_id_idx").on(table.uploadId),
+    index("tus_uploads_user_id_idx").on(table.userId),
+    index("tus_uploads_workspace_id_idx").on(table.workspaceId),
+  ]
+);
+
 // Public, time-bounded share tokens for individual assets.
 // `token` is a URL-safe random string. `expiresAt` is enforced at access time;
 // `revokedAt` lets owners kill a link without waiting for expiry.
