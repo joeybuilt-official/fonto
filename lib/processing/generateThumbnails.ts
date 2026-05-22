@@ -21,6 +21,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { assetDerivativeKey, assetStorageKey, getS3Client } from "@/lib/r2";
+import { decodeToBuffer } from "@/lib/processing/decode";
 
 const THUMB_LONG_EDGE_PX = 256;
 const PREVIEW_LONG_EDGE_PX = 1080;
@@ -136,11 +137,22 @@ export async function generateThumbnails(
   const original = await downloadOriginal(bucket, originalKey);
   log.info({ bytes: original.length }, "downloaded original");
 
+  // Phase 1.3 — route HEIC + RAW through the decoder dispatcher so sharp gets
+  // a buffer it can actually read. For web formats (JPEG/PNG/WebP/...) this is
+  // a passthrough; for HEIC it uses sharp(libheif) or heif-convert; for RAW
+  // it shells out to dcraw_emu. Failures here are real (corrupt input) and
+  // should fail the job so the reaper can retry / mark failed.
+  const decoded = await decodeToBuffer(original, asset.mimeType, asset.filename);
+  log.info(
+    { sourceFormat: decoded.sourceFormat, decodedBytes: decoded.buffer.length },
+    "decoded"
+  );
+
   // Encode both variants in parallel — sharp pipelines are independent. CPU
   // contention is bounded by the worker's `THUMBNAIL_WORKER_CONCURRENCY`.
   const [thumb, preview] = await Promise.all([
-    encodeVariant(original, THUMB_LONG_EDGE_PX, THUMB_QUALITY),
-    encodeVariant(original, PREVIEW_LONG_EDGE_PX, PREVIEW_QUALITY),
+    encodeVariant(decoded.buffer, THUMB_LONG_EDGE_PX, THUMB_QUALITY),
+    encodeVariant(decoded.buffer, PREVIEW_LONG_EDGE_PX, PREVIEW_QUALITY),
   ]);
 
   const thumbnailKey = assetDerivativeKey(workspaceId, assetId, "thumb");

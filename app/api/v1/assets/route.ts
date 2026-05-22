@@ -8,6 +8,7 @@ import { eq, and, desc } from "drizzle-orm";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
+import { detectMime } from "@/lib/mime";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -125,7 +126,12 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  const mimeType = file.type || "application/octet-stream";
+  // Resolve the canonical mime. Browser-set `file.type` is often blank or
+  // `application/octet-stream` for HEIC and camera-RAW uploads — `detectMime`
+  // sniffs the magic bytes (and falls back to filename extension for RAW)
+  // so downstream pHash/EXIF/decoder modules can route correctly. The shared
+  // `createAssetRow` helper handles dedup + perceptual + EXIF + queue enqueue.
+  const { mimeType } = await detectMime(buffer, file.type, file.name);
 
   // Open upload session for idempotency tracking.
   let sessionId: string | null = null;

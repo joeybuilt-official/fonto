@@ -193,6 +193,59 @@ belt-and-braces guard against worker crashes (SIGKILL/OOM/container drift)
 that leave rows orphaned in `processing` forever. See
 `lib/processing/reapStuckAssets.ts`.
 
+## RAW and HEIC support
+
+Fonto decodes both Apple HEIC/HEIF and the major camera-RAW formats so the
+grid and detail views render real thumbnails — not a broken-image
+placeholder — for the half of a real photo library that isn't JPEG.
+
+**Supported formats:**
+
+| Format | Source | Decoder |
+|---|---|---|
+| HEIC / HEIF / AVIF | iPhone, Android | `sharp` (libvips with bundled libheif) |
+| HEIC fallback | (when libheif missing) | `heif-convert` subprocess |
+| CR2 | Canon DSLR / older mirrorless | `dcraw_emu -e` embedded JPEG |
+| CR3 | Canon recent mirrorless (R / M50 / 90D+) | `dcraw_emu -e` embedded JPEG |
+| DNG | Adobe / Pixel / Leica | `dcraw_emu -e` embedded JPEG |
+| ARW / SRF / SR2 | Sony | `dcraw_emu -e` embedded JPEG |
+| NEF / NRW | Nikon | `dcraw_emu -e` embedded JPEG |
+| RW2 | Panasonic | `dcraw_emu -e` embedded JPEG |
+| ORF | Olympus / OM System | `dcraw_emu -e` embedded JPEG |
+| RAF | Fujifilm | `dcraw_emu -e` embedded JPEG |
+| PEF | Pentax | `dcraw_emu -e` embedded JPEG |
+| SRW | Samsung | `dcraw_emu -e` embedded JPEG |
+| X3F | Sigma Foveon | `dcraw_emu -w` demosaic fallback |
+
+For RAW we always try the **embedded preview JPEG first** (every modern
+camera ships one — it's what the LCD displays and what Lightroom uses for
+its "Embedded" preview; fast and high-quality). If extraction fails or the
+file has no embedded JPEG, we fall back to `dcraw_emu -w` which demosaics
+the raw sensor data to a 16-bit TIFF (slower, ~1-3s per shot, but always
+works for any LibRaw-supported camera).
+
+**Worker image dependencies:** the `fonto-worker` container installs
+`libheif`, `libheif-tools`, `libraw`, `libraw-tools`, and `exiftool` from
+Alpine packages. The sharp prebuilt binary already bundles libheif via
+its libvips dependency (`@img/sharp-libvips-linuxmusl-x64`), so HEIC works
+out of the box; the apk packages are belt-and-braces and provide the
+`heif-convert` CLI used as a fallback.
+
+**EXIF on RAW:** `lib/exif.ts` uses `exifr` which natively reads CR2 / ARW
+/ NEF / DNG / NRW / ORF / RAF / PEF / RW2. The two formats exifr can't
+parse (Canon CR3 and Sigma X3F) fall back to an `exiftool` subprocess;
+if exiftool isn't installed we degrade silently to empty EXIF rather than
+failing the upload.
+
+**Tuning:**
+- `RAW_DECODE_TIMEOUT_MS` (default 30000) — kill threshold per RAW or HEIC
+  decode subprocess. Lower this if you'd rather drop the thumbnail than
+  let a pathological file pin a worker for half a minute.
+
+**License note:** libraw is LGPL and dcraw is public domain. We invoke
+them as subprocesses (`dcraw_emu`) rather than linking — keeps Fonto's
+AGPL-3.0 license uncontaminated.
+
 ## Observability
 
 Fonto ships first-class metrics and tracing — both Prometheus-native and

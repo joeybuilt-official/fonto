@@ -9,6 +9,24 @@
 // block an upload.
 
 import exifr from "exifr";
+import { spawn } from "node:child_process";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+/**
+ * Mime types where `exifr` is known to have weak or no support, so we
+ * route through the `exiftool` subprocess for metadata. exifr (7.x)
+ * supports JPEG / TIFF / HEIC / AVIF / PNG / WebP / GIF and most
+ * TIFF-derived RAW containers (CR2, ARW, NEF, DNG, NRW, ORF, RAF, PEF,
+ * RW2). It does NOT yet parse the ISO-BMFF-based Canon CR3 or the
+ * Foveon X3F container. If exiftool isn't installed we degrade silently
+ * to all-nulls (uploads still succeed).
+ */
+const EXIFTOOL_FALLBACK_MIMES = new Set<string>([
+  "image/x-canon-cr3",
+  "image/x-sigma-x3f",
+]);
 
 export interface ExifData {
   /** Raw exifr merged output, kept verbatim for forensic / future-use queries. */
@@ -127,6 +145,16 @@ export async function extractExif(
   if (!isExtractable(mimeType)) return EMPTY;
   if (!buffer || buffer.length === 0) return EMPTY;
 
+  // Route formats exifr can't read to exiftool. Silent no-op when exiftool
+  // isn't installed (e.g. Alpine without the binary) — degraded mode is OK,
+  // an empty ExifData never blocks an upload.
+  if (EXIFTOOL_FALLBACK_MIMES.has(mimeType.toLowerCase())) {
+    const exiftoolResult = await tryExiftool(buffer);
+    if (exiftoolResult) return exiftoolResult;
+    // Fall through to exifr anyway — sometimes it reads partial EXIF even
+    // for formats it nominally doesn't support.
+  }
+
   let parsed: Record<string, unknown> | undefined;
   try {
     parsed = (await exifr.parse(buffer, {
@@ -201,4 +229,93 @@ export async function extractExif(
     widthPx,
     heightPx,
   };
+}
+
+/**
+ * Run `exiftool -json -n <file>` against a buffer written to a tempfile.
+ * Returns null if exiftool isn't installed, the buffer is rejected, or the
+ * output is unparseable — the caller falls back to exifr or to all-nulls.
+ *
+ * `-n` keeps numeric values numeric (no "f/2.8" string formatting), `-j`
+ * gives us a single-element JSON array.
+ */
+async function tryExiftool(buffer: Buffer): Promise<ExifData | null> {
+  let dir: string | null = null;
+  try {
+    dir = await mkdtemp(join(tmpdir(), "fonto-exiftool-"));
+    const file = join(dir, "in.bin");
+    await writeFile(file, buffer);
+
+    const json = await new Promise<string>((resolve, reject) => {
+      const proc = spawn("exiftool", ["-json", "-n", file], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const out: Buffer[] = [];
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        proc.kill("SIGKILL");
+      }, 15_000);
+      proc.stdout.on("data", (c: Buffer) => out.push(c));
+      proc.on("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          reject(new Error("exiftool timed out"));
+          return;
+        }
+        if (code !== 0) {
+          reject(new Error(`exiftool exit ${code}`));
+          return;
+        }
+        resolve(Buffer.concat(out).toString("utf8"));
+      });
+    });
+
+    const arr = JSON.parse(json) as unknown;
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    const parsed = arr[0] as Record<string, unknown>;
+
+    const lat = toNum(parsed.GPSLatitude);
+    const lon = toNum(parsed.GPSLongitude);
+    return {
+      raw: parsed,
+      capturedAt:
+        toDate(parsed.DateTimeOriginal) ??
+        toDate(parsed.CreateDate) ??
+        toDate(parsed.ModifyDate) ??
+        null,
+      latitude: lat != null && lat >= -90 && lat <= 90 ? lat : null,
+      longitude: lon != null && lon >= -180 && lon <= 180 ? lon : null,
+      cameraMake: toStr(parsed.Make),
+      cameraModel: toStr(parsed.Model),
+      lensModel: toStr(parsed.LensModel) ?? toStr(parsed.Lens),
+      focalLength: toNum(parsed.FocalLength),
+      fNumber: toNum(parsed.FNumber) ?? toNum(parsed.ApertureValue),
+      iso: toInt(parsed.ISO) ?? toInt(parsed.ISOSpeedRatings),
+      exposureTime: formatExposureTime(parsed.ExposureTime),
+      orientation: toInt(parsed.Orientation),
+      widthPx: toInt(parsed.ImageWidth) ?? toInt(parsed.ExifImageWidth),
+      heightPx: toInt(parsed.ImageHeight) ?? toInt(parsed.ExifImageHeight),
+    };
+  } catch (err) {
+    // ENOENT = exiftool not installed → degraded mode is fine.
+    // Anything else (parse error, timeout) — log but don't fail the upload.
+    if (
+      err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code?: string }).code !== "ENOENT"
+    ) {
+      console.warn("[fonto] exiftool fallback failed:", err);
+    }
+    return null;
+  } finally {
+    if (dir) {
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
 }
