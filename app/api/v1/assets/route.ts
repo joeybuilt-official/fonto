@@ -29,6 +29,7 @@ import {
   fontoGraphConfigured,
   mirrorAssetToGraph,
 } from "@/lib/fonto-graph";
+import { extractExif } from "@/lib/exif";
 
 const DOCUMENT_CLASSIFICATIONS = new Set(["document", "receipt", "scan", "report", "form", "contract", "letter"]);
 const DOCUMENT_TRIGGER_MIME = ["application/pdf", "text/", "image/tiff"];
@@ -474,6 +475,12 @@ export async function POST(request: NextRequest) {
   const mimeType = file.type || "application/octet-stream";
   const { phash, colors } = await computePerceptualMetadata(buffer, mimeType);
 
+  // Extract EXIF / IPTC / XMP synchronously. Cheap (<10ms typical) and the
+  // capture date needs to be correct on the very first render — async
+  // backfill would briefly show wrong dates in the timeline. extractExif
+  // never throws; an unreadable header just returns all nulls.
+  const exifData = await extractExif(buffer, mimeType);
+
   // pHash near-duplicate check: if the hash matches an existing asset within
   // Hamming distance ≤ 5, surface the match in the response so the UI can
   // prompt "Possible duplicate of …". The new asset is still uploaded — the
@@ -546,9 +553,24 @@ export async function POST(request: NextRequest) {
       lifecycleState: "active",
       source,
       extractedText,
-      capturedAt: new Date(),
+      // Prefer the EXIF capture date; fall back to upload time if the file
+      // has no usable timestamp (non-image, stripped metadata, etc.).
+      capturedAt: exifData.capturedAt ?? new Date(),
       phash,
       colors,
+      exif: exifData.raw,
+      latitude: exifData.latitude,
+      longitude: exifData.longitude,
+      cameraMake: exifData.cameraMake,
+      cameraModel: exifData.cameraModel,
+      lensModel: exifData.lensModel,
+      focalLength: exifData.focalLength,
+      fNumber: exifData.fNumber,
+      iso: exifData.iso,
+      exposureTime: exifData.exposureTime,
+      orientation: exifData.orientation,
+      widthPx: exifData.widthPx,
+      heightPx: exifData.heightPx,
       ocrState: mimeType.startsWith("image/") ? "pending" : "skipped",
     })
     .returning();
