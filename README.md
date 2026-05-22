@@ -96,9 +96,57 @@ the last 1000; failures are kept indefinitely for inspection. The
 `assets.processing_error` column records the most recent failure message;
 `assets.processing_attempts` counts every worker pickup.
 
-**Inspect queues:** `/admin/jobs` shows live waiting/active/completed/failed
-counts. A full bull-board UI is deferred to Phase 0.6 — see the TODO in
-`app/admin/jobs/page.tsx`.
+**Inspect queues:** `/admin/jobs` is the operator landing page. Workspace-owner
+gated. When `BULL_BOARD_URL` is set it links to the bull-board sidecar; the
+live-counts table is shown as a fallback either way.
+
+### Bull-board UI (sidecar)
+
+The full bull-board admin UI — retry, promote, clean, inspect job payloads —
+runs as a separate Express container (`Dockerfile.bullboard`), not as part of
+the Next.js app. The sidecar pattern mirrors the worker, dodges Next 16 +
+Express integration friction, and lets the UI scale independently.
+
+**Env vars:**
+- `BULL_BOARD_BASIC_AUTH_USER` — required; sidecar refuses to start if unset
+- `BULL_BOARD_BASIC_AUTH_PASS` — required; sidecar refuses to start if unset
+- `BULL_BOARD_PORT` — defaults to `3300`
+- `REDIS_URL` — same Valkey instance as the worker
+- `BULL_BOARD_URL` — set on the Next.js app so `/admin/jobs` surfaces a link
+
+**Run locally:**
+```bash
+BULL_BOARD_BASIC_AUTH_USER=ops \
+BULL_BOARD_BASIC_AUTH_PASS=changeme \
+pnpm tsx bullboard/index.ts
+# → http://localhost:3300/  (basic-auth: ops / changeme)
+```
+
+**Build + run the sidecar image:**
+```bash
+docker build -f Dockerfile.bullboard -t fonto-bullboard:dev .
+docker run --rm -p 3300:3300 \
+  -e REDIS_URL=redis://valkey:6379 \
+  -e BULL_BOARD_BASIC_AUTH_USER=ops \
+  -e BULL_BOARD_BASIC_AUTH_PASS=$(openssl rand -hex 24) \
+  fonto-bullboard:dev
+```
+
+**Recommended Caddy reverse-proxy snippet** (terminate TLS at Caddy; never
+expose Basic-auth credentials over plain HTTP):
+
+```caddyfile
+ops.example.com {
+  handle_path /fonto/jobs/* {
+    reverse_proxy fonto-bullboard:3300
+  }
+}
+```
+
+**Why a sidecar instead of an in-app route?** Bull-board ships an Express
+adapter; running it in its own process matches the worker's deploy story,
+keeps admin-only code out of the Next.js bundle, and avoids App Router +
+Express middleware integration friction (see ADR 0005 and ADR 0006).
 
 ## Built on Plexo
 
