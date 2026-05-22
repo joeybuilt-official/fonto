@@ -37,12 +37,19 @@ export const ClassifyJobSchema = z.object({
 });
 export type ClassifyJob = z.infer<typeof ClassifyJobSchema>;
 
+// Maintenance: periodic sweep that re-enqueues or terminally fails any asset
+// row stuck in processing_state='processing' past the threshold. Payload is
+// empty — the reaper reads the world from Postgres on each tick.
+export const ReapStuckAssetsJobSchema = z.object({}).strict();
+export type ReapStuckAssetsJob = z.infer<typeof ReapStuckAssetsJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
   Ocr: "ocr",
   Thumbnail: "thumbnail",
   Classify: "classify",
+  ReapStuckAssets: "reap-stuck-assets",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

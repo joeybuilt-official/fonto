@@ -73,6 +73,11 @@ separate worker container drains. A restart no longer drops in-flight work.
 - `REDIS_URL` — defaults to `redis://valkey:6379`
 - `WORKER_CONCURRENCY` — worker only, defaults to `4`
 - `LOG_LEVEL` — `info` (default), `debug`, `warn`, `error`
+- `REAPER_STUCK_THRESHOLD_MINUTES` — worker only, defaults to `60`. Rows in
+  `processing_state='processing'` whose `updated_at` is older than this are
+  considered abandoned by a dead worker.
+- `REAPER_INTERVAL_MS` — worker only, defaults to `300000` (5 min). How often
+  the maintenance worker re-runs the stuck-assets sweep.
 
 **Run the worker locally:**
 ```bash
@@ -99,6 +104,17 @@ the last 1000; failures are kept indefinitely for inspection. The
 **Inspect queues:** `/admin/jobs` shows live waiting/active/completed/failed
 counts. A full bull-board UI is deferred to Phase 0.6 — see the TODO in
 `app/admin/jobs/page.tsx`.
+
+**Stuck-asset reaper (Phase 0.2):** A second `maintenance` queue hosts a
+recurring `reap-stuck-assets` job (registered at worker boot via BullMQ's
+`upsertJobScheduler`). Every 5 minutes by default, it scans
+`fonto.assets WHERE processing_state='processing' AND updated_at < now() - interval '1 hour'`
+and either re-enqueues the row on `asset-processing` (when
+`processing_attempts < 5`) or terminally marks it `processing_state='failed'`
+with `processing_error='reaped after 5 attempts stuck >1h'`. This is the
+belt-and-braces guard against worker crashes (SIGKILL/OOM/container drift)
+that leave rows orphaned in `processing` forever. See
+`lib/processing/reapStuckAssets.ts`.
 
 ## Built on Plexo
 

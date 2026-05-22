@@ -19,13 +19,22 @@ import {
   getRedisConnection,
   closeRedisConnection,
   QueueNames,
+  JobNames,
   closeAllQueues,
   ProcessAssetJobSchema,
+  maintenanceQueue,
   type ProcessAssetJob,
 } from "@/lib/queue";
-import { processAsset } from "@/lib/processing";
+import { processAsset, reapStuckAssets } from "@/lib/processing";
 
 const CONCURRENCY = Math.max(parseInt(process.env.WORKER_CONCURRENCY ?? "4", 10), 1);
+
+// Reaper scheduler tick in milliseconds. Default 5 minutes. Configurable so
+// integration tests can dial it down to seconds without code changes.
+const REAPER_INTERVAL_MS = Math.max(
+  parseInt(process.env.REAPER_INTERVAL_MS ?? `${5 * 60 * 1000}`, 10),
+  1000
+);
 
 const workers: Worker[] = [];
 
@@ -130,6 +139,80 @@ class UnrecoverableError extends Error {
   }
 }
 
+/**
+ * Maintenance worker — single-concurrency consumer for the maintenance queue.
+ * Today it only handles `reap-stuck-assets`; future housekeeping jobs (orphan
+ * R2 object sweep, audit-log compaction, etc.) can land on the same queue.
+ *
+ * Concurrency is fixed at 1 deliberately: the reaper takes table-level locks
+ * on the assets table and we never want two sweeps overlapping anyway.
+ */
+function startMaintenanceWorker(): Worker {
+  const w = new Worker(
+    QueueNames.Maintenance,
+    async (job: Job) => {
+      const log = logger.child({
+        queue: QueueNames.Maintenance,
+        jobId: job.id,
+        name: job.name,
+      });
+      if (job.name === JobNames.ReapStuckAssets) {
+        log.info("reaper tick start");
+        const result = await reapStuckAssets();
+        log.info(
+          {
+            candidates: result.candidates,
+            reenqueued: result.reenqueued,
+            exhausted: result.exhausted,
+          },
+          "reaper tick complete"
+        );
+        return result;
+      }
+      log.warn({ name: job.name }, "unknown maintenance job — ignoring");
+      return null;
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: 1,
+    }
+  );
+
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.Maintenance,
+        jobId: job?.id,
+        name: job?.name,
+        err: err.message,
+      },
+      "maintenance job failed"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.Maintenance, err: err.message }, "maintenance worker error")
+  );
+
+  return w;
+}
+
+/**
+ * Register the recurring reaper schedule on the maintenance queue. Uses
+ * BullMQ v5+'s `upsertJobScheduler` so re-running the worker boot is safe and
+ * idempotent (re-applies the interval without duplicating the schedule).
+ */
+async function ensureReaperSchedule(): Promise<void> {
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.ReapStuckAssets,
+    { every: REAPER_INTERVAL_MS },
+    { name: JobNames.ReapStuckAssets }
+  );
+  logger.info(
+    { intervalMs: REAPER_INTERVAL_MS, jobName: JobNames.ReapStuckAssets },
+    "reaper schedule registered"
+  );
+}
+
 async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, "shutting down");
   // Stop accepting new jobs, wait for in-flight to finish (with timeout).
@@ -150,6 +233,19 @@ async function main(): Promise<void> {
   );
 
   workers.push(startAssetProcessingWorker());
+
+  // Maintenance worker + recurring reaper schedule. Registered after the
+  // primary worker so a boot-time failure here doesn't block asset
+  // processing — the reaper is belt-and-braces, not load-bearing.
+  workers.push(startMaintenanceWorker());
+  try {
+    await ensureReaperSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register reaper schedule — sweeps disabled until next boot"
+    );
+  }
 
   // Future: register thumbnail / classify / ocr-only workers here once their
   // pipelines are split out of the all-in-one processAsset function.
