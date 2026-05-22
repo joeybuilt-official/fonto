@@ -164,6 +164,57 @@ belt-and-braces guard against worker crashes (SIGKILL/OOM/container drift)
 that leave rows orphaned in `processing` forever. See
 `lib/processing/reapStuckAssets.ts`.
 
+## Observability
+
+Fonto ships first-class metrics and tracing — both Prometheus-native and
+OpenTelemetry-friendly. Everything is opt-in via env: with `METRICS_BEARER_TOKEN`
+unset, the scrape endpoints return 503; with `OTEL_EXPORTER_OTLP_ENDPOINT`
+unset, the OTel SDK never starts.
+
+**Prometheus scrape endpoints:**
+- Web: `GET /api/metrics` on the Next.js app (Node runtime, not edge).
+- Worker: `GET /metrics` on the worker container, port `WORKER_METRICS_PORT`
+  (default `9464`).
+
+Both require `Authorization: Bearer $METRICS_BEARER_TOKEN`. Example scrape
+config:
+
+```yaml
+scrape_configs:
+  - job_name: fonto-web
+    metrics_path: /api/metrics
+    authorization:
+      type: Bearer
+      credentials: ${METRICS_BEARER_TOKEN}
+    static_configs:
+      - targets: ['fonto-web:3500']
+  - job_name: fonto-worker
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials: ${METRICS_BEARER_TOKEN}
+    static_configs:
+      - targets: ['fonto-worker:9464']
+```
+
+**Custom metrics:**
+- `fonto_http_request_duration_seconds{method,route,status_code}` — histogram
+  of API request latency. Currently observed on `POST /api/v1/assets`.
+- `fonto_asset_processing_duration_seconds{outcome=success|failure}` —
+  histogram of the full post-upload pipeline (classification, OCR, tags).
+- `fonto_asset_processing_queue_depth{queue}` — gauge polled every 10s from
+  BullMQ (`waiting + active + delayed`).
+- `fonto_asset_ingest_total{mime_class=image|video|document|other}` — counter
+  bumped on every successful upload.
+- Plus the default Node process metrics (`fonto_process_*`,
+  `fonto_nodejs_*`).
+
+**OpenTelemetry:**
+Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318` (no trailing
+slash; the SDK appends `/v1/traces` and `/v1/metrics`). Service names default
+to `fonto-web` and `fonto-worker`; override with `OTEL_SERVICE_NAME`.
+Auto-instrumentation covers `http`, `pg`, `ioredis`, and `bullmq`.
+
 ## Built on Plexo
 
 Fonto is a [Plexo](https://getplexo.com) App Profile. Asset classification, tag suggestions, and image description all route through Plexo's model gateway. Plexo also adds persistent memory — Fonto remembers tag preferences and classification corrections across sessions. See `lib/plexo.ts` and `lib/plexo-registration.ts` for the integration surface.

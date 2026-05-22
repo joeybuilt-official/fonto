@@ -21,6 +21,11 @@ import {
 } from "@/lib/fonto-graph";
 import { extractExif } from "@/lib/exif";
 import { assetProcessingQueue, JobNames } from "@/lib/queue";
+import {
+  assetIngestTotal,
+  classifyMime,
+  httpRequestDurationSeconds,
+} from "@/lib/metrics";
 
 // Hamming distance threshold for "near-duplicate" pHash matches.
 // 0–4 = visually identical resizes/recompresses
@@ -154,7 +159,26 @@ function serializeAsset<T extends { phash?: bigint | null }>(asset: T): T & { ph
   };
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Time the full POST lifetime and emit Prometheus metrics around it. We do
+  // this in a wrapper so the existing flow below stays untouched — any new
+  // return path inside `handlePost` flows through here.
+  const endTimer = httpRequestDurationSeconds.startTimer({
+    method: "POST",
+    route: "/api/v1/assets",
+  });
+  let response: NextResponse;
+  try {
+    response = await handlePost(request);
+  } catch (err) {
+    endTimer({ status_code: "500" });
+    throw err;
+  }
+  endTimer({ status_code: String(response.status) });
+  return response;
+}
+
+async function handlePost(request: NextRequest): Promise<NextResponse> {
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -407,6 +431,8 @@ export async function POST(request: NextRequest) {
         phash,
       }).catch((err) => console.warn("[fonto-graph] asset mirror failed:", err));
     }
+
+    assetIngestTotal.labels({ mime_class: classifyMime(mimeType) }).inc(1);
 
     return NextResponse.json(
       {
