@@ -2,54 +2,59 @@
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Clock, Loader2 } from "lucide-react";
-import { PhotoCard, type Asset } from "../_components/photo-card";
+import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
-
-function groupByMonth(assets: Asset[]): [string, Asset[]][] {
-  const map = new Map<string, Asset[]>();
-  for (const a of assets) {
-    const d = new Date(a.capturedAt ?? a.createdAt);
-    // Key: YYYY-MM for sorting, label for display
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(a);
-  }
-  return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
-}
-
-function formatMonthLabel(key: string): string {
-  const [year, month] = key.split("-");
-  const d = new Date(parseInt(year), parseInt(month) - 1, 1);
-  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
-}
+import { VirtualizedTimeline } from "../_components/virtualized-timeline";
 
 export default function TimelinePage() {
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [loading, setLoading] = useState(true);
   const [mimeFilter, setMimeFilter] = useState("");
+  const [data, setData] = useState<{ assets: Asset[]; loading: boolean; filter: string }>({
+    assets: [],
+    loading: true,
+    filter: "",
+  });
+  const assets = useMemo(
+    () => (data.filter === mimeFilter ? data.assets : []),
+    [data, mimeFilter]
+  );
+  const loading = data.filter === mimeFilter ? data.loading : true;
   const [lightboxAssets, setLightboxAssets] = useState<Asset[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    setLoading(true);
-    const url = mimeFilter ? `/api/v1/assets?mime=${encodeURIComponent(mimeFilter)}` : "/api/v1/assets";
+    let cancelled = false;
+    const url = mimeFilter
+      ? `/api/v1/assets?mime=${encodeURIComponent(mimeFilter)}`
+      : "/api/v1/assets";
     fetch(url)
       .then((r) => r.json())
       .then((d) => {
-        const sorted = (d.assets ?? []).sort(
-          (a: Asset, b: Asset) =>
+        if (cancelled) return;
+        const sorted = ((d.assets ?? []) as Asset[]).sort(
+          (a, b) =>
             new Date(b.capturedAt ?? b.createdAt).getTime() -
             new Date(a.capturedAt ?? a.createdAt).getTime()
         );
-        setAssets(sorted);
+        setData({ assets: sorted, loading: false, filter: mimeFilter });
       })
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) {
+          setData({ assets: [], loading: false, filter: mimeFilter });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [mimeFilter]);
 
-  // Build a flat index for lightbox navigation (only image assets)
-  const imageAssets = assets.filter((a) => a.mimeType.startsWith("image/"));
+  const setAssets = useCallback(
+    (updater: (prev: Asset[]) => Asset[]) => {
+      setData((prev) => ({ ...prev, assets: updater(prev.assets) }));
+    },
+    []
+  );
 
   const openLightbox = useCallback(
     (asset: Asset) => {
@@ -74,8 +79,6 @@ export default function TimelinePage() {
     setLightboxAssets((prev) => prev.filter((a) => a.id !== assetId));
     setLightboxIndex(null);
   }
-
-  const groups = groupByMonth(assets);
 
   return (
     <div className="space-y-6">
@@ -113,59 +116,7 @@ export default function TimelinePage() {
           <p className="text-sm text-muted-foreground">No assets yet. Upload something from the Dashboard.</p>
         </div>
       ) : (
-        <div className="space-y-8">
-          {groups.map(([monthKey, group]) => {
-            const imageGroup = group.filter((a) => a.mimeType.startsWith("image/"));
-            return (
-              <div key={monthKey}>
-                {/* Sticky month header */}
-                <div className="sticky top-0 z-10 -mx-4 md:-mx-6 mb-3 flex items-center gap-3 bg-background/90 backdrop-blur-sm px-4 md:px-6 py-2 border-b border-border">
-                  <span className="text-xs font-bold uppercase tracking-widest text-foreground">
-                    {formatMonthLabel(monthKey)}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    · {group.length} {group.length === 1 ? "asset" : "assets"}
-                  </span>
-                </div>
-
-                {imageGroup.length > 0 ? (
-                  <div className="grid grid-cols-3 gap-1 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
-                    {imageGroup.map((asset) => (
-                      <PhotoCard
-                        key={asset.id}
-                        asset={asset}
-                        showQuickActions
-                        onClick={() => openLightbox(asset)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  // Non-image assets (PDFs, text, etc.) — show as list
-                  <div className="space-y-1.5">
-                    {group.map((asset) => (
-                      <div
-                        key={asset.id}
-                        className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5 hover:bg-muted/40 transition-colors"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-foreground">{asset.filename}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {asset.classification ?? asset.mimeType}
-                          </p>
-                        </div>
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">
-                          {new Date(asset.capturedAt ?? asset.createdAt).toLocaleDateString(undefined, {
-                            month: "short", day: "numeric",
-                          })}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        <VirtualizedTimeline assets={assets} onAssetClick={openLightbox} />
       )}
 
       {/* Lightbox */}
