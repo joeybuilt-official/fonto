@@ -61,6 +61,12 @@ export const assets = fontoSchema.table(
     ocrText: text("ocr_text"),
     // OCR pipeline state: pending | ready | failed | skipped (non-image).
     ocrState: text("ocr_state").notNull().default("pending"),
+    // Last error message from the BullMQ asset-processing pipeline, if any.
+    // Cleared on a successful run. Surfaced in /admin/jobs.
+    processingError: text("processing_error"),
+    // Number of times the BullMQ worker has attempted to process this asset.
+    // Incremented each time the worker picks the job up; reset on success.
+    processingAttempts: integer("processing_attempts").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

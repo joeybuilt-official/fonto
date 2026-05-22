@@ -1,23 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { eq, and, desc, isNotNull, sql } from "drizzle-orm";
+import { eq, and, desc, isNotNull } from "drizzle-orm";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
-import {
-  plexoAvailable,
-  plexoEnsureWorkspace,
-  plexoClassifyAsset,
-  plexoDescribeImage,
-  plexoPublishEvent,
-  plexoStoreMemory,
-  plexoSuggestTags,
-  plexoVisionOcr,
-} from "@/lib/plexo";
+import { plexoPublishEvent } from "@/lib/plexo";
 import {
   computePHash,
   extractPalette,
@@ -29,9 +19,7 @@ import {
   fontoGraphConfigured,
   mirrorAssetToGraph,
 } from "@/lib/fonto-graph";
-
-const DOCUMENT_CLASSIFICATIONS = new Set(["document", "receipt", "scan", "report", "form", "contract", "letter"]);
-const DOCUMENT_TRIGGER_MIME = ["application/pdf", "text/", "image/tiff"];
+import { assetProcessingQueue, JobNames } from "@/lib/queue";
 
 // Hamming distance threshold for "near-duplicate" pHash matches.
 // 0–4 = visually identical resizes/recompresses
@@ -62,233 +50,6 @@ async function computePerceptualMetadata(
   } catch (err) {
     console.warn("[fonto] perceptual metadata extraction failed:", err);
     return { phash: null, colors: null };
-  }
-}
-
-async function processAsset(
-  assetId: string,
-  userId: string,
-  email: string | undefined,
-  filename: string,
-  mimeType: string,
-  extractedText: string | null
-) {
-  try {
-    await db
-      .update(schema.assets)
-      .set({ processingState: "classified" })
-      .where(eq(schema.assets.id, assetId));
-
-    let classification: string;
-    let description: string | null = null;
-    let plexoWorkspaceId: string | null = null;
-
-    if (plexoAvailable()) {
-      plexoWorkspaceId = await plexoEnsureWorkspace(userId, email);
-      classification = await plexoClassifyAsset(
-        plexoWorkspaceId,
-        filename,
-        mimeType,
-        extractedText ?? undefined
-      );
-
-      if (mimeType.startsWith("image/")) {
-        description = await plexoDescribeImage(plexoWorkspaceId, filename, mimeType);
-      }
-    } else {
-      classification = mimeType.startsWith("image/") ? "photo" : "document";
-    }
-
-    await db
-      .update(schema.assets)
-      .set({ processingState: "extracted", classification, description })
-      .where(eq(schema.assets.id, assetId));
-
-    await db
-      .update(schema.assets)
-      .set({ processingState: "ready" })
-      .where(eq(schema.assets.id, assetId));
-
-    // ── OCR: image-only, fire-and-forget. Failures are non-fatal.
-    if (plexoWorkspaceId && mimeType.startsWith("image/")) {
-      void runOcrForAsset(assetId, plexoWorkspaceId).catch((err) => {
-        console.warn("[fonto] OCR failed for asset", assetId, err);
-      });
-    } else if (!mimeType.startsWith("image/")) {
-      // Non-image: mark OCR as skipped so the cron doesn't try to OCR PDFs.
-      await db
-        .update(schema.assets)
-        .set({ ocrState: "skipped" })
-        .where(eq(schema.assets.id, assetId));
-    }
-
-    const assetPayload = {
-      assetId,
-      filename,
-      mimeType,
-      classification,
-      description,
-    };
-
-    // Emit ext.fonto.asset.processed
-    void plexoPublishEvent("ext.fonto.asset.processed", assetPayload);
-
-    // Emit ext.fonto.document.processed for document-class assets
-    const isDocClassification = DOCUMENT_CLASSIFICATIONS.has(classification);
-    const isDocMime = DOCUMENT_TRIGGER_MIME.some((p) => mimeType.startsWith(p));
-    if (isDocClassification || isDocMime) {
-      void plexoPublishEvent("ext.fonto.document.processed", assetPayload);
-    }
-
-    // Emit ext.fonto.receipt.detected with extraction hint
-    if (classification === "receipt") {
-      void plexoPublishEvent("ext.fonto.receipt.detected", {
-        ...assetPayload,
-        extractedText: extractedText?.slice(0, 500) ?? null,
-      });
-    }
-
-    // memory.write with asset metadata
-    if (plexoWorkspaceId) {
-      const memContent = [
-        `[Fonto asset] ${filename}`,
-        `Type: ${mimeType} | Classification: ${classification}`,
-        description ? `Description: ${description}` : null,
-        extractedText ? `Content: ${extractedText.slice(0, 800)}` : null,
-      ]
-        .filter(Boolean)
-        .join("\n");
-
-      void plexoStoreMemory(plexoWorkspaceId, memContent, {
-        source: "fonto",
-        assetId,
-        classification,
-        mimeType,
-      });
-
-      // Auto-tagging
-      const suggestedNames = await plexoSuggestTags(
-        plexoWorkspaceId,
-        filename,
-        classification,
-        description
-      );
-      const [asset] = await db
-        .select({ workspaceId: schema.assets.workspaceId })
-        .from(schema.assets)
-        .where(eq(schema.assets.id, assetId))
-        .limit(1);
-
-      if (asset && suggestedNames.length > 0) {
-        for (const name of suggestedNames) {
-          const existing = await db
-            .select({ id: schema.tags.id })
-            .from(schema.tags)
-            .where(
-              and(
-                eq(schema.tags.workspaceId, asset.workspaceId),
-                eq(schema.tags.name, name)
-              )
-            )
-            .limit(1);
-
-          let tagId: string;
-          if (existing[0]) {
-            tagId = existing[0].id;
-          } else {
-            const [newTag] = await db
-              .insert(schema.tags)
-              .values({
-                workspaceId: asset.workspaceId,
-                name,
-                aiSuggested: true,
-              })
-              .returning({ id: schema.tags.id });
-            tagId = newTag.id;
-          }
-
-          await db
-            .insert(schema.assetTags)
-            .values({ assetId, tagId })
-            .onConflictDoNothing();
-        }
-      }
-    }
-  } catch (err) {
-    console.error("[fonto] processAsset error:", err);
-    await db
-      .update(schema.assets)
-      .set({ processingState: "captured" })
-      .where(eq(schema.assets.id, assetId));
-  }
-}
-
-/**
- * Run OCR on an image asset via Plexo's vision endpoint and persist the
- * result. Marks the asset's `ocrState` accordingly. Used both inline (after
- * upload) and by the nightly backfill cron.
- */
-export async function runOcrForAsset(
-  assetId: string,
-  plexoWorkspaceId: string
-): Promise<void> {
-  // Look up the asset and presign a 5-minute URL for Plexo's vision call.
-  const [asset] = await db
-    .select()
-    .from(schema.assets)
-    .where(eq(schema.assets.id, assetId))
-    .limit(1);
-  if (!asset) return;
-  if (!asset.mimeType.startsWith("image/")) {
-    await db
-      .update(schema.assets)
-      .set({ ocrState: "skipped" })
-      .where(eq(schema.assets.id, assetId));
-    return;
-  }
-
-  const bucket = process.env.R2_BUCKET!;
-  const key = assetStorageKey(asset.workspaceId, asset.id, asset.filename);
-  let signedUrl: string;
-  try {
-    signedUrl = await getSignedUrl(
-      getS3Client(),
-      new GetObjectCommand({ Bucket: bucket, Key: key }),
-      { expiresIn: 300 }
-    );
-  } catch (err) {
-    console.warn("[fonto] OCR presign failed for asset", assetId, err);
-    await db
-      .update(schema.assets)
-      .set({ ocrState: "failed" })
-      .where(eq(schema.assets.id, assetId));
-    return;
-  }
-
-  const result = await plexoVisionOcr(plexoWorkspaceId, signedUrl);
-  if (!result) {
-    await db
-      .update(schema.assets)
-      .set({ ocrState: "failed" })
-      .where(eq(schema.assets.id, assetId));
-    return;
-  }
-
-  await db
-    .update(schema.assets)
-    .set({
-      ocrText: result.text,
-      ocrState: "ready",
-    })
-    .where(eq(schema.assets.id, assetId));
-
-  if (result.text.length > 0) {
-    void plexoPublishEvent("ext.fonto.asset.ocr_extracted", {
-      assetId,
-      filename: asset.filename,
-      textLength: result.text.length,
-      model: result.model,
-    });
   }
 }
 
@@ -591,10 +352,25 @@ export async function POST(request: NextRequest) {
       source,
     });
 
-    // Fire-and-forget processing pipeline (classification, tags, memory, OCR)
-    processAsset(asset.id, user.id, user.email, file.name, file.type, extractedText).catch(
-      console.error
-    );
+    // Enqueue processing pipeline (classification, tags, memory, OCR) on the
+    // BullMQ asset-processing queue. The request returns immediately; the
+    // worker container picks up the job and runs `processAsset` against the
+    // same database. A container restart no longer drops in-flight work.
+    try {
+      await assetProcessingQueue().add(JobNames.ProcessAsset, {
+        assetId: asset.id,
+        workspaceId,
+        userId: user.id,
+        email: user.email,
+        filename: file.name,
+        mimeType,
+        extractedText,
+      });
+    } catch (err) {
+      // Never fail the upload because the queue is briefly unavailable —
+      // surface it to logs and let the next backfill cron pick this up.
+      console.error("[fonto] failed to enqueue process-asset job:", err);
+    }
 
     // Phase D-Fonto-1 (ADR 0027) — mirror the new Asset to the workspace
     // fonto graph so subsequent uploads have a populated vector index to
