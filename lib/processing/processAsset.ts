@@ -24,6 +24,7 @@ import {
   plexoSuggestTags,
   plexoVisionOcr,
 } from "@/lib/plexo";
+import { assetProcessingDurationSeconds } from "@/lib/metrics";
 
 const DOCUMENT_CLASSIFICATIONS = new Set([
   "document",
@@ -52,6 +53,17 @@ export interface ProcessAssetParams {
  * swallow their own errors — those aren't worth retrying the whole job over.
  */
 export async function processAsset(params: ProcessAssetParams): Promise<void> {
+  const endTimer = assetProcessingDurationSeconds.startTimer();
+  try {
+    await processAssetInner(params);
+    endTimer({ outcome: "success" });
+  } catch (err) {
+    endTimer({ outcome: "failure" });
+    throw err;
+  }
+}
+
+async function processAssetInner(params: ProcessAssetParams): Promise<void> {
   const { assetId, userId, email, filename, mimeType, extractedText } = params;
 
   await db

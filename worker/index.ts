@@ -11,6 +11,9 @@
 // In production, the `Dockerfile.worker` image executes the compiled
 // `dist/worker/index.js` file.
 
+// OTel SDK is booted via dynamic import inside main() before any other module
+// is touched so auto-instrumentations can patch pg/ioredis/http.
+import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { Worker, type Job } from "bullmq";
 import { eq, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
@@ -24,10 +27,67 @@ import {
   type ProcessAssetJob,
 } from "@/lib/queue";
 import { processAsset } from "@/lib/processing";
+import { register as metricsRegister } from "@/lib/metrics";
+import { startOtel } from "@/lib/otel";
 
 const CONCURRENCY = Math.max(parseInt(process.env.WORKER_CONCURRENCY ?? "4", 10), 1);
+const METRICS_PORT = Math.max(parseInt(process.env.WORKER_METRICS_PORT ?? "9464", 10), 1);
 
 const workers: Worker[] = [];
+let metricsServer: ReturnType<typeof createServer> | null = null;
+
+/**
+ * Tiny HTTP listener exposing `/metrics` for Prometheus to scrape. Bare
+ * Node `http` (no Express) — the worker container has no Next.js to
+ * piggyback on. Gated by the same `METRICS_BEARER_TOKEN` env var as the web
+ * route; if unset, the endpoint returns 503 instead of leaking metrics
+ * anonymously.
+ */
+function startMetricsServer(): void {
+  const handler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (req.url !== "/metrics") {
+      res.statusCode = 404;
+      res.end("not found");
+      return;
+    }
+    const expected = process.env.METRICS_BEARER_TOKEN;
+    if (!expected) {
+      res.statusCode = 503;
+      res.end("metrics endpoint disabled (METRICS_BEARER_TOKEN unset)");
+      return;
+    }
+    const auth = req.headers["authorization"];
+    const headerValue = Array.isArray(auth) ? auth[0] : auth ?? "";
+    const presented = headerValue.startsWith("Bearer ")
+      ? headerValue.slice("Bearer ".length).trim()
+      : "";
+    if (!presented || presented !== expected) {
+      res.statusCode = 401;
+      res.end("unauthorized");
+      return;
+    }
+    try {
+      const body = await metricsRegister.metrics();
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.end(body);
+    } catch (err) {
+      res.statusCode = 500;
+      res.end(err instanceof Error ? err.message : "internal error");
+    }
+  };
+
+  metricsServer = createServer((req, res) => {
+    void handler(req, res);
+  });
+  metricsServer.listen(METRICS_PORT, () => {
+    logger.info({ port: METRICS_PORT }, "worker metrics endpoint listening");
+  });
+  metricsServer.on("error", (err) =>
+    logger.error({ err: err.message }, "worker metrics server error")
+  );
+}
 
 function startAssetProcessingWorker(): Worker<ProcessAssetJob> {
   const w = new Worker<ProcessAssetJob>(
@@ -136,19 +196,31 @@ async function shutdown(signal: string): Promise<void> {
   await Promise.all(workers.map((w) => w.close()));
   await closeAllQueues();
   await closeRedisConnection();
+  if (metricsServer) {
+    await new Promise<void>((resolve) => {
+      metricsServer?.close(() => resolve());
+    });
+  }
   logger.info("shutdown complete");
   process.exit(0);
 }
 
 async function main(): Promise<void> {
+  // Boot OTel before constructing workers so http/pg/ioredis/bullmq spans
+  // capture worker lifetime cleanly. No-op if OTEL_EXPORTER_OTLP_ENDPOINT
+  // is unset.
+  await startOtel("fonto-worker");
+
   logger.info(
     {
       concurrency: CONCURRENCY,
+      metricsPort: METRICS_PORT,
       redisUrl: (process.env.REDIS_URL ?? "redis://valkey:6379").replace(/\/\/[^@]*@/, "//***@"),
     },
     "fonto worker starting"
   );
 
+  startMetricsServer();
   workers.push(startAssetProcessingWorker());
 
   // Future: register thumbnail / classify / ocr-only workers here once their
