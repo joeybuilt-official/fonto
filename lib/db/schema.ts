@@ -11,7 +11,10 @@ import {
   jsonb,
   uniqueIndex,
   integer,
+  doublePrecision,
+  real,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const fontoSchema = pgSchema("fonto");
 
@@ -61,6 +64,26 @@ export const assets = fontoSchema.table(
     ocrText: text("ocr_text"),
     // OCR pipeline state: pending | ready | failed | skipped (non-image).
     ocrState: text("ocr_state").notNull().default("pending"),
+    // Full raw EXIF/IPTC/XMP metadata blob extracted at ingest. NULL for
+    // non-image assets or when extraction fails. See lib/exif.ts.
+    exif: jsonb("exif"),
+    // GPS coordinates lifted out of EXIF for indexable map queries.
+    latitude: doublePrecision("latitude"),
+    longitude: doublePrecision("longitude"),
+    // Camera identity. Free-text — vendor strings vary wildly.
+    cameraMake: text("camera_make"),
+    cameraModel: text("camera_model"),
+    lensModel: text("lens_model"),
+    // Capture parameters.
+    focalLength: real("focal_length"),
+    fNumber: real("f_number"),
+    iso: integer("iso"),
+    exposureTime: text("exposure_time"),
+    // EXIF orientation tag (1..8); used by clients to rotate display.
+    orientation: integer("orientation"),
+    // Native pixel dimensions of the captured image.
+    widthPx: integer("width_px"),
+    heightPx: integer("height_px"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -71,6 +94,13 @@ export const assets = fontoSchema.table(
     index("assets_processing_state_idx").on(table.processingState),
     index("assets_ocr_state_idx").on(table.ocrState),
     index("assets_phash_idx").on(table.phash),
+    // Timeline browsing: workspace assets ordered by capture date.
+    index("assets_workspace_captured_at_idx").on(
+      table.workspaceId,
+      sql`${table.capturedAt} desc`
+    ),
+    // Map queries: (lat, lon) btree for future bounding-box scans.
+    index("assets_lat_lon_idx").on(table.latitude, table.longitude),
   ]
 );
 
