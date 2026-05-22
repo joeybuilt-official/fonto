@@ -16,7 +16,23 @@
 FROM node:22-alpine AS base
 
 FROM base AS deps
-RUN apk add --no-cache libc6-compat
+# libc6-compat: glibc shim for prebuilt native modules on Alpine.
+# vips/libheif: ensure sharp's prebuilt libvips binding finds libheif at
+#   runtime. The prebuilt @img/sharp-libvips-linuxmusl-x64 already bundles
+#   libheif (verified via `sharp.versions.heif`); we install the apk
+#   packages as well so the `heif-convert` CLI fallback in decode.ts works
+#   when sharp's bundle is somehow stripped (custom rebuilds, etc.).
+# libraw / libraw-tools: provides `dcraw_emu` for RAW thumbnail extraction.
+#   libraw is LGPL; calling the binary as a subprocess is license-safe.
+# exiftool: Perl-based metadata reader; used as the exifr fallback for
+#   CR3 / X3F where exifr can't read the container.
+RUN apk add --no-cache \
+      libc6-compat \
+      libheif \
+      libheif-tools \
+      libraw \
+      libraw-tools \
+      exiftool
 WORKDIR /app
 RUN npm install -g pnpm@10
 COPY package.json pnpm-lock.yaml ./
@@ -37,6 +53,17 @@ COPY . .
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+# Re-install the native-tool deps in the runtime image. The deps stage above
+# only had them for `pnpm install`; the worker process needs them at run time
+# to spawn dcraw_emu/heif-convert/exiftool. Keeping the list in sync with the
+# deps stage is intentional duplication.
+RUN apk add --no-cache \
+      libc6-compat \
+      libheif \
+      libheif-tools \
+      libraw \
+      libraw-tools \
+      exiftool
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 worker
 # Copy the full app: the worker imports from lib/, drizzle schema, etc.
 COPY --from=builder --chown=worker:nodejs /app/node_modules ./node_modules

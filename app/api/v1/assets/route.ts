@@ -20,6 +20,7 @@ import {
   mirrorAssetToGraph,
 } from "@/lib/fonto-graph";
 import { extractExif } from "@/lib/exif";
+import { detectMime } from "@/lib/mime";
 import { assetProcessingQueue, JobNames } from "@/lib/queue";
 import {
   assetIngestTotal,
@@ -255,9 +256,14 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
     extractedText = buffer.toString("utf-8").slice(0, 10_000);
   }
 
+  // Resolve the canonical mime. Browser-set `file.type` is often blank or
+  // `application/octet-stream` for HEIC and camera-RAW uploads — `detectMime`
+  // sniffs the magic bytes (and falls back to filename extension for RAW)
+  // so downstream pHash/EXIF/decoder modules can route correctly.
+  const { mimeType } = await detectMime(buffer, file.type, file.name);
+
   // Compute perceptual hash + dominant colors for image assets. Best-effort —
   // a decode failure should never block the upload itself.
-  const mimeType = file.type || "application/octet-stream";
   const { phash, colors } = await computePerceptualMetadata(buffer, mimeType);
 
   // Extract EXIF / IPTC / XMP synchronously. Cheap (<10ms typical) and the
@@ -370,7 +376,7 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
         Bucket: bucket,
         Key: key,
         Body: buffer,
-        ContentType: file.type || "application/octet-stream",
+        ContentType: mimeType,
         ContentLength: file.size,
       })
     );
@@ -392,7 +398,7 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
     void plexoPublishEvent("ext.fonto.asset.uploaded", {
       assetId: asset.id,
       filename: file.name,
-      mimeType: file.type || "application/octet-stream",
+      mimeType,
       sizeBytes: file.size,
       sha256,
       source,
