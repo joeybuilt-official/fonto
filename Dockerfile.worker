@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Fonto BullMQ worker image. Mirrors the main Dockerfile up through the deps
+# stage; the final stage runs the worker via `tsx` (the project already pulls
+# tsx in as a transitive dev dep, and pinning it here as a direct dep keeps
+# the worker invocation a one-liner).
+#
+# Build:
+#   docker build -f Dockerfile.worker -t fonto-worker:dev .
+#
+# Run:
+#   docker run --rm -e REDIS_URL=redis://valkey:6379 \
+#              -e DATABASE_URL=$DATABASE_URL \
+#              -e R2_BUCKET=$R2_BUCKET ... \
+#              fonto-worker:dev
+
+FROM node:22-alpine AS base
+
+FROM base AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+RUN npm install -g pnpm@10
+COPY package.json pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml ./
+COPY packages ./packages
+RUN pnpm install --frozen-lockfile
+
+FROM base AS builder
+WORKDIR /app
+RUN npm install -g pnpm@10
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages ./packages
+COPY . .
+# Worker is run with tsx — no compile step needed. We still keep the builder
+# stage so we can prune dev deps for the runtime image without losing tsx
+# (which is in devDependencies but required by the worker entrypoint).
+
+FROM base AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 worker
+# Copy the full app: the worker imports from lib/, drizzle schema, etc.
+COPY --from=builder --chown=worker:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=worker:nodejs /app/lib ./lib
+COPY --from=builder --chown=worker:nodejs /app/worker ./worker
+COPY --from=builder --chown=worker:nodejs /app/packages ./packages
+COPY --from=builder --chown=worker:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=worker:nodejs /app/tsconfig.json ./tsconfig.json
+USER worker
+ENV WORKER_CONCURRENCY=4
+CMD ["node", "--import", "tsx/esm", "worker/index.ts"]

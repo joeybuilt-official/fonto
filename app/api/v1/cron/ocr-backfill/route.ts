@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { db, schema } from "@/lib/db";
 import { eq, and, isNotNull } from "drizzle-orm";
-import { runOcrForAsset } from "@/app/api/v1/assets/route";
+import { runOcrForAsset } from "@/lib/processing";
 import { plexoEnsureWorkspace, plexoAvailable } from "@/lib/plexo";
 
 const DEFAULT_BATCH_SIZE = 50;

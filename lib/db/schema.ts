@@ -84,6 +84,12 @@ export const assets = fontoSchema.table(
     // Native pixel dimensions of the captured image.
     widthPx: integer("width_px"),
     heightPx: integer("height_px"),
+    // Last error message from the BullMQ asset-processing pipeline, if any.
+    // Cleared on a successful run. Surfaced in /admin/jobs.
+    processingError: text("processing_error"),
+    // Number of times the BullMQ worker has attempted to process this asset.
+    // Incremented each time the worker picks the job up; reset on success.
+    processingAttempts: integer("processing_attempts").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

@@ -60,7 +60,45 @@ Open [http://localhost:3500](http://localhost:3500).
 | Storage | Cloudflare R2 / S3-compatible |
 | AI | Plexo Core (optional) |
 | Image Processing | sharp, pHash |
+| Background Jobs | BullMQ + Redis/Valkey |
 | UI | Tailwind CSS v4, shadcn/ui |
+
+## Background Jobs (Worker Container)
+
+Asset processing (classification, OCR, perceptual hash, tag suggestion) runs
+as BullMQ jobs against a Redis/Valkey instance. The Next.js API enqueues; a
+separate worker container drains. A restart no longer drops in-flight work.
+
+**Env vars:**
+- `REDIS_URL` — defaults to `redis://valkey:6379`
+- `WORKER_CONCURRENCY` — worker only, defaults to `4`
+- `LOG_LEVEL` — `info` (default), `debug`, `warn`, `error`
+
+**Run the worker locally:**
+```bash
+pnpm tsx worker/index.ts
+```
+
+**Build + run the worker image:**
+```bash
+docker build -f Dockerfile.worker -t fonto-worker:dev .
+docker run --rm \
+  -e REDIS_URL=redis://valkey:6379 \
+  -e DATABASE_URL=$DATABASE_URL \
+  -e R2_BUCKET=$R2_BUCKET -e R2_ACCESS_KEY_ID=... -e R2_SECRET_ACCESS_KEY=... \
+  -e PLEXO_URL=... -e PLEXO_SERVICE_KEY=... \
+  fonto-worker:dev
+```
+
+**Retry semantics:** 5 attempts with exponential backoff starting at 2s
+(`defaultJobOptions` in `lib/queue/queues.ts`). Successful jobs are kept for
+the last 1000; failures are kept indefinitely for inspection. The
+`assets.processing_error` column records the most recent failure message;
+`assets.processing_attempts` counts every worker pickup.
+
+**Inspect queues:** `/admin/jobs` shows live waiting/active/completed/failed
+counts. A full bull-board UI is deferred to Phase 0.6 — see the TODO in
+`app/admin/jobs/page.tsx`.
 
 ## Built on Plexo
 
