@@ -7,20 +7,15 @@
         "https://app.getfonto.com",
         "https://myfonto.com"
       ],
-      "AllowedMethods": ["PUT", "GET", "HEAD", "PATCH", "POST", "DELETE"],
+      "AllowedMethods": ["PUT", "GET", "HEAD", "POST", "DELETE"],
       "AllowedHeaders": [
         "Content-Type",
         "Content-Length",
         "Content-MD5",
         "x-amz-content-sha256",
-        "x-amz-date",
-        "Upload-Length",
-        "Upload-Offset",
-        "Upload-Metadata",
-        "Tus-Resumable",
-        "Tus-Extension"
+        "x-amz-date"
       ],
-      "ExposeHeaders": ["ETag", "Upload-Offset", "Tus-Resumable", "Location"],
+      "ExposeHeaders": ["ETag"],
       "MaxAgeSeconds": 3600
     }
   ]
