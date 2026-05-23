@@ -33,8 +33,15 @@ export interface DirectUploadResult {
     filename: string;
     capturedAt: string | null;
     createdAt: string;
+    /** Hamming distance for pHash matches, cosine similarity for CLIP. */
     distance: number;
     thumbUrl: string;
+    // Phase 4.5 — discriminates the detection path so the UI can vary
+    // wording ("Near-duplicate" vs "Visually similar") and confidence
+    // can drive banner styling. Optional for back-compat with older
+    // servers that haven't shipped Phase 4.5 yet.
+    method?: "phash" | "clip";
+    confidence?: "high" | "medium" | "low";
   };
 }
 

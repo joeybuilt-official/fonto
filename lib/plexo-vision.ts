@@ -225,3 +225,11 @@ export async function ocrImage(
 
   return { lines, modelId };
 }
+
+// --- Phase 4.5 compatibility alias ---------------------------------------
+
+/**
+ * Alias for `visionConfigured`. Phase 4.5's dedup code prefers this longer
+ * name; both point at the same env probe.
+ */
+export const visionServiceConfigured = visionConfigured;

@@ -12,6 +12,7 @@ import type {
   OcrJob,
   ThumbnailJob,
   ClassifyJob,
+  ClipDedupCheckJob,
   WebhookDeliveryJob,
   EmbedAssetJob,
 } from "./jobs";
@@ -35,6 +36,10 @@ export const QueueNames = {
   // Separate queue so vision-service outages don't backlog the asset
   // processing pipeline.
   ClipEmbedding: "clip-embedding",
+  // Phase 4.5 — CLIP-similarity dedup check. Low priority, second-pass
+  // after pHash. Distinct from the asset-processing queue so a slow vision
+  // service call never delays the main pipeline.
+  ClipDedupCheck: "clip-dedup-check",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -143,6 +148,30 @@ export function clipEmbeddingQueue(): Queue<EmbedAssetJob> {
   return q;
 }
 
+/**
+ * Phase 4.5 — CLIP-similarity dedup check queue. Jobs are tiny `{ assetId,
+ * workspaceId }` payloads; the worker reads the clip_vec from Postgres at
+ * run time. Re-enqueueing with a delay is the worker's strategy for "the
+ * embedding hasn't been computed yet" — keep `attempts` modest so a
+ * truly broken row doesn't spin forever.
+ */
+export function clipDedupCheckQueue(): Queue<ClipDedupCheckJob> {
+  const name = QueueNames.ClipDedupCheck;
+  const existing = cache.get(name);
+  if (existing) return existing as Queue<ClipDedupCheckJob>;
+  const q = new Queue<ClipDedupCheckJob>(name, {
+    connection: getRedisConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 30_000 },
+      removeOnComplete: 500,
+      removeOnFail: 100,
+    },
+  });
+  cache.set(name, q);
+  return q;
+}
+
 export function maintenanceQueue(): Queue<Record<string, never>> {
   const name = QueueNames.Maintenance;
   const existing = cache.get(name);
@@ -165,6 +194,7 @@ export function allQueues(): Queue[] {
   maintenanceQueue();
   webhookDeliveryQueue();
   clipEmbeddingQueue();
+  clipDedupCheckQueue();
   return Array.from(cache.values());
 }
 

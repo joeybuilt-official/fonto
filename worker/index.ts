@@ -28,13 +28,17 @@ import {
   GenerateThumbnailsJobSchema,
   WebhookDeliveryJobSchema,
   EmbedAssetJobSchema,
+  ClipDedupCheckJobSchema,
   maintenanceQueue,
   webhookDeliveryQueue,
+  clipDedupCheckQueue,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
   type EmbedAssetJob,
+  type ClipDedupCheckJob,
 } from "@/lib/queue";
+import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
 import {
   processAsset,
@@ -60,6 +64,29 @@ const WEBHOOK_CONCURRENCY = Math.max(
   parseInt(process.env.WEBHOOK_DELIVERY_CONCURRENCY ?? "4", 10),
   1
 );
+// Phase 4.5 — CLIP-similarity dedup check. Each job is one DB lookup + one
+// pgvector NN query. Modest concurrency keeps the index hot without
+// hammering Postgres.
+const CLIP_DEDUP_CONCURRENCY = Math.max(
+  parseInt(process.env.CLIP_DEDUP_WORKER_CONCURRENCY ?? "2", 10),
+  1
+);
+// Phase 4.5 — re-enqueue delay when the embedding isn't yet present on the
+// row (the upstream CLIP-embed job from Phase 4.2 hasn't completed). We don't
+// fail the job because there's nothing wrong; we just wait and try again.
+const CLIP_DEDUP_RETRY_DELAY_MS = Math.max(
+  parseInt(process.env.CLIP_DEDUP_RETRY_DELAY_MS ?? "30000", 10),
+  1000
+);
+// Phase 4.5 — CLIP similarity threshold. Mirrored from createAssetRow's
+// env-aware helper, but read here so the worker stays self-contained.
+function clipDedupThreshold(): number {
+  const raw = process.env.CLIP_DEDUP_THRESHOLD;
+  if (!raw) return 0.92;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > 1) return 0.92;
+  return n;
+}
 const WEBHOOK_TIMEOUT_MS = Math.max(
   parseInt(process.env.WEBHOOK_TIMEOUT_MS ?? "10000", 10),
   1000
@@ -577,6 +604,115 @@ function startClipEmbeddingWorker(): Worker<EmbedAssetJob> {
 }
 
 /**
+ * Phase 4.5 — CLIP-similarity dedup check worker. Pulled from the
+ * `clip-dedup-check` queue when either (a) the inline embed in
+ * `createAssetRow()` exceeded its budget, or (b) a backfill sweep enqueued
+ * the asset. Re-enqueues itself with a delay if the upstream CLIP-embed
+ * job (Phase 4.2) hasn't populated `clip_vec` yet — it's expected, not an
+ * error.
+ */
+function startClipDedupCheckWorker(): Worker<ClipDedupCheckJob> {
+  const w = new Worker<ClipDedupCheckJob>(
+    QueueNames.ClipDedupCheck,
+    async (job: Job<ClipDedupCheckJob>) => {
+      const log = logger.child({
+        queue: QueueNames.ClipDedupCheck,
+        jobId: job.id,
+        assetId: job.data?.assetId,
+        attempt: job.attemptsMade + 1,
+      });
+
+      const parsed = ClipDedupCheckJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid clip-dedup payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const { assetId, workspaceId } = parsed.data;
+
+      type ClipVecRow = { clip_vec: number[] | null; lifecycle_state: string };
+      let rows: ClipVecRow[] = [];
+      try {
+        const result = await db.execute<ClipVecRow>(
+          sql`SELECT clip_vec, lifecycle_state FROM fonto.assets WHERE id = ${assetId} LIMIT 1`
+        );
+        rows = Array.isArray(result)
+          ? (result as unknown as ClipVecRow[])
+          : ((result as unknown as { rows?: ClipVecRow[] }).rows ?? []);
+      } catch (err) {
+        log.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          "clip_vec column unavailable — skipping dedup check"
+        );
+        return { skipped: true, reason: "clip_vec column missing" };
+      }
+
+      const row = rows[0];
+      if (!row) return { skipped: true, reason: "asset missing" };
+      if (row.lifecycle_state !== "active") {
+        await db
+          .update(schema.assets)
+          .set({ clipDedupCheckedAt: new Date() })
+          .where(eq(schema.assets.id, assetId))
+          .catch(() => undefined);
+        return { skipped: true, reason: "lifecycle" };
+      }
+
+      if (!row.clip_vec || row.clip_vec.length === 0) {
+        log.info("clip_vec not yet populated; re-enqueuing");
+        await clipDedupCheckQueue().add(
+          JobNames.ClipDedupCheck,
+          { assetId, workspaceId },
+          { delay: CLIP_DEDUP_RETRY_DELAY_MS }
+        );
+        return { skipped: true, reason: "clip_vec pending" };
+      }
+
+      // Phase 4.3's nearestNeighbors signature: (workspaceId, vec, limit, threshold).
+      // 4.5 wanted a richer options object with excludeAssetId; filter inline.
+      const matches = (await nearestNeighbors(
+        workspaceId,
+        row.clip_vec,
+        5,
+        clipDedupThreshold()
+      )).filter((m) => m.assetId !== assetId);
+
+      if (matches.length > 0) {
+        log.info(
+          { matchCount: matches.length, top: matches[0] },
+          "clip-dedup match(es) found"
+        );
+      }
+
+      await db
+        .update(schema.assets)
+        .set({ clipDedupCheckedAt: new Date() })
+        .where(eq(schema.assets.id, assetId));
+
+      return { matches: matches.length };
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: CLIP_DEDUP_CONCURRENCY,
+    }
+  );
+
+  w.on("failed", (job, err) =>
+    logger.error(
+      { queue: QueueNames.ClipDedupCheck, jobId: job?.id, err: err.message },
+      "clip-dedup worker error"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error(
+      { queue: QueueNames.ClipDedupCheck, err: err.message },
+      "clip-dedup worker error"
+    )
+  );
+
+  return w;
+}
+
+/**
  * BullMQ marker class to opt out of retries. Re-implemented here to avoid
  * importing the named export by path — the type lives at the package root
  * but has historically shifted between versions.
@@ -713,6 +849,7 @@ async function main(): Promise<void> {
       webhookConcurrency: WEBHOOK_CONCURRENCY,
       webhookTimeoutMs: WEBHOOK_TIMEOUT_MS,
       clipEmbedConcurrency: CLIP_EMBED_CONCURRENCY,
+      clipDedupConcurrency: CLIP_DEDUP_CONCURRENCY,
       metricsPort: METRICS_PORT,
       redisUrl: (process.env.REDIS_URL ?? "redis://valkey:6379").replace(/\/\/[^@]*@/, "//***@"),
     },
@@ -733,6 +870,8 @@ async function main(): Promise<void> {
   workers.push(startWebhookDeliveryWorker());
   // Phase 4.2 — CLIP image embeddings.
   workers.push(startClipEmbeddingWorker());
+  // Phase 4.5 — CLIP-similarity dedup fallback consumer.
+  workers.push(startClipDedupCheckWorker());
   try {
     await ensureReaperSchedule();
   } catch (err) {
