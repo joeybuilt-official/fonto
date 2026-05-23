@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { isWebhookEventType, SubscribableEventTypes } from "@/lib/webhooks/events";
 
@@ -61,6 +62,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No workspace found" }, { status: 400 });
   }
   const workspaceId = workspaces[0].id;
+
+  // Phase 3.1 — editor required to create webhook endpoints. The plan's open
+  // question of admin-vs-editor was decided in favour of editor per ADR 0004
+  // (no role beyond owner/editor/viewer ships in 3.1).
+  const gate = await requireWorkspaceAccessOrResponse(user.id, workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   const parsed = CreateBody.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {

@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { and, desc, eq, inArray, isNull, or, gt } from "drizzle-orm";
 import { hashPassword } from "@/lib/share-links/password";
@@ -94,6 +95,11 @@ export async function POST(request: NextRequest) {
   if (!resolvedWorkspaceId) {
     return NextResponse.json({ error: "Target not found" }, { status: 404 });
   }
+
+  // Phase 3.1 — creating a share link is a mutation against the workspace
+  // that owns the shared resource; editor or higher required.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, resolvedWorkspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   let expiresAt: Date | null = null;
   if (body.expiresAt !== undefined && body.expiresAt !== null) {

@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, inArray } from "drizzle-orm";
 import { emitWebhook } from "@/lib/webhooks/emit";
@@ -31,6 +32,10 @@ export async function POST(request: NextRequest) {
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
   const workspaceId = workspaces[0].id;
+
+  // Phase 3.1 — editor required to create tags.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   const body = (await request.json()) as { name: string; color?: string };
   if (!body.name?.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });

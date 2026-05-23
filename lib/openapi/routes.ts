@@ -34,6 +34,7 @@ import {
   ShareLinkEnvelopeSchema,
   ShareLinksEnvelopeSchema,
   WorkspacesEnvelopeSchema,
+  WorkspaceMembersEnvelopeSchema,
   ErrorSchema,
   UuidSchema,
   HexColorSchema,
@@ -74,6 +75,27 @@ registry.registerPath({
   responses: {
     200: json(WorkspacesEnvelopeSchema, "Workspaces the caller can access."),
     401: errorResponse("Not authenticated."),
+  },
+});
+
+// ---------------------------------------------------------------------------
+// /api/v1/workspace/members
+// ---------------------------------------------------------------------------
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/workspace/members",
+  summary: "List members + roles of the caller's primary workspace",
+  description:
+    "Phase 3.1 — returns the workspace_memberships rows for the caller's " +
+    "primary workspace. Viewer or higher is sufficient. The Phase 3.3 " +
+    "invitation flow will add POST/DELETE handlers on the same path.",
+  tags: ["Workspaces"],
+  security: AUTH_SECURITY,
+  responses: {
+    200: json(WorkspaceMembersEnvelopeSchema, "Members of the workspace."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Caller is not a member of any workspace."),
+    404: errorResponse("Workspace not found or caller has no membership."),
   },
 });
 

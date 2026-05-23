@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { and, eq, inArray } from "drizzle-orm";
 
@@ -24,6 +25,22 @@ export async function DELETE(
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
   const workspaceIds = workspaces.map((w) => w.id);
+
+  // Phase 3.1 — revoking a share is a mutation; resolve the link's workspace
+  // and gate on editor.
+  const [link] = await db
+    .select({ workspaceId: schema.shareLinks.workspaceId })
+    .from(schema.shareLinks)
+    .where(
+      and(
+        eq(schema.shareLinks.id, id),
+        inArray(schema.shareLinks.workspaceId, workspaceIds)
+      )
+    )
+    .limit(1);
+  if (!link) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const gate = await requireWorkspaceAccessOrResponse(user.id, link.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   const result = await db
     .update(schema.shareLinks)

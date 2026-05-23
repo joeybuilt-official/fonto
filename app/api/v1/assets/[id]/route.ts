@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { getS3Client, assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
@@ -77,6 +78,10 @@ export async function PATCH(
     .limit(1);
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Phase 3.1 — mutating an asset requires editor or higher on its workspace.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
+
   updates.seq = await nextSeq(existing.workspaceId, "asset");
 
   const [updated] = await db
@@ -123,6 +128,10 @@ export async function DELETE(
     .limit(1);
 
   if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Phase 3.1 — deleting an asset requires editor or higher.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, asset.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   const key = assetStorageKey(asset.workspaceId, asset.id, asset.filename);
   const legacyKey = assetStorageKeyLegacy(asset.workspaceId, asset.id, asset.filename);

@@ -31,6 +31,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { Readable } from "stream";
 import { getAuthUser } from "@/lib/auth/server";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
 import { getS3Client } from "@/lib/r2";
@@ -154,6 +155,14 @@ export async function POST(
   if (!upload) {
     return NextResponse.json({ error: "Upload not found" }, { status: 404 });
   }
+
+  // Phase 3.1 — completing an upload requires editor or higher on the
+  // workspace the upload was initiated against. The check is redundant with
+  // the userId filter above (an editor can only init for workspaces they
+  // belong to) but defends against role-downgrade races.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, upload.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
+
   if (upload.state === "completed" && upload.assetId) {
     // Idempotent replay: return the same asset.
     const [existingAsset] = await db

@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
 
@@ -41,6 +42,16 @@ export async function PATCH(
   if (!workspaces.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const workspaceIds = workspaces.map((w) => w.id);
 
+  // Phase 3.1 — editor required to mutate a smart collection.
+  const [existing] = await db
+    .select({ workspaceId: schema.smartCollections.workspaceId })
+    .from(schema.smartCollections)
+    .where(and(eq(schema.smartCollections.id, id), inArray(schema.smartCollections.workspaceId, workspaceIds)))
+    .limit(1);
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
+
   const body = await request.json() as { name?: string; query?: Record<string, unknown> };
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = String(body.name).trim();
@@ -67,6 +78,16 @@ export async function DELETE(
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const workspaceIds = workspaces.map((w) => w.id);
+
+  // Phase 3.1 — editor required to delete a smart collection.
+  const [existing] = await db
+    .select({ workspaceId: schema.smartCollections.workspaceId })
+    .from(schema.smartCollections)
+    .where(and(eq(schema.smartCollections.id, id), inArray(schema.smartCollections.workspaceId, workspaceIds)))
+    .limit(1);
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   const [deleted] = await db
     .delete(schema.smartCollections)

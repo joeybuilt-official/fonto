@@ -72,6 +72,28 @@ aws s3api put-bucket-cors \
   --cors-configuration file://docs/r2-cors.json
 ```
 
+## Multi-user workspaces
+
+Fonto workspaces moved from single-owner to multi-member in Phase 3.1. The model is intentionally narrow: three roles, no custom RBAC, no guest accounts. See [ADR 0004 — Multi-user workspace memberships](docs/adr/0004-multi-user-workspace-memberships.md) and [ADR 0007 — Link-only external sharing](docs/adr/0007-link-only-external-sharing.md) for the full rationale.
+
+| Role | Can do |
+|---|---|
+| **owner** | Everything. Billing, delete workspace, manage members. One per workspace. |
+| **editor** | Upload, edit, delete assets; manage collections, tags, projects, shares, webhooks. Cannot remove the owner or delete the workspace. |
+| **viewer** | Read-only. Sees the workspace and downloads originals (subject to workspace policy). |
+
+Membership lives in `fonto.workspace_memberships`. Every mutating `/api/v1/*` route calls `requireWorkspaceAccessOrResponse(userId, workspaceId, 'editor')` from `lib/authz.ts` — there is no `where: { workspaceId }` query that doesn't go through the gate. Run `pnpm tsx scripts/check-workspace-isolation.ts` for the audited manifest.
+
+### Inviting a collaborator
+
+The invite flow (`workspace_invitations` table + magic-link acceptance) lands in **Phase 3.3** (migration 0014). Until then, memberships can only be created by the application — `ensurePersonalWorkspace` writes the owner row, no one else gets membership. `GET /api/v1/workspace/members` lists who's currently on the workspace.
+
+### Schema notes
+
+- `workspaces.user_id` lingers as the "personal owner pointer" for one release — Phase 3.x may drop it once all call sites are migrated to `assertWorkspaceAccess`.
+- Backfill in migration `0012` inserts one `owner` membership for every existing workspace, idempotently.
+- `workspace_memberships.user_id` is `text` (matches Better Auth's `auth.user.id`), not uuid — keep this in mind if you write raw SQL.
+
 ## Sharing
 
 Fonto generates public, link-only share URLs for individual assets, collections, and (eventually) smart sets. Per [ADR 0004](docs/adr/0004-multi-user-workspace-memberships.md), external sharing is link-only — anonymous viewers never get a workspace membership.

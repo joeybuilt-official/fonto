@@ -384,3 +384,34 @@ export const ShareLinksEnvelopeSchema = z.object({
 export const WorkspacesEnvelopeSchema = z.object({
   workspaces: z.array(WorkspaceSchema),
 });
+
+// Phase 3.1 — workspace memberships.
+export const WorkspaceRoleSchema = z.enum(["owner", "editor", "viewer"]).openapi({
+  description: "Caller's role on the workspace. owner > editor > viewer.",
+});
+
+export const WorkspaceMemberSchema = registry.register(
+  "WorkspaceMember",
+  z
+    .object({
+      id: UuidSchema,
+      workspaceId: UuidSchema,
+      userId: z.string().openapi({
+        description: "Better Auth user.id (text). Cross-schema FK to auth.user.",
+      }),
+      role: WorkspaceRoleSchema,
+      createdAt: IsoDateTimeSchema,
+      createdBy: z
+        .string()
+        .nullable()
+        .openapi({
+          description:
+            "Inviter's user id, or NULL for backfilled owners and auto-provisioned memberships.",
+        }),
+    })
+    .openapi({ description: "A user's role on a workspace (ADR 0004)." })
+);
+
+export const WorkspaceMembersEnvelopeSchema = z.object({
+  members: z.array(WorkspaceMemberSchema),
+});

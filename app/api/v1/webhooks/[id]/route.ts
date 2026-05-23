@@ -11,6 +11,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { isWebhookEventType, SubscribableEventTypes } from "@/lib/webhooks/events";
 
@@ -67,6 +68,10 @@ export async function PATCH(
   const existing = await loadOwned(id, workspaceId);
   if (!existing) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
+  // Phase 3.1 — editor required to modify webhook endpoints.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
+
   const parsed = PatchBody.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json(
@@ -120,6 +125,10 @@ export async function DELETE(
   const { id } = await context.params;
   const existing = await loadOwned(id, workspaceId);
   if (!existing) return NextResponse.json({ error: "not_found" }, { status: 404 });
+
+  // Phase 3.1 — editor required to delete webhook endpoints.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   // Cascade-delete pending deliveries for this endpoint. Past deliveries
   // (delivered/failed) are kept for audit; pending ones would otherwise
