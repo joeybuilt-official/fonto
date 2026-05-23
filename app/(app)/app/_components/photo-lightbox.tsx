@@ -2,10 +2,10 @@
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
-  Trash2, Plus, Loader2, Share2, Check, Copy, Settings
+  Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star
 } from "lucide-react";
 import type { Asset } from "./photo-card";
 import { ConfirmButton } from "@/components/confirm-button";
@@ -313,6 +313,10 @@ export interface PhotoLightboxProps {
   hasPrev: boolean;
   hasNext: boolean;
   onTrash?: (assetId: string) => void;
+  // Phase 3.4 — optional callback so the parent can keep its asset list in
+  // sync with favorite/rating mutations (otherwise the grid would still show
+  // the old badge state when the lightbox closes).
+  onAssetUpdate?: (assetId: string, patch: { isFavorite?: boolean; rating?: number }) => void;
 }
 
 export function PhotoLightbox({
@@ -323,6 +327,7 @@ export function PhotoLightbox({
   hasPrev,
   hasNext,
   onTrash,
+  onAssetUpdate,
 }: PhotoLightboxProps) {
   const [url, setUrl] = useState<string | null>(null);
   const [urlLoading, setUrlLoading] = useState(true);
@@ -334,6 +339,17 @@ export function PhotoLightbox({
   const [shareCopied, setShareCopied] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  // Phase 3.4 — local optimistic state for favorite + rating. Initialized
+  // from the incoming asset; the F / 1..5 / 0 keyboard shortcuts and the
+  // toolbar buttons flip these immediately, then fire PATCH and revert on
+  // failure. Reset whenever the visible asset id changes (prev/next nav).
+  const [isFavorite, setIsFavorite] = useState<boolean>(!!asset.isFavorite);
+  const [rating, setRating] = useState<number>(asset.rating ?? 0);
+
+  useEffect(() => {
+    setIsFavorite(!!asset.isFavorite);
+    setRating(asset.rating ?? 0);
+  }, [asset.id, asset.isFavorite, asset.rating]);
 
   useEffect(() => {
     setUrl(null);
@@ -373,16 +389,94 @@ export function PhotoLightbox({
       });
   }, [asset.id]);
 
+  // Phase 3.4 — optimistic PATCH for { isFavorite } / { rating }. Flips the
+  // local state first, fires the request, reverts on failure. Bubbles the
+  // committed state up so the grid's badges stay coherent when the lightbox
+  // closes.
+  const mutateAsset = useCallback(
+    async (patch: { isFavorite?: boolean; rating?: number }) => {
+      const prev = { isFavorite, rating };
+      if (patch.isFavorite !== undefined) setIsFavorite(patch.isFavorite);
+      if (patch.rating !== undefined) setRating(patch.rating);
+      try {
+        const res = await fetch(`/api/v1/assets/${asset.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) throw new Error(`PATCH ${res.status}`);
+        onAssetUpdate?.(asset.id, patch);
+      } catch {
+        // Revert on failure. The optimistic UX is "snappy" — the only time
+        // the user sees a flip-back is if the request actually fails, which
+        // is rare for a single-row PATCH.
+        setIsFavorite(prev.isFavorite);
+        setRating(prev.rating);
+      }
+    },
+    [asset.id, isFavorite, rating, onAssetUpdate]
+  );
+
+  const toggleFavorite = useCallback(() => {
+    void mutateAsset({ isFavorite: !isFavorite });
+  }, [mutateAsset, isFavorite]);
+
+  const setRatingValue = useCallback(
+    (next: number) => {
+      // Tapping the current value clears it — matches Lightroom / Photos.
+      const target = next === rating ? 0 : next;
+      void mutateAsset({ rating: target });
+    },
+    [mutateAsset, rating]
+  );
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-      if (e.key === "ArrowLeft" && hasPrev) onPrev();
-      if (e.key === "ArrowRight" && hasNext) onNext();
-      if (e.key === "i") setShowPanel((v) => !v);
+      // Phase 3.4 — never swallow keystrokes when the user is typing into a
+      // text field. Without this guard, tagging "5g network" would mash a
+      // 5-star rating into the visible asset.
+      const t = e.target;
+      if (
+        t instanceof HTMLInputElement ||
+        t instanceof HTMLTextAreaElement ||
+        t instanceof HTMLSelectElement ||
+        (t instanceof HTMLElement && t.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key === "ArrowLeft" && hasPrev) {
+        onPrev();
+        return;
+      }
+      if (e.key === "ArrowRight" && hasNext) {
+        onNext();
+        return;
+      }
+      if (e.key === "i") {
+        setShowPanel((v) => !v);
+        return;
+      }
+      // Phase 3.4 — F toggles favorite, 0..5 sets rating.
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        toggleFavorite();
+        return;
+      }
+      if (e.key >= "0" && e.key <= "5") {
+        e.preventDefault();
+        void mutateAsset({ rating: Number(e.key) });
+        return;
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, onPrev, onNext, hasPrev, hasNext]);
+  }, [onClose, onPrev, onNext, hasPrev, hasNext, toggleFavorite, mutateAsset]);
 
   async function handleAddTag(tagId: string) {
     const res = await fetch(`/api/v1/assets/${asset.id}/tags`, {
@@ -496,17 +590,61 @@ export function PhotoLightbox({
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/95">
       {/* Top bar */}
-      <div className="flex h-12 items-center justify-between px-4 shrink-0 border-b border-white/10">
+      <div className="flex h-12 items-center justify-between gap-4 px-4 shrink-0 border-b border-white/10">
         <button
           onClick={onClose}
-          className="rounded-full p-1.5 text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+          className="rounded-full p-1.5 text-white/70 hover:text-white hover:bg-white/10 transition-colors shrink-0"
         >
           <X className="h-5 w-5" />
         </button>
-        <p className="text-sm text-white/70 truncate max-w-xs">{asset.filename}</p>
+
+        {/* Phase 3.4 — favorite + 5-star toolbar. Centered between the close
+            button and the info toggle. Keyboard shortcuts: F toggles
+            favorite, 1..5 set rating, 0 clears. */}
+        <div className="flex items-center gap-3 min-w-0 flex-1 justify-center">
+          <button
+            onClick={toggleFavorite}
+            className={`rounded-full p-1.5 transition-colors shrink-0 ${
+              isFavorite
+                ? "text-red-400 bg-white/10 hover:bg-white/15"
+                : "text-white/60 hover:text-white hover:bg-white/10"
+            }`}
+            title={isFavorite ? "Unfavorite (F)" : "Favorite (F)"}
+            aria-label={isFavorite ? "Unfavorite" : "Favorite"}
+            aria-pressed={isFavorite}
+          >
+            <Heart className="h-5 w-5" fill={isFavorite ? "currentColor" : "none"} />
+          </button>
+          <div className="flex items-center gap-0.5" role="radiogroup" aria-label="Rating">
+            {[1, 2, 3, 4, 5].map((n) => {
+              const active = n <= rating;
+              return (
+                <button
+                  key={n}
+                  onClick={() => setRatingValue(n)}
+                  className={`p-1 transition-colors ${
+                    active
+                      ? "text-yellow-400 hover:text-yellow-300"
+                      : "text-white/30 hover:text-white/70"
+                  }`}
+                  title={`Rate ${n}/5 (${n})`}
+                  aria-label={`Rate ${n} out of 5`}
+                  aria-checked={rating === n}
+                  role="radio"
+                >
+                  <Star className="h-4 w-4" fill={active ? "currentColor" : "none"} />
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-sm text-white/70 truncate max-w-xs" title={asset.filename}>
+            {asset.filename}
+          </p>
+        </div>
+
         <button
           onClick={() => setShowPanel((v) => !v)}
-          className={`rounded-full p-1.5 transition-colors ${
+          className={`rounded-full p-1.5 transition-colors shrink-0 ${
             showPanel ? "text-white bg-white/15" : "text-white/70 hover:text-white hover:bg-white/10"
           }`}
           title="Toggle info panel (i)"

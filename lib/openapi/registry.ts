@@ -163,6 +163,15 @@ export const AssetSchema = registry.register(
       thumbnailKey: z.string().nullable().optional(),
       previewKey: z.string().nullable().optional(),
       thumbnailGeneratedAt: IsoDateTimeSchema.nullable().optional(),
+      // Phase 3.4 — favorites + 0..5 star rating. Both default to the
+      // "unset" sentinel (false / 0) so existing rows after migration 0015
+      // surface as not-favorited, unrated.
+      isFavorite: z.boolean().openapi({
+        description: "Heart toggle. True if the user has favorited this asset.",
+      }),
+      rating: z.number().int().min(0).max(5).openapi({
+        description: "0..5 star rating. 0 means unrated.",
+      }),
       createdAt: IsoDateTimeSchema,
       updatedAt: IsoDateTimeSchema,
     })

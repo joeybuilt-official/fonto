@@ -203,6 +203,20 @@ registry.registerPath({
               lifecycleState: z
                 .enum(["active", "archivable", "archived", "trashed"])
                 .optional(),
+              // Phase 3.4 — favorites + 0..5 star ratings.
+              isFavorite: z.boolean().optional().openapi({
+                description: "Toggle the heart/favorite flag.",
+              }),
+              rating: z
+                .number()
+                .int()
+                .min(0)
+                .max(5)
+                .optional()
+                .openapi({ description: "Set the star rating. 0 clears." }),
+              // Phase 0 — soft-delete / restore shortcuts used by the UI.
+              trash: z.boolean().optional(),
+              restore: z.boolean().optional(),
             })
             .openapi({ description: "Partial update payload." }),
         },

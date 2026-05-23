@@ -4,7 +4,7 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, gte, SQL } from "drizzle-orm";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
@@ -25,15 +25,31 @@ export async function GET(request: NextRequest) {
   const validLifecycles = ["active", "archivable", "archived", "trashed"];
   const lifecycleFilter = validLifecycles.includes(lifecycle) ? lifecycle : "active";
 
+  // Phase 3.4 — favorites + ratings filter chips. Driven by query params:
+  //   ?favorite=1       → only favorited assets
+  //   ?ratingMin=4      → only assets rated >= 4 (1..5; clamped)
+  // Anything else is ignored. Partial indexes (assets_workspace_favorite_idx
+  // and assets_workspace_rating_idx) cover both predicates cheaply.
+  const favoriteParam = searchParams.get("favorite");
+  const onlyFavorites = favoriteParam === "1" || favoriteParam === "true";
+  const ratingMinRaw = searchParams.get("ratingMin");
+  const ratingMinParsed = ratingMinRaw == null ? NaN : Number.parseInt(ratingMinRaw, 10);
+  const ratingMin =
+    Number.isInteger(ratingMinParsed) && ratingMinParsed >= 1 && ratingMinParsed <= 5
+      ? ratingMinParsed
+      : null;
+
+  const where: SQL[] = [
+    eq(schema.assets.workspaceId, workspaceId),
+    eq(schema.assets.lifecycleState, lifecycleFilter),
+  ];
+  if (onlyFavorites) where.push(eq(schema.assets.isFavorite, true));
+  if (ratingMin !== null) where.push(gte(schema.assets.rating, ratingMin));
+
   const rows = await db
     .select()
     .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.workspaceId, workspaceId),
-        eq(schema.assets.lifecycleState, lifecycleFilter)
-      )
-    )
+    .where(and(...where))
     .orderBy(desc(schema.assets.createdAt));
 
   const filtered = rows

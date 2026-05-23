@@ -618,9 +618,50 @@ state of each row, not every intermediate write. Each row appears at most
 once per sync window — at its current seq.
 
 **What bumps an asset's seq.** Creation, lifecycle change (trash/restore/
-archive/purge), and share-link create/revoke (share state is visible to the
-client). Internal fields that the client never sees (e.g. internal queue
-attempt counters) do not bump seq.
+archive/purge), share-link create/revoke (share state is visible to the
+client), and favorite/rating changes. Internal fields that the client
+never sees (e.g. internal queue attempt counters) do not bump seq.
+
+## Library UX
+
+### Favorites and ratings
+
+Every asset carries a binary favorite (heart) and a 0..5 star rating, both
+editable from the lightbox top toolbar. 0 means "unrated"; the badge on the
+grid only appears for `rating > 0`. The favorite shows as a small heart in
+the corner of the grid card whenever it's set.
+
+**Keyboard shortcuts** (active while the lightbox is open and no text input
+has focus):
+
+| Key  | Action                |
+|------|-----------------------|
+| `F`  | Toggle favorite        |
+| `1`–`5` | Set rating (1..5)   |
+| `0`  | Clear rating           |
+
+The updates are optimistic — the heart and stars flip immediately, the
+`PATCH /api/v1/assets/{id}` fires in the background, and the UI reverts only
+if the request fails.
+
+**Filtering the timeline.** The chip row above the grid has two facet chips,
+"Favorites" and "Rated 4+". They stack on top of the mime filter (Photos /
+PDF / Text). Server-side they map to `?favorite=1` and `?ratingMin=4` on
+`GET /api/v1/assets`.
+
+**Smart collections.** The smart-collection query DSL accepts two new
+top-level keys that AND with everything else in the saved query:
+
+```json
+{
+  "favorite": true,
+  "ratingMin": 4,
+  "conditions": [{ "field": "mimeType", "op": "startsWith", "value": "image/" }]
+}
+```
+
+Both columns are indexed with partial BTrees (`is_favorite = true`, `rating > 0`)
+so the predicates are cheap even on large libraries.
 
 ## Built on Plexo
 

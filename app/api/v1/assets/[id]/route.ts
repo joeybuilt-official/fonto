@@ -31,6 +31,8 @@ export async function PATCH(
     lifecycleState?: string;
     trash?: boolean;
     restore?: boolean;
+    isFavorite?: boolean;
+    rating?: number;
   };
 
   const updates: Record<string, unknown> = {};
@@ -57,6 +59,31 @@ export async function PATCH(
     emitEvent = LIFECYCLE_EVENTS[body.lifecycleState] ?? null;
   }
 
+  // Phase 3.4 — favorites + 0..5 star ratings. Either or both can come in
+  // alongside (or independent of) a lifecycle mutation. The DB also has a
+  // CHECK constraint on `rating IN [0,5]`; we validate here so callers get
+  // a 400 instead of a 500.
+  if (body.isFavorite !== undefined) {
+    if (typeof body.isFavorite !== "boolean") {
+      return NextResponse.json({ error: "isFavorite must be boolean" }, { status: 400 });
+    }
+    updates.isFavorite = body.isFavorite;
+  }
+  if (body.rating !== undefined) {
+    if (
+      typeof body.rating !== "number" ||
+      !Number.isInteger(body.rating) ||
+      body.rating < 0 ||
+      body.rating > 5
+    ) {
+      return NextResponse.json(
+        { error: "rating must be an integer 0..5" },
+        { status: 400 }
+      );
+    }
+    updates.rating = body.rating;
+  }
+
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
@@ -78,6 +105,11 @@ export async function PATCH(
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   updates.seq = await nextSeq(existing.workspaceId, "asset");
+
+  // TODO(phase-3.2): once `recordAuditEvent(AuditAction.AssetUpdate, ...)`
+  // lands, emit an audit row here covering the field-level diff (which of
+  // lifecycle/isFavorite/rating changed). Favorites + ratings are client-
+  // visible so they want to show up in the per-asset history.
 
   const [updated] = await db
     .update(schema.assets)

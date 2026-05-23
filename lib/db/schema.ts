@@ -106,6 +106,12 @@ export const assets = fontoSchema.table(
     // the sync stream exposes. NULL only on rows older than the 0009 backfill
     // (the backfill stamps everything; new rows must always set this).
     seq: bigint("seq", { mode: "bigint" }),
+    // Phase 3.4 — favorites + 0..5 star ratings. `isFavorite` is a binary
+    // "loved" toggle (heart icon); `rating` is a 0..5 integer where 0 means
+    // "unrated". Both are surfaced as filter chips on the timeline and as
+    // smart-collection facets (`{ "favorite": true }`, `{ "ratingMin": N }`).
+    isFavorite: boolean("is_favorite").notNull().default(false),
+    rating: integer("rating").notNull().default(0),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
@@ -124,6 +130,14 @@ export const assets = fontoSchema.table(
     // Phase 2.3 — delta-sync cursor scans: GET /sync/assets?cursor=<seq>
     // walks rows in seq order per workspace.
     index("assets_workspace_seq_idx").on(table.workspaceId, table.seq),
+    // Phase 3.4 — favorites/ratings facets. Partial indexes keep the BTree
+    // small (most assets are neither favorited nor rated).
+    index("assets_workspace_favorite_idx")
+      .on(table.workspaceId)
+      .where(sql`${table.isFavorite} = true`),
+    index("assets_workspace_rating_idx")
+      .on(table.workspaceId, table.rating)
+      .where(sql`${table.rating} > 0`),
   ]
 );
 
