@@ -9,6 +9,7 @@ import { getS3Client, assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { plexoPublishEvent } from "@/lib/plexo";
 import { nextSeq } from "@/lib/db/seq";
+import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 const LIFECYCLE_EVENTS: Record<string, string> = {
   archivable: "ext.fonto.asset.archivable",
@@ -106,11 +107,35 @@ export async function PATCH(
     });
   }
 
+  // Phase 3.2 — audit. Pick the most specific action verb so the admin
+  // viewer's filter dropdown is useful (restore/archive/delete are distinct
+  // from a generic update).
+  const auditAction: AuditAction =
+    body.trash
+      ? AuditAction.AssetDelete
+      : body.restore
+        ? AuditAction.AssetRestore
+        : updates.lifecycleState === "archived"
+          ? AuditAction.AssetArchive
+          : AuditAction.AssetUpdate;
+  void recordAuditEvent({
+    workspaceId: existing.workspaceId,
+    userId: user.id,
+    action: auditAction,
+    targetType: "asset",
+    targetId: id,
+    metadata: {
+      lifecycleState: updated.lifecycleState,
+      filename: updated.filename,
+    },
+    request,
+  });
+
   return NextResponse.json({ asset: updated });
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -157,6 +182,20 @@ export async function DELETE(
     filename: asset.filename,
     mimeType: asset.mimeType,
     reason: "hard-delete",
+  });
+
+  void recordAuditEvent({
+    workspaceId: asset.workspaceId,
+    userId: user.id,
+    action: AuditAction.AssetDelete,
+    targetType: "asset",
+    targetId: id,
+    metadata: {
+      filename: asset.filename,
+      mimeType: asset.mimeType,
+      hardDelete: true,
+    },
+    request,
   });
 
   return NextResponse.json({ deleted: true });

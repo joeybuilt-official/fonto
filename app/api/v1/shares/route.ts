@@ -21,6 +21,7 @@ import { db, schema } from "@/lib/db";
 import { and, desc, eq, inArray, isNull, or, gt } from "drizzle-orm";
 import { hashPassword } from "@/lib/share-links/password";
 import { generateUniqueSlug } from "@/lib/share-links/slug";
+import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 type TargetType = "asset" | "collection" | "set";
 
@@ -162,6 +163,24 @@ export async function POST(request: NextRequest) {
 
   // TODO: bump assets.seq via nextSeq() once 2.3 lands so clients learn about
   // new shares. TODO: emit "share.created" webhook event once 2.4 lands.
+
+  void recordAuditEvent({
+    workspaceId: resolvedWorkspaceId,
+    userId: user.id,
+    action: AuditAction.ShareCreate,
+    targetType: "share_link",
+    targetId: link.id,
+    metadata: {
+      targetType,
+      targetId,
+      slug: link.slug,
+      passwordProtected: link.passwordHash !== null,
+      allowDownload: link.allowDownload,
+      maxViews: link.maxViews,
+      expiresAt: link.expiresAt?.toISOString() ?? null,
+    },
+    request,
+  });
 
   const origin = request.headers.get("origin") ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
   return NextResponse.json({

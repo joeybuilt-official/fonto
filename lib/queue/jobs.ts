@@ -51,6 +51,12 @@ export type ClassifyJob = z.infer<typeof ClassifyJobSchema>;
 export const ReapStuckAssetsJobSchema = z.object({}).strict();
 export type ReapStuckAssetsJob = z.infer<typeof ReapStuckAssetsJobSchema>;
 
+// Phase 3.2 — audit_log retention reaper. Empty payload; the reaper reads
+// AUDIT_RETENTION_DAYS at tick time so an env change propagates without a
+// scheduler re-register.
+export const PruneAuditLogJobSchema = z.object({}).strict();
+export type PruneAuditLogJob = z.infer<typeof PruneAuditLogJobSchema>;
+
 // Phase 2.4 — outbound webhook delivery. Payload references a row in
 // fonto.webhook_deliveries; the worker rehydrates everything else from
 // Postgres so the job stays tiny + crash-safe.
@@ -75,6 +81,8 @@ export const JobNames = {
   GenerateThumbnails: "generate-thumbnails",
   Classify: "classify",
   ReapStuckAssets: "reap-stuck-assets",
+  // Phase 3.2 — daily audit_log retention sweep.
+  PruneAuditLog: "prune-audit-log",
   // Phase 2.4 — outbound webhook delivery (one job per delivery attempt).
   DeliverWebhook: "deliver-webhook",
 } as const;

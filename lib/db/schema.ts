@@ -553,6 +553,59 @@ export const shareLinkViews = fontoSchema.table(
 // expires_at) so a future swap to the plugin would be a column-rename, not a
 // rewrite. Token shape is what the plan calls for: `fonto_pat_` prefix, both
 // `Authorization: Bearer` and `x-api-key` accepted, scopes = read/write/admin.
+// Phase 3.2 — append-only audit log.
+//
+// Records every state-mutating action a user performs in the workspace
+// (asset upload/update/delete, share create/revoke, token mint/revoke,
+// webhook CRUD, etc.). The log is append-only: no UPDATE, no DELETE except
+// by the retention reaper (default 90d, `AUDIT_RETENTION_DAYS`).
+//
+// Privacy notes:
+//   - Raw IPs are NEVER persisted. The `ipAddress` column stores the IP
+//     truncated to /24 (IPv4) or /48 (IPv6). Same stance as Phase 2.5's
+//     share_link_views (which hashes; here we truncate because the data is
+//     consumed by the workspace owner and a coarse subnet is enough to
+//     spot rogue/foreign access without enabling per-user tracking).
+//   - `userAgent` is truncated to 500 chars at write time.
+//
+// `workspaceId` is nullable because some events are user-scoped rather than
+// workspace-scoped (e.g. token.mint / token.revoke happen against a user,
+// not a single workspace). Workspace-scoped events MUST set it.
+//
+// `targetId` is `text` (not uuid) because some targets are slugs (shares),
+// hex secrets (tokens), or composite keys we may want to extend.
+export const auditLog = fontoSchema.table(
+  "audit_log",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id"),
+    userId: text("user_id").notNull(),
+    action: text("action").notNull(),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    // IPv4 truncated to /24, IPv6 truncated to /48. NEVER the raw IP.
+    ipAddress: text("ip_address"),
+    // Truncated to 500 chars at write time.
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("audit_log_workspace_created_idx").on(
+      table.workspaceId,
+      sql`${table.createdAt} desc`
+    ),
+    index("audit_log_user_created_idx").on(
+      table.userId,
+      sql`${table.createdAt} desc`
+    ),
+    index("audit_log_action_created_idx").on(
+      table.action,
+      sql`${table.createdAt} desc`
+    ),
+  ]
+);
+
 export const apiKeys = fontoSchema.table(
   "api_keys",
   {

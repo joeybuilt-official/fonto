@@ -14,6 +14,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { isWebhookEventType, SubscribableEventTypes } from "@/lib/webhooks/events";
+import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 const CreateBody = z.object({
   url: z.string().url(),
@@ -100,6 +101,19 @@ export async function POST(request: NextRequest) {
       description: description ?? null,
     })
     .returning();
+
+  void recordAuditEvent({
+    workspaceId,
+    userId: user.id,
+    action: AuditAction.WebhookCreate,
+    targetType: "webhook_endpoint",
+    targetId: endpoint.id,
+    metadata: {
+      url: endpoint.url,
+      enabledEvents: endpoint.enabledEvents,
+    },
+    request,
+  });
 
   // Single-show secret reveal: only return the secret on this response.
   // Subsequent GETs will not include it.

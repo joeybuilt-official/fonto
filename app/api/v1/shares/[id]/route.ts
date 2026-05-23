@@ -13,9 +13,10 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { and, eq, inArray } from "drizzle-orm";
+import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -52,7 +53,10 @@ export async function DELETE(
         eq(schema.shareLinks.revoked, false)
       )
     )
-    .returning({ id: schema.shareLinks.id });
+    .returning({
+      id: schema.shareLinks.id,
+      workspaceId: schema.shareLinks.workspaceId,
+    });
 
   if (!result.length) {
     return NextResponse.json({ error: "Not found or already revoked" }, { status: 404 });
@@ -60,6 +64,15 @@ export async function DELETE(
 
   // TODO: bump assets.seq via nextSeq() once 2.3 lands. TODO: emit
   // "share.revoked" webhook event once 2.4 lands.
+
+  void recordAuditEvent({
+    workspaceId: result[0].workspaceId,
+    userId: user.id,
+    action: AuditAction.ShareRevoke,
+    targetType: "share_link",
+    targetId: id,
+    request,
+  });
 
   return NextResponse.json({ revoked: true });
 }

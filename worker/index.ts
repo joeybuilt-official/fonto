@@ -35,6 +35,7 @@ import {
 } from "@/lib/queue";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
 import { processAsset, reapStuckAssets, generateThumbnails } from "@/lib/processing";
+import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -76,6 +77,13 @@ const METRICS_PORT = Math.max(parseInt(process.env.WORKER_METRICS_PORT ?? "9464"
 // integration tests can dial it down to seconds without code changes.
 const REAPER_INTERVAL_MS = Math.max(
   parseInt(process.env.REAPER_INTERVAL_MS ?? `${5 * 60 * 1000}`, 10),
+  1000
+);
+
+// Phase 3.2 — audit log retention reaper. Default once per day. Configurable
+// so integration tests can dial it down to seconds.
+const AUDIT_PRUNE_INTERVAL_MS = Math.max(
+  parseInt(process.env.AUDIT_PRUNE_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
   1000
 );
 
@@ -526,6 +534,12 @@ function startMaintenanceWorker(): Worker {
         );
         return result;
       }
+      if (job.name === JobNames.PruneAuditLog) {
+        // Phase 3.2 — daily audit retention sweep. The pruner itself emits
+        // structured pino logs (component=audit.prune); we just delegate.
+        const result = await pruneAuditLog();
+        return result;
+      }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");
       return null;
     },
@@ -567,6 +581,23 @@ async function ensureReaperSchedule(): Promise<void> {
   logger.info(
     { intervalMs: REAPER_INTERVAL_MS, jobName: JobNames.ReapStuckAssets },
     "reaper schedule registered"
+  );
+}
+
+/**
+ * Phase 3.2 — register the daily audit-log retention sweep on the
+ * maintenance queue. Same idempotent `upsertJobScheduler` pattern as the
+ * stuck-asset reaper so re-running boot is safe.
+ */
+async function ensureAuditPruneSchedule(): Promise<void> {
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.PruneAuditLog,
+    { every: AUDIT_PRUNE_INTERVAL_MS },
+    { name: JobNames.PruneAuditLog }
+  );
+  logger.info(
+    { intervalMs: AUDIT_PRUNE_INTERVAL_MS, jobName: JobNames.PruneAuditLog },
+    "audit prune schedule registered"
   );
 }
 
@@ -621,6 +652,14 @@ async function main(): Promise<void> {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
       "failed to register reaper schedule — sweeps disabled until next boot"
+    );
+  }
+  try {
+    await ensureAuditPruneSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register audit prune schedule — retention disabled until next boot"
     );
   }
 
