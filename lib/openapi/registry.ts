@@ -162,6 +162,14 @@ export const AssetSchema = registry.register(
       exif: z.record(z.string(), z.unknown()).nullable().optional(),
       latitude: z.number().nullable().optional(),
       longitude: z.number().nullable().optional(),
+      // Phase 5.2 — reverse-geocoded place name. NULL when GPS is missing
+      // or no city sits within ~200 km (open ocean, polar regions).
+      placeName: z.string().nullable().optional().openapi({
+        description:
+          'Reverse-geocoded "City, CC" derived from (latitude, longitude). ' +
+          "See `lib/geocoder.ts`.",
+        example: "Reykjavík, IS",
+      }),
       cameraMake: z.string().nullable().optional(),
       cameraModel: z.string().nullable().optional(),
       lensModel: z.string().nullable().optional(),
@@ -877,4 +885,48 @@ export const ClusterStatsSchema = registry.register(
 
 export const ClusterStatsEnvelopeSchema = z.object({
   stats: ClusterStatsSchema,
+});
+
+// --- Phase 5.2 — map (within-bbox) ----------------------------------------
+//
+// Trimmed projection of `assets` for the map viewport query — just enough to
+// position a marker, render a mini-thumbnail icon, and label the tooltip.
+// Distinct from `AssetSchema` because returning the full row × 5000 markers
+// would be wasteful for what the map UI actually consumes.
+export const MapAssetSchema = registry.register(
+  "MapAsset",
+  z
+    .object({
+      id: UuidSchema,
+      latitude: z.number().min(-90).max(90),
+      longitude: z.number().min(-180).max(180),
+      thumbnailUrl: z
+        .string()
+        .nullable()
+        .openapi({
+          description:
+            "Endpoint that 302s to the signed CDN URL for the 256px thumbnail. " +
+            "NULL when the asset hasn't been thumbnailed yet.",
+        }),
+      capturedAt: IsoDateTimeSchema.nullable(),
+      placeName: z
+        .string()
+        .nullable()
+        .openapi({
+          description:
+            'Reverse-geocoded "City, CC" derived from (latitude, longitude) ' +
+            "via the offline GeoNames cities500 dataset. NULL until the " +
+            "geocoder has run for this row.",
+          example: "Reykjavík, IS",
+        }),
+    })
+    .openapi({
+      description:
+        "Compact asset projection for the map viewport query. " +
+        "Trimmed to keep payloads under ~1 MB at the 5k row cap.",
+    })
+);
+
+export const MapAssetsEnvelopeSchema = z.object({
+  assets: z.array(MapAssetSchema),
 });

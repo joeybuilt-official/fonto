@@ -28,6 +28,7 @@ import {
 // of pgvector. The module and its callers are gone; pHash NN now happens
 // in-DB via findPHashNearDuplicate() above.
 import { extractExif } from "@/lib/exif";
+import { nearestPlace, formatPlaceName } from "@/lib/geocoder";
 import { assetProcessingQueue, clipDedupCheckQueue, JobNames } from "@/lib/queue";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { nextSeq } from "@/lib/db/seq";
@@ -445,6 +446,20 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
   const { phash, colors } = await computePerceptualMetadata(buffer, mimeType);
   const exifData = await extractExif(buffer, mimeType);
 
+  // Phase 5.2 — reverse-geocode the EXIF GPS pair to a human-readable place
+  // name ("Reykjavík, IS") for timeline + map UX. Skips when either coord is
+  // missing; returns null on a polar / open-ocean photo. The lookup is
+  // O(log n) over an in-memory KDBush so the upload latency hit is sub-ms.
+  let placeName: string | null = null;
+  if (exifData.latitude != null && exifData.longitude != null) {
+    try {
+      const hit = await nearestPlace(exifData.latitude, exifData.longitude);
+      if (hit) placeName = formatPlaceName(hit);
+    } catch (err) {
+      console.warn("[fonto] reverse-geocode failed:", err);
+    }
+  }
+
   let possibleDuplicate: PossibleDuplicate | null = null;
   if (phash != null) {
     const match = await findPHashNearDuplicate(workspaceId, phash);
@@ -490,6 +505,7 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
       exif: exifData.raw,
       latitude: exifData.latitude,
       longitude: exifData.longitude,
+      placeName,
       cameraMake: exifData.cameraMake,
       cameraModel: exifData.cameraModel,
       lensModel: exifData.lensModel,

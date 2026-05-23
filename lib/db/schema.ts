@@ -134,6 +134,11 @@ export const assets = fontoSchema.table(
     // GPS coordinates lifted out of EXIF for indexable map queries.
     latitude: doublePrecision("latitude"),
     longitude: doublePrecision("longitude"),
+    // Phase 5.2 — reverse-geocoded place name ("Reykjavík, IS") derived from
+    // (latitude, longitude) via the offline GeoNames cities500 dataset (see
+    // `lib/geocoder.ts`). NULL when either coord is missing, the geocoder
+    // hasn't run yet, or no city lies within ~200 km (open ocean, polar).
+    placeName: text("place_name"),
     // Camera identity. Free-text — vendor strings vary wildly.
     cameraMake: text("camera_make"),
     cameraModel: text("camera_model"),

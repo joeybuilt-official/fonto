@@ -1102,6 +1102,50 @@ A future v2 will cluster results by CLIP similarity inside 24h windows
 ("trip to Iceland day 3" instead of "47 photos from 2023-05-23") — see the
 `TODO(v2)` in `app/api/v1/memories/route.ts`.
 
+## Map / GPS / reverse geocoding
+
+Phase 5.2 surfaces every geo-tagged asset on an interactive map (MapLibre GL
+JS + OpenStreetMap raster tiles + supercluster for client-side hierarchical
+clustering). The page lives at `/app/map`; on every viewport change it
+debounces (350 ms) and refetches `/api/v1/assets/within-bbox`.
+
+Each asset row carries a reverse-geocoded `place_name` (`"Reykjavík, IS"`)
+derived from `(latitude, longitude)` via the offline **GeoNames cities500**
+dataset (every populated place with ≥500 residents, ~190k entries, ~9 MB
+uncompressed TSV — see `lib/geocoder.ts`). The lookup uses a `kdbush`
+spatial index built once per process and cached; the lookup is `O(log n)`
+plus a haversine scan over the bbox-filtered candidates.
+
+The repo only ships a ~50-line placeholder of the dataset so the geocoder
+code path runs in CI / local dev without committing 9 MB of TSV. **Before
+the first production deploy, materialise the full file:**
+
+```bash
+pnpm tsx scripts/fetch-geonames.ts
+```
+
+That downloads `cities500.zip` from `download.geonames.org`, unzips it into
+`data/geonames/cities500.tsv`, and is idempotent (re-running overwrites in
+place). The script needs `unzip` on PATH (Alpine: `apk add --no-cache
+unzip`). Bake it into the production Dockerfile or the first-boot init step
+of the deployment.
+
+GeoNames is **CC-BY-4.0**; the map page renders the required OSM tile
+attribution in the footer. If you swap the tile source, swap the
+attribution string in `app/(app)/app/map/page.tsx` to match.
+
+**Backfill existing assets** (idempotent — only touches rows with GPS but no
+`place_name`):
+
+```bash
+pnpm backfill:places
+pnpm backfill:places -- --batch=50 --dry-run
+```
+
+Run it again after a future cities500 refresh — the WHERE clause picks up
+rows the previous pass left unmatched (e.g. mid-ocean photos that suddenly
+match a new tiny island entry).
+
 ## Stacks
 
 Phase 5.5 groups related assets — RAW+JPEG of the same shot, an iPhone burst,
