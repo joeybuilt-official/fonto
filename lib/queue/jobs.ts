@@ -90,6 +90,16 @@ export const WebhookDeliveryJobSchema = z.object({
 });
 export type WebhookDeliveryJob = z.infer<typeof WebhookDeliveryJobSchema>;
 
+// Phase 5.1 — face detection + ArcFace embedding job. Payload is tiny: the
+// worker reads the asset (and its thumbnail derivative) from Postgres/R2 at
+// run time, posts to the Plexo vision sidecar, and inserts
+// `fonto.face_instances` rows.
+export const FaceDetectJobSchema = z.object({
+  assetId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+});
+export type FaceDetectJob = z.infer<typeof FaceDetectJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -112,6 +122,10 @@ export const JobNames = {
   // inline embed in createAssetRow() exceeds the inline budget, or as a
   // backfill sweep.
   ClipDedupCheck: "clip-dedup-check",
+  // Phase 5.1 — face detection + ArcFace embedding for a single asset.
+  // Enqueued after thumbnails complete; the worker writes
+  // `fonto.face_instances` rows.
+  FaceDetect: "face-detect",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

@@ -15,6 +15,7 @@ import type {
   ClipDedupCheckJob,
   WebhookDeliveryJob,
   EmbedAssetJob,
+  FaceDetectJob,
 } from "./jobs";
 
 export const QueueNames = {
@@ -40,6 +41,9 @@ export const QueueNames = {
   // after pHash. Distinct from the asset-processing queue so a slow vision
   // service call never delays the main pipeline.
   ClipDedupCheck: "clip-dedup-check",
+  // Phase 5.1 — face detection + ArcFace embedding. Separate queue so a
+  // sidecar outage on /v1/faces/detect doesn't backlog the CLIP queue.
+  FaceDetect: "face-detect",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -172,6 +176,42 @@ export function clipDedupCheckQueue(): Queue<ClipDedupCheckJob> {
   return q;
 }
 
+/**
+ * Phase 5.1 — face detection + ArcFace embedding queue. Network-bound (POST
+ * to plexo-vision /v1/faces/detect). Concurrency is controlled by the
+ * worker via FACE_DETECT_CONCURRENCY env (default 2).
+ *
+ * Jobs include both the detection pass (RetinaFace or equivalent) and the
+ * 512-dim embedding pass — the sidecar batches both behind a single call.
+ * If the sidecar is unconfigured the worker no-ops with a skip reason.
+ */
+export function faceDetectQueue(): Queue<FaceDetectJob> {
+  const name = QueueNames.FaceDetect;
+  const existing = cache.get(name);
+  if (existing) return existing as Queue<FaceDetectJob>;
+  const q = new Queue<FaceDetectJob>(name, {
+    connection: getRedisConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: 1000,
+      removeOnFail: 500,
+    },
+  });
+  cache.set(name, q);
+  return q;
+}
+
+/**
+ * Enqueue a face-detect job for an asset. Thin wrapper that lets producers
+ * stay decoupled from the queue handle (and dodge an explicit import in
+ * dynamic-import sites like `lib/assets/createAssetRow.ts`). Fire-and-forget;
+ * the worker reads everything else from Postgres/R2.
+ */
+export async function addFaceDetectJob(payload: FaceDetectJob): Promise<void> {
+  await faceDetectQueue().add("face-detect", payload);
+}
+
 export function maintenanceQueue(): Queue<Record<string, never>> {
   const name = QueueNames.Maintenance;
   const existing = cache.get(name);
@@ -195,6 +235,7 @@ export function allQueues(): Queue[] {
   webhookDeliveryQueue();
   clipEmbeddingQueue();
   clipDedupCheckQueue();
+  faceDetectQueue();
   return Array.from(cache.values());
 }
 

@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Joeybuilt LLC
+//
+// Phase 5.1 — GET /api/v1/persons.
+//
+// Lists the caller's primary workspace's persons (id, name, cover_face_id,
+// instance_count, sample face thumbnail URL), ordered by instance_count desc.
+// Hidden persons are excluded by default; pass `?hidden=true` to include.
+//
+// The sample thumbnail URL points at the asset the cover face belongs to —
+// crop is rendered client-side via the bbox on the face row (the People grid
+// uses a CSS object-position / background-position trick). For asset URL
+// resolution we reuse the existing `/api/v1/assets/:id/url` helper.
+export const dynamic = "force-dynamic";
+
+import { NextRequest, NextResponse } from "next/server";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { getAuthUser } from "@/lib/auth/server";
+import { getUserWorkspaces } from "@/lib/workspace";
+import { db, schema } from "@/lib/db";
+
+interface PersonOut {
+  id: string;
+  workspaceId: string;
+  name: string | null;
+  coverFaceId: string | null;
+  instanceCount: number;
+  hidden: boolean;
+  createdAt: string;
+  updatedAt: string;
+  // The asset the cover face is on (so the client can render a crop).
+  // NULL when the person has no faces yet, or coverFaceId is stale.
+  coverAssetId: string | null;
+  coverBbox: { x: number; y: number; w: number; h: number } | null;
+}
+
+export async function GET(request: NextRequest) {
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const workspaces = await getUserWorkspaces(user.id);
+  if (!workspaces.length) return NextResponse.json({ persons: [] });
+  const workspaceIds = workspaces.map((w) => w.id);
+
+  const includeHidden = request.nextUrl.searchParams.get("hidden") === "true";
+
+  const where = includeHidden
+    ? inArray(schema.persons.workspaceId, workspaceIds)
+    : and(
+        inArray(schema.persons.workspaceId, workspaceIds),
+        eq(schema.persons.hidden, false)
+      );
+
+  const rows = await db
+    .select()
+    .from(schema.persons)
+    .where(where)
+    .orderBy(desc(schema.persons.instanceCount));
+
+  // Resolve cover face -> asset + bbox in a single batch lookup.
+  const coverFaceIds = rows
+    .map((r) => r.coverFaceId)
+    .filter((id): id is string => typeof id === "string");
+
+  const facesById = new Map<
+    string,
+    { assetId: string; bbox: unknown }
+  >();
+  if (coverFaceIds.length > 0) {
+    const faceRows = await db
+      .select({
+        id: schema.faceInstances.id,
+        assetId: schema.faceInstances.assetId,
+        bbox: schema.faceInstances.bbox,
+      })
+      .from(schema.faceInstances)
+      .where(inArray(schema.faceInstances.id, coverFaceIds));
+    for (const f of faceRows) {
+      facesById.set(f.id, { assetId: f.assetId, bbox: f.bbox });
+    }
+  }
+
+  const persons: PersonOut[] = rows.map((p) => {
+    const cover = p.coverFaceId ? facesById.get(p.coverFaceId) : undefined;
+    const bb = cover?.bbox as
+      | { x?: unknown; y?: unknown; w?: unknown; h?: unknown }
+      | undefined;
+    const bbox =
+      bb &&
+      typeof bb.x === "number" &&
+      typeof bb.y === "number" &&
+      typeof bb.w === "number" &&
+      typeof bb.h === "number"
+        ? { x: bb.x, y: bb.y, w: bb.w, h: bb.h }
+        : null;
+    return {
+      id: p.id,
+      workspaceId: p.workspaceId,
+      name: p.name,
+      coverFaceId: p.coverFaceId,
+      instanceCount: p.instanceCount,
+      hidden: p.hidden,
+      createdAt: p.createdAt.toISOString(),
+      updatedAt: p.updatedAt.toISOString(),
+      coverAssetId: cover?.assetId ?? null,
+      coverBbox: bbox,
+    };
+  });
+
+  return NextResponse.json({ persons });
+}
