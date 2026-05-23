@@ -4,17 +4,23 @@
       "ID": "fonto-direct-upload",
       "AllowedOrigins": [
         "http://localhost:3500",
-        "https://app.getfonto.com"
+        "https://app.getfonto.com",
+        "https://myfonto.com"
       ],
-      "AllowedMethods": ["PUT", "GET", "HEAD"],
+      "AllowedMethods": ["PUT", "GET", "HEAD", "PATCH", "POST", "DELETE"],
       "AllowedHeaders": [
         "Content-Type",
         "Content-Length",
         "Content-MD5",
         "x-amz-content-sha256",
-        "x-amz-date"
+        "x-amz-date",
+        "Upload-Length",
+        "Upload-Offset",
+        "Upload-Metadata",
+        "Tus-Resumable",
+        "Tus-Extension"
       ],
-      "ExposeHeaders": ["ETag"],
+      "ExposeHeaders": ["ETag", "Upload-Offset", "Tus-Resumable", "Location"],
       "MaxAgeSeconds": 3600
     }
   ]
