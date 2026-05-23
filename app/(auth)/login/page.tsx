@@ -2,19 +2,42 @@
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { signIn, signUp } from "@/lib/auth/client";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
-export default function LoginPage() {
+function LoginPageInner() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const searchParams = useSearchParams();
+  // Invitation hand-off (Phase 3.3): the accept page sends users here with
+  // ?callback=/invitations/<token>&invitation=<token>&email=<addr>. After
+  // a successful sign-in OR sign-up we push the user back to `callback`,
+  // which retriggers the accept POST.
+  const callback = searchParams.get("callback");
+  const invitation = searchParams.get("invitation");
+  const presetEmail = searchParams.get("email");
+  const [email, setEmail] = useState(presetEmail ?? "");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [isSignUp, setIsSignUp] = useState(false);
+  // Default to the signup form when arriving from an invitation — the
+  // common case is a brand-new user.
+  const [isSignUp, setIsSignUp] = useState(!!invitation);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (presetEmail) setEmail(presetEmail);
+  }, [presetEmail]);
+
+  const safeCallback = (() => {
+    // Only honour callback if it's a same-origin relative path. Prevents
+    // open-redirect via a crafted ?callback=https://attacker.example/.
+    if (!callback) return null;
+    if (!callback.startsWith("/")) return null;
+    if (callback.startsWith("//")) return null;
+    return callback;
+  })();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -35,7 +58,7 @@ export default function LoginPage() {
           return;
         }
       }
-      router.push("/app/dashboard");
+      router.push(safeCallback ?? "/app/dashboard");
     } catch {
       setError("Something went wrong");
     } finally {
@@ -112,5 +135,20 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  // useSearchParams requires a Suspense boundary in App Router.
+  return (
+    <Suspense
+      fallback={
+        <div className="flex flex-1 items-center justify-center bg-background px-4">
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        </div>
+      }
+    >
+      <LoginPageInner />
+    </Suspense>
   );
 }

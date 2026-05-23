@@ -645,3 +645,58 @@ export const apiKeys = fontoSchema.table(
     index("api_keys_secret_hash_idx").on(table.secretHash),
   ]
 );
+
+// Phase 3.3 — workspace invitations.
+//
+// Email-keyed invitations that produce `workspace_memberships` rows on
+// acceptance. See ADR 0004 for the full multi-user model.
+//
+// Token storage: PLAINTEXT random 32-byte URL-safe value (unlike PATs which
+// are hashed). Rationale: invitations are short-lived (7 days), have one
+// acceptable use, and the settings UI needs to be able to re-show the URL
+// when the original recipient has lost the email. The attack surface is
+// dramatically smaller than for long-lived PATs.
+export const workspaceInvitations = fontoSchema.table(
+  "workspace_invitations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // Invited address. Compared case-insensitively against `auth.user.email`
+    // at acceptance time. We store the canonical lowercased form on insert.
+    email: text("email").notNull(),
+    // Role granted on acceptance. Owners cannot be invited — they're minted
+    // when the workspace is created. Promote a member to owner via a future
+    // membership-update endpoint, not by re-inviting.
+    role: text("role").notNull(),
+    // Random 32-byte base64url. Used as the public URL segment AND the
+    // lookup key — see comment above.
+    token: text("token").notNull(),
+    // Better Auth `user.id` of the inviter. Used to render "X invited you"
+    // on the accept page.
+    invitedBy: text("invited_by").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    // Resolved at acceptance — the Better Auth `user.id` of the user that
+    // claimed the invite. NULL until acceptance.
+    acceptedByUserId: text("accepted_by_user_id"),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    // Hard cap, default 7 days from create. Override via env
+    // `WORKSPACE_INVITATION_TTL_DAYS`.
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // Tokens are unique — the lookup key for /accept and the public GET.
+    uniqueIndex("workspace_invitations_token_idx").on(table.token),
+    // "Pending invitations in this workspace" — the settings UI filters
+    // on (workspaceId, acceptedAt IS NULL, revokedAt IS NULL, expiresAt > now).
+    index("workspace_invitations_workspace_state_idx").on(
+      table.workspaceId,
+      table.acceptedAt,
+      table.revokedAt,
+      table.expiresAt
+    ),
+    // "All invitations addressed to <email>" — used to surface pending
+    // invitations after a new user completes signup with `?invitation=`.
+    index("workspace_invitations_email_idx").on(table.email),
+  ]
+);

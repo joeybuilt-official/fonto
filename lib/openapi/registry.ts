@@ -355,6 +355,68 @@ export const ApiKeySchema = registry.register(
     })
 );
 
+// --- Workspace invitations (Phase 3.3) ------------------------------------
+
+export const WorkspaceInvitationSchema = registry.register(
+  "WorkspaceInvitation",
+  z
+    .object({
+      id: UuidSchema,
+      workspaceId: UuidSchema,
+      email: z.string().email().openapi({
+        description: "Invited email address (lowercased on insert).",
+      }),
+      role: z.enum(["editor", "viewer"]).openapi({
+        description:
+          "Role granted on acceptance. Owners cannot be invited — promote " +
+          "an existing member instead.",
+      }),
+      token: z.string().openapi({
+        description:
+          "Plaintext URL-safe token. Stored in the clear so the settings UI " +
+          "can re-show the URL; the short TTL (7d default) bounds the risk.",
+      }),
+      url: z.string().url().openapi({
+        description:
+          "Fully-qualified acceptance URL — `{APP_URL}/invitations/{token}`.",
+      }),
+      invitedBy: z.string().openapi({
+        description: "Better Auth user.id of the inviter.",
+      }),
+      expiresAt: IsoDateTimeSchema,
+      createdAt: IsoDateTimeSchema,
+    })
+    .openapi({
+      description:
+        "Pending workspace invitation. See ADR 0004 for the multi-user model.",
+    })
+);
+
+// Public response for `GET /api/v1/workspace/invitations/:token` (no
+// auth required). Deliberately narrow: just enough to render the accept
+// page without leaking workspace/inviter identifiers.
+export const PublicInvitationViewSchema = registry.register(
+  "PublicInvitationView",
+  z
+    .object({
+      workspace: z.object({ name: z.string() }),
+      inviterEmail: z.string().email().nullable(),
+      inviterName: z.string().nullable(),
+      role: z.enum(["editor", "viewer"]),
+      email: z.string().email(),
+      state: z.enum(["pending", "accepted", "revoked", "expired"]),
+      expired: z.boolean(),
+      used: z.boolean(),
+      revoked: z.boolean(),
+      expiresAt: IsoDateTimeSchema,
+    })
+    .openapi({
+      description:
+        "Public view of an invitation, surfaced to the acceptance page " +
+        "before the recipient signs in.",
+    })
+);
+
 // --- Convenience: response shapes that wrap a single component ------------
 
 export const AssetEnvelopeSchema = z.object({ asset: AssetSchema });
@@ -384,7 +446,6 @@ export const ShareLinksEnvelopeSchema = z.object({
 export const WorkspacesEnvelopeSchema = z.object({
   workspaces: z.array(WorkspaceSchema),
 });
-
 // Phase 3.1 — workspace memberships.
 export const WorkspaceRoleSchema = z.enum(["owner", "editor", "viewer"]).openapi({
   description: "Caller's role on the workspace. owner > editor > viewer.",
@@ -414,4 +475,9 @@ export const WorkspaceMemberSchema = registry.register(
 
 export const WorkspaceMembersEnvelopeSchema = z.object({
   members: z.array(WorkspaceMemberSchema),
+});
+
+// Phase 3.3 — workspace invitations.
+export const WorkspaceInvitationEnvelopeSchema = z.object({
+  invitations: z.array(WorkspaceInvitationSchema),
 });

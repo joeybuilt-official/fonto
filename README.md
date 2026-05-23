@@ -148,6 +148,48 @@ Per-IP sliding-window: **30 requests / 60 seconds**, enforced on the `/share/*` 
 
 The raw client IP is never persisted. Each access row stores `sha256(SHARE_LINK_IP_SALT + ip)`. Set `SHARE_LINK_IP_SALT` per deployment (generate: `openssl rand -hex 32`) — rotating it invalidates all existing analytics (intentional). Referers are truncated to 500 chars.
 
+## Inviting members
+
+Workspaces are multi-user — the owner can invite collaborators as `editor` (upload, edit, delete) or `viewer` (read-only). Roles and the model are documented in [ADR 0004](docs/adr/0004-multi-user-workspace-memberships.md).
+
+### Sending an invitation
+
+From `/app/settings/members` enter an email and pick a role, or post to the API directly:
+
+```bash
+curl -X POST https://your-fonto.example/api/v1/workspace/invitations \
+  -H "content-type: application/json" \
+  -H "cookie: fonto.session_token=..." \
+  -d '{ "email": "friend@example.com", "role": "viewer" }'
+```
+
+The response includes the plaintext acceptance URL:
+
+```json
+{
+  "id": "…",
+  "token": "8tQ…",
+  "url": "https://your-fonto.example/invitations/8tQ…",
+  "expiresAt": "2026-05-30T17:24:00.000Z"
+}
+```
+
+Invitations expire after `WORKSPACE_INVITATION_TTL_DAYS` (default 7). They have one acceptable use.
+
+### Email delivery
+
+Phase 3.3 ships **without an email transport** — the parity plan defers email infrastructure (nodemailer + react-email) to Phase 7.3. Until then, share the URL from the response manually. The settings UI also surfaces a Copy link button on every pending invitation.
+
+### Acceptance flow
+
+1. Recipient opens `/invitations/{token}`. The page renders publicly (no login required for the metadata view).
+2. If signed in with the matching address → Accept POSTs to `/api/v1/workspace/invitations/{token}/accept`, the membership is created, and the user lands on the dashboard.
+3. If not signed in → the page links to `/login?callback=/invitations/{token}&invitation={token}&email=…`. After signup (the form defaults to signup when arriving via this link) the user is bounced back to the acceptance page, where the Accept button retries.
+
+### Revocation
+
+`DELETE /api/v1/workspace/invitations/{tokenOrId}` flips `revoked_at`. Already-accepted invitations cannot be revoked (the membership row is the source of truth at that point — revoke that instead).
+
 ## Tech Stack
 
 | Layer | Technology |

@@ -104,6 +104,24 @@ export default function SettingsPage() {
       </div>
 
       <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+        <h2 className="text-sm font-semibold text-foreground">Members</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-foreground">Workspace members</p>
+            <p className="text-xs text-muted-foreground">
+              Invite collaborators as editors or viewers.
+            </p>
+          </div>
+          <Link
+            href="/app/settings/members"
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+          >
+            Manage members
+          </Link>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
         <h2 className="text-sm font-semibold text-foreground">API access</h2>
         <div className="flex items-center justify-between">
           <div>
