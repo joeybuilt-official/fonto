@@ -771,6 +771,65 @@ top-level keys that AND with everything else in the saved query:
 Both columns are indexed with partial BTrees (`is_favorite = true`, `rating > 0`)
 so the predicates are cheap even on large libraries.
 
+## pgvector
+
+Vector data — CLIP image embeddings (Phase 4), ArcFace face embeddings
+(Phase 5), and eventually pHash recast as a dense vector — lives in the
+same `postgres` instance as every other Fonto table, via the
+[`pgvector`](https://github.com/pgvector/pgvector) extension. There is no
+separate vector store. See `docs/adr/0002-pgvector-not-falkordb.md` for
+the rationale; the short version is that `WHERE workspace_id = $1 AND
+lifecycle_state = 'active' ORDER BY clip_vec <=> $2 LIMIT 50` is a single
+index scan in Postgres and a cross-store join everywhere else.
+
+**Prerequisite.** The `vector` extension must be installable on
+`DATABASE_URL`. The shared `postgres` cluster has it; bare Postgres
+needs `apt-get install postgresql-NN-pgvector` on the host before
+migrations run. Probe at runtime:
+
+```bash
+curl -fsS http://localhost:3500/api/health?check=vector
+# {"ok":true,"check":"vector","timestamp":"..."}
+# 503 + a hint string if the extension isn't installed.
+```
+
+**Schema.** Migration `0017_pgvector_setup.sql` runs
+`CREATE EXTENSION IF NOT EXISTS vector`, adds `fonto.assets.clip_vec
+vector(512)`, and creates the partial HNSW index:
+
+```sql
+CREATE INDEX assets_clip_vec_hnsw_idx
+  ON fonto.assets
+  USING hnsw (clip_vec vector_cosine_ops)
+  WHERE clip_vec IS NOT NULL;
+```
+
+**HNSW vs IVFFlat.** We chose HNSW. It has higher build cost than IVFFlat
+but lower query latency at the recall floor we care about for
+text-to-image search. pgvector's defaults (`m = 16`,
+`ef_construction = 64`) are reasonable for libraries up to a few million
+vectors per workspace; revisit if recall slips. The index is partial
+(`WHERE clip_vec IS NOT NULL`) so it stays small until Phase 4.2 starts
+backfilling embeddings.
+
+**Migration order.** Apply `0017` **before** Phase 4.2's CLIP backfill —
+without the column the backfill writer has nowhere to put its output.
+On a large existing assets table `CREATE INDEX ... USING hnsw` can take
+hours; the build is safe to run on a live table (pgvector handles
+concurrent writes during the build), but plan a maintenance window if
+the library is sizeable.
+
+**Reading.** `lib/vectors/nearestNeighbors(workspaceId, queryVec, limit,
+threshold?)` runs the cosine kNN scan and returns
+`{ assetId, similarity }[]`. `lib/vectors/cosineSimilarity(a, b)` is the
+pure-JS equivalent for re-ranking or sanity checks.
+
+**FalkorDB retirement.** `lib/fonto-graph.ts` used to mirror pHashes into
+a FalkorDB sidecar for vector kNN. ADR 0002 retires that path. The
+module is now a stubbed no-op (every export returns `false` / `null`)
+kept for binary compatibility while the call sites in
+`lib/assets/createAssetRow.ts` get cleaned up in a follow-up PR.
+
 ## Audit log
 
 Every mutating action a user performs against a workspace (asset uploads,
