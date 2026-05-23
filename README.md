@@ -622,6 +622,30 @@ archive/purge), and share-link create/revoke (share state is visible to the
 client). Internal fields that the client never sees (e.g. internal queue
 attempt counters) do not bump seq.
 
+## Audit log
+
+Every mutating action a user performs against a workspace (asset uploads,
+updates, deletions; share-link creation and revocation; token mints and
+revocations; webhook CRUD; settings changes) is recorded to the
+`fonto.audit_log` table by `lib/audit.ts`'s `recordAuditEvent()` helper.
+
+Audit writes are **strictly fire-and-forget** — the helper swallows every
+error and logs a `component=audit.write` pino line on failure. Audit logging
+will never break a request path.
+
+**Privacy.** Raw client IPs are NEVER stored. The helper truncates IPv4 to
+/24 and IPv6 to /48 before writing. User-Agent strings are capped at 500
+characters. The full retention contract lives in ADR 0007.
+
+**Retention.** Rows older than `AUDIT_RETENTION_DAYS` (default 90) are
+deleted by a daily BullMQ maintenance job (`prune-audit-log`, registered
+in `worker/index.ts` alongside the stuck-asset reaper). The interval is
+configurable via `AUDIT_PRUNE_INTERVAL_MS` (default 24 h).
+
+**Viewing.** Workspace owners can browse the last 200 events in their
+workspace at `/app/settings/audit`, optionally filtered by action. There
+is no CSV/JSON export by design — the log lives in the admin UI only.
+
 ## Built on Plexo
 
 Fonto is a [Plexo](https://getplexo.com) App Profile. Asset classification, tag suggestions, and image description all route through Plexo's model gateway. Plexo also adds persistent memory — Fonto remembers tag preferences and classification corrections across sessions. See `lib/plexo.ts` and `lib/plexo-registration.ts` for the integration surface.

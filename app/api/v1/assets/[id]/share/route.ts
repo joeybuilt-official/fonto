@@ -12,6 +12,7 @@ import { db, schema } from "@/lib/db";
 import { eq, and, inArray, gt, desc, or, isNull } from "drizzle-orm";
 import { bumpAssetSeq } from "@/lib/db/seq";
 import { generateUniqueSlug } from "@/lib/share-links/slug";
+import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 const DEFAULT_TTL_HOURS = 24;
 const MAX_TTL_HOURS = 24 * 30;
@@ -112,6 +113,22 @@ export async function POST(
   // legacy endpoint is single-target / no-password and stays minimal —
   // the deprecation header already points consumers at the new API.
 
+  void recordAuditEvent({
+    workspaceId: asset.workspaceId,
+    userId: user.id,
+    action: AuditAction.ShareCreate,
+    targetType: "share_link",
+    targetId: link.id,
+    metadata: {
+      targetType: "asset",
+      targetId: asset.id,
+      slug: link.slug,
+      legacyRoute: true,
+      expiresAt: link.expiresAt?.toISOString() ?? null,
+    },
+    request,
+  });
+
   return NextResponse.json({
     token: link.token,
     slug: link.slug,
@@ -124,7 +141,7 @@ export async function POST(
  * DELETE — revoke all active share links for an asset.
  */
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -159,6 +176,18 @@ export async function DELETE(
     )
     .limit(1);
   if (asset) await bumpAssetSeq(asset.workspaceId, id);
+
+  if (asset) {
+    void recordAuditEvent({
+      workspaceId: asset.workspaceId,
+      userId: user.id,
+      action: AuditAction.ShareRevoke,
+      targetType: "asset",
+      targetId: id,
+      metadata: { legacyRoute: true, scope: "all-for-asset" },
+      request,
+    });
+  }
 
   return NextResponse.json({ revoked: true });
 }

@@ -13,6 +13,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { isWebhookEventType, SubscribableEventTypes } from "@/lib/webhooks/events";
+import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 const PatchBody = z.object({
   url: z.string().url().optional(),
@@ -103,11 +104,25 @@ export async function PATCH(
     .where(eq(schema.webhookEndpoints.id, id))
     .returning();
 
+  void recordAuditEvent({
+    workspaceId,
+    userId: user.id,
+    action: AuditAction.WebhookUpdate,
+    targetType: "webhook_endpoint",
+    targetId: id,
+    metadata: {
+      url: row.url,
+      enabledEvents: row.enabledEvents,
+      enabledChanged: parsed.data.enabled,
+    },
+    request,
+  });
+
   return NextResponse.json({ endpoint: publicEndpoint(row) });
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   const user = await getAuthUser();
@@ -136,6 +151,18 @@ export async function DELETE(
   await db
     .delete(schema.webhookEndpoints)
     .where(eq(schema.webhookEndpoints.id, id));
+
+  void recordAuditEvent({
+    workspaceId,
+    userId: user.id,
+    action: AuditAction.WebhookDelete,
+    targetType: "webhook_endpoint",
+    targetId: id,
+    metadata: {
+      url: existing.url,
+    },
+    request,
+  });
 
   return NextResponse.json({ ok: true });
 }

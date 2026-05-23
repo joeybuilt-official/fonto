@@ -9,6 +9,7 @@ import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
 import { detectMime } from "@/lib/mime";
+import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -196,6 +197,23 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
         .set({ state: "completed", assetId: asset.id })
         .where(eq(schema.uploadSessions.id, sessionId));
     }
+
+    // Phase 3.2 — audit. Fire-and-forget; never blocks the upload response.
+    void recordAuditEvent({
+      workspaceId,
+      userId: user.id,
+      action: AuditAction.AssetUpload,
+      targetType: "asset",
+      targetId: asset.id,
+      metadata: {
+        filename: file.name,
+        mimeType,
+        sizeBytes: file.size,
+        deduplicated: false,
+        legacyMultipart: true,
+      },
+      request,
+    });
 
     return NextResponse.json(
       {

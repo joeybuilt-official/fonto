@@ -35,6 +35,7 @@ import { db, schema } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
 import { getS3Client } from "@/lib/r2";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
+import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 const CompleteRequestSchema = z.object({
   // Optional, but accepted for symmetry with /init's response. We mainly
@@ -265,6 +266,22 @@ export async function POST(
     .update(schema.assetUploads)
     .set({ state: "completed", assetId: result.asset.id, updatedAt: new Date() })
     .where(eq(schema.assetUploads.id, uploadId));
+
+  void recordAuditEvent({
+    workspaceId: upload.workspaceId,
+    userId: user.id,
+    action: AuditAction.AssetUpload,
+    targetType: "asset",
+    targetId: result.asset.id,
+    metadata: {
+      filename: upload.filename,
+      mimeType: upload.mimeType,
+      sizeBytes: upload.sizeBytes,
+      deduplicated: result.deduplicated,
+      directUpload: true,
+    },
+    request,
+  });
 
   const status = result.deduplicated ? 200 : 201;
   return NextResponse.json(

@@ -19,6 +19,7 @@ import {
   listApiKeysForUser,
   type ApiKeyScope,
 } from "@/lib/auth/api-keys";
+import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 const ScopeEnum = z.enum(["read", "write", "admin"]);
 
@@ -84,6 +85,22 @@ export async function POST(req: Request) {
     name: body.name,
     scopes: body.scopes as ApiKeyScope[],
     expiresInDays: body.expiresInDays ?? null,
+  });
+
+  // Phase 3.2 — audit. Token mint is user-scoped (no workspaceId column on
+  // api_keys), so the audit row has no workspaceId either.
+  void recordAuditEvent({
+    workspaceId: null,
+    userId: ctx.user.id,
+    action: AuditAction.TokenMint,
+    targetType: "api_key",
+    targetId: created.id,
+    metadata: {
+      name: created.name,
+      scopes: created.scopes,
+      expiresAt: created.expiresAt?.toISOString() ?? null,
+    },
+    request: req,
   });
 
   // The plaintext `token` is returned EXACTLY ONCE here. The client must

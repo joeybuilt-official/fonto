@@ -6,9 +6,10 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/server";
 import { revokeApiKey } from "@/lib/auth/api-keys";
+import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 export async function DELETE(
-  _req: Request,
+  req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   const ctx = await getAuthContext();
@@ -26,5 +27,13 @@ export async function DELETE(
   if (!ok) {
     return NextResponse.json({ error: "Token not found" }, { status: 404 });
   }
+  void recordAuditEvent({
+    workspaceId: null,
+    userId: ctx.user.id,
+    action: AuditAction.TokenRevoke,
+    targetType: "api_key",
+    targetId: id,
+    request: req,
+  });
   return NextResponse.json({ ok: true });
 }
