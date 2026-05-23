@@ -773,6 +773,89 @@ export const apiKeys = fontoSchema.table(
   ]
 );
 
+// Phase 5.1 — face detection + ArcFace embedding + DBSCAN clustering.
+//
+// Two tables (see drizzle/migrations/0021_faces_persons.sql, already landed
+// in main + prod):
+//
+//   - `persons`         — one row per clustered identity. Built by the
+//                         DBSCAN clusterer in lib/faces/cluster.ts. Name +
+//                         cover face are user-edited via the People page.
+//   - `face_instances`  — one row per detected face on an asset. Carries
+//                         the normalised bbox, ArcFace 512-dim L2-normalised
+//                         embedding, detection confidence, and an optional
+//                         FK to a `persons` cluster.
+//
+// FKs across both directions are intentionally soft (matching the rest of
+// the schema's `correspondentId`/`documentTypeId` style). The route handlers
+// own lifecycle: delete a person -> faces detach (person_id = NULL); hide a
+// face -> excluded from the next clustering pass.
+export const persons = fontoSchema.table(
+  "persons",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // User-assigned display name. NULL = unnamed cluster (UI shows
+    // "Unnamed person" + cover thumbnail).
+    name: text("name"),
+    // Soft FK to face_instances.id — the avatar face. NULL = "fall back to
+    // the first face in the cluster" at render time.
+    coverFaceId: uuid("cover_face_id"),
+    // Hidden from the People page grid (false positives, strangers, kids
+    // the user doesn't want surfaced). Faces stay attached; only the
+    // cluster card is suppressed.
+    hidden: boolean("hidden").notNull().default(false),
+    // Denormalised count of face_instances pointing at this person. Kept
+    // in sync by the clusterer + merge/split route handlers.
+    instanceCount: integer("instance_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // People page grid: list workspace persons (excluding hidden) ordered
+    // by instance count desc. Matches the SQL index in 0021.
+    index("persons_workspace_visible_idx").on(
+      table.workspaceId,
+      table.hidden,
+      sql`${table.instanceCount} desc`
+    ),
+  ]
+);
+
+export const faceInstances = fontoSchema.table(
+  "face_instances",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    assetId: uuid("asset_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // Normalised bounding box (0..1) — { x, y, w, h }. Stored as jsonb for
+    // forward-compatibility (future: landmarks array, pose vector).
+    bbox: jsonb("bbox").notNull(),
+    // Detection confidence (RetinaFace / equivalent). 0..1.
+    confidence: real("confidence").notNull(),
+    // ArcFace 512-dim embedding. Unit-norm so cosine distance is
+    // 1 - dot(a, b). NULL between detect and embed steps.
+    embedding: vector("embedding", 512),
+    // DBSCAN cluster assignment. NULL means the face hasn't been clustered
+    // yet, or landed in DBSCAN noise (no cluster met minPts).
+    personId: uuid("person_id"),
+    // User-hidden flag (false positives, strangers). Hidden faces are
+    // excluded from clustering inputs on the next run.
+    hidden: boolean("hidden").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("face_instances_workspace_person_idx").on(
+      table.workspaceId,
+      table.personId
+    ),
+    index("face_instances_asset_idx").on(table.assetId),
+    // The HNSW pgvector index is declared in 0021 directly via raw SQL
+    // (Drizzle's index builder doesn't speak HNSW); we don't redeclare it
+    // here.
+  ]
+);
+
 // Phase 3.3 — workspace invitations.
 //
 // Email-keyed invitations that produce `workspace_memberships` rows on

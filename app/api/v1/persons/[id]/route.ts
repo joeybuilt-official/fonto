@@ -1,0 +1,232 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Joeybuilt LLC
+//
+// Phase 5.1 — /api/v1/persons/:id
+//   GET    — person detail + first N faces (default 24).
+//   PATCH  — { name?, hidden?, cover_face_id? }
+//   DELETE — detach faces (person_id -> NULL) then drop the person row.
+export const dynamic = "force-dynamic";
+
+import { NextRequest, NextResponse } from "next/server";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { getAuthUser } from "@/lib/auth/server";
+import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
+import { db, schema } from "@/lib/db";
+
+const DEFAULT_FACES_LIMIT = 24;
+const MAX_FACES_LIMIT = 200;
+
+async function loadPersonInWorkspaces(id: string, workspaceIds: string[]) {
+  const [row] = await db
+    .select()
+    .from(schema.persons)
+    .where(
+      and(
+        eq(schema.persons.id, id),
+        inArray(schema.persons.workspaceId, workspaceIds)
+      )
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const workspaces = await getUserWorkspaces(user.id);
+  if (!workspaces.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const workspaceIds = workspaces.map((w) => w.id);
+
+  const person = await loadPersonInWorkspaces(id, workspaceIds);
+  if (!person) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Viewer is enough to read.
+  const gate = await requireWorkspaceAccessOrResponse(
+    user.id,
+    person.workspaceId,
+    "viewer"
+  );
+  if (!gate.ok) return gate.response;
+
+  const limitRaw = Number(request.nextUrl.searchParams.get("limit") ?? "");
+  const limit = Math.min(
+    MAX_FACES_LIMIT,
+    Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : DEFAULT_FACES_LIMIT
+  );
+
+  const faces = await db
+    .select({
+      id: schema.faceInstances.id,
+      assetId: schema.faceInstances.assetId,
+      bbox: schema.faceInstances.bbox,
+      confidence: schema.faceInstances.confidence,
+      hidden: schema.faceInstances.hidden,
+      createdAt: schema.faceInstances.createdAt,
+    })
+    .from(schema.faceInstances)
+    .where(
+      and(
+        eq(schema.faceInstances.personId, person.id),
+        eq(schema.faceInstances.hidden, false)
+      )
+    )
+    .limit(limit);
+
+  return NextResponse.json({
+    person: {
+      id: person.id,
+      workspaceId: person.workspaceId,
+      name: person.name,
+      coverFaceId: person.coverFaceId,
+      instanceCount: person.instanceCount,
+      hidden: person.hidden,
+      createdAt: person.createdAt.toISOString(),
+      updatedAt: person.updatedAt.toISOString(),
+    },
+    faces: faces.map((f) => ({
+      ...f,
+      createdAt: f.createdAt.toISOString(),
+    })),
+  });
+}
+
+interface PatchBody {
+  name?: unknown;
+  hidden?: unknown;
+  cover_face_id?: unknown;
+  coverFaceId?: unknown;
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const workspaces = await getUserWorkspaces(user.id);
+  if (!workspaces.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const workspaceIds = workspaces.map((w) => w.id);
+
+  const person = await loadPersonInWorkspaces(id, workspaceIds);
+  if (!person) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const gate = await requireWorkspaceAccessOrResponse(
+    user.id,
+    person.workspaceId,
+    "editor"
+  );
+  if (!gate.ok) return gate.response;
+
+  const body = (await request.json().catch(() => ({}))) as PatchBody;
+
+  const patch: {
+    name?: string | null;
+    hidden?: boolean;
+    coverFaceId?: string | null;
+    updatedAt: Date;
+  } = { updatedAt: new Date() };
+
+  if ("name" in body) {
+    if (body.name === null) patch.name = null;
+    else if (typeof body.name === "string") {
+      const trimmed = body.name.trim();
+      patch.name = trimmed.length === 0 ? null : trimmed.slice(0, 200);
+    } else {
+      return NextResponse.json({ error: "name must be string or null" }, { status: 400 });
+    }
+  }
+  if ("hidden" in body) {
+    if (typeof body.hidden !== "boolean") {
+      return NextResponse.json({ error: "hidden must be boolean" }, { status: 400 });
+    }
+    patch.hidden = body.hidden;
+  }
+  const coverRaw = body.cover_face_id ?? body.coverFaceId;
+  if (coverRaw !== undefined) {
+    if (coverRaw === null) {
+      patch.coverFaceId = null;
+    } else if (typeof coverRaw === "string") {
+      // Validate the face belongs to this person (and so to this workspace).
+      const [face] = await db
+        .select({ id: schema.faceInstances.id })
+        .from(schema.faceInstances)
+        .where(
+          and(
+            eq(schema.faceInstances.id, coverRaw),
+            eq(schema.faceInstances.workspaceId, person.workspaceId)
+          )
+        )
+        .limit(1);
+      if (!face) {
+        return NextResponse.json(
+          { error: "cover_face_id must reference a face in this workspace" },
+          { status: 400 }
+        );
+      }
+      patch.coverFaceId = coverRaw;
+    } else {
+      return NextResponse.json(
+        { error: "cover_face_id must be uuid or null" },
+        { status: 400 }
+      );
+    }
+  }
+
+  const [updated] = await db
+    .update(schema.persons)
+    .set(patch)
+    .where(eq(schema.persons.id, person.id))
+    .returning();
+
+  return NextResponse.json({
+    person: {
+      ...updated,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+    },
+  });
+}
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const workspaces = await getUserWorkspaces(user.id);
+  if (!workspaces.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const workspaceIds = workspaces.map((w) => w.id);
+
+  const person = await loadPersonInWorkspaces(id, workspaceIds);
+  if (!person) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const gate = await requireWorkspaceAccessOrResponse(
+    user.id,
+    person.workspaceId,
+    "editor"
+  );
+  if (!gate.ok) return gate.response;
+
+  // Detach faces first so a re-cluster can re-attach them to a fresh person.
+  await db
+    .update(schema.faceInstances)
+    .set({ personId: null })
+    .where(eq(schema.faceInstances.personId, person.id));
+  await db.delete(schema.persons).where(eq(schema.persons.id, person.id));
+
+  // Touch persons.updated_at for any reciprocal denorms — currently a no-op
+  // but kept to mirror the pattern from `/stacks` DELETE.
+  await db.execute(sql`SELECT 1`);
+
+  return NextResponse.json({ ok: true as const });
+}

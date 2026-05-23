@@ -382,6 +382,35 @@ async function tryEnqueueClipEmbed(assetId: string, workspaceId: string, mimeTyp
 }
 
 /**
+ * Phase 5.1 — try to enqueue a face-detect job. Same dynamic-import pattern
+ * as the thumbnail/CLIP-embed enqueues above. Skips non-image MIME types.
+ * The worker handler reads the asset (and its thumbnail) from Postgres/R2,
+ * so the payload stays tiny.
+ *
+ * Enqueued alongside the thumbnail job. The face-detect worker prefers the
+ * 1080px preview derivative; if it hasn't been generated yet, it falls
+ * back to the original. (Both downloads are R2 GETs — equivalent cost.)
+ */
+async function tryEnqueueFaceDetect(
+  assetId: string,
+  workspaceId: string,
+  mimeType: string
+): Promise<void> {
+  if (!mimeType.startsWith("image/")) return;
+  try {
+    const mod = (await import("@/lib/queue")) as unknown as {
+      faceDetectQueue?: () => { add: (n: string, p: unknown) => Promise<unknown> };
+      JobNames?: Record<string, string>;
+    };
+    if (typeof mod.faceDetectQueue !== "function") return;
+    const jobName = mod.JobNames?.FaceDetect ?? "face-detect";
+    await mod.faceDetectQueue().add(jobName, { assetId, workspaceId });
+  } catch (err) {
+    console.warn("[fonto] face-detect enqueue skipped:", err);
+  }
+}
+
+/**
  * Insert (or short-circuit-return existing) an asset row from an in-memory
  * buffer. Both `/api/v1/assets` (legacy multipart) and
  * `/api/v1/assets/:id/complete` (presigned PUT) funnel through here.
@@ -521,6 +550,12 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
   // non-image MIME types; degrades to a warning if the queue export drifts.
   // The dedicated embedding worker writes assets.clip_vec asynchronously.
   void tryEnqueueClipEmbed(asset.id, workspaceId, mimeType);
+
+  // Phase 5.1 — face detection + ArcFace embedding (fire-and-forget). Same
+  // skip rules as CLIP. The worker prefers the 1080px preview so this
+  // typically runs after thumbnails complete; the queue's BullMQ backoff
+  // covers the brief race window if the preview hasn't landed yet.
+  void tryEnqueueFaceDetect(asset.id, workspaceId, mimeType);
 
   // Phase 4.5 — second-pass CLIP-similarity dedup check. Only runs for
   // image assets and only when pHash didn't already produce a hit. If the

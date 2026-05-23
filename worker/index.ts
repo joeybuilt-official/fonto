@@ -29,6 +29,7 @@ import {
   WebhookDeliveryJobSchema,
   EmbedAssetJobSchema,
   ClipDedupCheckJobSchema,
+  FaceDetectJobSchema,
   maintenanceQueue,
   webhookDeliveryQueue,
   clipDedupCheckQueue,
@@ -37,6 +38,7 @@ import {
   type WebhookDeliveryJob,
   type EmbedAssetJob,
   type ClipDedupCheckJob,
+  type FaceDetectJob,
 } from "@/lib/queue";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
@@ -45,6 +47,7 @@ import {
   reapStuckAssets,
   generateThumbnails,
   embedAsset,
+  detectFacesForAsset,
 } from "@/lib/processing";
 import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { register as metricsRegister } from "@/lib/metrics";
@@ -96,6 +99,13 @@ const WEBHOOK_TIMEOUT_MS = Math.max(
 // default to avoid hammering it.
 const CLIP_EMBED_CONCURRENCY = Math.max(
   parseInt(process.env.CLIP_EMBED_CONCURRENCY ?? "4", 10),
+  1
+);
+// Phase 5.1 — face detection + ArcFace embedding. Network-bound (POST to
+// plexo-vision /v1/faces/detect). Conservative default; the sidecar pins a
+// dedicated GPU/CPU pool and we don't want to swamp it.
+const FACE_DETECT_CONCURRENCY = Math.max(
+  parseInt(process.env.FACE_DETECT_CONCURRENCY ?? "2", 10),
   1
 );
 
@@ -713,6 +723,66 @@ function startClipDedupCheckWorker(): Worker<ClipDedupCheckJob> {
 }
 
 /**
+ * Phase 5.1 — face detection + ArcFace embedding worker. Drains the
+ * `face-detect` queue: downloads the asset's preview from R2, POSTs to
+ * `{PLEXO_VISION_URL}/v1/faces/detect`, and inserts one
+ * `fonto.face_instances` row per detection.
+ *
+ * `detectFacesForAsset()` swallows soft failures (sidecar unconfigured,
+ * non-image MIME, R2 miss) and returns without throwing — the worker logs
+ * them and the job succeeds. Hard failures (DB write error) bubble up and
+ * BullMQ retries per the queue policy.
+ */
+function startFaceDetectWorker(): Worker<FaceDetectJob> {
+  const w = new Worker<FaceDetectJob>(
+    QueueNames.FaceDetect,
+    async (job: Job<FaceDetectJob>) => {
+      const log = logger.child({
+        queue: QueueNames.FaceDetect,
+        jobId: job.id,
+        assetId: job.data?.assetId,
+        attempt: job.attemptsMade + 1,
+      });
+
+      const parsed = FaceDetectJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid face-detect payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const { assetId } = parsed.data;
+
+      log.info("detecting faces");
+      await detectFacesForAsset(assetId);
+      log.info("face-detect job complete");
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: FACE_DETECT_CONCURRENCY,
+    }
+  );
+
+  w.on("completed", (job) =>
+    logger.info({ queue: QueueNames.FaceDetect, jobId: job.id }, "face-detect job completed")
+  );
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.FaceDetect,
+        jobId: job?.id,
+        attempt: job?.attemptsMade,
+        err: err.message,
+      },
+      "face-detect job failed"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.FaceDetect, err: err.message }, "face-detect worker error")
+  );
+
+  return w;
+}
+
+/**
  * BullMQ marker class to opt out of retries. Re-implemented here to avoid
  * importing the named export by path — the type lives at the package root
  * but has historically shifted between versions.
@@ -850,6 +920,7 @@ async function main(): Promise<void> {
       webhookTimeoutMs: WEBHOOK_TIMEOUT_MS,
       clipEmbedConcurrency: CLIP_EMBED_CONCURRENCY,
       clipDedupConcurrency: CLIP_DEDUP_CONCURRENCY,
+      faceDetectConcurrency: FACE_DETECT_CONCURRENCY,
       metricsPort: METRICS_PORT,
       redisUrl: (process.env.REDIS_URL ?? "redis://valkey:6379").replace(/\/\/[^@]*@/, "//***@"),
     },
@@ -872,6 +943,8 @@ async function main(): Promise<void> {
   workers.push(startClipEmbeddingWorker());
   // Phase 4.5 — CLIP-similarity dedup fallback consumer.
   workers.push(startClipDedupCheckWorker());
+  // Phase 5.1 — face detection + ArcFace embedding.
+  workers.push(startFaceDetectWorker());
   try {
     await ensureReaperSchedule();
   } catch (err) {
