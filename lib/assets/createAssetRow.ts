@@ -68,6 +68,13 @@ export interface CreateAssetInput {
   /** Full asset buffer for EXIF / pHash / palette extraction. */
   buffer: Buffer;
   source: string;
+  /**
+   * Phase 3.5 — pre-normalised virtual folder path (or null). Callers are
+   * responsible for running raw client input through
+   * `normalizeDirectoryPath()` before passing it here; this column trusts
+   * what it receives.
+   */
+  directoryPath?: string | null;
 }
 
 export interface CreateAssetResult {
@@ -199,6 +206,7 @@ async function tryEnqueueThumbnail(assetId: string, workspaceId: string, mimeTyp
  */
 export async function createAssetRow(input: CreateAssetInput): Promise<CreateAssetResult> {
   const { workspaceId, userId, userEmail, filename, mimeType, sizeBytes, buffer, source } = input;
+  const directoryPath = input.directoryPath ?? null;
   const sha256 = input.sha256 ?? createHash("sha256").update(buffer).digest("hex");
 
   // SHA-256 dedup: return existing non-purged asset if hash matches.
@@ -304,6 +312,7 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
       widthPx: exifData.widthPx,
       heightPx: exifData.heightPx,
       ocrState: mimeType.startsWith("image/") ? "pending" : "skipped",
+      directoryPath,
     })
     .returning();
 

@@ -25,6 +25,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { assetProcessingQueue, thumbnailQueue, JobNames } from "@/lib/queue";
+import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -167,6 +168,13 @@ export function getTusServer(): Server {
         console.error("[fonto-tus] failed to record tus upload row:", err);
       }
 
+      // Phase 3.5 — folder path. `tus-js-client` exposes `metadata` as a flat
+      // string-keyed object; we accept `path` (preferred) and also tolerate
+      // `directoryPath` for clients that pick the longer name. Run through
+      // the shared normaliser so the column matches what /init writes.
+      const rawPath = metadata.path ?? metadata.directoryPath ?? null;
+      const directoryPath = normalizeDirectoryPath(rawPath, { filename });
+
       // Attach the resolved identity back onto the upload's metadata so it
       // survives across PATCH chunks and is visible inside onUploadFinish.
       // S3Store persists this on the multipart upload's metadata field.
@@ -177,6 +185,10 @@ export function getTusServer(): Server {
           filetype: mimeType,
           userId: user.id,
           workspaceId,
+          // Stash the normalised value back into metadata so onUploadFinish
+          // doesn't have to re-derive (or re-trust the client). Empty string
+          // sentinels `null` since metadata values are stringy.
+          directoryPath: directoryPath ?? "",
         },
       };
     },
@@ -201,6 +213,12 @@ export function getTusServer(): Server {
       const workspaceId = metadata.workspaceId;
       const filename = metadata.filename ?? "upload.bin";
       const mimeType = metadata.filetype ?? "application/octet-stream";
+      // Phase 3.5 — onUploadCreate stashed the normalised path here (or ""
+      // for "no folder"). Coerce the empty-string sentinel back to null.
+      const directoryPath =
+        metadata.directoryPath && metadata.directoryPath.length > 0
+          ? metadata.directoryPath
+          : null;
 
       if (!userId || !workspaceId) {
         throw tusReject(500, "Upload finalize failed: missing identity metadata");
@@ -230,6 +248,7 @@ export function getTusServer(): Server {
           source: "tus",
           capturedAt: new Date(),
           ocrState: mimeType.startsWith("image/") ? "pending" : "skipped",
+          directoryPath,
         })
         .returning();
 

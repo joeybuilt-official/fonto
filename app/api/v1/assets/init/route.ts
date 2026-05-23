@@ -23,6 +23,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
+import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 
 const DEFAULT_MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 500 MB
 const PRESIGN_EXPIRES_SECONDS = 15 * 60;
@@ -33,6 +34,12 @@ const InitRequestSchema = z.object({
   sizeBytes: z.number().int().nonnegative(),
   /** Optional client-side SHA-256 (lowercase hex). */
   clientChecksum: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
+  /**
+   * Phase 3.5 — optional virtual folder path. Pre-validation is loose
+   * (just bound the length); `normalizeDirectoryPath` does the real shape
+   * check and returns null if the input is unusable.
+   */
+  path: z.string().max(2048).optional(),
 });
 
 function maxUploadBytes(): number {
@@ -104,6 +111,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const expiresAt = new Date(Date.now() + PRESIGN_EXPIRES_SECONDS * 1000);
 
+  const directoryPath = normalizeDirectoryPath(body.path, {
+    filename: body.filename,
+  });
+
   await db.insert(schema.assetUploads).values({
     id: uploadId,
     workspaceId,
@@ -115,6 +126,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     storageKey,
     state: "pending",
     presignedExpiresAt: expiresAt,
+    directoryPath,
   });
 
   return NextResponse.json(

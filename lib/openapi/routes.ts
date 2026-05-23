@@ -38,6 +38,7 @@ import {
   WorkspaceInvitationSchema,
   WorkspaceInvitationEnvelopeSchema,
   PublicInvitationViewSchema,
+  FolderListingSchema,
   ErrorSchema,
   UuidSchema,
   HexColorSchema,
@@ -321,6 +322,15 @@ registry.registerPath({
               .string()
               .regex(/^[a-f0-9]{64}$/)
               .optional(),
+            path: z
+              .string()
+              .optional()
+              .openapi({
+                description:
+                  "Phase 3.5 — optional virtual folder path. Normalised " +
+                  "server-side; invalid input becomes NULL (root).",
+                example: "/Photos/2024/Iceland",
+              }),
           }),
         },
       },
@@ -1090,6 +1100,43 @@ registry.registerPath({
 });
 
 // ---------------------------------------------------------------------------
+// /api/v1/folders (Phase 3.5 — virtual folder view)
+// ---------------------------------------------------------------------------
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/folders",
+  summary: "List immediate sub-folders + asset count under a directory prefix",
+  description:
+    "Folders are virtual: computed at read time by GROUP BY-ing the " +
+    "`directory_path` column on `assets`. Pass `prefix` to descend; empty " +
+    "prefix lists top-level folders.",
+  tags: ["Folders"],
+  security: AUTH_SECURITY,
+  request: {
+    query: z.object({
+      prefix: z
+        .string()
+        .optional()
+        .openapi({
+          description:
+            "Directory prefix in canonical form (leading `/`, no trailing " +
+            "`/`). Empty/omitted = workspace root.",
+          example: "/Photos/2024",
+        }),
+      workspaceId: UuidSchema.optional().openapi({
+        description:
+          "Workspace to scope the listing to. Defaults to the caller's first workspace.",
+      }),
+    }),
+  },
+  responses: {
+    200: json(FolderListingSchema, "Folder listing."),
+    401: errorResponse("Not authenticated."),
+    404: errorResponse("Workspace not accessible."),
+  },
+});
+
+// ---------------------------------------------------------------------------
 // /api/v1/search
 // ---------------------------------------------------------------------------
 registry.registerPath({
@@ -1274,6 +1321,7 @@ export const REGISTERED_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/v1/document-types",
   "POST /api/v1/document-types",
   "DELETE /api/v1/document-types",
+  "GET /api/v1/folders",
   "GET /api/v1/search",
   "POST /api/v1/uploads/tus",
   "PATCH /api/v1/uploads/tus/{uploadId}",

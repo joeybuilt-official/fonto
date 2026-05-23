@@ -163,15 +163,27 @@ export const AssetSchema = registry.register(
       thumbnailKey: z.string().nullable().optional(),
       previewKey: z.string().nullable().optional(),
       thumbnailGeneratedAt: IsoDateTimeSchema.nullable().optional(),
-      // Phase 3.4 — favorites + 0..5 star rating. Both default to the
-      // "unset" sentinel (false / 0) so existing rows after migration 0015
-      // surface as not-favorited, unrated.
+      // Phase 3.4 — favorites + 0..5 star rating.
       isFavorite: z.boolean().openapi({
         description: "Heart toggle. True if the user has favorited this asset.",
       }),
       rating: z.number().int().min(0).max(5).openapi({
         description: "0..5 star rating. 0 means unrated.",
       }),
+      // Phase 3.5 — virtual folder path. NULL = "lives at workspace root".
+      // Normalised: leading `/`, no trailing `/`, no `..` segments.
+      directoryPath: z
+        .string()
+        .nullable()
+        .optional()
+        .openapi({
+          description:
+            "Virtual folder path the asset was uploaded into. Captured from " +
+            "the `X-Fonto-Path` header (multipart), the `path` field on " +
+            "`/assets/init`, or `metadata.path` on tus. NULL means the asset " +
+            "lives at the workspace root.",
+          example: "/Photos/2024/Iceland",
+        }),
       createdAt: IsoDateTimeSchema,
       updatedAt: IsoDateTimeSchema,
     })
@@ -490,3 +502,41 @@ export const WorkspaceMembersEnvelopeSchema = z.object({
 export const WorkspaceInvitationEnvelopeSchema = z.object({
   invitations: z.array(WorkspaceInvitationSchema),
 });
+
+// Phase 3.5 — folder listing.
+export const FolderListingSchema = registry.register(
+  "FolderListing",
+  z
+    .object({
+      prefix: z.string().openapi({
+        description:
+          "The directory prefix this listing is for. Empty string = workspace root.",
+        example: "/Photos",
+      }),
+      folders: z.array(
+        z.object({
+          name: z.string().openapi({
+            description: "Display name (last segment of `path`).",
+          }),
+          path: z.string().openapi({
+            description: "Full normalised path; pass as `?prefix=` to descend.",
+            example: "/Photos/2024",
+          }),
+          assetCount: z.number().int().nonnegative().openapi({
+            description:
+              "Count of all active assets under this sub-folder (recursive).",
+          }),
+        })
+      ),
+      assetsAtThisLevel: z.number().int().nonnegative().openapi({
+        description:
+          "Count of assets whose `directory_path` equals `prefix` exactly " +
+          "(i.e. sit at this level, not in a sub-folder).",
+      }),
+    })
+    .openapi({
+      description:
+        "Listing of the immediate sub-folders + asset count at the given " +
+        "prefix. Folders are virtual — see ADR/parity-plan Phase 3.5.",
+    })
+);

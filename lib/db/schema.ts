@@ -157,6 +157,13 @@ export const assets = fontoSchema.table(
     // smart-collection facets (`{ "favorite": true }`, `{ "ratingMin": N }`).
     isFavorite: boolean("is_favorite").notNull().default(false),
     rating: integer("rating").notNull().default(0),
+    // Phase 3.5 — virtual folder path (Immich-style). Captures the source
+    // directory of the upload so users can browse by the directory tree they
+    // came from. Stored as a normalised string (leading `/`, no trailing
+    // `/`, no `..` segments); see `lib/folders/normalize.ts`. NULL means
+    // "lives at workspace root" — no folder. There is intentionally no
+    // `folders` table; folders are GROUP BY prefixes of this column.
+    directoryPath: text("directory_path"),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
@@ -183,6 +190,12 @@ export const assets = fontoSchema.table(
     index("assets_workspace_rating_idx")
       .on(table.workspaceId, table.rating)
       .where(sql`${table.rating} > 0`),
+    // Phase 3.5 — folder listing prefix scans
+    // (`WHERE workspace_id = $1 AND directory_path LIKE '/Photos/%'`).
+    index("assets_workspace_directory_path_idx").on(
+      table.workspaceId,
+      table.directoryPath
+    ),
   ]
 );
 
@@ -292,6 +305,11 @@ export const assetUploads = fontoSchema.table(
     clientChecksum: text("client_checksum"),
     // R2 object key reserved at init time. Format matches assetStorageKey().
     storageKey: text("storage_key").notNull(),
+    // Phase 3.5 — optional folder path the client passed at /init time.
+    // Normalised + persisted here so /complete can pour it into the assets
+    // row without trusting the client to re-send it. See
+    // `lib/folders/normalize.ts`.
+    directoryPath: text("directory_path"),
     // pending | completed | aborted
     state: text("state").notNull().default("pending"),
     presignedExpiresAt: timestamp("presigned_expires_at", { withTimezone: true }).notNull(),
