@@ -24,6 +24,18 @@ type SmartQuery = {
   // `{ field, op, value }` shape for the common cases.
   favorite?: boolean;
   ratingMin?: number;
+  // Phase 4.6 — zero-shot classification facets. Lets users build "all
+  // food photos" smart collections without thinking about CLIP. Both AND
+  // with everything else (same rule as favorite/ratingMin above).
+  //   subClassification: exact match against `assets.sub_classification`
+  //     (e.g. "food", "portrait"). Validated against the live taxonomy at
+  //     query time would be ideal, but the static set is large enough
+  //     that we just trust the string and let an unknown value match
+  //     nothing.
+  //   classifyMethod: "clip" | "llm-fallback" — filter to rows that took
+  //     a specific classify path. Useful for QA dashboards.
+  subClassification?: string;
+  classifyMethod?: "clip" | "llm-fallback";
 };
 
 function buildCondition(c: Condition): SQL | null {
@@ -113,6 +125,13 @@ export async function GET(
     q.ratingMin <= 5
   ) {
     conditions.push(gte(schema.assets.rating, q.ratingMin));
+  }
+  // Phase 4.6 — zero-shot classification facets.
+  if (typeof q.subClassification === "string" && q.subClassification.length > 0) {
+    conditions.push(eq(schema.assets.subClassification, q.subClassification));
+  }
+  if (q.classifyMethod === "clip" || q.classifyMethod === "llm-fallback") {
+    conditions.push(eq(schema.assets.classifyMethod, q.classifyMethod));
   }
 
   const assets = await db

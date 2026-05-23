@@ -164,6 +164,22 @@ export const assets = fontoSchema.table(
     // "lives at workspace root" — no folder. There is intentionally no
     // `folders` table; folders are GROUP BY prefixes of this column.
     directoryPath: text("directory_path"),
+    // Phase 4.6 — zero-shot CLIP classification metadata.
+    //   subClassification: chosen sub-taxonomy key (e.g. "food", "portrait").
+    //     NULL if the top-level had no subs or confidence was too low.
+    //   classifyMethod: which path produced the classification — "clip" for
+    //     the cheap zero-shot path, "llm-fallback" when CLIP was uncertain
+    //     and we asked the vision-LLM. Used for both metrics and future
+    //     re-classification sweeps.
+    //   classifyConfidence: top-1 cosine in [0, 1]. For LLM fallback this
+    //     is the CLIP score we *would* have used (often near 0).
+    //   autoTaggedAt: stamp on each successful auto-tag pass; lets a future
+    //     backfill cron find rows that need re-tagging when the taxonomy
+    //     or threshold changes.
+    subClassification: text("sub_classification"),
+    classifyMethod: text("classify_method"),
+    classifyConfidence: real("classify_confidence"),
+    autoTaggedAt: timestamp("auto_tagged_at", { withTimezone: true }),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
