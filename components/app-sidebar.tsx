@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles } from "lucide-react";
+import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Map } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import { useRouter } from "next/navigation";
@@ -17,6 +17,8 @@ const navItems = [
   // (both are time-axis browsing); the plan calls for it under Map, but Map
   // isn't in the nav yet so Timeline is the right adjacent home for now.
   { href: "/app/memories", label: "Memories", icon: Sparkles },
+  // Phase 5.2 — Map view (geo-tagged photos clustered by viewport).
+  { href: "/app/map", label: "Map", icon: Map },
   { href: "/app/folders", label: "Folders", icon: FolderTree },
   { href: "/app/photos", label: "Photos", icon: Image },
   { href: "/app/documents", label: "Documents", icon: FileText },
