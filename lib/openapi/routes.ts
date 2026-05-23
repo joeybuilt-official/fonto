@@ -47,6 +47,13 @@ import {
   ErrorSchema,
   UuidSchema,
   HexColorSchema,
+  PersonSchema,
+  PersonEnvelopeSchema,
+  PersonsEnvelopeSchema,
+  PersonDetailEnvelopeSchema,
+  PersonFacesEnvelopeSchema,
+  FaceEnvelopeSchema,
+  ClusterStatsEnvelopeSchema,
 } from "./registry";
 
 // Default security for endpoints requiring auth (any of the three works).
@@ -1617,6 +1624,251 @@ registry.registerPath({
 });
 
 // ---------------------------------------------------------------------------
+// Phase 5.1 — Faces & Persons
+// ---------------------------------------------------------------------------
+
+const PersonPathIdParam = z.object({ id: UuidSchema });
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/persons",
+  summary: "List persons in the caller's workspace",
+  description:
+    "Ordered by `instanceCount` desc. Hidden persons are excluded by " +
+    "default; pass `?hidden=true` to include them. Each entry carries the " +
+    "resolved cover-face asset id + bbox so the People grid can render a " +
+    "crop without an extra round-trip.",
+  tags: ["People"],
+  security: AUTH_SECURITY,
+  request: {
+    query: z.object({
+      hidden: z.enum(["true", "false"]).optional(),
+    }),
+  },
+  responses: {
+    200: json(PersonsEnvelopeSchema, "Persons in the caller's workspaces."),
+    401: errorResponse("Not authenticated."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/persons/{id}",
+  summary: "Person detail + first N faces",
+  description:
+    "Returns the person row plus up to `?limit=` (default 24, max 200) " +
+    "non-hidden faces. Use `/persons/{id}/faces` for paginated access.",
+  tags: ["People"],
+  security: AUTH_SECURITY,
+  request: {
+    params: PersonPathIdParam,
+    query: z.object({
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+    }),
+  },
+  responses: {
+    200: json(PersonDetailEnvelopeSchema, "Person + faces."),
+    401: errorResponse("Not authenticated."),
+    404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/api/v1/persons/{id}",
+  summary: "Edit a person (name, hidden flag, cover face)",
+  tags: ["People"],
+  security: AUTH_SECURITY,
+  request: {
+    params: PersonPathIdParam,
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({
+            name: z.string().nullable().optional(),
+            hidden: z.boolean().optional(),
+            cover_face_id: UuidSchema.nullable().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: json(PersonEnvelopeSchema, "Updated person."),
+    400: errorResponse("Bad request."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/persons/{id}",
+  summary: "Delete a person (detaches faces; does not delete face rows)",
+  tags: ["People"],
+  security: AUTH_SECURITY,
+  request: { params: PersonPathIdParam },
+  responses: {
+    200: json(z.object({ ok: z.literal(true) }), "Person deleted."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/persons/{id}/faces",
+  summary: "Paginated faces for a person, joined with their asset",
+  tags: ["People"],
+  security: AUTH_SECURITY,
+  request: {
+    params: PersonPathIdParam,
+    query: z.object({
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+      offset: z.coerce.number().int().min(0).optional(),
+    }),
+  },
+  responses: {
+    200: json(PersonFacesEnvelopeSchema, "Faces for the person."),
+    401: errorResponse("Not authenticated."),
+    404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/persons/{id}/merge",
+  summary: "Merge this person's faces into another, then delete this person",
+  tags: ["People"],
+  security: AUTH_SECURITY,
+  request: {
+    params: PersonPathIdParam,
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({ into: UuidSchema }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: json(
+      z.object({ ok: z.literal(true), person: PersonSchema.nullable() }),
+      "Merged."
+    ),
+    400: errorResponse("Bad request."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/persons/{id}/split",
+  summary: "Move face_ids into a new anonymous person row",
+  tags: ["People"],
+  security: AUTH_SECURITY,
+  request: {
+    params: PersonPathIdParam,
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({ face_ids: z.array(UuidSchema).min(1) }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: json(
+      z.object({
+        ok: z.literal(true),
+        source: PersonSchema.nullable(),
+        person: PersonSchema.nullable(),
+      }),
+      "Split."
+    ),
+    400: errorResponse("Bad request."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/api/v1/faces/{id}",
+  summary: "Edit a face (hide / reassign to a different person)",
+  description:
+    "Powers the lightbox `hide this face / reassign` UI. When `person_id` " +
+    "changes, both the previous and the new person's `instance_count` are " +
+    "recomputed.",
+  tags: ["People"],
+  security: AUTH_SECURITY,
+  request: {
+    params: z.object({ id: UuidSchema }),
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({
+            hidden: z.boolean().optional(),
+            person_id: UuidSchema.nullable().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: json(FaceEnvelopeSchema, "Updated face."),
+    400: errorResponse("Bad request."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/faces/cluster",
+  summary: "Run DBSCAN clustering over the workspace's face_instances",
+  description:
+    "Owner-only. Runs synchronously; at workspace-archive scale the in-" +
+    "memory clusterer is measured in seconds. Hand-edited (named) persons " +
+    "are preserved.",
+  tags: ["People"],
+  security: AUTH_SECURITY,
+  request: {
+    body: {
+      required: false,
+      content: {
+        "application/json": {
+          schema: z.object({
+            eps: z.number().min(0).max(2).optional().openapi({
+              description: "Cosine-distance threshold. Default 0.32.",
+            }),
+            minPts: z.number().int().min(2).optional().openapi({
+              description: "DBSCAN minimum cluster size. Default 3.",
+            }),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: json(ClusterStatsEnvelopeSchema, "Cluster stats."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Owner role required."),
+    404: errorResponse("No workspace for caller."),
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Coverage gate
 // ---------------------------------------------------------------------------
 // Routes registered above. The integration script (scripts/check-openapi-coverage.ts)
@@ -1689,6 +1941,16 @@ export const REGISTERED_ROUTES: ReadonlySet<string> = new Set([
   "DELETE /api/v1/stacks/{id}/assets/{assetId}",
   "GET /api/v1/stacks/suggestions",
   "POST /api/v1/stacks/suggestions/accept",
+  // Phase 5.1 — faces & persons.
+  "GET /api/v1/persons",
+  "GET /api/v1/persons/{id}",
+  "PATCH /api/v1/persons/{id}",
+  "DELETE /api/v1/persons/{id}",
+  "GET /api/v1/persons/{id}/faces",
+  "POST /api/v1/persons/{id}/merge",
+  "POST /api/v1/persons/{id}/split",
+  "PATCH /api/v1/faces/{id}",
+  "POST /api/v1/faces/cluster",
   "POST /api/v1/cron/purge-trashed",
   "POST /api/v1/cron/ocr-backfill",
 ]);

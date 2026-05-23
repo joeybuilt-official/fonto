@@ -715,3 +715,166 @@ export const MemoryYearSchema = registry.register(
 export const MemoriesEnvelopeSchema = z.object({
   years: z.array(MemoryYearSchema),
 });
+
+// --- Phase 5.1 — Faces & Persons ------------------------------------------
+
+export const FaceBboxSchema = z
+  .object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    w: z.number().min(0).max(1),
+    h: z.number().min(0).max(1),
+  })
+  .openapi({
+    description:
+      "Normalised face bounding box (0..1) over the source image. " +
+      "Multiply by the rendered image's width/height to draw a crop.",
+  });
+
+export const FaceInstanceSchema = registry.register(
+  "FaceInstance",
+  z
+    .object({
+      id: UuidSchema,
+      assetId: UuidSchema,
+      workspaceId: UuidSchema,
+      bbox: FaceBboxSchema,
+      confidence: z.number().min(0).max(1).openapi({
+        description: "Detection confidence, 0..1.",
+      }),
+      personId: UuidSchema.nullable().openapi({
+        description:
+          "Cluster assignment. NULL means the face is either unclustered " +
+          "yet or landed in DBSCAN noise.",
+      }),
+      hidden: z.boolean().openapi({
+        description:
+          "User-hidden flag (false positive / stranger). Hidden faces are " +
+          "excluded from clustering inputs on the next run.",
+      }),
+      createdAt: IsoDateTimeSchema,
+    })
+    .openapi({
+      description:
+        "One detected face on an asset. Carries the bbox + cluster " +
+        "assignment; the 512-dim ArcFace embedding is stored server-side " +
+        "and never returned over the wire.",
+    })
+);
+
+export const PersonSchema = registry.register(
+  "Person",
+  z
+    .object({
+      id: UuidSchema,
+      workspaceId: UuidSchema,
+      name: z.string().nullable().openapi({
+        description: "User-assigned display name. NULL = unnamed cluster.",
+      }),
+      coverFaceId: UuidSchema.nullable().openapi({
+        description:
+          "The face_instance the user picked (or the clusterer auto-picked) " +
+          "as the avatar. NULL means 'fall back to the first face in the " +
+          "cluster' at render time.",
+      }),
+      instanceCount: z.number().int().nonnegative().openapi({
+        description:
+          "Denormalised count of face_instances pointing at this person.",
+      }),
+      hidden: z.boolean().openapi({
+        description:
+          "Hidden from the People page grid. Faces stay attached; only the " +
+          "cluster card is suppressed.",
+      }),
+      createdAt: IsoDateTimeSchema,
+      updatedAt: IsoDateTimeSchema,
+    })
+    .openapi({
+      description:
+        "A clustered identity. Created by `clusterWorkspaceFaces()` in " +
+        "`lib/faces/cluster.ts`; name + cover are user-edited via the " +
+        "People page UI.",
+    })
+);
+
+// Wire shape for the People grid: Person plus the resolved cover-face asset
+// id + bbox so the client can render a crop without an extra round-trip.
+export const PersonGridEntrySchema = registry.register(
+  "PersonGridEntry",
+  PersonSchema.extend({
+    coverAssetId: UuidSchema.nullable().openapi({
+      description:
+        "The asset the cover face belongs to. NULL when the person has no " +
+        "faces yet, or `coverFaceId` is stale.",
+    }),
+    coverBbox: FaceBboxSchema.nullable(),
+  }).openapi({
+    description:
+      "Person row plus the resolved cover-face crop. Returned by " +
+      "`GET /api/v1/persons`.",
+  })
+);
+
+export const PersonsEnvelopeSchema = z.object({
+  persons: z.array(PersonGridEntrySchema),
+});
+
+export const PersonDetailEnvelopeSchema = z.object({
+  person: PersonSchema,
+  faces: z.array(FaceInstanceSchema),
+});
+
+export const PersonEnvelopeSchema = z.object({ person: PersonSchema });
+
+export const PersonFaceEntrySchema = registry.register(
+  "PersonFaceEntry",
+  FaceInstanceSchema.extend({
+    asset: z
+      .object({
+        id: UuidSchema,
+        filename: z.string(),
+        mimeType: z.string(),
+        thumbnailKey: z.string().nullable().optional(),
+        previewKey: z.string().nullable().optional(),
+        previewUrl: z
+          .string()
+          .openapi({
+            description:
+              "Relative URL the client can fetch to get a presigned R2 URL " +
+              "for the 1080px preview. Always points at " +
+              "`/api/v1/assets/{assetId}/url?variant=preview`.",
+          }),
+      })
+      .openapi({
+        description: "Asset metadata joined onto the face row.",
+      }),
+  })
+);
+
+export const PersonFacesEnvelopeSchema = z.object({
+  faces: z.array(PersonFaceEntrySchema),
+  limit: z.number().int().positive(),
+  offset: z.number().int().nonnegative(),
+});
+
+export const FaceEnvelopeSchema = z.object({ face: FaceInstanceSchema });
+
+export const ClusterStatsSchema = registry.register(
+  "FaceClusterStats",
+  z
+    .object({
+      created: z.number().int().nonnegative(),
+      updated: z.number().int().nonnegative(),
+      noise: z.number().int().nonnegative(),
+    })
+    .openapi({
+      description:
+        "Result counts from `POST /api/v1/faces/cluster`. `created` = new " +
+        "person rows, `updated` = existing persons re-used, `noise` = " +
+        "faces that landed in DBSCAN noise (no cluster met minPts).",
+    })
+);
+
+export const ClusterStatsEnvelopeSchema = z.object({
+  stats: ClusterStatsSchema,
+});

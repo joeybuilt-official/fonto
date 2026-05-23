@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles } from "lucide-react";
+import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Users } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import { useRouter } from "next/navigation";
@@ -19,6 +19,9 @@ const navItems = [
   { href: "/app/memories", label: "Memories", icon: Sparkles },
   { href: "/app/folders", label: "Folders", icon: FolderTree },
   { href: "/app/photos", label: "Photos", icon: Image },
+  // Phase 5.1 — People (face clusters). Sits between Photos and Documents
+  // since it's a primary browsing axis over the image library.
+  { href: "/app/people", label: "People", icon: Users },
   { href: "/app/documents", label: "Documents", icon: FileText },
   { href: "/app/collections", label: "Albums", icon: FolderOpen },
   { href: "/app/projects", label: "Projects", icon: Folder },
