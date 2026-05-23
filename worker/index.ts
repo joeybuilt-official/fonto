@@ -21,31 +21,33 @@ import { logger } from "@/lib/logger";
 import {
   getRedisConnection,
   closeRedisConnection,
+} from "@/lib/queue/connection";
+import {
   QueueNames,
-  JobNames,
+  maintenanceQueue,
+  webhookDeliveryQueue,
+  clipDedupCheckQueue,
   closeAllQueues,
+} from "@/lib/queue/queues";
+import {
+  JobNames,
   ProcessAssetJobSchema,
   GenerateThumbnailsJobSchema,
   WebhookDeliveryJobSchema,
   EmbedAssetJobSchema,
   ClipDedupCheckJobSchema,
-  maintenanceQueue,
-  webhookDeliveryQueue,
-  clipDedupCheckQueue,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
   type EmbedAssetJob,
   type ClipDedupCheckJob,
-} from "@/lib/queue";
+} from "@/lib/queue/jobs";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
-import {
-  processAsset,
-  reapStuckAssets,
-  generateThumbnails,
-  embedAsset,
-} from "@/lib/processing";
+import { processAsset } from "@/lib/processing/processAsset";
+import { reapStuckAssets } from "@/lib/processing/reapStuckAssets";
+import { generateThumbnails } from "@/lib/processing/generateThumbnails";
+import { embedAsset } from "@/lib/processing/embedAsset";
 import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";

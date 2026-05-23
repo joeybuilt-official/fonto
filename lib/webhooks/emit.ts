@@ -7,7 +7,7 @@
 // because webhooks are a side channel: dropping one must not roll back the
 // user-visible action that triggered it.
 
-import { randomUUID } from "crypto";
+import { createHmac, randomUUID } from "crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { webhookDeliveryQueue, JobNames } from "@/lib/queue";
@@ -106,10 +106,6 @@ export function signWebhookPayload(
   signingSecret: string,
   timestamp?: number
 ): { timestamp: number; signature: string; header: string } {
-  // Lazy require so this module stays lightweight on the edge — `crypto` is
-  // Node-only, and `emit.ts` is imported from the Next.js routes.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createHmac } = require("crypto") as typeof import("crypto");
   const ts = typeof timestamp === "number" ? timestamp : Math.floor(Date.now() / 1000);
   const signedPayload = `${ts}.${body}`;
   const sig = createHmac("sha256", signingSecret).update(signedPayload).digest("hex");
