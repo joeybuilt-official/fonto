@@ -106,9 +106,27 @@ export const assets = fontoSchema.table(
     // (sorted by weight desc, up to 8 entries). NULL until computed.
     colors: jsonb("colors"),
     // OCR-extracted text for image assets. NULL until OCR succeeds.
+    // For PaddleOCR PP-OCRv5 (Phase 4.4) this is the concatenated text from
+    // all detected lines, joined with newlines.
     ocrText: text("ocr_text"),
-    // OCR pipeline state: pending | ready | failed | skipped (non-image).
+    // OCR pipeline state:
+    //   pending  — image asset, hasn't been processed yet (default).
+    //   ready    — OCR ran and produced text (ocr_text non-empty).
+    //   empty    — OCR ran successfully but found no text. Phase 4.4: with
+    //              PaddleOCR this is a legitimate, distinct outcome —
+    //              e.g. solid-color photos, abstract art, blurred snaps.
+    //              Distinct from `skipped` (we didn't try) and from
+    //              `failed` (we tried and the model errored).
+    //   failed   — OCR pipeline errored (model unreachable, decode error,
+    //              etc.). Backfill cron will retry by leaving this row to
+    //              be reset to 'pending' by an operator.
+    //   skipped  — non-image MIME type; OCR was never attempted.
     ocrState: text("ocr_state").notNull().default("pending"),
+    // Phase 4.4 — per-line OCR bounding boxes for the lightbox text-region
+    // highlighter. `[{ text, bbox: [x, y, w, h], confidence }, ...]`.
+    // NULL if OCR hasn't run, ran via the legacy LLM fallback, or found
+    // no text. Bbox coordinates are in source image pixel space.
+    ocrBoxes: jsonb("ocr_boxes"),
     // Full raw EXIF/IPTC/XMP metadata blob extracted at ingest. NULL for
     // non-image assets or when extraction fails. See lib/exif.ts.
     exif: jsonb("exif"),

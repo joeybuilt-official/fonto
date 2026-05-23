@@ -146,7 +146,19 @@ export const AssetSchema = registry.register(
       phash: z.string().nullable().optional(),
       colors: z.array(AssetColorEntrySchema).nullable().optional(),
       ocrText: z.string().nullable().optional(),
-      ocrState: z.enum(["pending", "ready", "failed", "skipped"]).or(z.string()),
+      // Phase 4.4 — `empty` joined the enum: PaddleOCR ran successfully but
+      // found no text (distinct from `failed` and `skipped`).
+      ocrState: z.enum(["pending", "ready", "empty", "failed", "skipped"]).or(z.string()),
+      ocrBoxes: z
+        .array(
+          z.object({
+            text: z.string(),
+            bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]),
+            confidence: z.number(),
+          }),
+        )
+        .nullable()
+        .optional(),
       exif: z.record(z.string(), z.unknown()).nullable().optional(),
       latitude: z.number().nullable().optional(),
       longitude: z.number().nullable().optional(),
