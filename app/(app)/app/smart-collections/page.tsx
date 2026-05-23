@@ -12,6 +12,8 @@ type SmartCollection = {
   createdAt: string;
 };
 
+type PersonOption = { id: string; name: string | null };
+
 const PRESET_QUERIES = [
   { label: "All receipts", query: { conditions: [{ field: "classification", op: "eq", value: "receipt" }], logic: "and" } },
   { label: "All contracts", query: { conditions: [{ field: "classification", op: "eq", value: "contract" }], logic: "and" } },
@@ -25,6 +27,52 @@ export default function SmartCollectionsPage() {
   const [showForm, setShowForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
+
+  // Phase 5.4 — ML-enriched facet inputs. These are layered on top of the
+  // preset (or used standalone) and merged into the saved `query` JSON on
+  // submit. Empty/zero values are omitted from the payload so the saved
+  // query stays minimal.
+  const [clipText, setClipText] = useState("");
+  const [hasFaces, setHasFaces] = useState(false);
+  const [selectedPersonIds, setSelectedPersonIds] = useState<string[]>([]);
+  const [dominantColor, setDominantColor] = useState("");
+  const [colorTolerance, setColorTolerance] = useState(30);
+  const [personOptions, setPersonOptions] = useState<PersonOption[]>([]);
+  const [personsAvailable, setPersonsAvailable] = useState(false);
+
+  // Probe for /api/v1/persons (Phase 5.1). Until that endpoint exists,
+  // the "People" facet stays hidden so we don't expose a no-op control.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/v1/persons");
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { persons?: PersonOption[] };
+        setPersonsAvailable(true);
+        setPersonOptions(Array.isArray(data.persons) ? data.persons : []);
+      } catch {
+        // endpoint not deployed yet — hide the control.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function resetFacets() {
+    setClipText("");
+    setHasFaces(false);
+    setSelectedPersonIds([]);
+    setDominantColor("");
+    setColorTolerance(30);
+  }
+
+  function togglePerson(id: string) {
+    setSelectedPersonIds((prev) =>
+      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
+    );
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,14 +93,26 @@ export default function SmartCollectionsPage() {
     e.preventDefault();
     if (!newName.trim()) return;
     const preset = PRESET_QUERIES.find((p) => p.label === selectedPreset);
+    // Start from the preset (if any) and layer the Phase 5.4 facets on
+    // top as additional top-level keys. The server ANDs them together.
+    const query: Record<string, unknown> = { ...(preset?.query ?? {}) };
+    const clipTrimmed = clipText.trim();
+    if (clipTrimmed.length > 0) query.clipText = clipTrimmed;
+    if (selectedPersonIds.length > 0) query.personIds = selectedPersonIds;
+    if (hasFaces) query.hasFaces = true;
+    if (/^#[0-9a-fA-F]{6}$/.test(dominantColor)) {
+      query.dominantColor = dominantColor.toLowerCase();
+      if (colorTolerance !== 30) query.tolerance = colorTolerance;
+    }
     const res = await fetch("/api/v1/smart-collections", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName.trim(), query: preset?.query ?? {} }),
+      body: JSON.stringify({ name: newName.trim(), query }),
     });
     if (res.ok) {
       setNewName("");
       setSelectedPreset(null);
+      resetFacets();
       setShowForm(false);
       load();
     }
@@ -108,9 +168,138 @@ export default function SmartCollectionsPage() {
               ))}
             </div>
           </div>
+          {/* Phase 5.4 — ML-enriched facet inputs. Each control writes a
+              single top-level key into the saved query when non-empty. */}
+          <div className="space-y-3 border-t border-border pt-4">
+            <p className="text-xs text-muted-foreground">
+              Optional facets (AND-ed with the preset above):
+            </p>
+
+            <div className="space-y-1">
+              <label htmlFor="sc-clip-text" className="block text-xs font-medium text-foreground">
+                Visual search
+              </label>
+              <input
+                id="sc-clip-text"
+                type="text"
+                value={clipText}
+                onChange={(e) => setClipText(e.target.value)}
+                placeholder="e.g. dog on beach, snow-capped mountain, kitchen counter"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              <p className="text-xs text-muted-foreground">
+                Embedded with CLIP at query time. Requires the vision sidecar.
+              </p>
+            </div>
+
+            {personsAvailable && (
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-foreground">
+                  People
+                </label>
+                {personOptions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No tagged people yet.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {personOptions.map((p) => {
+                      const active = selectedPersonIds.includes(p.id);
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => togglePerson(p.id)}
+                          className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                            active
+                              ? "bg-foreground text-background border-foreground"
+                              : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {p.name ?? "Unnamed"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {personsAvailable && (
+              <label className="flex items-center gap-2 text-xs text-foreground">
+                <input
+                  type="checkbox"
+                  checked={hasFaces}
+                  onChange={(e) => setHasFaces(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-border"
+                />
+                Only assets with detected faces
+              </label>
+            )}
+
+            <div className="space-y-1">
+              <label htmlFor="sc-color" className="block text-xs font-medium text-foreground">
+                Dominant color
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  id="sc-color"
+                  type="color"
+                  value={dominantColor || "#888888"}
+                  onChange={(e) => setDominantColor(e.target.value)}
+                  className="h-8 w-12 cursor-pointer rounded border border-border bg-background"
+                  aria-label="Pick dominant color"
+                />
+                <input
+                  type="text"
+                  value={dominantColor}
+                  onChange={(e) => setDominantColor(e.target.value)}
+                  placeholder="#ff5500"
+                  className="w-28 rounded-lg border border-border bg-background px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                {dominantColor && (
+                  <button
+                    type="button"
+                    onClick={() => setDominantColor("")}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              {dominantColor && (
+                <div className="pt-1">
+                  <label htmlFor="sc-tolerance" className="block text-xs text-muted-foreground">
+                    Tolerance: ΔE {colorTolerance}
+                  </label>
+                  <input
+                    id="sc-tolerance"
+                    type="range"
+                    min={5}
+                    max={80}
+                    step={1}
+                    value={colorTolerance}
+                    onChange={(e) => setColorTolerance(Number(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="flex gap-2">
             <button type="submit" className="rounded-lg bg-foreground px-3 py-2 text-sm text-background hover:bg-foreground/90">Create</button>
-            <button type="button" onClick={() => { setShowForm(false); setSelectedPreset(null); }} className="rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted/40">Cancel</button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowForm(false);
+                setSelectedPreset(null);
+                resetFacets();
+              }}
+              className="rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted/40"
+            >
+              Cancel
+            </button>
           </div>
         </form>
       )}

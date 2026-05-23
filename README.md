@@ -964,6 +964,32 @@ relies on them.
 top-level keys (alongside `favorite` and `ratingMin`). Both AND with the
 user's other conditions.
 
+**ML-enriched smart-collection facets (Phase 5.4).** Four more top-level
+keys, all AND-ed with everything else:
+
+```json
+{
+  "clipText": "dog on beach",
+  "personIds": ["3f0a…", "b211…"],
+  "hasFaces": true,
+  "dominantColor": "#ff5500",
+  "tolerance": 30
+}
+```
+
+- `clipText` embeds the text via the Plexo vision sidecar (cached
+  per-process for `CLIP_TEXT_CACHE_TTL_MS`, default 1 h) and intersects
+  the saved query with the top 200 nearest-neighbour matches from
+  `assets.clip_vec`. If `PLEXO_VISION_URL` is unset, the clause is
+  silently dropped — every other condition still applies.
+- `personIds` / `hasFaces` depend on the Phase 5.1 `face_instances`
+  table; until 5.1 ships the clauses are no-ops (do not error, do not
+  filter).
+- `dominantColor` compares the asset's top palette entry (from
+  `assets.colors`, populated by the Phase 0 pHash worker) against the
+  target hex using CIE76 ΔE in Lab space. `tolerance` is in ΔE units
+  (default 30 ≈ "same hue family").
+
 **Graceful degradation.** If the vision service is unreachable at boot,
 every image takes the LLM-fallback path. If the LLM is also unavailable,
 the worker falls back to a MIME-based heuristic (`image/*` → `photo`,
@@ -1044,6 +1070,37 @@ exact-string lookups.
 - The pgvector extension and `fonto.assets.clip_vec` column must exist
   (lands in Phase 4.3 migration 0017). Until then `clip_vec` writes throw
   cleanly and the worker logs a "phase 4.3 not landed" skip.
+
+## Memories (On this day)
+
+Phase 5.3 surfaces a per-day flashback view: every asset whose EXIF capture
+date matches today's MM-DD (±N days) in prior years, grouped by year. The
+dashboard renders a horizontal carousel (one tile per prior year, click to
+open the full grid); the dedicated page at `/app/memories` exposes a date
+picker so you can navigate to any day.
+
+Backed by `GET /api/v1/memories?date=YYYY-MM-DD` (default: today). The
+query relies on a functional partial index added in migration 0023
+(`assets_workspace_captured_mmdd_idx`) so it stays cheap as the library
+grows; without it Postgres falls back to a seq scan on the whole
+`fonto.assets` table.
+
+Two knobs in `.env.example`:
+
+- `MEMORIES_DAY_WINDOW` (default `3`) — days of fuzz around the target
+  date. Set `0` for exact MM-DD only.
+- `MEMORIES_MAX_PER_YEAR` (default `50`) — per-year cap on the returned
+  list, applied after the SQL `LIMIT 200`. Prevents a single high-volume
+  day from dominating the carousel.
+
+Memories only includes `lifecycle_state = 'active'` assets with a non-NULL
+`captured_at`, and only years strictly before the current calendar year (so
+"this year" never appears in the flashback). Wrap-around across month
+boundaries (Dec → Jan) is intentionally not handled in V1.
+
+A future v2 will cluster results by CLIP similarity inside 24h windows
+("trip to Iceland day 3" instead of "47 photos from 2023-05-23") — see the
+`TODO(v2)` in `app/api/v1/memories/route.ts`.
 
 ## Built on Plexo
 

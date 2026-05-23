@@ -40,6 +40,7 @@ import {
   PublicInvitationViewSchema,
   FolderListingSchema,
   ClipSearchEnvelopeSchema,
+  MemoriesEnvelopeSchema,
   ErrorSchema,
   UuidSchema,
   HexColorSchema,
@@ -1315,6 +1316,43 @@ registry.registerPath({
 });
 
 // ---------------------------------------------------------------------------
+// /api/v1/memories — Phase 5.3 "On this day"
+// ---------------------------------------------------------------------------
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/memories",
+  summary: "Assets captured on the same calendar day in prior years",
+  description:
+    "Returns active assets whose `captured_at` falls on the requested MM-DD " +
+    "(±MEMORIES_DAY_WINDOW days, default 3) in any year *before* the current " +
+    "one. Grouped by year, newest year first. Each year's bucket is capped " +
+    "at MEMORIES_MAX_PER_YEAR (default 50). Defaults to today when `date` is " +
+    "omitted.",
+  tags: ["Memories"],
+  security: AUTH_SECURITY,
+  request: {
+    query: z.object({
+      date: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/)
+        .optional()
+        .openapi({
+          description: "Target calendar day (YYYY-MM-DD). Defaults to today.",
+          example: "2026-05-23",
+        }),
+    }),
+  },
+  responses: {
+    200: json(
+      MemoriesEnvelopeSchema,
+      "One bucket per prior year containing assets, newest year first."
+    ),
+    400: errorResponse("Malformed `date` parameter."),
+    401: errorResponse("Not authenticated."),
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Cron endpoints (admin-only; called by Kubernetes/cron scheduler)
 // ---------------------------------------------------------------------------
 registry.registerPath({
@@ -1404,6 +1442,7 @@ export const REGISTERED_ROUTES: ReadonlySet<string> = new Set([
   "PATCH /api/v1/uploads/tus/{uploadId}",
   "GET /api/v1/uploads/tus/{uploadId}",
   "DELETE /api/v1/uploads/tus/{uploadId}",
+  "GET /api/v1/memories",
   "POST /api/v1/cron/purge-trashed",
   "POST /api/v1/cron/ocr-backfill",
 ]);

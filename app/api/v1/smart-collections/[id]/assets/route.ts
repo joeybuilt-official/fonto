@@ -6,7 +6,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { eq, and, or, inArray, ilike, gte, lte, SQL, isNull } from "drizzle-orm";
+import { eq, and, or, inArray, ilike, gte, lte, sql, SQL, isNull } from "drizzle-orm";
+// (sql imported for ML/face stubs and the Phase 5.5 stack filter subquery.)
+import { visionConfigured } from "@/lib/plexo-vision";
+import { getCachedClipTextEmbedding, nearestNeighbors } from "@/lib/vectors";
+import { deltaE76, parseHex, rgbToLab } from "@/lib/perceptual";
 
 type Condition = {
   field: string;
@@ -36,7 +40,46 @@ type SmartQuery = {
   //     a specific classify path. Useful for QA dashboards.
   subClassification?: string;
   classifyMethod?: "clip" | "llm-fallback";
+  // Phase 5.4 — ML-enriched facets.
+  //   clipText: free-text CLIP query. Embeds the text via plexo-vision
+  //     (cached per-process for 1 h), runs a pgvector kNN against
+  //     `assets.clip_vec`, and ANDs the resulting asset IDs into the
+  //     predicate. If vision is unconfigured or the embed fails, the
+  //     clause is silently dropped (graceful degradation; same shape as
+  //     /api/v1/search/clip's `{ unavailable: true }` response). Top-K
+  //     for the kNN is 200 with similarity threshold 0.18.
+  //   personIds: filter to assets that have a face_instance row whose
+  //     personId is in this list. Depends on Phase 5.1's `face_instances`
+  //     table; until that ships the clause is a no-op (does not error).
+  //   hasFaces: true ⇒ keep only assets with at least one non-hidden
+  //     face_instance; false ⇒ keep only assets with none. Same dep on
+  //     Phase 5.1 — no-op until merged.
+  //   dominantColor + tolerance: filter by the top entry in `assets.colors`
+  //     within ΔE76 (CIE76 Lab Euclidean) of the target hex. `tolerance`
+  //     is in ΔE units; default 30 ≈ "same hue family". `colors` itself
+  //     is populated by the Phase 0 pHash worker and is shaped as
+  //     `[{ hex: "#rrggbb", weight: 0..1 }, ...]` sorted by weight desc.
+  //     We can't push this filter into SQL cleanly (palette is a JSONB
+  //     array) so we apply it in-process after the SQL pull. Acceptable
+  //     because we cap the SQL result at 200 already.
+  clipText?: string;
+  personIds?: string[];
+  hasFaces?: boolean;
+  dominantColor?: string;
+  tolerance?: number;
+  // Phase 5.5 — stacks. By default smart collections respect the timeline-
+  // wide stack filter (primary-only): a stacked burst surfaces as one
+  // result, not twelve. Set `expandStacks: true` to opt in to "every
+  // stacked member is a result". Useful for QA dashboards and for power-
+  // user collections like "all RAW originals".
+  expandStacks?: boolean;
 };
+
+// Tunables for the clipText kNN clause. Match the inline-search defaults
+// (`/api/v1/search/clip`) so users get the same recall in both surfaces.
+const CLIP_TEXT_KNN_LIMIT = 200;
+const CLIP_TEXT_KNN_THRESHOLD = 0.18;
+const DEFAULT_COLOR_TOLERANCE = 30;
 
 function buildCondition(c: Condition): SQL | null {
   const { field, op, value } = c;
@@ -134,12 +177,108 @@ export async function GET(
     conditions.push(eq(schema.assets.classifyMethod, q.classifyMethod));
   }
 
-  const assets = await db
+  // Phase 5.4 — clipText: run the kNN before the SQL pull so the result
+  // ID set narrows the WHERE clause. Scoped per workspace; collections
+  // can span multiple workspaces, so we kNN each in turn and union.
+  // Graceful degradation: vision unconfigured / embed failure ⇒ skip
+  // the clause entirely (matches /api/v1/search/clip behaviour).
+  if (typeof q.clipText === "string" && q.clipText.trim().length > 0) {
+    if (visionConfigured()) {
+      const matched = new Set<string>();
+      for (const wsId of workspaceIds) {
+        const embedded = await getCachedClipTextEmbedding(wsId, q.clipText.trim());
+        if (!embedded) continue;
+        const hits = await nearestNeighbors(
+          wsId,
+          embedded.vector,
+          CLIP_TEXT_KNN_LIMIT,
+          CLIP_TEXT_KNN_THRESHOLD
+        );
+        for (const h of hits) matched.add(h.assetId);
+      }
+      if (matched.size === 0) {
+        // No CLIP matches anywhere ⇒ short-circuit, the AND can't satisfy.
+        return NextResponse.json({ assets: [], total: 0, query: q });
+      }
+      conditions.push(inArray(schema.assets.id, Array.from(matched)));
+    }
+    // If !visionConfigured the clause is silently dropped.
+  }
+
+  // Phase 5.4 — personIds / hasFaces: depends on Phase 5.1's
+  // `face_instances` table. Until that ships, both clauses are no-ops
+  // and we record a TODO marker via a single trace-friendly comment.
+  // When 5.1 lands, replace the `false &&` guards below with real
+  // EXISTS clauses against `schema.faceInstances`.
+  const faceInstancesAvailable = (schema as Record<string, unknown>)
+    .faceInstances !== undefined;
+  if (faceInstancesAvailable && Array.isArray(q.personIds) && q.personIds.length > 0) {
+    // TODO(phase-5.1): wire when face_instances merges. Until then this
+    // branch is unreachable because `faceInstancesAvailable` is false.
+    // Intentional shape preview:
+    //   conditions.push(sql`EXISTS (SELECT 1 FROM fonto.face_instances fi
+    //     WHERE fi.asset_id = ${schema.assets.id}
+    //       AND fi.hidden = false
+    //       AND fi.person_id = ANY(${q.personIds}))`);
+  }
+  if (faceInstancesAvailable && typeof q.hasFaces === "boolean") {
+    // TODO(phase-5.1): wire when face_instances merges.
+    //   const exists = sql`EXISTS (SELECT 1 FROM fonto.face_instances fi
+    //     WHERE fi.asset_id = ${schema.assets.id} AND fi.hidden = false)`;
+    //   conditions.push(q.hasFaces ? exists : sql`NOT ${exists}`);
+  }
+  // Phase 5.5 — stacks: default to primary-only unless the saved query
+  // explicitly opts in to expansion. Same correlated-subquery shape as the
+  // /api/v1/assets list route so the planner picks the same index path.
+  if (q.expandStacks !== true) {
+    conditions.push(
+      or(
+        isNull(schema.assets.stackId),
+        sql`${schema.assets.id} = (SELECT ${schema.stacks.primaryAssetId} FROM ${schema.stacks} WHERE ${schema.stacks.id} = ${schema.assets.stackId})`
+      )!
+    );
+  }
+
+  // Touch `sql` so the import is not flagged as unused while the face
+  // predicates remain stubbed. Removed when Phase 5.1 wires the EXISTS.
+  void sql;
+
+  const rawAssets = await db
     .select()
     .from(schema.assets)
     .where(and(...conditions))
     .orderBy(schema.assets.createdAt)
     .limit(200);
+
+  // Phase 5.4 — dominantColor post-filter. We pull from SQL first
+  // (already capped at 200) and then filter in-process — the palette is
+  // a JSONB array and the ΔE distance is awkward to express in pure
+  // SQL. The cost is bounded by the 200-row LIMIT above.
+  let assets = rawAssets;
+  if (typeof q.dominantColor === "string" && q.dominantColor.length > 0) {
+    const targetRgb = parseHex(q.dominantColor);
+    if (targetRgb) {
+      const tolerance =
+        typeof q.tolerance === "number" && Number.isFinite(q.tolerance) && q.tolerance > 0
+          ? q.tolerance
+          : DEFAULT_COLOR_TOLERANCE;
+      const targetLab = rgbToLab(targetRgb[0], targetRgb[1], targetRgb[2]);
+      assets = rawAssets.filter((row) => {
+        const colors = row.colors as
+          | Array<{ hex?: unknown; weight?: unknown }>
+          | null
+          | undefined;
+        if (!Array.isArray(colors) || colors.length === 0) return false;
+        const top = colors[0];
+        if (!top || typeof top.hex !== "string") return false;
+        const rgb = parseHex(top.hex);
+        if (!rgb) return false;
+        const lab = rgbToLab(rgb[0], rgb[1], rgb[2]);
+        return deltaE76(lab, targetLab) <= tolerance;
+      });
+    }
+    // Unparseable hex ⇒ silently drop the filter (don't 500 on bad UI input).
+  }
 
   return NextResponse.json({ assets, total: assets.length, query: q });
 }

@@ -11,3 +11,4 @@
 
 export { cosineSimilarity } from "./cosine";
 export { nearestNeighbors, type NearestNeighborMatch } from "./nearest";
+export { getCachedClipTextEmbedding } from "./clipTextCache";

@@ -5,7 +5,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
-  Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star
+  Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star, Layers
 } from "lucide-react";
 import type { Asset } from "./photo-card";
 import { ConfirmButton } from "@/components/confirm-button";
@@ -345,11 +345,48 @@ export function PhotoLightbox({
   // failure. Reset whenever the visible asset id changes (prev/next nav).
   const [isFavorite, setIsFavorite] = useState<boolean>(!!asset.isFavorite);
   const [rating, setRating] = useState<number>(asset.rating ?? 0);
+  // Phase 5.5 — stack expansion. When the visible asset belongs to a stack
+  // we lazy-fetch its members the first time the user clicks the badge,
+  // then render an inline carousel along the bottom. Members are sorted
+  // primary-first by the server (`GET /api/v1/stacks/:id`).
+  const [stackMembers, setStackMembers] = useState<Asset[] | null>(null);
+  const [stackOpen, setStackOpen] = useState(false);
+  const [stackLoading, setStackLoading] = useState(false);
 
   useEffect(() => {
     setIsFavorite(!!asset.isFavorite);
     setRating(asset.rating ?? 0);
+    // Reset stack expansion when the visible asset changes.
+    setStackMembers(null);
+    setStackOpen(false);
   }, [asset.id, asset.isFavorite, asset.rating]);
+
+  // Phase 5.5 — fetch the members of `asset.stackId` once, on demand.
+  // Stays a no-op for standalone assets.
+  const stackId = asset.stackId ?? null;
+  async function toggleStack() {
+    if (!stackId) return;
+    if (stackOpen) {
+      setStackOpen(false);
+      return;
+    }
+    setStackOpen(true);
+    if (stackMembers !== null) return;
+    setStackLoading(true);
+    try {
+      const res = await fetch(`/api/v1/stacks/${stackId}`);
+      if (!res.ok) {
+        setStackMembers([]);
+        return;
+      }
+      const data = (await res.json()) as { assets?: Asset[] };
+      setStackMembers(data.assets ?? []);
+    } catch {
+      setStackMembers([]);
+    } finally {
+      setStackLoading(false);
+    }
+  }
 
   useEffect(() => {
     setUrl(null);
@@ -687,6 +724,42 @@ export function PhotoLightbox({
               <Tag className="h-16 w-16 text-white/20" />
             </div>
           )}
+
+          {/* Phase 5.5 — stack indicator. Bottom-left, only when the asset
+              belongs to a stack. Click to toggle inline carousel of all
+              members (members lazy-loaded on first open). */}
+          {stackId && (
+            <div className="absolute bottom-4 left-4 z-10 flex flex-col items-start gap-2">
+              <button
+                onClick={toggleStack}
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  stackOpen
+                    ? "bg-white text-black"
+                    : "bg-black/70 text-white hover:bg-black/85"
+                }`}
+                title={stackOpen ? "Collapse stack" : "Expand stack"}
+                aria-expanded={stackOpen}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                {stackLoading
+                  ? "Stack…"
+                  : stackMembers
+                  ? `Stack of ${stackMembers.length}`
+                  : "Stack"}
+              </button>
+              {stackOpen && stackMembers && stackMembers.length > 0 && (
+                <div className="flex max-w-[60vw] gap-1.5 overflow-x-auto rounded-md bg-black/50 p-1.5">
+                  {stackMembers.map((m) => (
+                    <StackThumb
+                      key={m.id}
+                      asset={m}
+                      active={m.id === asset.id}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Metadata panel */}
@@ -715,6 +788,38 @@ export function PhotoLightbox({
         targetType="asset"
         targetId={asset.id}
       />
+    </div>
+  );
+}
+
+// Phase 5.5 — small thumbnail used inside the stack carousel. Fetches the
+// 256px grid variant via the same `?variant=thumb` endpoint the photo
+// cards use. Pure presentation — clicks are not wired (members live
+// behind the same lightbox; switching is left to the parent's prev/next).
+function StackThumb({ asset, active }: { asset: Asset; active: boolean }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!asset.mimeType.startsWith("image/")) return;
+    fetch(`/api/v1/assets/${asset.id}/url?variant=thumb`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { url?: string } | null) => setSrc(d?.url ?? null))
+      .catch(() => setSrc(null));
+  }, [asset.id, asset.mimeType]);
+  return (
+    <div
+      className={`relative h-14 w-14 shrink-0 overflow-hidden rounded ${
+        active ? "ring-2 ring-white" : "ring-1 ring-white/20"
+      }`}
+      title={asset.filename}
+    >
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt={asset.filename} className="h-full w-full object-cover" />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-white/10">
+          <Layers className="h-4 w-4 text-white/40" />
+        </div>
+      )}
     </div>
   );
 }

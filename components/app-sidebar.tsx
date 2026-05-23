@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap } from "lucide-react";
+import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import { useRouter } from "next/navigation";
@@ -13,6 +13,10 @@ import type { User } from "@/lib/auth/types";
 const navItems = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/timeline", label: "Timeline", icon: Clock },
+  // Phase 5.3 — Memories ("On this day"). Logically a sibling of Timeline
+  // (both are time-axis browsing); the plan calls for it under Map, but Map
+  // isn't in the nav yet so Timeline is the right adjacent home for now.
+  { href: "/app/memories", label: "Memories", icon: Sparkles },
   { href: "/app/folders", label: "Folders", icon: FolderTree },
   { href: "/app/photos", label: "Photos", icon: Image },
   { href: "/app/documents", label: "Documents", icon: FileText },

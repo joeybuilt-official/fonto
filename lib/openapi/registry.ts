@@ -256,7 +256,21 @@ export const SmartCollectionSchema = registry.register(
     .openapi({
       description:
         "A saved query that materializes a dynamic asset list at read time. " +
-        "`query` is a JSON predicate; see `lib/assets/smart-collections.ts`.",
+        "`query` is a JSON predicate; see `lib/assets/smart-collections.ts`. " +
+        "Accepted top-level keys (all AND-ed with each other and with the " +
+        "user's `conditions[]`): " +
+        "`conditions` (array of `{ field, op, value }`), `logic` (\"and\"|\"or\", " +
+        "applies only inside `conditions[]`), `favorite` (bool), `ratingMin` " +
+        "(int 1..5), `subClassification` (string, e.g. \"food\"), " +
+        "`classifyMethod` (\"clip\"|\"llm-fallback\"), `clipText` (string — " +
+        "free-text CLIP query; embedded server-side and intersected via " +
+        "nearest-neighbour against `assets.clip_vec`; silently dropped if " +
+        "the vision sidecar is unconfigured), `personIds` (uuid[]; matches " +
+        "assets that have a non-hidden face_instance for one of the listed " +
+        "persons; no-op until Phase 5.1 ships), `hasFaces` (bool; same dep), " +
+        "`dominantColor` (\"#rrggbb\"; matches assets whose top palette " +
+        "entry is within ΔE76 ≤ `tolerance` of the target), `tolerance` " +
+        "(number, ΔE units, defaults to 30).",
     })
 );
 
@@ -589,3 +603,41 @@ export const FolderListingSchema = registry.register(
         "prefix. Folders are virtual — see ADR/parity-plan Phase 3.5.",
     })
 );
+
+// --- Phase 5.3 — Memories ("On this day") ---------------------------------
+//
+// `MemoryYear` is one bucket of the `/api/v1/memories` response: every asset
+// captured on the same MM-DD (±MEMORIES_DAY_WINDOW) within a single prior
+// calendar year, plus a total count (which may exceed `assets.length` when
+// the per-year cap clips the bucket).
+export const MemoryYearSchema = registry.register(
+  "MemoryYear",
+  z
+    .object({
+      year: z.number().int().openapi({
+        description: "Calendar year the bucket belongs to (e.g. 2021).",
+      }),
+      count: z
+        .number()
+        .int()
+        .nonnegative()
+        .openapi({
+          description:
+            "Total assets matched within the day window for this year " +
+            "(may exceed assets.length when MEMORIES_MAX_PER_YEAR clips the list).",
+        }),
+      assets: z.array(AssetSchema).openapi({
+        description:
+          "Assets captured in this year on the requested MM-DD ± window, " +
+          "newest first. Capped at MEMORIES_MAX_PER_YEAR (default 50).",
+      }),
+    })
+    .openapi({
+      description:
+        "One year's bucket in the Memories (\"On this day\") response.",
+    })
+);
+
+export const MemoriesEnvelopeSchema = z.object({
+  years: z.array(MemoryYearSchema),
+});

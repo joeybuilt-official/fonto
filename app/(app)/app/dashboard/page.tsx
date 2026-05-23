@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { directUploadEnabled, uploadDirect } from "@/lib/upload-client";
+import { MemoryCard } from "./memory-card";
 
 const SUBTYPE_LABELS: Record<string, string> = {
   photo: "Photo",
@@ -343,6 +344,11 @@ export default function DashboardPage() {
           Export JSON
         </Link>
       </div>
+
+      {/* Phase 5.3 — Memories ("On this day"). Renders only when there is
+          history from prior years matching today's MM-DD; hidden otherwise
+          so the dashboard isn't dominated by empty state. */}
+      <MemoryCard />
 
       {/* Upload zone */}
       <div

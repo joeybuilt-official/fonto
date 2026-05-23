@@ -5,7 +5,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, and, desc, gte, SQL } from "drizzle-orm";
+import { eq, and, desc, gte, isNull, or, sql, SQL } from "drizzle-orm";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
@@ -42,12 +42,31 @@ export async function GET(request: NextRequest) {
       ? ratingMinParsed
       : null;
 
+  // Phase 5.5 — manual stacks. Default behaviour: hide stack members other
+  // than the primary so a 12-shot burst surfaces as one timeline tile. Pass
+  // `?expandStacks=true` (or `=1`) to opt in to the historical "show every
+  // asset" mode — used by tooling and the stack-detail view itself.
+  const expandStacksParam = searchParams.get("expandStacks");
+  const expandStacks =
+    expandStacksParam === "true" || expandStacksParam === "1";
+
   const where: SQL[] = [
     eq(schema.assets.workspaceId, workspaceId),
     eq(schema.assets.lifecycleState, lifecycleFilter),
   ];
   if (onlyFavorites) where.push(eq(schema.assets.isFavorite, true));
   if (ratingMin !== null) where.push(gte(schema.assets.rating, ratingMin));
+  if (!expandStacks) {
+    // Show standalone assets OR the primary of each stack the asset
+    // belongs to. Correlated subquery keeps everything index-driven via
+    // `stacks_primary_asset_id_idx` + `assets_workspace_stack_idx`.
+    where.push(
+      or(
+        isNull(schema.assets.stackId),
+        sql`${schema.assets.id} = (SELECT ${schema.stacks.primaryAssetId} FROM ${schema.stacks} WHERE ${schema.stacks.id} = ${schema.assets.stackId})`
+      )!
+    );
+  }
 
   const rows = await db
     .select()

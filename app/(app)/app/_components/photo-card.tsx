@@ -19,6 +19,10 @@ export interface Asset {
   // before the backfill stamps them, so we keep these optional on the client.
   isFavorite?: boolean;
   rating?: number;
+  // Phase 5.5 — manual stacks. NULL/undefined ⇒ standalone. When set, the
+  // timeline only shows the primary; clicking opens the lightbox which
+  // surfaces a "stack of N" badge with inline carousel of all members.
+  stackId?: string | null;
 }
 
 interface QuickActionsProps {

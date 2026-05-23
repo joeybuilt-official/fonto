@@ -202,6 +202,12 @@ export const assets = fontoSchema.table(
     classifyMethod: text("classify_method"),
     classifyConfidence: real("classify_confidence"),
     autoTaggedAt: timestamp("auto_tagged_at", { withTimezone: true }),
+    // Phase 5.5 — manual stacks. NULL = standalone asset. When set, the row
+    // belongs to a `fonto.stacks` group and the timeline hides it unless the
+    // asset is the stack's `primaryAssetId` (or the caller opts in to
+    // `?expandStacks=true`). FK is soft-enforced in SQL (matches the same
+    // approach as `correspondentId` / `documentTypeId`).
+    stackId: uuid("stack_id"),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
@@ -241,6 +247,50 @@ export const assets = fontoSchema.table(
     index("assets_clip_dedup_pending_idx")
       .on(table.workspaceId, table.createdAt)
       .where(sql`${table.clipDedupCheckedAt} IS NULL`),
+    // Phase 5.5 — partial index on (workspace_id, stack_id) restricted to
+    // assets that actually belong to a stack. Lets the lightbox "expand
+    // stack" query and the suggester membership scans run from a small
+    // index instead of the full assets table.
+    index("assets_workspace_stack_idx")
+      .on(table.workspaceId, table.stackId)
+      .where(sql`${table.stackId} IS NOT NULL`),
+  ]
+);
+
+// Phase 5.5 — manual stacks.
+//
+// A stack is a group of related assets where one is "primary" — RAW+JPEG of
+// the same shot, an iPhone burst, multiple edits of the same photo. The
+// timeline shows only the primary; clicking expands the rest of the stack
+// inline in the lightbox.
+//
+// Membership lives on `assets.stack_id`: every member row has its
+// `stack_id` pointing here. The `primary_asset_id` here points to whichever
+// member should represent the stack in the timeline. Both directions are
+// soft FKs (no enforced DB FK) — same approach as `correspondentId` on
+// assets. We always own the lifecycle in the route handlers: when a stack
+// is deleted, members are un-stacked first (`stack_id = NULL`); when the
+// primary is removed from a stack, the next-oldest member is promoted.
+//
+// Suggestion is a separate, read-only pass (`lib/stacks/suggest.ts`) — the
+// suggester flags candidate clusters but never writes; the user confirms
+// each suggestion via `POST /api/v1/stacks/suggestions/accept`.
+export const stacks = fontoSchema.table(
+  "stacks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // Soft FK to `assets.id`. The handler ensures this asset's `stack_id`
+    // equals the stack's id at all times.
+    primaryAssetId: uuid("primary_asset_id").notNull(),
+    // Optional display name (e.g. "Sunset, 2024-06-18"). NULL = unnamed.
+    name: text("name"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("stacks_workspace_id_idx").on(table.workspaceId),
+    index("stacks_primary_asset_id_idx").on(table.primaryAssetId),
   ]
 );
 
