@@ -153,6 +153,23 @@ async function main(): Promise<void> {
         stats.fail++;
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[backfill-exif] fail ${r.id} (${r.filename}): ${msg}`);
+        // Write a sentinel so the row drops out of the next batch's
+        // `exif IS NULL` filter and the loop can terminate. Records the
+        // failure shape so a later sweep can re-select these explicitly
+        // (e.g. WHERE exif ? '_backfill_error').
+        if (!dryRun) {
+          try {
+            await sql`
+              UPDATE fonto.assets
+              SET exif = ${sql.json({ _backfill_error: msg.slice(0, 200) })}::jsonb,
+                  updated_at = now()
+              WHERE id = ${r.id}
+            `;
+          } catch {
+            // Best-effort sentinel — if the UPDATE itself fails we still
+            // proceed so a single dead row can't strand the whole backfill.
+          }
+        }
       }
     }
 
