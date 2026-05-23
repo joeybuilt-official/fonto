@@ -45,6 +45,17 @@ export const ClassifyJobSchema = z.object({
 });
 export type ClassifyJob = z.infer<typeof ClassifyJobSchema>;
 
+// Phase 4.2 — CLIP image embedding job. The worker downloads the asset's
+// preview derivative (or original if preview missing), POSTs to the Plexo
+// vision service, and writes the returned 512-dim float vector to
+// `assets.clip_vec` (lands with the 4.3 pgvector migration). Payload stays
+// tiny — the worker rehydrates everything else from Postgres.
+export const EmbedAssetJobSchema = z.object({
+  assetId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+});
+export type EmbedAssetJob = z.infer<typeof EmbedAssetJobSchema>;
+
 // Maintenance: periodic sweep that re-enqueues or terminally fails any asset
 // row stuck in processing_state='processing' past the threshold. Payload is
 // empty — the reaper reads the world from Postgres on each tick.
@@ -85,6 +96,8 @@ export const JobNames = {
   PruneAuditLog: "prune-audit-log",
   // Phase 2.4 — outbound webhook delivery (one job per delivery attempt).
   DeliverWebhook: "deliver-webhook",
+  // Phase 4.2 — CLIP image embedding job.
+  EmbedAsset: "embed-asset",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

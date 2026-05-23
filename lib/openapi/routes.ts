@@ -39,6 +39,7 @@ import {
   WorkspaceInvitationEnvelopeSchema,
   PublicInvitationViewSchema,
   FolderListingSchema,
+  ClipSearchEnvelopeSchema,
   ErrorSchema,
   UuidSchema,
   HexColorSchema,
@@ -1240,6 +1241,80 @@ registry.registerPath({
 });
 
 // ---------------------------------------------------------------------------
+// /api/v1/search/clip (Phase 4.2 — CLIP text-to-image search)
+// ---------------------------------------------------------------------------
+const ClipSearchQuery = z.object({
+  q: z.string().openapi({
+    description: "Free-text query, e.g. 'dog on beach' or 'sunset over mountains'.",
+    example: "dog on beach",
+  }),
+  limit: z
+    .string()
+    .optional()
+    .openapi({
+      description: "Max results (1..200). Default 50.",
+      example: "50",
+    }),
+  workspaceId: UuidSchema.optional().openapi({
+    description:
+      "Optional explicit workspace id. If omitted, the caller's first " +
+      "accessible workspace is used (matching `/api/v1/search` defaults).",
+  }),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/search/clip",
+  summary: "Semantic image search via CLIP text-to-image embeddings",
+  description:
+    "Phase 4.2 — embeds the query text via the Plexo vision service and " +
+    "runs a pgvector nearest-neighbour scan against `assets.clip_vec`. " +
+    "Results are sorted by cosine similarity descending. When the vision " +
+    "service is not configured or unreachable the route degrades to " +
+    "`{ results: [], unavailable: true }` instead of returning 5xx.",
+  tags: ["Search"],
+  security: AUTH_SECURITY,
+  request: { query: ClipSearchQuery },
+  responses: {
+    200: json(ClipSearchEnvelopeSchema, "Matching assets ranked by similarity."),
+    400: errorResponse("Missing or invalid query."),
+    401: errorResponse("Not authenticated."),
+    404: errorResponse("Workspace not accessible to caller."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/search/clip",
+  summary: "Semantic image search via CLIP (JSON body form)",
+  description:
+    "Alternate JSON-body form of the CLIP search route. Identical behaviour " +
+    "and response shape; useful for clients that prefer not to URL-encode " +
+    "long natural-language queries.",
+  tags: ["Search"],
+  security: AUTH_SECURITY,
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            q: z.string(),
+            limit: z.number().int().positive().optional(),
+            workspaceId: UuidSchema.optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: json(ClipSearchEnvelopeSchema, "Matching assets ranked by similarity."),
+    400: errorResponse("Missing or invalid body."),
+    401: errorResponse("Not authenticated."),
+    404: errorResponse("Workspace not accessible to caller."),
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Cron endpoints (admin-only; called by Kubernetes/cron scheduler)
 // ---------------------------------------------------------------------------
 registry.registerPath({
@@ -1323,6 +1398,8 @@ export const REGISTERED_ROUTES: ReadonlySet<string> = new Set([
   "DELETE /api/v1/document-types",
   "GET /api/v1/folders",
   "GET /api/v1/search",
+  "GET /api/v1/search/clip",
+  "POST /api/v1/search/clip",
   "POST /api/v1/uploads/tus",
   "PATCH /api/v1/uploads/tus/{uploadId}",
   "GET /api/v1/uploads/tus/{uploadId}",

@@ -38,6 +38,27 @@ interface Asset {
 
 interface Tag { id: string; name: string; color: string }
 
+interface ClipHit { asset: Asset; similarity: number }
+
+// Phase 4.2 — heuristic for "fire a CLIP search alongside the text search".
+// Two cheap signals: queries with >3 words usually describe a scene rather
+// than name a file, and queries containing one of these visual verbs
+// almost always want a semantic match. We keep this dumb on purpose —
+// the user-facing fallout of a false positive is just an extra section.
+const SEMANTIC_VERBS = [
+  "show", "find", "with", "wearing", "holding", "near", "looking", "of",
+  "containing", "featuring", "during", "at",
+];
+
+function looksSemantic(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return false;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length > 3) return true;
+  const lower = trimmed.toLowerCase();
+  return SEMANTIC_VERBS.some((v) => lower.includes(` ${v} `) || lower.startsWith(`${v} `));
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -80,6 +101,12 @@ function SearchInner() {
 
   // Document viewer
   const [viewerAsset, setViewerAsset] = useState<Asset | null>(null);
+
+  // Phase 4.2 — CLIP semantic results (fired alongside text search for
+  // "natural-language-looking" queries). `null` = not run; `[]` = ran but
+  // unavailable or no hits.
+  const [clipHits, setClipHits] = useState<ClipHit[] | null>(null);
+  const [clipUnavailable, setClipUnavailable] = useState(false);
 
   useEffect(() => {
     fetch("/api/v1/tags")
@@ -127,7 +154,36 @@ function SearchInner() {
 
       if (!q.trim() && !cl && !tid && !df && !dt && !ocr && !col) {
         setResults(null);
+        setClipHits(null);
+        setClipUnavailable(false);
         return;
+      }
+
+      // Phase 4.2 — kick off the CLIP search in parallel for "natural" queries.
+      // We don't await here; the section appears under the text results when
+      // the response arrives. Failures are silent — the section just doesn't
+      // render. Skipping when other structured filters are active keeps the
+      // semantic block out of pure-filter views like "tag=foo".
+      if (q.trim() && looksSemantic(q) && !tid && !cl && !col) {
+        const clipParams = new URLSearchParams({ q: q.trim(), limit: "24" });
+        fetch(`/api/v1/search/clip?${clipParams.toString()}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            if (!d) {
+              setClipHits([]);
+              setClipUnavailable(false);
+              return;
+            }
+            setClipUnavailable(!!d.unavailable);
+            setClipHits(Array.isArray(d.results) ? d.results : []);
+          })
+          .catch(() => {
+            setClipHits([]);
+            setClipUnavailable(false);
+          });
+      } else {
+        setClipHits(null);
+        setClipUnavailable(false);
       }
 
       const params = new URLSearchParams();
@@ -369,6 +425,65 @@ function SearchInner() {
           ))}
         </div>
       ) : null}
+
+      {/* Phase 4.2 — CLIP semantic results, rendered under the text matches.
+          We render the section any time a CLIP search has been run for the
+          current query, even with 0 results, so the user can see whether
+          semantic matching contributed. */}
+      {clipHits !== null && (
+        <div className="space-y-2 pt-2">
+          <div className="flex items-center gap-2 border-t border-border pt-4">
+            <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              Visually similar
+            </p>
+            {clipUnavailable && (
+              <span className="text-xs text-muted-foreground">
+                (semantic search service unavailable)
+              </span>
+            )}
+          </div>
+          {clipHits.length === 0 ? (
+            !clipUnavailable && (
+              <p className="text-sm text-muted-foreground">No semantic matches.</p>
+            )
+          ) : (
+            <div className="space-y-1.5">
+              {clipHits.map((hit) => (
+                <button
+                  key={`clip-${hit.asset.id}`}
+                  onClick={() => {
+                    const a = hit.asset;
+                    const isDoc = !a.mimeType.startsWith("image/");
+                    if (isDoc && (a.mimeType === "application/pdf" || a.extractedText)) {
+                      setViewerAsset(a);
+                    } else if (a.mimeType.startsWith("image/")) {
+                      router.push("/app/photos");
+                    } else {
+                      router.push("/app/documents");
+                    }
+                  }}
+                  className="flex w-full items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted/40 transition-colors"
+                >
+                  <AssetIcon mimeType={hit.asset.mimeType} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-foreground">{hit.asset.filename}</p>
+                    {hit.asset.description && (
+                      <p className="truncate text-xs text-muted-foreground">{hit.asset.description}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {hit.asset.classification ?? hit.asset.mimeType} · {formatBytes(hit.asset.sizeBytes)}
+                    </p>
+                  </div>
+                  <span className="text-xs text-amber-400/80 whitespace-nowrap font-mono">
+                    {(hit.similarity * 100).toFixed(0)}%
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {viewerAsset && (
         <DocumentViewer

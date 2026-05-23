@@ -27,14 +27,21 @@ import {
   ProcessAssetJobSchema,
   GenerateThumbnailsJobSchema,
   WebhookDeliveryJobSchema,
+  EmbedAssetJobSchema,
   maintenanceQueue,
   webhookDeliveryQueue,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
+  type EmbedAssetJob,
 } from "@/lib/queue";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
-import { processAsset, reapStuckAssets, generateThumbnails } from "@/lib/processing";
+import {
+  processAsset,
+  reapStuckAssets,
+  generateThumbnails,
+  embedAsset,
+} from "@/lib/processing";
 import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
@@ -56,6 +63,13 @@ const WEBHOOK_CONCURRENCY = Math.max(
 const WEBHOOK_TIMEOUT_MS = Math.max(
   parseInt(process.env.WEBHOOK_TIMEOUT_MS ?? "10000", 10),
   1000
+);
+// Phase 4.2 — CLIP embedding worker. Network-bound (POST to plexo-vision)
+// but the vision service is itself CPU-bound, so we keep concurrency low by
+// default to avoid hammering it.
+const CLIP_EMBED_CONCURRENCY = Math.max(
+  parseInt(process.env.CLIP_EMBED_CONCURRENCY ?? "4", 10),
+  1
 );
 
 // Exponential backoff for webhook delivery retries (in milliseconds).
@@ -493,6 +507,76 @@ function startWebhookDeliveryWorker(): Worker<WebhookDeliveryJob> {
 }
 
 /**
+ * Phase 4.2 — CLIP image embedding worker. Drains the `clip-embedding` queue:
+ * downloads an asset's preview derivative (or original if preview missing)
+ * from R2, POSTs to plexo-vision's `/vision/clip/image`, and writes the
+ * returned 512-dim vector to `assets.clip_vec`.
+ *
+ * Skips non-image MIME types silently (returns success — BullMQ won't retry).
+ * Non-2xx from vision throws; BullMQ retries per queue policy. If the vision
+ * service is unconfigured the job no-ops with a skip reason.
+ */
+function startClipEmbeddingWorker(): Worker<EmbedAssetJob> {
+  const w = new Worker<EmbedAssetJob>(
+    QueueNames.ClipEmbedding,
+    async (job: Job<EmbedAssetJob>) => {
+      const log = logger.child({
+        queue: QueueNames.ClipEmbedding,
+        jobId: job.id,
+        assetId: job.data?.assetId,
+        attempt: job.attemptsMade + 1,
+      });
+
+      const parsed = EmbedAssetJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid embed payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const data = parsed.data;
+
+      log.info("embedding asset");
+      const result = await embedAsset({
+        assetId: data.assetId,
+        workspaceId: data.workspaceId,
+      });
+      if (result.skipped) {
+        log.info({ reason: result.reason, modelId: result.modelId }, "embed job skipped");
+      } else {
+        log.info(
+          { modelId: result.modelId, dimensions: result.dimensions },
+          "asset embedded"
+        );
+      }
+      return result;
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: CLIP_EMBED_CONCURRENCY,
+    }
+  );
+
+  w.on("completed", (job) =>
+    logger.info({ queue: QueueNames.ClipEmbedding, jobId: job.id }, "embed job completed")
+  );
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.ClipEmbedding,
+        jobId: job?.id,
+        attempt: job?.attemptsMade,
+        err: err.message,
+      },
+      "embed job failed"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.ClipEmbedding, err: err.message }, "embed worker error")
+  );
+
+  return w;
+}
+
+/**
  * BullMQ marker class to opt out of retries. Re-implemented here to avoid
  * importing the named export by path — the type lives at the package root
  * but has historically shifted between versions.
@@ -628,6 +712,7 @@ async function main(): Promise<void> {
       thumbnailConcurrency: THUMBNAIL_CONCURRENCY,
       webhookConcurrency: WEBHOOK_CONCURRENCY,
       webhookTimeoutMs: WEBHOOK_TIMEOUT_MS,
+      clipEmbedConcurrency: CLIP_EMBED_CONCURRENCY,
       metricsPort: METRICS_PORT,
       redisUrl: (process.env.REDIS_URL ?? "redis://valkey:6379").replace(/\/\/[^@]*@/, "//***@"),
     },
@@ -646,6 +731,8 @@ async function main(): Promise<void> {
   workers.push(startMaintenanceWorker());
   // Phase 2.4 — outbound webhook delivery.
   workers.push(startWebhookDeliveryWorker());
+  // Phase 4.2 — CLIP image embeddings.
+  workers.push(startClipEmbeddingWorker());
   try {
     await ensureReaperSchedule();
   } catch (err) {

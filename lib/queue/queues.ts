@@ -13,6 +13,7 @@ import type {
   ThumbnailJob,
   ClassifyJob,
   WebhookDeliveryJob,
+  EmbedAssetJob,
 } from "./jobs";
 
 export const QueueNames = {
@@ -30,6 +31,10 @@ export const QueueNames = {
   // application level (we re-enqueue with `delay` based on attempt number)
   // so we use a low BullMQ-level `attempts` value.
   WebhookDelivery: "webhook-delivery",
+  // Phase 4.2 — CLIP image embedding. Network-bound (POST to plexo-vision).
+  // Separate queue so vision-service outages don't backlog the asset
+  // processing pipeline.
+  ClipEmbedding: "clip-embedding",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -116,6 +121,28 @@ export function webhookDeliveryQueue(): Queue<WebhookDeliveryJob> {
   return q;
 }
 
+/**
+ * Phase 4.2 — CLIP embedding queue. Defaults to 3 attempts with exponential
+ * backoff (vision service hiccups are common; one retry usually unsticks).
+ * Concurrency is controlled by the worker via CLIP_EMBED_CONCURRENCY env.
+ */
+export function clipEmbeddingQueue(): Queue<EmbedAssetJob> {
+  const name = QueueNames.ClipEmbedding;
+  const existing = cache.get(name);
+  if (existing) return existing as Queue<EmbedAssetJob>;
+  const q = new Queue<EmbedAssetJob>(name, {
+    connection: getRedisConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: 1000,
+      removeOnFail: 500,
+    },
+  });
+  cache.set(name, q);
+  return q;
+}
+
 export function maintenanceQueue(): Queue<Record<string, never>> {
   const name = QueueNames.Maintenance;
   const existing = cache.get(name);
@@ -137,6 +164,7 @@ export function allQueues(): Queue[] {
   classifyQueue();
   maintenanceQueue();
   webhookDeliveryQueue();
+  clipEmbeddingQueue();
   return Array.from(cache.values());
 }
 

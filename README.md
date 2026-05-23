@@ -795,6 +795,58 @@ configurable via `AUDIT_PRUNE_INTERVAL_MS` (default 24 h).
 workspace at `/app/settings/audit`, optionally filtered by action. There
 is no CSV/JSON export by design — the log lives in the admin UI only.
 
+## CLIP search
+
+Fonto can answer "find me a dog on a beach" without anyone having tagged
+those photos. Phase 4.2 wires the search UI to an OpenCLIP (ViT-B/32 by
+default) image encoder hosted by the Plexo `apps/vision` service. Image
+embeddings are computed once at upload time, written into
+`fonto.assets.clip_vec` (pgvector), and queried with cosine similarity at
+search time after the user's text query gets its own CLIP text embedding.
+
+### What gets indexed
+
+- Every image asset (any `image/*` MIME type) at upload. The worker prefers
+  the 1080px preview derivative — small, web-safe, already decoded by
+  sharp — over the original to keep vision-service load reasonable.
+- Existing images can be embedded retroactively with `pnpm backfill:clip`
+  (idempotent; only touches rows where `clip_vec IS NULL`).
+- Non-image assets are skipped silently. PDFs/text still fall through the
+  text + OCR search path.
+
+### Querying
+
+- `GET /api/v1/search/clip?q=dog+on+beach&limit=50` — returns
+  `{ results: [{ asset, similarity }] }` sorted by cosine similarity
+  descending.
+- `POST /api/v1/search/clip` with `{ q, limit, workspaceId? }` — same
+  behaviour, JSON body. Useful for long natural-language queries that don't
+  URL-encode cleanly.
+- The web search page automatically fires a CLIP query alongside the text
+  search when the typed query "looks natural" (>3 words, or contains a
+  visual verb like "show", "wearing", "near"). Semantic hits render under
+  the text results as a "Visually similar" section.
+
+### Query language
+
+The query is free text. CLIP was trained on alt-text-style captions, so it
+likes phrases that describe a scene: "person in a red coat", "screenshot
+of a terminal", "logo on a white background". One- or two-word queries
+work but are noisier — prefer the existing filename/OCR text search for
+exact-string lookups.
+
+### Prerequisites
+
+- The Plexo vision sidecar (`apps/vision` in the platform repo) must be
+  reachable at `PLEXO_VISION_URL` (default `http://plexo-vision:7000`).
+  Without it, the search route returns `{ results: [], unavailable: true }`
+  and the embed worker no-ops — uploads still work; semantic search is
+  simply absent.
+- `PLEXO_SERVICE_KEY` is reused as the vision service auth bearer.
+- The pgvector extension and `fonto.assets.clip_vec` column must exist
+  (lands in Phase 4.3 migration 0017). Until then `clip_vec` writes throw
+  cleanly and the worker logs a "phase 4.3 not landed" skip.
+
 ## Built on Plexo
 
 Fonto is a [Plexo](https://getplexo.com) App Profile. Asset classification, tag suggestions, and image description all route through Plexo's model gateway. Plexo also adds persistent memory — Fonto remembers tag preferences and classification corrections across sessions. See `lib/plexo.ts` and `lib/plexo-registration.ts` for the integration surface.

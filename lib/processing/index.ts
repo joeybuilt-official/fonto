@@ -3,3 +3,4 @@
 export * from "./processAsset";
 export * from "./reapStuckAssets";
 export * from "./generateThumbnails";
+export * from "./embedAsset";
