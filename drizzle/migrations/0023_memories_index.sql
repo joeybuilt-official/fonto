@@ -30,10 +30,15 @@
 -- 0022 are reserved for parallel agents working on adjacent phases; this
 -- one lands at 0023 per Phase 5 plan.
 
+-- NOTE: Postgres requires index expressions to be IMMUTABLE. `EXTRACT()` on
+-- a `timestamp with time zone` is STABLE (depends on session timezone), not
+-- IMMUTABLE — even though the underlying month/day values don't change for a
+-- given absolute instant. `to_char(captured_at AT TIME ZONE 'UTC', 'MM-DD')`
+-- is IMMUTABLE because the timezone is fixed. We index on that string and
+-- the query layer formats `$month-$day` the same way for the lookup.
 CREATE INDEX IF NOT EXISTS assets_workspace_captured_mmdd_idx
     ON fonto.assets (
         workspace_id,
-        (EXTRACT(MONTH FROM captured_at)),
-        (EXTRACT(DAY   FROM captured_at))
+        (to_char(captured_at AT TIME ZONE 'UTC', 'MM-DD'))
     )
     WHERE lifecycle_state = 'active' AND captured_at IS NOT NULL;
