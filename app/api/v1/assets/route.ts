@@ -9,6 +9,7 @@ import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
 import { detectMime } from "@/lib/mime";
+import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -145,6 +146,14 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
     sessionId = session?.id ?? null;
   }
 
+  // Phase 3.5 — optional virtual folder path. Clients pass the source
+  // directory via `X-Fonto-Path` (header chosen over form field so curl
+  // examples and the existing FormData path don't need to be reshuffled).
+  const directoryPath = normalizeDirectoryPath(
+    request.headers.get("X-Fonto-Path"),
+    { filename: file.name }
+  );
+
   const result = await createAssetRow({
     workspaceId,
     userId: user.id,
@@ -154,6 +163,7 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
     sizeBytes: file.size,
     buffer,
     source,
+    directoryPath,
   });
 
   if (result.deduplicated) {

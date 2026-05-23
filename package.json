@@ -13,7 +13,8 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "backfill:exif": "tsx scripts/backfill-exif.ts",
-    "backfill:thumbnails": "tsx scripts/backfill-thumbnails.ts"
+    "backfill:thumbnails": "tsx scripts/backfill-thumbnails.ts",
+    "backfill:folders": "tsx scripts/backfill-directory-paths.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",

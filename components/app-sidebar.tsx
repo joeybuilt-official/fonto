@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, Zap } from "lucide-react";
+import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import { useRouter } from "next/navigation";
@@ -13,6 +13,7 @@ import type { User } from "@/lib/auth/types";
 const navItems = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/timeline", label: "Timeline", icon: Clock },
+  { href: "/app/folders", label: "Folders", icon: FolderTree },
   { href: "/app/photos", label: "Photos", icon: Image },
   { href: "/app/documents", label: "Documents", icon: FileText },
   { href: "/app/collections", label: "Albums", icon: FolderOpen },

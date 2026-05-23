@@ -255,6 +255,10 @@ export async function POST(
     sha256,
     buffer,
     source,
+    // Phase 3.5 — folder path captured at /init time. The column is already
+    // normalised (`normalizeDirectoryPath` was called there) so we just pass
+    // it through.
+    directoryPath: upload.directoryPath ?? null,
   });
 
   // 5) Mark the upload row completed (even if dedup short-circuited — we

@@ -587,6 +587,50 @@ do heavy work asynchronously after acknowledging.
   your handler can deduplicate.
 - **Pin to HTTPS** for endpoint URLs in production.
 
+## Folder view
+
+Fonto preserves the source directory tree of your uploads so you can browse
+by folder, Immich-style, without giving up everything else (timeline, smart
+collections, etc.). Folders are **virtual** — they're computed at read time
+from a single `directory_path text` column on `assets`; there is no folders
+table.
+
+**Capturing the path on upload** — three sites accept a directory:
+
+- **Multipart `POST /api/v1/assets`** — send `X-Fonto-Path: /Photos/2024`.
+- **Presigned `POST /api/v1/assets/init`** — include `"path": "/Photos/2024"`
+  in the JSON body. It's persisted on the `asset_uploads` row and copied
+  into the asset when `/complete` fires.
+- **tus `/api/v1/uploads/tus`** — set `metadata.path` on your `tus-js-client`
+  upload (tus encodes metadata as Upload-Metadata).
+
+Paths are normalised server-side via `lib/folders/normalize.ts`: leading
+slash, no trailing slash, no `..` segments, `\` → `/`, max 1024 chars. If
+the last segment matches the upload filename it's stripped (so clients can
+pass either a directory or a full file path).
+
+**Listing folders** — `GET /api/v1/folders?prefix=/Photos` returns:
+
+```json
+{
+  "prefix": "/Photos",
+  "folders": [
+    { "name": "2024", "path": "/Photos/2024", "assetCount": 412 },
+    { "name": "2023", "path": "/Photos/2023", "assetCount": 308 }
+  ],
+  "assetsAtThisLevel": 4
+}
+```
+
+Empty/omitted `prefix` lists top-level folders. The folder grid in the web
+UI lives at `/app/folders` (see the sidebar **Folders** entry).
+
+**Backfilling legacy uploads.** Older tools sometimes packed the relative
+path into the `filename` column itself (`Photos/2024/IMG_0001.jpg`). Run
+`pnpm backfill:folders` to split those rows: directory portion → normalised
+`directory_path`, basename → `filename`. Idempotent (skips rows that already
+have a path).
+
 ## Delta sync
 
 Fonto exposes cursor-based delta sync so clients (mobile, CLI, third-party) can

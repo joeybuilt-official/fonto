@@ -163,6 +163,20 @@ export const AssetSchema = registry.register(
       thumbnailKey: z.string().nullable().optional(),
       previewKey: z.string().nullable().optional(),
       thumbnailGeneratedAt: IsoDateTimeSchema.nullable().optional(),
+      // Phase 3.5 — virtual folder path. NULL = "lives at workspace root".
+      // Normalised: leading `/`, no trailing `/`, no `..` segments.
+      directoryPath: z
+        .string()
+        .nullable()
+        .optional()
+        .openapi({
+          description:
+            "Virtual folder path the asset was uploaded into. Captured from " +
+            "the `X-Fonto-Path` header (multipart), the `path` field on " +
+            "`/assets/init`, or `metadata.path` on tus. NULL means the asset " +
+            "lives at the workspace root.",
+          example: "/Photos/2024/Iceland",
+        }),
       createdAt: IsoDateTimeSchema,
       updatedAt: IsoDateTimeSchema,
     })
@@ -384,3 +398,42 @@ export const ShareLinksEnvelopeSchema = z.object({
 export const WorkspacesEnvelopeSchema = z.object({
   workspaces: z.array(WorkspaceSchema),
 });
+
+// --- FolderListing (Phase 3.5) -------------------------------------------
+
+export const FolderListingSchema = registry.register(
+  "FolderListing",
+  z
+    .object({
+      prefix: z.string().openapi({
+        description:
+          "The directory prefix this listing is for. Empty string = workspace root.",
+        example: "/Photos",
+      }),
+      folders: z.array(
+        z.object({
+          name: z.string().openapi({
+            description: "Display name (last segment of `path`).",
+          }),
+          path: z.string().openapi({
+            description: "Full normalised path; pass as `?prefix=` to descend.",
+            example: "/Photos/2024",
+          }),
+          assetCount: z.number().int().nonnegative().openapi({
+            description:
+              "Count of all active assets under this sub-folder (recursive).",
+          }),
+        })
+      ),
+      assetsAtThisLevel: z.number().int().nonnegative().openapi({
+        description:
+          "Count of assets whose `directory_path` equals `prefix` exactly " +
+          "(i.e. sit at this level, not in a sub-folder).",
+      }),
+    })
+    .openapi({
+      description:
+        "Listing of the immediate sub-folders + asset count at the given " +
+        "prefix. Folders are virtual — see ADR/parity-plan Phase 3.5.",
+    })
+);
