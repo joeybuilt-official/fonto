@@ -5,10 +5,11 @@
 import { useEffect, useState, useRef } from "react";
 import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
-  Trash2, Plus, Loader2, Share2, Check, Copy
+  Trash2, Plus, Loader2, Share2, Check, Copy, Settings
 } from "lucide-react";
 import type { Asset } from "./photo-card";
 import { ConfirmButton } from "@/components/confirm-button";
+import { ShareDialog } from "./share-dialog";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -48,6 +49,7 @@ interface MetadataPanelProps {
   onShare: () => Promise<void>;
   shareState: { url: string | null; copied: boolean; loading: boolean };
   onRevokeShare: () => Promise<void>;
+  onOpenShareDialog: () => void;
 }
 
 function MetadataPanel({
@@ -64,6 +66,7 @@ function MetadataPanel({
   onShare,
   shareState,
   onRevokeShare,
+  onOpenShareDialog,
 }: MetadataPanelProps) {
   const [addingTag, setAddingTag] = useState(false);
   const [tagInput, setTagInput] = useState("");
@@ -273,6 +276,14 @@ function MetadataPanel({
                 </button>
               </div>
             )}
+            {/* Phase 2.5 — full share management (password, downloads, views). */}
+            <button
+              onClick={onOpenShareDialog}
+              className="flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors"
+            >
+              <Settings className="h-3.5 w-3.5 text-muted-foreground" />
+              Manage share links…
+            </button>
             <ConfirmButton
               onConfirm={() => onTrash?.()}
               className="flex w-full items-center gap-2 rounded-md border border-destructive/30 bg-background px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
@@ -322,6 +333,7 @@ export function PhotoLightbox({
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
   useEffect(() => {
     setUrl(null);
@@ -555,9 +567,16 @@ export function PhotoLightbox({
             onShare={handleShare}
             shareState={{ url: shareUrl, copied: shareCopied, loading: shareLoading }}
             onRevokeShare={handleRevokeShare}
+            onOpenShareDialog={() => setShareDialogOpen(true)}
           />
         )}
       </div>
+      <ShareDialog
+        open={shareDialogOpen}
+        onClose={() => setShareDialogOpen(false)}
+        targetType="asset"
+        targetId={asset.id}
+      />
     </div>
   );
 }

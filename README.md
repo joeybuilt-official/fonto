@@ -72,6 +72,60 @@ aws s3api put-bucket-cors \
   --cors-configuration file://docs/r2-cors.json
 ```
 
+## Sharing
+
+Fonto generates public, link-only share URLs for individual assets, collections, and (eventually) smart sets. Per [ADR 0004](docs/adr/0004-multi-user-workspace-memberships.md), external sharing is link-only — anonymous viewers never get a workspace membership.
+
+### Link types
+
+| Type | Payload | URL |
+|---|---|---|
+| `asset` | One asset (image / PDF / file). | `/share/{slug}` — inline preview + optional download. |
+| `collection` | A manual collection's current contents (up to 500 assets, thumbnailed grid). | `/share/{slug}` |
+| `set` | A smart collection (rule-based). *Stub for now — preview-only.* | `/share/{slug}` |
+
+Slugs are 8-character base62, collision-checked at insert. Legacy long random tokens from Phase 1 are still resolved (the route accepts either).
+
+### API
+
+- `POST /api/v1/shares` — create a link. Body:
+  ```json
+  {
+    "targetType": "asset" | "collection" | "set",
+    "targetId": "uuid",
+    "password": "optional string (>= 4 chars)",
+    "allowDownload": true,
+    "maxViews": 100,
+    "expiresAt": "2026-12-31T23:59:59Z"
+  }
+  ```
+  Returns `{ id, slug, url, ... }`. All optional fields default to "unbounded".
+- `GET /api/v1/shares` — list active shares in the caller's workspaces.
+- `DELETE /api/v1/shares/:id` — revoke (soft — the row stays for the view-count audit trail).
+- `GET /api/v1/shares/:id/views` — last 50 access events (timestamp, hashed IP, user-agent, success).
+
+The legacy `POST/GET/DELETE /api/v1/assets/:id/share` endpoint stays in place for one release and writes through the new schema (default: 24h TTL, no password, downloads allowed).
+
+### Password protection
+
+Passwords are hashed with **argon2id** at OWASP 2025 parameters (`m=64 MiB`, `t=3`, `p=1`). Verification is constant-time via `@node-rs/argon2`. A failed attempt records a `success=false` row in `share_link_views`.
+
+The viewer submits the password via `?p=<plain>` on the share URL (the password prompt page submits a GET form). Wrong password → re-render the prompt; never leak whether the slug exists.
+
+### Expiry & view caps
+
+- `expiresAt` — optional ISO timestamp; `NULL` means "never expires". Capped at 1 year out at create-time.
+- `maxViews` — optional integer; once `viewCount >= maxViews`, the link 404s. Failed password attempts do NOT consume views.
+- `lastAccessedAt` is bumped only on successful resolves.
+
+### Rate limiting
+
+Per-IP sliding-window: **30 requests / 60 seconds**, enforced on the `/share/*` route via the shared Valkey (`sharelink:rate:{ipHash}` keys). Over-quota → a friendly "Too many requests" page. Fails open if Valkey is unreachable. Tune via `lib/share-links/rate-limit.ts`.
+
+### Privacy
+
+The raw client IP is never persisted. Each access row stores `sha256(SHARE_LINK_IP_SALT + ip)`. Set `SHARE_LINK_IP_SALT` per deployment (generate: `openssl rand -hex 32`) — rotating it invalidates all existing analytics (intentional). Referers are truncated to 500 chars.
+
 ## Tech Stack
 
 | Layer | Technology |
