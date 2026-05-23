@@ -155,8 +155,15 @@ interface DuplicatePrompt {
     filename: string;
     capturedAt: string | null;
     createdAt: string;
+    /** Hamming distance for pHash matches, cosine similarity for CLIP. */
     distance: number;
     thumbUrl: string;
+    // Phase 4.5 — distinguish pHash vs CLIP matches in the banner. Both
+    // fields are optional for back-compat with servers that haven't
+    // shipped 4.5 yet — in that case the UI falls back to the old
+    // "Possible duplicate" wording.
+    method?: "phash" | "clip";
+    confidence?: "high" | "medium" | "low";
   };
 }
 
@@ -242,6 +249,8 @@ export default function DashboardPage() {
           createdAt: string;
           distance: number;
           thumbUrl: string;
+          method?: "phash" | "clip";
+          confidence?: "high" | "medium" | "low";
         };
       };
       let data: UploadData | null = null;
@@ -596,8 +605,34 @@ function DuplicatePromptCard({
     ? new Date(prompt.match.capturedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
     : new Date(prompt.match.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 
+  // Phase 4.5 — wording + distance formatting vary by detection path.
+  // pHash → Hamming distance (integer, lower = closer). CLIP → cosine
+  // similarity (0..1, higher = closer). Older servers without `method`
+  // fall back to the original "Possible duplicate of" copy.
+  const method = prompt.match.method;
+  const headline =
+    method === "clip"
+      ? "Visually similar to"
+      : method === "phash"
+      ? "Near-duplicate of"
+      : "Possible duplicate of";
+  const distanceLabel =
+    method === "clip"
+      ? `sim ${prompt.match.distance.toFixed(2)}`
+      : `d${prompt.match.distance}`;
+  // Confidence tints the border. High = solid border, medium = default,
+  // low = dashed/subtle. Defaults to medium if the server didn't send
+  // a confidence field.
+  const confidence = prompt.match.confidence ?? "medium";
+  const borderClass =
+    confidence === "high"
+      ? "border-amber-500/60"
+      : confidence === "low"
+      ? "border-dashed border-border"
+      : "border-border";
+
   return (
-    <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 shadow-lg">
+    <div className={`pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-lg border ${borderClass} bg-card px-3 py-2 shadow-lg`}>
       <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-muted/30 flex items-center justify-center">
         {thumbUrl ? (
           /* eslint-disable-next-line @next/next/no-img-element */
@@ -607,11 +642,11 @@ function DuplicatePromptCard({
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground">Possible duplicate of</p>
+        <p className="text-sm font-medium text-foreground">{headline}</p>
         <p className="truncate text-xs text-muted-foreground" title={prompt.match.filename}>
           {prompt.match.filename}
           <span className="ml-1">· {dateLabel}</span>
-          <span className="ml-1">· d{prompt.match.distance}</span>
+          <span className="ml-1">· {distanceLabel}</span>
         </p>
       </div>
       <div className="flex flex-shrink-0 items-center gap-1">

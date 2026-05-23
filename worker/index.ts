@@ -27,12 +27,16 @@ import {
   ProcessAssetJobSchema,
   GenerateThumbnailsJobSchema,
   WebhookDeliveryJobSchema,
+  ClipDedupCheckJobSchema,
   maintenanceQueue,
   webhookDeliveryQueue,
+  clipDedupCheckQueue,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
+  type ClipDedupCheckJob,
 } from "@/lib/queue";
+import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
 import { processAsset, reapStuckAssets, generateThumbnails } from "@/lib/processing";
 import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
@@ -53,6 +57,29 @@ const WEBHOOK_CONCURRENCY = Math.max(
   parseInt(process.env.WEBHOOK_DELIVERY_CONCURRENCY ?? "4", 10),
   1
 );
+// Phase 4.5 — CLIP-similarity dedup check. Each job is one DB lookup + one
+// pgvector NN query. Modest concurrency keeps the index hot without
+// hammering Postgres.
+const CLIP_DEDUP_CONCURRENCY = Math.max(
+  parseInt(process.env.CLIP_DEDUP_WORKER_CONCURRENCY ?? "2", 10),
+  1
+);
+// Phase 4.5 — re-enqueue delay when the embedding isn't yet present on the
+// row (the upstream CLIP-embed job from Phase 4.2 hasn't completed). We don't
+// fail the job because there's nothing wrong; we just wait and try again.
+const CLIP_DEDUP_RETRY_DELAY_MS = Math.max(
+  parseInt(process.env.CLIP_DEDUP_RETRY_DELAY_MS ?? "30000", 10),
+  1000
+);
+// Phase 4.5 — CLIP similarity threshold. Mirrored from createAssetRow's
+// env-aware helper, but read here so the worker stays self-contained.
+function clipDedupThreshold(): number {
+  const raw = process.env.CLIP_DEDUP_THRESHOLD;
+  if (!raw) return 0.92;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > 1) return 0.92;
+  return n;
+}
 const WEBHOOK_TIMEOUT_MS = Math.max(
   parseInt(process.env.WEBHOOK_TIMEOUT_MS ?? "10000", 10),
   1000
@@ -493,6 +520,146 @@ function startWebhookDeliveryWorker(): Worker<WebhookDeliveryJob> {
 }
 
 /**
+ * Phase 4.5 — CLIP-similarity dedup check worker. Pulled from the
+ * `clip-dedup-check` queue when either (a) the inline embed in
+ * `createAssetRow()` exceeded its budget, or (b) a backfill sweep enqueued
+ * the asset. Re-enqueues itself with a delay if the upstream CLIP-embed
+ * job (Phase 4.2) hasn't populated `clip_vec` yet — it's expected, not an
+ * error.
+ *
+ * On success, stamps `clip_dedup_checked_at` and (today) logs results. A
+ * future iteration will insert a `notifications` row (Phase 7.3) so users
+ * see the warning in-app even though the upload response already returned.
+ */
+function startClipDedupCheckWorker(): Worker<ClipDedupCheckJob> {
+  const w = new Worker<ClipDedupCheckJob>(
+    QueueNames.ClipDedupCheck,
+    async (job: Job<ClipDedupCheckJob>) => {
+      const log = logger.child({
+        queue: QueueNames.ClipDedupCheck,
+        jobId: job.id,
+        assetId: job.data?.assetId,
+        attempt: job.attemptsMade + 1,
+      });
+
+      const parsed = ClipDedupCheckJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid clip-dedup payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const { assetId, workspaceId } = parsed.data;
+
+      // Read the asset's clip_vec via raw SQL — the column lives on
+      // `fonto.assets` once Phase 4.3 lands. Selecting via sql.raw keeps
+      // the worker buildable in the stub-only world where the Drizzle
+      // schema doesn't yet expose `clipVec` as a typed column.
+      type ClipVecRow = { clip_vec: number[] | null; lifecycle_state: string };
+      let rows: ClipVecRow[] = [];
+      try {
+        const result = await db.execute<ClipVecRow>(
+          sql`SELECT clip_vec, lifecycle_state FROM fonto.assets WHERE id = ${assetId} LIMIT 1`
+        );
+        // drizzle execute() returns either an array or a `{ rows }` object
+        // depending on the driver — handle both.
+        rows = Array.isArray(result)
+          ? (result as unknown as ClipVecRow[])
+          : ((result as unknown as { rows?: ClipVecRow[] }).rows ?? []);
+      } catch (err) {
+        // The clip_vec column doesn't exist yet (Phase 4.3 hasn't shipped)
+        // — treat as a soft no-op so the queue drains cleanly.
+        log.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          "clip_vec column unavailable — skipping dedup check"
+        );
+        return { skipped: true, reason: "clip_vec column missing" };
+      }
+
+      const row = rows[0];
+      if (!row) {
+        log.warn("asset row missing — dropping job");
+        return { skipped: true, reason: "asset missing" };
+      }
+      if (row.lifecycle_state !== "active") {
+        log.info({ lifecycleState: row.lifecycle_state }, "asset not active — skipping");
+        await db
+          .update(schema.assets)
+          .set({ clipDedupCheckedAt: new Date() })
+          .where(eq(schema.assets.id, assetId))
+          .catch(() => undefined);
+        return { skipped: true, reason: "lifecycle" };
+      }
+
+      if (!row.clip_vec || row.clip_vec.length === 0) {
+        // Upstream embed hasn't completed yet. Re-enqueue with a delay —
+        // this is the expected path, not an error.
+        log.info("clip_vec not yet populated; re-enqueuing");
+        await clipDedupCheckQueue().add(
+          JobNames.ClipDedupCheck,
+          { assetId, workspaceId },
+          { delay: CLIP_DEDUP_RETRY_DELAY_MS }
+        );
+        return { skipped: true, reason: "clip_vec pending" };
+      }
+
+      const threshold = clipDedupThreshold();
+      let matches: Awaited<ReturnType<typeof nearestNeighbors>>;
+      try {
+        matches = await nearestNeighbors(workspaceId, row.clip_vec, {
+          limit: 5,
+          threshold,
+          excludeAssetId: assetId,
+        });
+      } catch (err) {
+        log.error(
+          { err: err instanceof Error ? err.message : String(err) },
+          "nearestNeighbors failed"
+        );
+        throw err;
+      }
+
+      // TODO(phase-7.3): on match, insert a `notifications` row so the
+      // user sees the "visually similar to ..." banner in-app even though
+      // the upload response already returned. For now, just log.
+      if (matches.length > 0) {
+        log.info(
+          { matchCount: matches.length, top: matches[0] },
+          "clip-dedup match(es) found"
+        );
+      } else {
+        log.info("clip-dedup pass: no matches above threshold");
+      }
+
+      await db
+        .update(schema.assets)
+        .set({ clipDedupCheckedAt: new Date() })
+        .where(eq(schema.assets.id, assetId));
+
+      return { matches: matches.length };
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: CLIP_DEDUP_CONCURRENCY,
+    }
+  );
+
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.ClipDedupCheck,
+        jobId: job?.id,
+        err: err.message,
+      },
+      "clip-dedup worker error"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.ClipDedupCheck, err: err.message }, "clip-dedup worker error")
+  );
+
+  return w;
+}
+
+/**
  * BullMQ marker class to opt out of retries. Re-implemented here to avoid
  * importing the named export by path — the type lives at the package root
  * but has historically shifted between versions.
@@ -628,6 +795,7 @@ async function main(): Promise<void> {
       thumbnailConcurrency: THUMBNAIL_CONCURRENCY,
       webhookConcurrency: WEBHOOK_CONCURRENCY,
       webhookTimeoutMs: WEBHOOK_TIMEOUT_MS,
+      clipDedupConcurrency: CLIP_DEDUP_CONCURRENCY,
       metricsPort: METRICS_PORT,
       redisUrl: (process.env.REDIS_URL ?? "redis://valkey:6379").replace(/\/\/[^@]*@/, "//***@"),
     },
@@ -646,6 +814,8 @@ async function main(): Promise<void> {
   workers.push(startMaintenanceWorker());
   // Phase 2.4 — outbound webhook delivery.
   workers.push(startWebhookDeliveryWorker());
+  // Phase 4.5 — CLIP-similarity dedup fallback consumer.
+  workers.push(startClipDedupCheckWorker());
   try {
     await ensureReaperSchedule();
   } catch (err) {

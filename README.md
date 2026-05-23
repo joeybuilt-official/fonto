@@ -190,6 +190,37 @@ Phase 3.3 ships **without an email transport** — the parity plan defers email 
 
 `DELETE /api/v1/workspace/invitations/{tokenOrId}` flips `revoked_at`. Already-accepted invitations cannot be revoked (the membership row is the source of truth at that point — revoke that instead).
 
+## Duplicate detection
+
+Every image upload runs two passes of duplicate detection. Both produce the same `possibleDuplicate` payload on the upload response, discriminated by a `method` field so the UI can vary the banner copy.
+
+### 1. pHash (always on)
+
+A 64-bit perceptual hash (sign-of-DCT-coefficients) is computed in-process at ingest. The new asset's hash is compared with every other active asset's hash in the same workspace; matches at **Hamming distance ≤ 5** are flagged. This catches:
+
+- Identical images uploaded twice (different filenames or sources)
+- The same image at a different resize or JPEG quality
+- Minor color shifts / metadata strips
+
+pHash is sub-millisecond and runs synchronously inside the upload request — there's never a fallback path.
+
+### 2. CLIP cosine similarity (Phase 4.5; second pass)
+
+After pHash returns no hit, Fonto computes a 512-d CLIP embedding for the image and queries the workspace's vector index. Matches above the configured similarity threshold (default **0.92**, matching Immich's pre-tuned value) are flagged. This catches what pHash structurally cannot:
+
+- Re-crops of the same scene
+- Color-graded re-edits / filter passes
+- Different framings of the same subject
+
+The embed call can be slow (200–500 ms against a healthy vision service, more under load), so the pass runs against a budget: if the embed lands within `CLIP_DEDUP_INLINE_TIMEOUT_MS` (default 2000) the dedup banner ships in the upload response; otherwise the upload returns immediately and the `clip-dedup-check` BullMQ worker handles the check out-of-band. Either way, `clip_dedup_checked_at` is stamped so the same row is never processed twice.
+
+The CLIP pass degrades to a no-op when no vision service is wired (`PLEXO_VISION_URL` unset), when the upstream embed hasn't yet written `clip_vec` for the row, or when pHash already produced a match.
+
+### Operator tooling
+
+- `pnpm scan:clip-duplicates` — bulk-scan every workspace's unchecked assets and emit a JSONL report. Supports `--workspace=<uuid>`, `--threshold=<0..1>`, `--batch=<n>`, `--limit=<n>`, and `--mark-checked`.
+- Env knobs: `CLIP_DEDUP_THRESHOLD`, `CLIP_DEDUP_INLINE_TIMEOUT_MS`, `CLIP_DEDUP_WORKER_CONCURRENCY`, `CLIP_DEDUP_RETRY_DELAY_MS`.
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -200,7 +231,7 @@ Phase 3.3 ships **without an email transport** — the parity plan defers email 
 | Auth | Better Auth |
 | Storage | Cloudflare R2 / S3-compatible |
 | AI | Plexo Core (optional) |
-| Image Processing | sharp, pHash |
+| Image Processing | sharp, pHash, CLIP (Phase 4.5) |
 | Background Jobs | BullMQ + Redis/Valkey |
 | UI | Tailwind CSS v4, shadcn/ui |
 

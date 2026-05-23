@@ -14,7 +14,8 @@
     "db:studio": "drizzle-kit studio",
     "backfill:exif": "tsx scripts/backfill-exif.ts",
     "backfill:thumbnails": "tsx scripts/backfill-thumbnails.ts",
-    "backfill:folders": "tsx scripts/backfill-directory-paths.ts"
+    "backfill:folders": "tsx scripts/backfill-directory-paths.ts",
+    "scan:clip-duplicates": "tsx scripts/scan-clip-duplicates.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",

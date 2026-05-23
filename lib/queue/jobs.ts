@@ -57,6 +57,16 @@ export type ReapStuckAssetsJob = z.infer<typeof ReapStuckAssetsJobSchema>;
 export const PruneAuditLogJobSchema = z.object({}).strict();
 export type PruneAuditLogJob = z.infer<typeof PruneAuditLogJobSchema>;
 
+// Phase 4.5 — CLIP-similarity second-pass dedup check. Enqueued when the
+// inline embed in `createAssetRow()` exceeds CLIP_DEDUP_INLINE_TIMEOUT_MS,
+// or as a backfill from `scripts/scan-clip-duplicates.ts`. Tiny payload:
+// the worker reads the asset row + clip_vec from Postgres at run time.
+export const ClipDedupCheckJobSchema = z.object({
+  assetId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+});
+export type ClipDedupCheckJob = z.infer<typeof ClipDedupCheckJobSchema>;
+
 // Phase 2.4 — outbound webhook delivery. Payload references a row in
 // fonto.webhook_deliveries; the worker rehydrates everything else from
 // Postgres so the job stays tiny + crash-safe.
@@ -85,6 +95,10 @@ export const JobNames = {
   PruneAuditLog: "prune-audit-log",
   // Phase 2.4 — outbound webhook delivery (one job per delivery attempt).
   DeliverWebhook: "deliver-webhook",
+  // Phase 4.5 — second-pass CLIP-similarity dedup check. Enqueued when the
+  // inline embed in createAssetRow() exceeds the inline budget, or as a
+  // backfill sweep.
+  ClipDedupCheck: "clip-dedup-check",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

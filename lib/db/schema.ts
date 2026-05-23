@@ -164,6 +164,12 @@ export const assets = fontoSchema.table(
     // "lives at workspace root" — no folder. There is intentionally no
     // `folders` table; folders are GROUP BY prefixes of this column.
     directoryPath: text("directory_path"),
+    // Phase 4.5 — timestamp the CLIP-similarity dedup pass last ran for this
+    // asset (either inline at upload time or via the worker fallback). NULL
+    // means "not yet checked"; the worker only considers rows where this is
+    // NULL and `clip_vec` is non-NULL. Distinct from `phash` dedup which
+    // runs synchronously in `createAssetRow()` and has no stamped column.
+    clipDedupCheckedAt: timestamp("clip_dedup_checked_at", { withTimezone: true }),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
@@ -196,6 +202,13 @@ export const assets = fontoSchema.table(
       table.workspaceId,
       table.directoryPath
     ),
+    // Phase 4.5 — partial index for the CLIP-dedup worker sweep: it picks
+    // rows where the embedding is present but the dedup check hasn't run.
+    // Partial so the index stays small (most active rows are either still
+    // pending an embed or already checked).
+    index("assets_clip_dedup_pending_idx")
+      .on(table.workspaceId, table.createdAt)
+      .where(sql`${table.clipDedupCheckedAt} IS NULL`),
   ]
 );
 

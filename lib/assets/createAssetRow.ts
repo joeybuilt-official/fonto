@@ -30,9 +30,11 @@ import {
   mirrorAssetToGraph,
 } from "@/lib/fonto-graph";
 import { extractExif } from "@/lib/exif";
-import { assetProcessingQueue, JobNames } from "@/lib/queue";
+import { assetProcessingQueue, clipDedupCheckQueue, JobNames } from "@/lib/queue";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { nextSeq } from "@/lib/db/seq";
+import { embedImage, visionServiceConfigured } from "@/lib/plexo-vision";
+import { nearestNeighbors } from "@/lib/vectors";
 // Phase 1.1 `thumbnailQueue` + `JobNames.GenerateThumbnails` resolved
 // dynamically below so this module stays buildable if those exports
 // disappear in a future refactor (or in a parallel-worktree merge with
@@ -45,15 +47,67 @@ import { assetIngestTotal, classifyMime } from "@/lib/metrics";
 // 11+  = different image
 export const PHASH_DUPLICATE_THRESHOLD = 5;
 
+// Phase 4.5 — CLIP-similarity threshold for the second-pass dedup check.
+// 0.92 matches Immich's default ("clearly the same scene, possibly a re-edit
+// or different crop"). Tunable via CLIP_DEDUP_THRESHOLD.
+export const CLIP_DUPLICATE_THRESHOLD_DEFAULT = 0.92;
+// Phase 4.5 — inline embed budget. If the vision call exceeds this we bail
+// out and defer the dedup pass to the worker so the upload response isn't
+// blocked. Tunable via CLIP_DEDUP_INLINE_TIMEOUT_MS.
+export const CLIP_DEDUP_INLINE_TIMEOUT_MS_DEFAULT = 2000;
+
+function clipDedupThreshold(): number {
+  const raw = process.env.CLIP_DEDUP_THRESHOLD;
+  if (!raw) return CLIP_DUPLICATE_THRESHOLD_DEFAULT;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > 1) return CLIP_DUPLICATE_THRESHOLD_DEFAULT;
+  return n;
+}
+
+function clipDedupInlineTimeoutMs(): number {
+  const raw = process.env.CLIP_DEDUP_INLINE_TIMEOUT_MS;
+  if (!raw) return CLIP_DEDUP_INLINE_TIMEOUT_MS_DEFAULT;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return CLIP_DEDUP_INLINE_TIMEOUT_MS_DEFAULT;
+  return Math.floor(n);
+}
+
 export type Asset = typeof schema.assets.$inferSelect;
+
+/**
+ * Phase 4.5 — extended dedup hint surfaced to the client upload response.
+ * `method` discriminates the detection path (pHash vs CLIP), `distance`
+ * carries pHash Hamming OR CLIP cosine similarity depending on method, and
+ * `confidence` is a normalised UI bucket derived from `method`+`distance`:
+ *
+ *   - pHash: <=2 = high, else medium
+ *   - CLIP:  >=0.95 = high, >=0.93 = medium, else low
+ */
+export type DuplicateDetectionMethod = "phash" | "clip";
+export type DuplicateConfidence = "high" | "medium" | "low";
 
 export interface PossibleDuplicate {
   assetId: string;
   filename: string;
   capturedAt: string | null;
   createdAt: string;
+  /** Hamming distance for pHash matches; cosine similarity for CLIP matches. */
   distance: number;
   thumbUrl: string;
+  /** Phase 4.5 — which detection path produced this match. */
+  method: DuplicateDetectionMethod;
+  /** Phase 4.5 — UI bucket for the banner styling / wording. */
+  confidence: DuplicateConfidence;
+}
+
+function phashConfidence(distance: number): DuplicateConfidence {
+  return distance <= 2 ? "high" : "medium";
+}
+
+function clipConfidence(similarity: number): DuplicateConfidence {
+  if (similarity >= 0.95) return "high";
+  if (similarity >= 0.93) return "medium";
+  return "low";
 }
 
 export interface CreateAssetInput {
@@ -180,6 +234,109 @@ async function findPHashNearDuplicate(
 }
 
 /**
+ * Phase 4.5 — race the inline CLIP embed against the budget. Returns the
+ * embedding if it lands in time; returns `"timeout"` if the budget was
+ * exceeded (so the caller can defer to the worker); returns `null` on any
+ * other failure (service unconfigured, network error, decode failure) — in
+ * which case the caller should silently skip the CLIP pass.
+ *
+ * The actual `embedImage()` stub returns `null` until Phase 4.2 ships, so in
+ * practice this function will short-circuit to `null` on every call. Wiring
+ * the race up now keeps the createAssetRow flow stable across both worlds.
+ */
+async function embedImageWithBudget(
+  buffer: Buffer,
+  mimeType: string,
+  budgetMs: number
+): Promise<number[] | "timeout" | null> {
+  if (!visionServiceConfigured()) return null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race<number[] | "timeout" | null>([
+      embedImage(buffer, mimeType, { timeoutMs: budgetMs }).catch((err) => {
+        console.warn("[fonto] inline CLIP embed failed:", err);
+        return null;
+      }),
+      new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), budgetMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Phase 4.5 — fire-and-forget enqueue of the worker fallback job. Same
+ * defensive shape as `tryEnqueueThumbnail`: never throws, only logs.
+ */
+async function tryEnqueueClipDedupCheck(assetId: string, workspaceId: string): Promise<void> {
+  try {
+    await clipDedupCheckQueue().add(JobNames.ClipDedupCheck, { assetId, workspaceId });
+  } catch (err) {
+    console.warn("[fonto] clip-dedup-check enqueue skipped:", err);
+  }
+}
+
+/**
+ * Phase 4.5 — given a freshly-computed embedding, find the best workspace-
+ * scoped CLIP neighbor (excluding the asset itself) above the configured
+ * similarity threshold. Returns metadata for the duplicate banner, or null.
+ */
+async function findClipNearDuplicate(
+  workspaceId: string,
+  clipVec: number[],
+  excludeAssetId: string,
+  threshold: number
+): Promise<{
+  id: string;
+  filename: string;
+  capturedAt: string | null;
+  createdAt: string;
+  similarity: number;
+} | null> {
+  let matches: Awaited<ReturnType<typeof nearestNeighbors>>;
+  try {
+    matches = await nearestNeighbors(workspaceId, clipVec, {
+      limit: 5,
+      threshold,
+      excludeAssetId,
+    });
+  } catch (err) {
+    console.warn("[fonto] CLIP nearestNeighbors failed:", err);
+    return null;
+  }
+  if (matches.length === 0) return null;
+  // Sorted desc by similarity by contract; take the top.
+  const top = matches[0];
+  // Look up the matching row's display metadata.
+  const [row] = await db
+    .select({
+      id: schema.assets.id,
+      filename: schema.assets.filename,
+      capturedAt: schema.assets.capturedAt,
+      createdAt: schema.assets.createdAt,
+    })
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.workspaceId, workspaceId),
+        eq(schema.assets.id, top.assetId),
+        eq(schema.assets.lifecycleState, "active")
+      )
+    )
+    .limit(1);
+  if (!row) return null;
+  return {
+    id: row.id,
+    filename: row.filename,
+    capturedAt: row.capturedAt ? row.capturedAt.toISOString() : null,
+    createdAt: row.createdAt.toISOString(),
+    similarity: top.similarity,
+  };
+}
+
+/**
  * Try to enqueue a thumbnail job, but don't crash the build if Phase 1.1
  * hasn't shipped the queue export yet. The import is dynamic + try/catch so a
  * missing symbol stays a runtime warning rather than a TS error.
@@ -245,6 +402,8 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
         createdAt: match.createdAt,
         distance: match.distance,
         thumbUrl: `/api/v1/assets/${match.id}/url`,
+        method: "phash",
+        confidence: phashConfidence(match.distance),
       };
     }
     // Shadow-mode pHash NN against the FalkorDB index (ADR 0027). Read-only.
@@ -356,6 +515,56 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
 
   // Phase 1.1 thumbnail enqueue — optional; resolved dynamically.
   await tryEnqueueThumbnail(asset.id, workspaceId, mimeType);
+
+  // Phase 4.5 — second-pass CLIP-similarity dedup check. Only runs for
+  // image assets and only when pHash didn't already produce a hit (the
+  // user only needs to see one banner per upload). If the inline embed
+  // takes longer than CLIP_DEDUP_INLINE_TIMEOUT_MS we hand off to the
+  // BullMQ worker so the upload response isn't blocked.
+  if (mimeType.startsWith("image/") && possibleDuplicate == null) {
+    const inlineBudget = clipDedupInlineTimeoutMs();
+    const clipResult = await embedImageWithBudget(buffer, mimeType, inlineBudget);
+    if (clipResult === "timeout") {
+      // Defer to worker. Don't stamp clipDedupCheckedAt — the worker will.
+      void tryEnqueueClipDedupCheck(asset.id, workspaceId);
+    } else if (clipResult != null) {
+      // Got an embedding inline. Run NN and stamp the timestamp.
+      const threshold = clipDedupThreshold();
+      const clipMatch = await findClipNearDuplicate(
+        workspaceId,
+        clipResult,
+        asset.id,
+        threshold
+      );
+      if (clipMatch) {
+        possibleDuplicate = {
+          assetId: clipMatch.id,
+          filename: clipMatch.filename,
+          capturedAt: clipMatch.capturedAt,
+          createdAt: clipMatch.createdAt,
+          distance: clipMatch.similarity,
+          thumbUrl: `/api/v1/assets/${clipMatch.id}/url`,
+          method: "clip",
+          confidence: clipConfidence(clipMatch.similarity),
+        };
+      }
+      // Stamp the check as complete either way — null result means "no
+      // dup found", not "we never tried".
+      await db
+        .update(schema.assets)
+        .set({ clipDedupCheckedAt: new Date() })
+        .where(eq(schema.assets.id, asset.id))
+        .catch((err) => {
+          console.warn("[fonto] failed to stamp clipDedupCheckedAt:", err);
+        });
+    } else if (visionServiceConfigured()) {
+      // Service was configured but the embed call returned null (failure).
+      // Defer to the worker so we eventually have a clip_vec + checked_at.
+      void tryEnqueueClipDedupCheck(asset.id, workspaceId);
+    }
+    // If visionServiceConfigured() === false we silently skip — the
+    // feature is just not wired in this environment.
+  }
 
   // Phase D-Fonto-1 (ADR 0027): mirror to fonto graph for vector NN.
   if (phash != null && fontoGraphConfigured()) {
