@@ -34,6 +34,9 @@ import {
   ShareLinkEnvelopeSchema,
   ShareLinksEnvelopeSchema,
   WorkspacesEnvelopeSchema,
+  WorkspaceInvitationSchema,
+  WorkspaceInvitationEnvelopeSchema,
+  PublicInvitationViewSchema,
   ErrorSchema,
   UuidSchema,
   HexColorSchema,
@@ -74,6 +77,141 @@ registry.registerPath({
   responses: {
     200: json(WorkspacesEnvelopeSchema, "Workspaces the caller can access."),
     401: errorResponse("Not authenticated."),
+  },
+});
+
+// ---------------------------------------------------------------------------
+// /api/v1/workspace/invitations (Phase 3.3)
+// ---------------------------------------------------------------------------
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/workspace/invitations",
+  summary: "List pending invitations for the caller's primary workspace",
+  tags: ["Workspaces", "Invitations"],
+  security: AUTH_SECURITY,
+  responses: {
+    200: json(
+      WorkspaceInvitationEnvelopeSchema,
+      "Pending invitations (not yet accepted, revoked, or expired)."
+    ),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Caller is not the workspace owner."),
+    404: errorResponse("Workspace not found."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/workspace/invitations",
+  summary: "Invite a user to the workspace by email",
+  description:
+    "Generates a plaintext URL-safe token, persists the invitation with a " +
+    "7-day default TTL (`WORKSPACE_INVITATION_TTL_DAYS`), and returns the " +
+    "`{ id, token, url }`. Email delivery is intentionally stubbed in Phase " +
+    "3.3 — the inviter is expected to share the URL until Phase 7.3 lands " +
+    "an email transport.",
+  tags: ["Workspaces", "Invitations"],
+  security: AUTH_SECURITY,
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({
+            email: z.string().email(),
+            role: z.enum(["editor", "viewer"]),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: json(WorkspaceInvitationSchema, "Invitation created."),
+    400: errorResponse("Invalid body."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Caller cannot invite to this workspace."),
+    404: errorResponse("No workspace for caller."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/workspace/invitations/{token}",
+  summary: "Public lookup of an invitation by token",
+  description:
+    "Returns minimal metadata for the acceptance page to render before the " +
+    "recipient signs in. Does not require authentication. Includes the " +
+    "invitation `state` so the page can render expired/revoked/used states.",
+  tags: ["Workspaces", "Invitations"],
+  request: {
+    params: z.object({ token: z.string() }),
+  },
+  responses: {
+    200: json(PublicInvitationViewSchema, "Invitation found."),
+    404: errorResponse("Invitation not found."),
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/workspace/invitations/{token}",
+  summary: "Revoke an invitation",
+  description:
+    "Revokes a pending invitation. The path parameter accepts either the " +
+    "invitation id (UUID) or the public token; the handler disambiguates " +
+    "at runtime. Already-accepted or already-revoked invitations return 409.",
+  tags: ["Workspaces", "Invitations"],
+  security: AUTH_SECURITY,
+  request: {
+    params: z.object({ token: z.string() }),
+  },
+  responses: {
+    200: json(
+      z.object({ ok: z.literal(true), id: UuidSchema }),
+      "Invitation revoked."
+    ),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Caller is not the workspace owner."),
+    404: errorResponse("Invitation not found."),
+    409: errorResponse("Invitation already accepted or revoked."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/workspace/invitations/{token}/accept",
+  summary: "Accept an invitation",
+  description:
+    "Claims an invitation and adds the caller as a member of the target " +
+    "workspace. The caller's email must match the invited address. If the " +
+    "caller is unauthenticated the response is `401 { signupRequired: true }`; " +
+    "clients are expected to redirect to the signup flow with the token " +
+    "preserved so the same call can be re-issued post-signup.",
+  tags: ["Workspaces", "Invitations"],
+  security: AUTH_SECURITY,
+  request: {
+    params: z.object({ token: z.string() }),
+  },
+  responses: {
+    200: json(
+      z.object({
+        ok: z.literal(true),
+        workspaceId: UuidSchema,
+        role: z.enum(["editor", "viewer"]),
+        acceptedAt: z.string().datetime().nullable(),
+      }),
+      "Invitation accepted; membership created."
+    ),
+    401: errorResponse("Not authenticated (signup required)."),
+    403: errorResponse(
+      "Caller's email does not match the invited address."
+    ),
+    404: errorResponse("Invitation not found."),
+    409: errorResponse("Concurrent state change."),
+    410: errorResponse("Invitation expired, revoked, or already accepted."),
+    500: errorResponse(
+      "Membership table not available (Phase 3.1 migration pending)."
+    ),
   },
 });
 
@@ -1055,6 +1193,11 @@ registry.registerPath({
 // `{param}` placeholders.
 export const REGISTERED_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/v1/workspace",
+  "GET /api/v1/workspace/invitations",
+  "POST /api/v1/workspace/invitations",
+  "GET /api/v1/workspace/invitations/{token}",
+  "DELETE /api/v1/workspace/invitations/{token}",
+  "POST /api/v1/workspace/invitations/{token}/accept",
   "GET /api/v1/assets",
   "POST /api/v1/assets",
   "POST /api/v1/assets/init",
