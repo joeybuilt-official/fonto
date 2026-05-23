@@ -533,6 +533,41 @@ do heavy work asynchronously after acknowledging.
   your handler can deduplicate.
 - **Pin to HTTPS** for endpoint URLs in production.
 
+## Delta sync
+
+Fonto exposes cursor-based delta sync so clients (mobile, CLI, third-party) can
+catch up after being offline without refetching the whole library each wake.
+
+Endpoints (all `GET`, return `{ entries, nextCursor, hasMore }`):
+
+- `/api/v1/sync/assets?cursor=<seq>&limit=500`
+- `/api/v1/sync/tags?cursor=<seq>&limit=500`
+- `/api/v1/sync/collections?cursor=<seq>&limit=500`
+
+**Cursor semantics.** Every syncable entity carries a monotonic per-workspace
+`seq bigint`. Each call returns rows with `seq > cursor` ordered by seq ASC.
+The response's `nextCursor` is the highest `seq` returned; the client persists
+it and sends it back next call. A missing/empty cursor means "from the start".
+Cursors are decimal strings (bigint), non-negative; anything else returns 400.
+
+**Page sizes.** `limit` defaults to 500, max 1000. `hasMore: true` means more
+rows likely exist beyond this page; keep calling with the new cursor until
+`hasMore` is false.
+
+**Tombstones.** Deleted assets show up as `{ op: 'delete', id, seq }` entries
+once `deleted_at` (trash) or `purged_at` (hard delete) is set. The full asset
+row is **not** included for tombstones — only the id. Upserts use
+`{ op: 'upsert', seq, asset: { ... current state ... } }`.
+
+**Compacted, not historical.** A client offline for months sees the latest
+state of each row, not every intermediate write. Each row appears at most
+once per sync window — at its current seq.
+
+**What bumps an asset's seq.** Creation, lifecycle change (trash/restore/
+archive/purge), and share-link create/revoke (share state is visible to the
+client). Internal fields that the client never sees (e.g. internal queue
+attempt counters) do not bump seq.
+
 ## Built on Plexo
 
 Fonto is a [Plexo](https://getplexo.com) App Profile. Asset classification, tag suggestions, and image description all route through Plexo's model gateway. Plexo also adds persistent memory — Fonto remembers tag preferences and classification corrections across sessions. See `lib/plexo.ts` and `lib/plexo-registration.ts` for the integration surface.

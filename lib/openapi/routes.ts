@@ -9,6 +9,12 @@
 // `app/api/v1/...`, then add a `registry.registerPath(...)` call below.
 //
 // Keep this file boring. Reach for ./registry.ts for shared schemas.
+//
+// The bare `import "./registry"` ensures `extendZodWithOpenApi(z)` runs and
+// the `declare module 'zod'` augmentation in `@asteasolutions/zod-to-openapi`
+// is in scope before we call `.openapi(...)` below. Without it, TS doesn't
+// see the augmented methods even though they exist at runtime.
+import "./registry";
 import { z } from "zod";
 import {
   registry,

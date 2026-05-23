@@ -6,6 +6,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { emitWebhook } from "@/lib/webhooks/emit";
+import { nextSeq } from "@/lib/db/seq";
 
 export async function GET() {
   const user = await getAuthUser();
@@ -36,6 +37,8 @@ export async function POST(request: NextRequest) {
   const name = String(body.name ?? "").trim();
   if (!name) return NextResponse.json({ error: "Name is required" }, { status: 400 });
 
+  // Phase 2.3 — allocate delta-sync seq for this new collection.
+  const seq = await nextSeq(workspaces[0].id, "collection");
   const [collection] = await db
     .insert(schema.collections)
     .values({
@@ -43,6 +46,7 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       name,
       description: String(body.description ?? ""),
+      seq,
     })
     .returning();
 
