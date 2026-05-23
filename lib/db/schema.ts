@@ -15,6 +15,7 @@ import {
   real,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { vector } from "./drizzle-vector";
 
 export const fontoSchema = pgSchema("fonto");
 
@@ -164,6 +165,12 @@ export const assets = fontoSchema.table(
     // "lives at workspace root" — no folder. There is intentionally no
     // `folders` table; folders are GROUP BY prefixes of this column.
     directoryPath: text("directory_path"),
+    // Phase 4.3 (ADR 0002) — CLIP image embedding for text-to-image search
+    // and visual-similarity dedup. 512-dim float vector, populated by the
+    // Phase 4.2 backfill worker. NULL until computed. Cosine-distance HNSW
+    // index is partial (`WHERE clip_vec IS NOT NULL`) so unbackfilled rows
+    // don't bloat the index — see migration 0017.
+    clipVec: vector("clip_vec", 512),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
