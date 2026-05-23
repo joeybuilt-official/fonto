@@ -5,6 +5,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq, inArray } from "drizzle-orm";
+import { nextSeq } from "@/lib/db/seq";
 
 export async function GET() {
   const user = await getAuthUser();
@@ -33,12 +34,15 @@ export async function POST(request: NextRequest) {
   const body = (await request.json()) as { name: string; color?: string };
   if (!body.name?.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
 
+  // Phase 2.3 — allocate delta-sync seq for this new tag.
+  const seq = await nextSeq(workspaceId, "tag");
   const [tag] = await db
     .insert(schema.tags)
     .values({
       workspaceId,
       name: body.name.trim().toLowerCase(),
       color: body.color ?? "#6366f1",
+      seq,
     })
     .returning();
 

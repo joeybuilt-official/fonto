@@ -101,6 +101,11 @@ export const assets = fontoSchema.table(
     thumbnailGeneratedAt: timestamp("thumbnail_generated_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    // Phase 2.3 — monotonic per-workspace delta-sync cursor. Allocated via
+    // `lib/db/seq.ts:nextSeq()` on every insert/update that mutates a field
+    // the sync stream exposes. NULL only on rows older than the 0009 backfill
+    // (the backfill stamps everything; new rows must always set this).
+    seq: bigint("seq", { mode: "bigint" }),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
@@ -116,6 +121,9 @@ export const assets = fontoSchema.table(
     ),
     // Map queries: (lat, lon) btree for future bounding-box scans.
     index("assets_lat_lon_idx").on(table.latitude, table.longitude),
+    // Phase 2.3 — delta-sync cursor scans: GET /sync/assets?cursor=<seq>
+    // walks rows in seq order per workspace.
+    index("assets_workspace_seq_idx").on(table.workspaceId, table.seq),
   ]
 );
 
@@ -131,10 +139,13 @@ export const collections = fontoSchema.table(
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    // Phase 2.3 — delta-sync cursor; see assets.seq.
+    seq: bigint("seq", { mode: "bigint" }),
   },
   (table) => [
     index("collections_workspace_id_idx").on(table.workspaceId),
     index("collections_project_id_idx").on(table.projectId),
+    index("collections_workspace_seq_idx").on(table.workspaceId, table.seq),
   ]
 );
 
@@ -161,8 +172,13 @@ export const tags = fontoSchema.table(
     color: text("color").notNull().default("#6366f1"),
     aiSuggested: boolean("ai_suggested").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    // Phase 2.3 — delta-sync cursor; see assets.seq.
+    seq: bigint("seq", { mode: "bigint" }),
   },
-  (table) => [index("tags_workspace_id_idx").on(table.workspaceId)]
+  (table) => [
+    index("tags_workspace_id_idx").on(table.workspaceId),
+    index("tags_workspace_seq_idx").on(table.workspaceId, table.seq),
+  ]
 );
 
 export const assetTags = fontoSchema.table(
@@ -321,6 +337,18 @@ export const tusUploads = fontoSchema.table(
     index("tus_uploads_workspace_id_idx").on(table.workspaceId),
   ]
 );
+
+// Phase 2.3 — per-workspace monotonic counters powering delta sync. One row
+// per workspace; each `nextSeq()` call atomically increments and returns the
+// new value for the requested entity kind. Rows are created lazily via
+// INSERT ... ON CONFLICT DO UPDATE so brand-new workspaces don't need a
+// dedicated setup step.
+export const workspaceSeq = fontoSchema.table("workspace_seq", {
+  workspaceId: uuid("workspace_id").primaryKey(),
+  assetSeq: bigint("asset_seq", { mode: "bigint" }).notNull().default(sql`0`),
+  tagSeq: bigint("tag_seq", { mode: "bigint" }).notNull().default(sql`0`),
+  collectionSeq: bigint("collection_seq", { mode: "bigint" }).notNull().default(sql`0`),
+});
 
 // Public, time-bounded share tokens for individual assets.
 // `token` is a URL-safe random string. `expiresAt` is enforced at access time;

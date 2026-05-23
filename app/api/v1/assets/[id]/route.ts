@@ -7,6 +7,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { getS3Client, assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { plexoPublishEvent } from "@/lib/plexo";
+import { nextSeq } from "@/lib/db/seq";
 
 const LIFECYCLE_EVENTS: Record<string, string> = {
   archivable: "ext.fonto.asset.archivable",
@@ -59,6 +60,24 @@ export async function PATCH(
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
+
+  // Phase 2.3 — find the asset's workspace so we can bump its delta-sync
+  // seq alongside the lifecycle/state mutation. We have to know the
+  // workspace_id specifically (not just "one the user owns") to keep the
+  // per-workspace counter monotonic.
+  const [existing] = await db
+    .select({ workspaceId: schema.assets.workspaceId })
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.id, id),
+        inArray(schema.assets.workspaceId, workspaceIds)
+      )
+    )
+    .limit(1);
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  updates.seq = await nextSeq(existing.workspaceId, "asset");
 
   const [updated] = await db
     .update(schema.assets)

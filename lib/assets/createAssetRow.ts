@@ -31,6 +31,7 @@ import {
 } from "@/lib/fonto-graph";
 import { extractExif } from "@/lib/exif";
 import { assetProcessingQueue, JobNames } from "@/lib/queue";
+import { nextSeq } from "@/lib/db/seq";
 // Phase 1.1 `thumbnailQueue` + `JobNames.GenerateThumbnails` resolved
 // dynamically below so this module stays buildable if those exports
 // disappear in a future refactor (or in a parallel-worktree merge with
@@ -263,6 +264,10 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
     }
   }
 
+  // Phase 2.3 — allocate this row's delta-sync seq before insert so it
+  // appears on the very first `/sync/assets` page after creation.
+  const assetSeq = await nextSeq(workspaceId, "asset");
+
   const [asset] = await db
     .insert(schema.assets)
     .values({
@@ -271,6 +276,7 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
       mimeType,
       sizeBytes,
       sha256,
+      seq: assetSeq,
       // The presigned-PUT path has already written the object to R2 before
       // calling here, so the row starts `synced`. The legacy multipart path
       // overrides this to `syncing` and flips to `synced` after its

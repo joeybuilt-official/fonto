@@ -5,6 +5,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray, isNull, gt, desc } from "drizzle-orm";
+import { bumpAssetSeq } from "@/lib/db/seq";
 
 const DEFAULT_TTL_HOURS = 24;
 const MAX_TTL_HOURS = 24 * 30;
@@ -92,6 +93,10 @@ export async function POST(
     })
     .returning();
 
+  // Phase 2.3 — share state is visible to clients; bump asset seq so
+  // syncing clients learn the asset's share status changed.
+  await bumpAssetSeq(asset.workspaceId, asset.id);
+
   return NextResponse.json({
     token: link.token,
     url: `/share/${link.token}`,
@@ -124,6 +129,19 @@ export async function DELETE(
         isNull(schema.shareLinks.revokedAt)
       )
     );
+
+  // Phase 2.3 — revocation changes externally-visible state; bump seq so
+  // syncing clients pick up the change. Find the asset's workspace from
+  // the user's owned set (revocation only happens for workspaces they
+  // own).
+  const [asset] = await db
+    .select({ workspaceId: schema.assets.workspaceId })
+    .from(schema.assets)
+    .where(
+      and(eq(schema.assets.id, id), inArray(schema.assets.workspaceId, workspaceIds))
+    )
+    .limit(1);
+  if (asset) await bumpAssetSeq(asset.workspaceId, id);
 
   return NextResponse.json({ revoked: true });
 }
