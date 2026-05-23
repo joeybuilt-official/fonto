@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 
@@ -47,6 +48,17 @@ export async function PATCH(
   if (!workspaces.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const workspaceIds = workspaces.map((w) => w.id);
 
+  // Phase 3.1 — editor required to mutate a project. Look up the row first
+  // so we can scope the gate to the right workspace.
+  const [existing] = await db
+    .select({ workspaceId: schema.projects.workspaceId })
+    .from(schema.projects)
+    .where(and(eq(schema.projects.id, id), inArray(schema.projects.workspaceId, workspaceIds)))
+    .limit(1);
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
+
   const body = await request.json() as { name?: string; description?: string; color?: string };
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.name !== undefined) updates.name = String(body.name).trim();
@@ -74,6 +86,16 @@ export async function DELETE(
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const workspaceIds = workspaces.map((w) => w.id);
+
+  // Phase 3.1 — editor required to delete a project.
+  const [existing] = await db
+    .select({ workspaceId: schema.projects.workspaceId })
+    .from(schema.projects)
+    .where(and(eq(schema.projects.id, id), inArray(schema.projects.workspaceId, workspaceIds)))
+    .limit(1);
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   // Detach collections from project before deleting
   await db

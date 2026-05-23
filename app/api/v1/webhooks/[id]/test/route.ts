@@ -10,6 +10,7 @@ import { randomUUID } from "crypto";
 import { and, eq } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { webhookDeliveryQueue, JobNames } from "@/lib/queue";
 
@@ -36,6 +37,11 @@ export async function POST(
     )
     .limit(1);
   if (!endpoint) return NextResponse.json({ error: "not_found" }, { status: 404 });
+
+  // Phase 3.1 — sending a test webhook is a mutation (it consumes delivery
+  // attempts on the receiver); editor required.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, endpoint.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   const envelope = {
     id: randomUUID(),

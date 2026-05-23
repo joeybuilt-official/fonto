@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
 
@@ -68,6 +69,10 @@ export async function POST(
 
   if (!collection) return NextResponse.json({ error: "Collection not found" }, { status: 404 });
 
+  // Phase 3.1 — editor required to mutate collection contents.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, collection.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
+
   const [link] = await db
     .insert(schema.collectionAssets)
     .values({ collectionId, assetId: body.assetId })
@@ -87,10 +92,28 @@ export async function DELETE(
 
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
+  const workspaceIds = workspaces.map((w) => w.id);
 
   const { searchParams } = request.nextUrl;
   const assetId = searchParams.get("assetId");
   if (!assetId) return NextResponse.json({ error: "assetId required" }, { status: 400 });
+
+  // Phase 3.1 — editor required to remove assets from a collection. Look up
+  // the collection's workspace first so the gate can run against the right id.
+  const [collection] = await db
+    .select({ workspaceId: schema.collections.workspaceId })
+    .from(schema.collections)
+    .where(
+      and(
+        eq(schema.collections.id, collectionId),
+        inArray(schema.collections.workspaceId, workspaceIds)
+      )
+    )
+    .limit(1);
+  if (!collection) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const gate = await requireWorkspaceAccessOrResponse(user.id, collection.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   await db
     .delete(schema.collectionAssets)

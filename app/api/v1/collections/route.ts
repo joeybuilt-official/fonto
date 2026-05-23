@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { emitWebhook } from "@/lib/webhooks/emit";
@@ -32,6 +33,10 @@ export async function POST(request: NextRequest) {
   if (!workspaces.length) {
     return NextResponse.json({ error: "No workspace found" }, { status: 400 });
   }
+
+  // Phase 3.1 — editor required to create a collection.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, workspaces[0].id, "editor");
+  if (!gate.ok) return gate.response;
 
   const body = await request.json();
   const name = String(body.name ?? "").trim();

@@ -32,6 +32,51 @@ export const workspaces = fontoSchema.table(
   (table) => [index("workspaces_user_id_idx").on(table.userId)]
 );
 
+// Phase 3.1 — multi-user workspace memberships (ADR 0004).
+//
+// `workspaces.user_id` remains the canonical "personal owner" pointer for one
+// release. This table is the authoritative source going forward — every
+// authz decision (`assertWorkspaceAccess` in lib/authz.ts) reads from here.
+//
+// Roles (text, CHECK in migration 0012):
+//   - 'owner'  — one per workspace, billing + delete + member management
+//   - 'editor' — upload, edit, delete assets; cannot remove the owner
+//   - 'viewer' — read-only
+//
+// Backfill (migration 0012): one membership row per existing workspace,
+// role='owner', userId = workspaces.user_id, createdBy = NULL.
+//
+// `createdBy` is the inviter's user id; NULL for backfilled owners and any
+// auto-provisioned membership that didn't come through an invite (the
+// invitation table arrives in Phase 3.3 — migration 0014).
+export const workspaceMemberships = fontoSchema.table(
+  "workspace_memberships",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // Matches Better Auth `user.id` (text). Cross-schema, FK enforced in SQL.
+    userId: text("user_id").notNull(),
+    // 'owner' | 'editor' | 'viewer' — CHECK constraint in SQL.
+    role: text("role").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    // Inviter's user id; NULL for backfilled owners.
+    createdBy: text("created_by"),
+  },
+  (table) => [
+    uniqueIndex("workspace_memberships_workspace_user_idx").on(
+      table.workspaceId,
+      table.userId
+    ),
+    // "What workspaces can this user see?" — the hot path of getUserWorkspaces.
+    index("workspace_memberships_user_idx").on(table.userId),
+    // "Who's an editor in this workspace?" — member-list + invite-flow queries.
+    index("workspace_memberships_workspace_role_idx").on(
+      table.workspaceId,
+      table.role
+    ),
+  ]
+);
+
 export const assets = fontoSchema.table(
   "assets",
   {

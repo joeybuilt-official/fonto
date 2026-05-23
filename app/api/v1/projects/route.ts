@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, inArray, desc } from "drizzle-orm";
 
@@ -30,6 +31,10 @@ export async function POST(request: NextRequest) {
 
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 400 });
+
+  // Phase 3.1 — editor required to create projects.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, workspaces[0].id, "editor");
+  if (!gate.ok) return gate.response;
 
   const body = await request.json() as { name?: string; description?: string; color?: string };
   const name = String(body.name ?? "").trim();

@@ -20,6 +20,7 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 
@@ -51,6 +52,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "No workspace found" }, { status: 400 });
   }
   const workspaceId = workspaces[0].id;
+
+  // Phase 3.1 — editor or higher required to initiate uploads.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   let body: z.infer<typeof InitRequestSchema>;
   try {

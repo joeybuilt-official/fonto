@@ -1,25 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Authorization helpers for admin-only surfaces.
+// Authorization helpers for multi-user workspaces (ADR 0004).
 //
-// STUB FOR PHASE 0.6 — the full multi-user RBAC model arrives in Phase 3
-// (`workspace_memberships` with owner/editor/viewer + `assertWorkspaceAccess`
-// audit-logged helper — see Phase 3 of the Fonto → Immich parity plan and
-// ADR 0005). Until then, "admin" === workspace owner. Every workspace in
-// the system today is single-owner; `workspaces.userId` is the canonical
-// owner column.
+// Phase 3.1 lands the full membership-based model. Every mutating route MUST
+// route through `assertWorkspaceAccess` (or its throwing variant
+// `requireWorkspaceAccess`) before touching workspace-scoped state.
 //
-// Call this from Server Components and admin route handlers that mutate or
-// expose operational state. The shape of the return value is intentionally
-// discriminated so the caller decides how to render the failure (a 401 for
-// API routes, a redirect-to-login for pages, an "Admins only" panel for the
-// jobs page, etc.).
+// Role ordering: owner > editor > viewer. The "minimum role" check uses this
+// ordering — `requireWorkspaceAccess(.., 'editor')` is satisfied by both
+// 'editor' and 'owner', not by 'viewer'.
+//
+// `requireWorkspaceOwner` from the 0.6 stub is preserved as a thin alias so
+// existing call sites (e.g. the bull-board page) keep working unchanged.
 
 import { db, schema } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import type { User } from "@/lib/auth/types";
+
+export type WorkspaceRole = "owner" | "editor" | "viewer";
 
 export type AuthzFailure = "unauthenticated" | "forbidden";
 
@@ -27,24 +28,145 @@ export type AuthzResult =
   | { ok: true; user: User }
   | { ok: false; reason: AuthzFailure };
 
+// Numeric rank for ordering comparisons. Higher = more authority.
+const ROLE_RANK: Record<WorkspaceRole, number> = {
+  viewer: 1,
+  editor: 2,
+  owner: 3,
+};
+
 /**
- * Resolve the current session and assert the user owns the given workspace.
+ * Returns the caller's role on a workspace, or null if they have no
+ * membership row at all. Pure read — does not throw.
+ */
+export async function getUserWorkspaceRole(
+  userId: string,
+  workspaceId: string
+): Promise<WorkspaceRole | null> {
+  const rows = await db
+    .select({ role: schema.workspaceMemberships.role })
+    .from(schema.workspaceMemberships)
+    .where(
+      and(
+        eq(schema.workspaceMemberships.userId, userId),
+        eq(schema.workspaceMemberships.workspaceId, workspaceId)
+      )
+    )
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) return null;
+  // The DB CHECK constraint enforces the role vocabulary; the cast is safe.
+  return row.role as WorkspaceRole;
+}
+
+export type AccessReason = "no-membership" | "insufficient-role";
+
+export type AccessResult =
+  | { ok: true; role: WorkspaceRole }
+  | { ok: false; reason: AccessReason };
+
+/**
+ * Assert that `userId` has at least `minimumRole` on `workspaceId`.
  *
- * @param workspaceId UUID of the workspace the caller wants to act on.
- *   Pass the active workspace from the page/route resolver (typically the
- *   user's personal workspace).
+ * Non-throwing — call sites pick how to surface the failure (404 vs 403,
+ * redirect vs JSON envelope). For mutating route handlers, prefer the
+ * throwing `requireWorkspaceAccess` helper below.
  *
- * @returns
- *   - `{ ok: true, user }` — session valid AND `workspaces.userId === user.id`
- *   - `{ ok: false, reason: 'unauthenticated' }` — no session
- *   - `{ ok: false, reason: 'forbidden' }` — session OK but not the owner
- *     (or the workspace does not exist)
+ * Role ordering: owner > editor > viewer.
+ */
+export async function assertWorkspaceAccess(
+  userId: string,
+  workspaceId: string,
+  minimumRole: WorkspaceRole
+): Promise<AccessResult> {
+  const role = await getUserWorkspaceRole(userId, workspaceId);
+  if (!role) return { ok: false, reason: "no-membership" };
+  if (ROLE_RANK[role] < ROLE_RANK[minimumRole]) {
+    return { ok: false, reason: "insufficient-role" };
+  }
+  return { ok: true, role };
+}
+
+/**
+ * Thrown by `requireWorkspaceAccess` on access denial. Route handlers should
+ * `catch` this and translate to an HTTP envelope (the helper functions in
+ * `lib/api/errors.ts` will do this for you once Phase 3.5 lands).
  *
- * NOTE (Phase 3): this helper will be superseded by `assertWorkspaceAccess`
- * which checks `workspace_memberships` for role-based access and writes to
- * `audit_log`. Call sites of `requireWorkspaceOwner` should be the first
- * thing to migrate when that lands. Keep the function signature
- * `(workspaceId) => AuthzResult` so the swap is a rename.
+ * The discriminant `name === 'WorkspaceAccessError'` is stable for
+ * `error instanceof WorkspaceAccessError` checks across module boundaries.
+ */
+export class WorkspaceAccessError extends Error {
+  readonly name = "WorkspaceAccessError" as const;
+  readonly reason: AccessReason;
+  readonly status: 403 | 404;
+  constructor(reason: AccessReason) {
+    super(
+      reason === "no-membership"
+        ? "No membership on this workspace"
+        : "Insufficient role on this workspace"
+    );
+    this.reason = reason;
+    // 404 hides workspace existence from non-members; 403 signals "you exist
+    // here but can't do that".
+    this.status = reason === "no-membership" ? 404 : 403;
+  }
+}
+
+/**
+ * Throwing variant of `assertWorkspaceAccess`. Use at the top of mutating
+ * route handlers — one call, one failure mode, no branching ceremony.
+ */
+export async function requireWorkspaceAccess(
+  userId: string,
+  workspaceId: string,
+  minimumRole: WorkspaceRole
+): Promise<WorkspaceRole> {
+  const result = await assertWorkspaceAccess(userId, workspaceId, minimumRole);
+  if (!result.ok) throw new WorkspaceAccessError(result.reason);
+  return result.role;
+}
+
+/**
+ * Convenience for route handlers: assert access OR return the canonical
+ * NextResponse. Lets each mutation handler stay a one-liner check.
+ *
+ * Usage:
+ *   const gate = await requireWorkspaceAccessOrResponse(user.id, wsId, 'editor');
+ *   if (!gate.ok) return gate.response;
+ *
+ * On `no-membership` we return 404 (don't leak workspace existence to
+ * non-members). On `insufficient-role` we return 403.
+ */
+export type GateResult =
+  | { ok: true; role: WorkspaceRole }
+  | { ok: false; response: NextResponse };
+
+export async function requireWorkspaceAccessOrResponse(
+  userId: string,
+  workspaceId: string,
+  minimumRole: WorkspaceRole
+): Promise<GateResult> {
+  const result = await assertWorkspaceAccess(userId, workspaceId, minimumRole);
+  if (result.ok) return { ok: true, role: result.role };
+  const status = result.reason === "no-membership" ? 404 : 403;
+  const message =
+    result.reason === "no-membership"
+      ? "Workspace not found"
+      : "Forbidden: insufficient role";
+  return {
+    ok: false,
+    response: NextResponse.json({ error: message }, { status }),
+  };
+}
+
+/**
+ * Resolve the current session and assert the user is the owner of
+ * `workspaceId`. Returns the discriminated `AuthzResult` shape Phase 0.6
+ * relied on so existing call sites (bull-board) keep working unchanged.
+ *
+ * Internally delegates to `assertWorkspaceAccess(.., 'owner')` — the
+ * `workspaces.user_id` direct check has been retired.
  */
 export async function requireWorkspaceOwner(
   workspaceId: string
@@ -52,16 +174,7 @@ export async function requireWorkspaceOwner(
   const user = await getAuthUser();
   if (!user) return { ok: false, reason: "unauthenticated" };
 
-  const rows = await db
-    .select({ userId: schema.workspaces.userId })
-    .from(schema.workspaces)
-    .where(eq(schema.workspaces.id, workspaceId))
-    .limit(1);
-
-  const workspace = rows[0];
-  if (!workspace || workspace.userId !== user.id) {
-    return { ok: false, reason: "forbidden" };
-  }
-
+  const result = await assertWorkspaceAccess(user.id, workspaceId, "owner");
+  if (!result.ok) return { ok: false, reason: "forbidden" };
   return { ok: true, user };
 }
