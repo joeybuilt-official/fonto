@@ -3,31 +3,55 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Clock, Loader2 } from "lucide-react";
+import { Clock, Loader2, Heart, Star } from "lucide-react";
 import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
 import { VirtualizedTimeline } from "../_components/virtualized-timeline";
 
+// Phase 3.4 — favorites + 4+ rating chips augment the existing mime chips.
+// The fetch URL is derived from the full filter set so the cache key in
+// `data.filter` discriminates correctly when only the facet changes.
+type Facets = { mime: string; favorite: boolean; ratingMin: number | null };
+
+function facetsKey(f: Facets): string {
+  return `m=${f.mime}|f=${f.favorite ? 1 : 0}|r=${f.ratingMin ?? 0}`;
+}
+
+function buildAssetsUrl(f: Facets): string {
+  const params = new URLSearchParams();
+  if (f.mime) params.set("mime", f.mime);
+  if (f.favorite) params.set("favorite", "1");
+  if (f.ratingMin != null) params.set("ratingMin", String(f.ratingMin));
+  const qs = params.toString();
+  return qs ? `/api/v1/assets?${qs}` : "/api/v1/assets";
+}
+
 export default function TimelinePage() {
   const [mimeFilter, setMimeFilter] = useState("");
-  const [data, setData] = useState<{ assets: Asset[]; loading: boolean; filter: string }>({
+  const [favoriteFilter, setFavoriteFilter] = useState(false);
+  const [ratingMinFilter, setRatingMinFilter] = useState<number | null>(null);
+  const facets: Facets = useMemo(
+    () => ({ mime: mimeFilter, favorite: favoriteFilter, ratingMin: ratingMinFilter }),
+    [mimeFilter, favoriteFilter, ratingMinFilter]
+  );
+  const currentKey = facetsKey(facets);
+
+  const [data, setData] = useState<{ assets: Asset[]; loading: boolean; filterKey: string }>({
     assets: [],
     loading: true,
-    filter: "",
+    filterKey: "",
   });
   const assets = useMemo(
-    () => (data.filter === mimeFilter ? data.assets : []),
-    [data, mimeFilter]
+    () => (data.filterKey === currentKey ? data.assets : []),
+    [data, currentKey]
   );
-  const loading = data.filter === mimeFilter ? data.loading : true;
+  const loading = data.filterKey === currentKey ? data.loading : true;
   const [lightboxAssets, setLightboxAssets] = useState<Asset[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const url = mimeFilter
-      ? `/api/v1/assets?mime=${encodeURIComponent(mimeFilter)}`
-      : "/api/v1/assets";
+    const url = buildAssetsUrl(facets);
     fetch(url)
       .then((r) => r.json())
       .then((d) => {
@@ -37,17 +61,17 @@ export default function TimelinePage() {
             new Date(b.capturedAt ?? b.createdAt).getTime() -
             new Date(a.capturedAt ?? a.createdAt).getTime()
         );
-        setData({ assets: sorted, loading: false, filter: mimeFilter });
+        setData({ assets: sorted, loading: false, filterKey: currentKey });
       })
       .catch(() => {
         if (!cancelled) {
-          setData({ assets: [], loading: false, filter: mimeFilter });
+          setData({ assets: [], loading: false, filterKey: currentKey });
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [mimeFilter]);
+  }, [facets, currentKey]);
 
   const setAssets = useCallback(
     (updater: (prev: Asset[]) => Asset[]) => {
@@ -80,6 +104,18 @@ export default function TimelinePage() {
     setLightboxIndex(null);
   }
 
+  // Phase 3.4 — bubble favorite/rating mutations from the lightbox into
+  // the timeline list so the grid badges (heart, star count) update without
+  // a round-trip to the server.
+  const handleAssetUpdate = useCallback(
+    (assetId: string, patch: { isFavorite?: boolean; rating?: number }) => {
+      const apply = (a: Asset): Asset => (a.id === assetId ? { ...a, ...patch } : a);
+      setAssets((prev) => prev.map(apply));
+      setLightboxAssets((prev) => prev.map(apply));
+    },
+    [setAssets]
+  );
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -102,6 +138,38 @@ export default function TimelinePage() {
               {filter === "" ? "All" : filter === "image/" ? "Photos" : filter === "application/pdf" ? "PDF" : "Text"}
             </button>
           ))}
+          {/* Phase 3.4 — facet chips. Independent toggles; either or both
+              can stack on top of the mime filter. */}
+          <button
+            onClick={() => setFavoriteFilter((v) => !v)}
+            className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+              favoriteFilter
+                ? "bg-foreground text-background border-foreground"
+                : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"
+            }`}
+            aria-pressed={favoriteFilter}
+          >
+            <Heart
+              className="h-3 w-3"
+              fill={favoriteFilter ? "currentColor" : "none"}
+            />
+            Favorites
+          </button>
+          <button
+            onClick={() => setRatingMinFilter((v) => (v === 4 ? null : 4))}
+            className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+              ratingMinFilter === 4
+                ? "bg-foreground text-background border-foreground"
+                : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"
+            }`}
+            aria-pressed={ratingMinFilter === 4}
+          >
+            <Star
+              className="h-3 w-3"
+              fill={ratingMinFilter === 4 ? "currentColor" : "none"}
+            />
+            Rated 4+
+          </button>
         </div>
       </div>
 
@@ -129,6 +197,7 @@ export default function TimelinePage() {
           hasPrev={lightboxIndex > 0}
           hasNext={lightboxIndex < lightboxAssets.length - 1}
           onTrash={handleLightboxTrash}
+          onAssetUpdate={handleAssetUpdate}
         />
       )}
     </div>

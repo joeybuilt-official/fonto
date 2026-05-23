@@ -17,6 +17,13 @@ type Condition = {
 type SmartQuery = {
   conditions?: Condition[];
   logic?: "and" | "or";
+  // Phase 3.4 — top-level facet DSL extensions. These are AND-ed with the
+  // user's conditions (and with each other), regardless of `logic`. They
+  // exist as dedicated keys rather than `Condition` entries so the UI can
+  // surface them as named filter chips and clients don't have to know the
+  // `{ field, op, value }` shape for the common cases.
+  favorite?: boolean;
+  ratingMin?: number;
 };
 
 function buildCondition(c: Condition): SQL | null {
@@ -90,6 +97,22 @@ export async function GET(
     } else {
       conditions.push(...userConditions);
     }
+  }
+
+  // Phase 3.4 — facet predicates always AND with everything else (including
+  // `logic: "or"` groups). Both are validated: favorite must be strictly
+  // `true` to apply (false/undefined are "no opinion"); ratingMin must be
+  // an integer in 1..5.
+  if (q.favorite === true) {
+    conditions.push(eq(schema.assets.isFavorite, true));
+  }
+  if (
+    typeof q.ratingMin === "number" &&
+    Number.isInteger(q.ratingMin) &&
+    q.ratingMin >= 1 &&
+    q.ratingMin <= 5
+  ) {
+    conditions.push(gte(schema.assets.rating, q.ratingMin));
   }
 
   const assets = await db

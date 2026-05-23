@@ -3,7 +3,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2 } from "lucide-react";
+import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star } from "lucide-react";
 
 export interface Asset {
   id: string;
@@ -15,6 +15,10 @@ export interface Asset {
   processingState: string;
   capturedAt: string | null;
   createdAt: string;
+  // Phase 3.4 — favorites + ratings. Both default to "unset" on legacy rows
+  // before the backfill stamps them, so we keep these optional on the client.
+  isFavorite?: boolean;
+  rating?: number;
 }
 
 interface QuickActionsProps {
@@ -198,6 +202,26 @@ export function PhotoCard({
           hovered || selected || selectMode ? "opacity-100" : "opacity-0"
         }`}
       />
+
+      {/* Phase 3.4 — favorite heart (always visible when set; subtle).
+          Lives bottom-left so it doesn't fight with checkbox (top-right)
+          or quick actions (bottom-right). */}
+      {asset.isFavorite && (
+        <div className="absolute bottom-1.5 left-1.5 z-10 pointer-events-none">
+          <Heart
+            className="h-3.5 w-3.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]"
+            fill="currentColor"
+          />
+        </div>
+      )}
+      {/* Phase 3.4 — star rating badge. Top-left, tiny. Only shown when
+          rated > 0 so unrated assets stay visually quiet. */}
+      {asset.rating !== undefined && asset.rating > 0 && (
+        <div className="absolute top-1.5 left-1.5 z-10 flex items-center gap-0.5 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white pointer-events-none">
+          <Star className="h-2.5 w-2.5" fill="currentColor" />
+          {asset.rating}
+        </div>
+      )}
 
       {/* Top-right: checkbox */}
       {(selectMode || hovered || selected) && (
