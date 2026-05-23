@@ -53,4 +53,4 @@ COPY --from=builder --chown=bullboard:nodejs /app/tsconfig.json ./tsconfig.json
 USER bullboard
 ENV BULL_BOARD_PORT=3300
 EXPOSE 3300
-CMD ["node", "--import", "tsx/esm", "bullboard/index.ts"]
+CMD ["node_modules/.bin/tsx", "bullboard/index.ts"]
