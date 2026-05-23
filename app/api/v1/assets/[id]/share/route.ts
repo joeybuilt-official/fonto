@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+//
+// Legacy per-asset share endpoint. Phase 2.5 kept this in place for one
+// release alongside the new /api/v1/shares API. New rows are written through
+// the same `share_links` schema with `targetType='asset'`, no password, and
+// `allowDownload=true` so existing clients continue to "just work".
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { eq, and, inArray, isNull, gt, desc } from "drizzle-orm";
+import { eq, and, inArray, gt, desc, or, isNull } from "drizzle-orm";
 import { bumpAssetSeq } from "@/lib/db/seq";
+import { generateUniqueSlug } from "@/lib/share-links/slug";
 
 const DEFAULT_TTL_HOURS = 24;
 const MAX_TTL_HOURS = 24 * 30;
@@ -25,15 +31,17 @@ export async function GET(
   if (!workspaces.length) return NextResponse.json({ links: [] });
   const workspaceIds = workspaces.map((w) => w.id);
 
+  const now = new Date();
   const links = await db
     .select()
     .from(schema.shareLinks)
     .where(
       and(
-        eq(schema.shareLinks.assetId, id),
+        eq(schema.shareLinks.targetType, "asset"),
+        eq(schema.shareLinks.targetId, id),
         inArray(schema.shareLinks.workspaceId, workspaceIds),
-        isNull(schema.shareLinks.revokedAt),
-        gt(schema.shareLinks.expiresAt, new Date())
+        eq(schema.shareLinks.revoked, false),
+        or(isNull(schema.shareLinks.expiresAt), gt(schema.shareLinks.expiresAt, now))
       )
     )
     .orderBy(desc(schema.shareLinks.createdAt));
@@ -79,15 +87,19 @@ export async function POST(
     /* no body */
   }
 
-  const token = randomBytes(24).toString("base64url");
+  const slug = await generateUniqueSlug();
+  const token = `${slug}.${randomBytes(16).toString("base64url")}`;
   const expiresAt = new Date(Date.now() + ttlHours * 3600_000);
 
   const [link] = await db
     .insert(schema.shareLinks)
     .values({
       assetId: asset.id,
+      targetType: "asset",
+      targetId: asset.id,
       workspaceId: asset.workspaceId,
       token,
+      slug,
       createdBy: user.id,
       expiresAt,
     })
@@ -96,10 +108,14 @@ export async function POST(
   // Phase 2.3 — share state is visible to clients; bump asset seq so
   // syncing clients learn the asset's share status changed.
   await bumpAssetSeq(asset.workspaceId, asset.id);
+  // Webhook event emission lives on the new /api/v1/shares route. This
+  // legacy endpoint is single-target / no-password and stays minimal —
+  // the deprecation header already points consumers at the new API.
 
   return NextResponse.json({
     token: link.token,
-    url: `/share/${link.token}`,
+    slug: link.slug,
+    url: `/share/${link.slug}`,
     expiresAt: link.expiresAt,
   });
 }
@@ -121,12 +137,13 @@ export async function DELETE(
 
   await db
     .update(schema.shareLinks)
-    .set({ revokedAt: new Date() })
+    .set({ revoked: true, revokedAt: new Date() })
     .where(
       and(
-        eq(schema.shareLinks.assetId, id),
+        eq(schema.shareLinks.targetType, "asset"),
+        eq(schema.shareLinks.targetId, id),
         inArray(schema.shareLinks.workspaceId, workspaceIds),
-        isNull(schema.shareLinks.revokedAt)
+        eq(schema.shareLinks.revoked, false)
       )
     );
 

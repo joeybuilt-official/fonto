@@ -415,24 +415,83 @@ export const webhookDeliveries = fontoSchema.table(
   ]
 );
 
-// Public, time-bounded share tokens for individual assets.
-// `token` is a URL-safe random string. `expiresAt` is enforced at access time;
-// `revokedAt` lets owners kill a link without waiting for expiry.
+// Public, time-bounded share tokens.
+//
+// Phase 2.5 overhaul (see ADR 0004 + ADR 0007 + migration 0011):
+//   - `targetType` + `targetId` generalise the link beyond single assets to
+//     collections and sets. Old rows are backfilled with targetType='asset'.
+//   - `passwordHash` is an argon2id digest; verified timing-safely on resolve.
+//   - `allowDownload`, `maxViews`, `viewCount`, `lastAccessedAt` are new
+//     capability + analytics knobs.
+//   - `assetId` is kept as a redundant column for one release so deployed
+//     clients that still read it don't break. TODO: drop in a focused PR.
+//   - `revokedAt` continues to live on, but a denormalised boolean `revoked`
+//     is added for cheaper indexable filters.
+//   - The legacy random `token` column is preserved; new short `slug` (8 char
+//     base62) is the public URL segment going forward and is unique-indexed.
 export const shareLinks = fontoSchema.table(
   "share_links",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    // Legacy: kept for one release; new rows still write it (= targetId) so
+    // the `notNull` constraint inherited from migration 0001 stays satisfied.
+    // TODO(2.6): drop this column once all clients move to targetId.
     assetId: uuid("asset_id").notNull(),
     workspaceId: uuid("workspace_id").notNull(),
+    // 'asset' | 'collection' | 'set'
+    targetType: text("target_type").notNull().default("asset"),
+    targetId: uuid("target_id").notNull(),
+    // Legacy long random URL-safe token. New rows still get one (mirrored from
+    // `slug` for backward compat); the public URL is /share/{slug}.
     token: text("token").notNull().unique(),
+    // 8 char base62 — the new public URL segment.
+    slug: text("slug").notNull(),
+    // Optional argon2id digest. NULL = no password required.
+    passwordHash: text("password_hash"),
+    allowDownload: boolean("allow_download").notNull().default(true),
+    // NULL = unlimited.
+    maxViews: integer("max_views"),
+    viewCount: integer("view_count").notNull().default(0),
     createdBy: text("created_by").notNull(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    // Optional — NULL means "never expires".
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastAccessedAt: timestamp("last_accessed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    // Denormalised flag for indexable filters; mirrors `revokedAt IS NOT NULL`.
+    revoked: boolean("revoked").notNull().default(false),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (table) => [
     index("share_links_token_idx").on(table.token),
+    uniqueIndex("share_links_slug_idx").on(table.slug),
     index("share_links_asset_id_idx").on(table.assetId),
+    index("share_links_target_idx").on(table.targetType, table.targetId),
+    index("share_links_workspace_active_idx").on(table.workspaceId, table.revoked),
+  ]
+);
+
+// Per-access audit trail for share links. Stored for analytics + abuse
+// forensics. Privacy: raw IPs are NEVER persisted — only a per-deploy salted
+// SHA-256 (`SHARE_LINK_IP_SALT` env). `success=false` rows capture wrong
+// password attempts (rate-limit signal).
+export const shareLinkViews = fontoSchema.table(
+  "share_link_views",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    shareLinkId: uuid("share_link_id").notNull(),
+    accessedAt: timestamp("accessed_at", { withTimezone: true }).defaultNow().notNull(),
+    // sha256(SHARE_LINK_IP_SALT + ip), hex. Coarse — fine for rate analytics.
+    ipHash: text("ip_hash"),
+    userAgent: text("user_agent"),
+    success: boolean("success").notNull().default(true),
+    // Truncated to 500 chars at write time.
+    referer: text("referer"),
+  },
+  (table) => [
+    index("share_link_views_link_accessed_idx").on(
+      table.shareLinkId,
+      sql`${table.accessedAt} desc`
+    ),
   ]
 );
 
