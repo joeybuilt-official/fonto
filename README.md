@@ -1102,6 +1102,56 @@ A future v2 will cluster results by CLIP similarity inside 24h windows
 ("trip to Iceland day 3" instead of "47 photos from 2023-05-23") — see the
 `TODO(v2)` in `app/api/v1/memories/route.ts`.
 
+## Stacks
+
+Phase 5.5 groups related assets — RAW+JPEG of the same shot, an iPhone burst,
+multiple edits of the same photo — into a "stack" where one member is the
+**primary**. The timeline shows only the primary; clicking opens the lightbox
+which surfaces a "Stack of N" badge in the bottom-left corner. Click the
+badge to expand an inline carousel of every member.
+
+**Manual creation.** Suggestions are read-only — the auto-suggester at
+`GET /api/v1/stacks/suggestions` flags candidate clusters but never creates
+stacks on your behalf. Accept a suggestion via
+`POST /api/v1/stacks/suggestions/accept`, or create one from scratch via
+`POST /api/v1/stacks` with a `{ assetIds, primaryAssetId, name? }` body.
+
+**Two heuristics**, configured per-deploy in `.env.example`:
+
+| Heuristic   | Rule                                                                                              | Window env var               |
+|-------------|---------------------------------------------------------------------------------------------------|------------------------------|
+| `raw+jpeg`  | Two assets from the same camera (matching `cameraMake`/`cameraModel`), one `image/jpeg` + one canonical RAW (CR2/CR3/DNG/ARW/NEF/etc — see `lib/mime.ts:RAW_MIME_TYPES`) within `STACK_RAW_JPEG_THRESHOLD_S` seconds of each other. | `STACK_RAW_JPEG_THRESHOLD_S` (default `2`) |
+| `burst`     | 3+ assets from the same camera within `STACK_BURST_THRESHOLD_S` seconds of each other. Pairs are intentionally skipped — they're more likely an intentional double than a burst. | `STACK_BURST_THRESHOLD_S` (default `5`)   |
+
+Bursts win over raw+jpeg when both would surface overlapping assets: if a
+4-shot burst happens to contain a RAW+JPEG pair, the burst suggestion covers
+it and the pair is suppressed.
+
+**Timeline filter.** `GET /api/v1/assets` defaults to primary-only:
+non-primary stacked members are hidden. Pass `?expandStacks=true` (or `=1`)
+to opt in to "show every asset" mode. The filter uses a correlated subquery
+over `fonto.stacks`, indexed by both the partial
+`assets(workspace_id, stack_id) WHERE stack_id IS NOT NULL` and
+`stacks(primary_asset_id)`.
+
+**Smart-collection compatibility.** By default smart collections respect the
+same primary-only stack filter so a burst of 12 surfaces as one match, not
+twelve. The DSL extension `{ "expandStacks": true }` opts in to the
+"every member is a match" mode — useful for power-user collections like
+"all RAW originals":
+
+```json
+{
+  "expandStacks": true,
+  "conditions": [{ "field": "mimeType", "op": "startsWith", "value": "image/x-" }]
+}
+```
+
+**Lifecycle.** Removing the primary from a stack promotes the next-oldest
+member (by `capturedAt`, falling back to `createdAt`) to primary. Removing
+the last member deletes the stack row entirely. `DELETE /api/v1/stacks/:id`
+un-stacks every member then drops the stack row in one call.
+
 ## Built on Plexo
 
 Fonto is a [Plexo](https://getplexo.com) App Profile. Asset classification, tag suggestions, and image description all route through Plexo's model gateway. Plexo also adds persistent memory — Fonto remembers tag preferences and classification corrections across sessions. See `lib/plexo.ts` and `lib/plexo-registration.ts` for the integration surface.

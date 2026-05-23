@@ -196,6 +196,15 @@ export const AssetSchema = registry.register(
             "lives at the workspace root.",
           example: "/Photos/2024/Iceland",
         }),
+      // Phase 5.5 — manual stacks. NULL/absent = standalone. When set, the
+      // asset belongs to a `fonto.stacks` group; the timeline default-hides
+      // non-primary members.
+      stackId: UuidSchema.nullable().optional().openapi({
+        description:
+          "ID of the `fonto.stacks` row this asset belongs to. NULL = " +
+          "standalone. The timeline shows only the stack's primary asset " +
+          "unless `?expandStacks=true` is passed.",
+      }),
       createdAt: IsoDateTimeSchema,
       updatedAt: IsoDateTimeSchema,
     })
@@ -565,6 +574,71 @@ export const ClipSearchEnvelopeSchema = z
     }),
   })
   .openapi({ description: "Response envelope for the CLIP text-to-image search route." });
+
+// Phase 5.5 — manual stacks.
+export const StackSchema = registry.register(
+  "Stack",
+  z
+    .object({
+      id: UuidSchema,
+      workspaceId: UuidSchema,
+      primaryAssetId: UuidSchema.openapi({
+        description:
+          "ID of the asset that represents this stack in the timeline. " +
+          "Always one of the stack's members; updated automatically when " +
+          "the primary is removed from the stack.",
+      }),
+      name: z.string().nullable().optional().openapi({
+        description: "Optional display name. NULL = unnamed.",
+      }),
+      createdAt: IsoDateTimeSchema,
+      updatedAt: IsoDateTimeSchema,
+    })
+    .openapi({
+      description:
+        "A group of related assets where one is 'primary' (RAW+JPEG, " +
+        "burst, multiple edits). Members carry `stack_id` on their asset " +
+        "row pointing here; the timeline default-hides non-primary members.",
+    })
+);
+
+export const StackEnvelopeSchema = z.object({
+  stack: StackSchema,
+  assets: z.array(AssetSchema).openapi({
+    description: "Members, sorted primary-first then capturedAt ascending.",
+  }),
+});
+
+export const StackSuggestionSchema = registry.register(
+  "StackSuggestion",
+  z
+    .object({
+      assetIds: z.array(UuidSchema).openapi({
+        description:
+          "Assets the heuristic clusters together. The first id is the " +
+          "suggested primary when no override is passed to `/accept`.",
+      }),
+      reason: z.enum(["raw+jpeg", "burst"]).openapi({
+        description:
+          "Which heuristic produced this suggestion. `raw+jpeg` = two " +
+          "members within `STACK_RAW_JPEG_THRESHOLD_S` from the same " +
+          "camera, one image/jpeg + one canonical RAW. `burst` = 3+ " +
+          "members within `STACK_BURST_THRESHOLD_S` from the same camera.",
+      }),
+    })
+    .openapi({
+      description:
+        "A candidate stack flagged by the auto-suggester (read-only). " +
+        "The user confirms via `POST /api/v1/stacks/suggestions/accept`.",
+    })
+);
+
+export const StackSuggestionsEnvelopeSchema = z.object({
+  suggestions: z.array(StackSuggestionSchema),
+  total: z.number().int().nonnegative().openapi({
+    description: "Total suggestions found (vs. capped response length).",
+  }),
+});
 
 // Phase 3.5 — folder listing.
 export const FolderListingSchema = registry.register(

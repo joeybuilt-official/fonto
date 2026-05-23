@@ -41,6 +41,9 @@ import {
   FolderListingSchema,
   ClipSearchEnvelopeSchema,
   MemoriesEnvelopeSchema,
+  StackSchema,
+  StackEnvelopeSchema,
+  StackSuggestionsEnvelopeSchema,
   ErrorSchema,
   UuidSchema,
   HexColorSchema,
@@ -263,6 +266,16 @@ registry.registerPath({
         .enum(["active", "archivable", "archived", "trashed"])
         .optional()
         .openapi({ description: "Lifecycle bucket (default `active`)." }),
+      // Phase 5.5 — stack expansion override.
+      expandStacks: z
+        .enum(["true", "1"])
+        .optional()
+        .openapi({
+          description:
+            "Phase 5.5 — opt-in to 'show every stacked asset' mode. " +
+            "Default is primary-only: members of a stack are hidden " +
+            "unless they ARE the stack's primary.",
+        }),
     }),
   },
   responses: {
@@ -1380,6 +1393,230 @@ registry.registerPath({
 });
 
 // ---------------------------------------------------------------------------
+// /api/v1/stacks (Phase 5.5 — manual stacks)
+// ---------------------------------------------------------------------------
+const StackPathIdParam = z.object({ id: UuidSchema });
+const StackAssetPathParams = z.object({ id: UuidSchema, assetId: UuidSchema });
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/stacks",
+  summary: "Create a stack from a confirmed asset group",
+  description:
+    "Editor role required. All assets must live in the caller's primary " +
+    "workspace and not already belong to another stack. `primaryAssetId` " +
+    "must be one of `assetIds` — it's the row the timeline will surface.",
+  tags: ["Stacks"],
+  security: AUTH_SECURITY,
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({
+            assetIds: z.array(UuidSchema).min(1),
+            primaryAssetId: UuidSchema,
+            name: z.string().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: json(
+      z.object({
+        stack: StackSchema,
+        assetIds: z.array(UuidSchema),
+        primaryAsset: AssetSchema.nullable(),
+      }),
+      "Stack created."
+    ),
+    400: errorResponse("Bad request (missing primary, foreign asset, etc.)."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Workspace or assets not found."),
+    409: errorResponse("One or more assets already belong to another stack."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/stacks/{id}",
+  summary: "Get a stack with its members",
+  description:
+    "Returns the stack row plus its members sorted primary-first then by " +
+    "ascending capturedAt. Viewer role is sufficient.",
+  tags: ["Stacks"],
+  security: AUTH_SECURITY,
+  request: { params: StackPathIdParam },
+  responses: {
+    200: json(StackEnvelopeSchema, "Stack + members."),
+    401: errorResponse("Not authenticated."),
+    404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/api/v1/stacks/{id}",
+  summary: "Update stack name and/or primary",
+  description:
+    "Changing `primaryAssetId` moves the cover image; the new primary must " +
+    "already be a member. `name` can be set to null to clear.",
+  tags: ["Stacks"],
+  security: AUTH_SECURITY,
+  request: {
+    params: StackPathIdParam,
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({
+            primaryAssetId: UuidSchema.optional(),
+            name: z.string().nullable().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: json(StackEnvelopeSchema, "Updated stack + members."),
+    400: errorResponse("Primary not a member, or invalid body."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/stacks/{id}",
+  summary: "Un-stack all members and delete the stack",
+  tags: ["Stacks"],
+  security: AUTH_SECURITY,
+  request: { params: StackPathIdParam },
+  responses: {
+    200: json(z.object({ ok: z.literal(true) }), "Stack deleted."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/stacks/{id}/assets",
+  summary: "Add assets to an existing stack",
+  description:
+    "Idempotent against assets already in this stack; conflicts if any " +
+    "asset already belongs to a different stack.",
+  tags: ["Stacks"],
+  security: AUTH_SECURITY,
+  request: {
+    params: StackPathIdParam,
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({ assetIds: z.array(UuidSchema).min(1) }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: json(StackEnvelopeSchema, "Updated stack + members."),
+    400: errorResponse("Bad request."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Stack not found."),
+    409: errorResponse("Asset already in another stack."),
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/stacks/{id}/assets/{assetId}",
+  summary: "Remove one asset from a stack",
+  description:
+    "If the removed asset was the primary, the next-oldest member is " +
+    "promoted; if no members remain, the stack itself is deleted.",
+  tags: ["Stacks"],
+  security: AUTH_SECURITY,
+  request: { params: StackAssetPathParams },
+  responses: {
+    200: json(
+      z.object({
+        ok: z.literal(true),
+        deleted: z.boolean().openapi({
+          description: "True if the stack was deleted (no members remained).",
+        }),
+        newPrimaryAssetId: UuidSchema.nullable(),
+      }),
+      "Asset removed."
+    ),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Stack or asset membership not found."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/stacks/suggestions",
+  summary: "List auto-suggested stack candidates",
+  description:
+    "Read-only. Runs `suggestStacks()` over the caller's primary workspace " +
+    "and returns the first 50 candidate clusters. Reasons: `raw+jpeg` " +
+    "(2 assets, mixed JPEG + RAW within `STACK_RAW_JPEG_THRESHOLD_S`) or " +
+    "`burst` (3+ shots within `STACK_BURST_THRESHOLD_S` from the same " +
+    "camera). Bursts suppress overlapping pairs.",
+  tags: ["Stacks"],
+  security: AUTH_SECURITY,
+  responses: {
+    200: json(StackSuggestionsEnvelopeSchema, "Candidate stacks."),
+    401: errorResponse("Not authenticated."),
+    404: errorResponse("No workspace for caller."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/stacks/suggestions/accept",
+  summary: "Accept a suggestion and create the stack",
+  description:
+    "Convenience wrapper over `POST /api/v1/stacks` for suggestions. " +
+    "`primaryAssetId` defaults to the first id in `assetIds` if not " +
+    "specified.",
+  tags: ["Stacks"],
+  security: AUTH_SECURITY,
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({
+            assetIds: z.array(UuidSchema).min(1),
+            primaryAssetId: UuidSchema.optional(),
+            name: z.string().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: json(
+      z.object({ stack: StackSchema, assetIds: z.array(UuidSchema) }),
+      "Stack created from suggestion."
+    ),
+    400: errorResponse("Bad request."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Workspace or assets not found."),
+    409: errorResponse("One or more assets already in another stack."),
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Coverage gate
 // ---------------------------------------------------------------------------
 // Routes registered above. The integration script (scripts/check-openapi-coverage.ts)
@@ -1443,6 +1680,15 @@ export const REGISTERED_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/v1/uploads/tus/{uploadId}",
   "DELETE /api/v1/uploads/tus/{uploadId}",
   "GET /api/v1/memories",
+  // Phase 5.5 — manual stacks.
+  "POST /api/v1/stacks",
+  "GET /api/v1/stacks/{id}",
+  "PATCH /api/v1/stacks/{id}",
+  "DELETE /api/v1/stacks/{id}",
+  "POST /api/v1/stacks/{id}/assets",
+  "DELETE /api/v1/stacks/{id}/assets/{assetId}",
+  "GET /api/v1/stacks/suggestions",
+  "POST /api/v1/stacks/suggestions/accept",
   "POST /api/v1/cron/purge-trashed",
   "POST /api/v1/cron/ocr-backfill",
 ]);
