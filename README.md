@@ -321,6 +321,55 @@ the last 1000; failures are kept indefinitely for inspection. The
 gated. When `BULL_BOARD_URL` is set it links to the bull-board sidecar; the
 live-counts table is shown as a fallback either way.
 
+## OCR (PaddleOCR PP-OCRv5)
+
+Image assets are OCR'd by the post-upload pipeline and surfaced via
+`assets.ocr_text` (full-text search) and `assets.ocr_boxes` (per-line
+bounding boxes for the lightbox text-region highlighter, Phase 4.4).
+
+**Default path** — Fonto calls `POST /vision/ocr` on the Plexo Vision
+sidecar (`apps/vision`), which serves [PaddleOCR PP-OCRv5][paddleocr] via
+ONNX runtime. PaddleOCR is Apache 2.0; the PP-OCRv5 base model weights
+ship with 80+ languages out of the box (default: English + Chinese).
+Per-image latency is typically tens of milliseconds vs. ~3s for the
+previous LLM-based path.
+
+[paddleocr]: https://github.com/PaddlePaddle/PaddleOCR
+
+**Fallback path** — set `OCR_LLM_FALLBACK=true` to retain the original
+Plexo Core LLM-based OCR. When the vision sidecar is unreachable or
+errors, the worker re-attempts via `sdk.visionOcr`. Per-line bounding
+boxes are NOT recorded on this path (the LLM doesn't return them) — only
+the concatenated text.
+
+**Languages** — pass an ISO-639-1 code via `OCR_DEFAULT_LANG` (e.g. `en`,
+`zh`, `ja`, `de`). The PP-OCRv5 detector is language-agnostic; the
+recognizer is selected per request.
+
+**State machine** — `assets.ocr_state`:
+
+| State     | Meaning                                                              |
+|-----------|----------------------------------------------------------------------|
+| `pending` | image asset, hasn't been processed yet                               |
+| `ready`   | OCR ran and produced text                                            |
+| `empty`   | OCR ran successfully but found no text (e.g. solid-colour photo)     |
+| `failed`  | OCR pipeline errored (model unreachable, decode error, etc.)         |
+| `skipped` | non-image MIME type — OCR was never attempted                        |
+
+`empty` is intentionally distinct from `skipped` (we didn't try) and
+`failed` (we tried and the model errored). The nightly backfill cron
+(`/api/v1/cron/ocr-backfill`) treats `empty` as success.
+
+**Env vars:**
+- `PLEXO_VISION_URL` — base URL of the Plexo Vision sidecar. Required
+  for the PaddleOCR path; if unset, OCR falls back to LLM (when
+  `OCR_LLM_FALLBACK=true`) or is recorded as `failed`.
+- `OCR_LLM_FALLBACK` — `false` by default; `true` retains the legacy
+  LLM path as a backup.
+- `OCR_DEFAULT_LANG` — defaults to `en`.
+- `OCR_BACKFILL_BATCH_SIZE` — nightly cron batch size, default `50`.
+  Clamped to `1..500` per call.
+
 ### Bull-board UI (sidecar)
 
 The full bull-board admin UI — retry, promote, clean, inspect job payloads —
@@ -469,8 +518,13 @@ scrape_configs:
 **Custom metrics:**
 - `fonto_http_request_duration_seconds{method,route,status_code}` — histogram
   of API request latency. Currently observed on `POST /api/v1/assets`.
-- `fonto_asset_processing_duration_seconds{outcome=success|failure}` —
+- `fonto_asset_processing_duration_seconds{outcome=success|failure|paddle|llm-fallback|empty|skip}` —
   histogram of the full post-upload pipeline (classification, OCR, tags).
+  `success`/`failure` are recorded once per pipeline run; the OCR sub-step
+  emits an additional observation with `outcome=paddle` (PaddleOCR
+  succeeded), `llm-fallback` (the legacy LLM path produced the text),
+  `empty` (model ran but found no text), `skip` (no OCR provider available),
+  or `failure` (model errored).
 - `fonto_asset_processing_queue_depth{queue}` — gauge polled every 10s from
   BullMQ (`waiting + active + delayed`).
 - `fonto_asset_ingest_total{mime_class=image|video|document|other}` — counter

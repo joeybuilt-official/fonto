@@ -1,33 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Phase 4.2 — Plexo Vision (CLIP) client.
+// Plexo Vision client — thin HTTP wrapper around the `apps/vision` service
+// in the Plexo monorepo (Phase 4.1). Three endpoint families today:
 //
-// Thin HTTP facade in front of the `apps/vision` service shipped by Plexo in
-// Phase 4.1. The vision service exposes two CLIP endpoints:
-//   POST /vision/clip/image  { image: base64 } → { vector, modelId }
-//   POST /vision/clip/text   { text }          → { vector, modelId }
+//   POST /vision/clip/image  { image }  → { vector, modelId }
+//   POST /vision/clip/text   { text }   → { vector, modelId }
+//   POST /vision/ocr         { image | imageUrl, lang? } → { lines[], modelId }
 //
-// Vectors are L2-normalised floats (OpenCLIP). Callers don't care about
-// dimensionality here; they just hand the raw `number[]` to pgvector.
+// (Face detect/embed routes exist on the service side but no client yet —
+//  Phase 5.)
 //
-// Authentication reuses the same `PLEXO_SERVICE_KEY` Plexo Core uses — the
-// vision service trusts the shared platform secret rather than minting its
-// own. If either `PLEXO_VISION_URL` or `PLEXO_SERVICE_KEY` is unset, every
-// call short-circuits to throw. Callers MUST guard with `visionConfigured()`
-// or handle the error gracefully.
+// Lives separately from `lib/plexo.ts` (the Plexo Core SDK facade for
+// completion + memory) because the vision service is reachable on its own
+// URL and uses the same shared `PLEXO_SERVICE_KEY` as Plexo Core but as a
+// distinct deployable.
 //
-// Timeout: 15 s per request. Throws on any non-2xx (callers wrap with their
-// own try/catch + degradation logic).
-//
-// AGPL note: OpenCLIP weights are MIT-licensed; running them inside our own
-// ONNX runtime is fine to ship with an AGPL app.
+// AGPL note: OpenCLIP weights are MIT, PaddleOCR PP-OCRv5 is Apache 2.0 —
+// shipping them inside our own ONNX runtime is fine with an AGPL app.
 
-const VISION_TIMEOUT_MS = 15_000;
+const DEFAULT_TIMEOUT_MS = 15_000;
+const OCR_TIMEOUT_MS = 30_000;
 
 let cachedModelId: string | null = null;
 
-/** Read env each call so dynamic env changes (tests, restart) are observed. */
 function visionUrl(): string {
   return process.env.PLEXO_VISION_URL ?? "http://plexo-vision:7000";
 }
@@ -37,36 +33,71 @@ function serviceKey(): string {
 }
 
 /**
- * True iff both the vision URL and the shared service key are set. Routes
- * that need to degrade gracefully ("unavailable") branch on this before
- * touching the vision client.
+ * True iff PLEXO_VISION_URL is set. Callers that need to degrade gracefully
+ * branch on this before touching any of the embed/ocr functions. Note we do
+ * NOT require PLEXO_SERVICE_KEY here — the OCR path may be exercised on dev
+ * instances without auth; the auth header is omitted when the key is unset.
  */
 export function visionConfigured(): boolean {
-  return Boolean(process.env.PLEXO_VISION_URL) && Boolean(process.env.PLEXO_SERVICE_KEY);
+  return Boolean(process.env.PLEXO_VISION_URL);
 }
 
-/** Last-seen model id from the vision service, if any. */
+/** Last-seen model id from any vision call. */
 export function lastSeenModelId(): string | null {
   return cachedModelId;
 }
+
+/** Shared POST helper. Generic over the response shape. */
+async function visionRequest<T>(
+  path: string,
+  body: Record<string, unknown>,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<T> {
+  const base = process.env.PLEXO_VISION_URL;
+  if (!base) {
+    throw new Error("PLEXO_VISION_URL is not set");
+  }
+  const url = base.replace(/\/+$/, "") + path;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        ...(serviceKey() ? { authorization: `Bearer ${serviceKey()}` } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(
+        `plexo-vision ${path} HTTP ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`
+      );
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// --- CLIP embeddings (Phase 4.2) -----------------------------------------
 
 export interface EmbedResult {
   vector: number[];
   modelId: string;
 }
 
-interface VisionResponseBody {
+interface EmbedResponseBody {
   vector?: unknown;
   modelId?: unknown;
   model_id?: unknown;
 }
 
-function parseEmbedBody(raw: unknown): EmbedResult {
-  if (!raw || typeof raw !== "object") {
-    throw new Error("vision: malformed response (expected object)");
-  }
-  const body = raw as VisionResponseBody;
-  const vec = body.vector;
+function parseEmbedBody(raw: EmbedResponseBody): EmbedResult {
+  const vec = raw.vector;
   if (!Array.isArray(vec) || vec.length === 0) {
     throw new Error("vision: malformed response (missing vector array)");
   }
@@ -79,73 +110,118 @@ function parseEmbedBody(raw: unknown): EmbedResult {
     numeric[i] = v;
   }
   const modelId =
-    typeof body.modelId === "string"
-      ? body.modelId
-      : typeof body.model_id === "string"
-        ? body.model_id
+    typeof raw.modelId === "string"
+      ? raw.modelId
+      : typeof raw.model_id === "string"
+        ? raw.model_id
         : "unknown";
   cachedModelId = modelId;
   return { vector: numeric, modelId };
 }
 
-async function postJson(path: string, body: unknown): Promise<EmbedResult> {
-  if (!visionConfigured()) {
-    throw new Error(
-      "vision: PLEXO_VISION_URL or PLEXO_SERVICE_KEY not configured"
-    );
-  }
-  const url = `${visionUrl().replace(/\/+$/, "")}${path}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), VISION_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${serviceKey()}`,
-        Accept: "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      let detail = "";
-      try {
-        detail = (await res.text()).slice(0, 500);
-      } catch {
-        /* swallow */
-      }
-      throw new Error(`vision: ${res.status} ${res.statusText} ${detail}`.trim());
-    }
-    const json = (await res.json()) as unknown;
-    return parseEmbedBody(json);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /**
- * Embed an image. Accepts either a `Buffer` (raw image bytes) or a
- * `string` (already-base64 payload, no data: URL prefix). The vision
- * service decodes + preprocesses internally; we send the bytes intact.
- *
- * Throws on transport error, non-2xx, or malformed response. Callers in
- * the worker/queue must catch and either retry (BullMQ) or move on.
+ * Embed an image. Accepts either a `Buffer` (raw image bytes — base64'd
+ * before send) or a `string` (already base64-encoded, no data: prefix).
  */
 export async function embedImage(buffer: Buffer | string): Promise<EmbedResult> {
   const image = typeof buffer === "string" ? buffer : buffer.toString("base64");
-  return postJson("/vision/clip/image", { image });
+  return parseEmbedBody(
+    await visionRequest<EmbedResponseBody>("/vision/clip/image", { image })
+  );
 }
 
 /**
  * Embed a free-text query for CLIP text-to-image retrieval. The returned
- * vector shares a unit-norm latent space with `embedImage()` output, so the
- * caller can compute cosine similarity directly against `assets.clip_vec`.
+ * vector shares a unit-norm latent space with `embedImage()` output.
  */
 export async function embedText(text: string): Promise<EmbedResult> {
   const trimmed = text.trim();
   if (!trimmed) {
     throw new Error("vision: empty text payload");
   }
-  return postJson("/vision/clip/text", { text: trimmed });
+  return parseEmbedBody(
+    await visionRequest<EmbedResponseBody>("/vision/clip/text", { text: trimmed })
+  );
+}
+
+// --- OCR (Phase 4.4 — PaddleOCR PP-OCRv5) --------------------------------
+
+export interface OcrLine {
+  text: string;
+  bbox: [number, number, number, number];
+  confidence: number;
+}
+
+export interface OcrResult {
+  lines: OcrLine[];
+  modelId: string;
+}
+
+interface OcrResponseBody {
+  lines?: Array<{
+    text?: unknown;
+    bbox?: unknown;
+    confidence?: unknown;
+  }>;
+  modelId?: unknown;
+  model_id?: unknown;
+  model?: unknown;
+}
+
+/**
+ * Run OCR on a single image via PaddleOCR PP-OCRv5. Accepts either a Buffer
+ * (sent as base64) or a string URL (the vision service fetches it itself —
+ * typically a presigned R2 URL).
+ *
+ * Returns line-level results: text + bbox `[x, y, w, h]` + 0..1 confidence.
+ * `lines` is empty when PaddleOCR ran but found no text (a legitimate
+ * result, distinct from a failure throw).
+ */
+export async function ocrImage(
+  buffer: Buffer | string,
+  lang?: string
+): Promise<OcrResult> {
+  const body: Record<string, unknown> = {
+    lang: lang ?? process.env.OCR_DEFAULT_LANG ?? "en",
+  };
+  if (typeof buffer === "string") {
+    body.imageUrl = buffer;
+  } else {
+    body.imageBase64 = buffer.toString("base64");
+  }
+
+  const data = await visionRequest<OcrResponseBody>(
+    "/vision/ocr",
+    body,
+    OCR_TIMEOUT_MS
+  );
+
+  const modelId =
+    typeof data.modelId === "string"
+      ? data.modelId
+      : typeof data.model_id === "string"
+        ? data.model_id
+        : typeof data.model === "string"
+          ? data.model
+          : "paddleocr-pp-ocrv5";
+  cachedModelId = modelId;
+
+  const rawLines = Array.isArray(data.lines) ? data.lines : [];
+  const lines: OcrLine[] = [];
+  for (const r of rawLines) {
+    const text = typeof r.text === "string" ? r.text : "";
+    const conf = typeof r.confidence === "number" ? r.confidence : 0;
+    const bb = r.bbox;
+    let bbox: [number, number, number, number] = [0, 0, 0, 0];
+    if (
+      Array.isArray(bb) &&
+      bb.length === 4 &&
+      bb.every((n) => typeof n === "number")
+    ) {
+      bbox = [bb[0] as number, bb[1] as number, bb[2] as number, bb[3] as number];
+    }
+    if (text) lines.push({ text, bbox, confidence: conf });
+  }
+
+  return { lines, modelId };
 }

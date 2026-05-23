@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Nightly OCR backfill. Picks up `ocr_state='pending'` rows in batches and
-// pushes them through Plexo's vision/ocr endpoint. Idempotent — failed rows
-// are marked `failed` so a future run can manually retry by resetting them
-// to `pending`.
+// pushes them through the Plexo vision sidecar (PaddleOCR PP-OCRv5 since
+// Phase 4.4) — or, if OCR_LLM_FALLBACK=true and the vision service is down,
+// through the legacy LLM-based path. Idempotent — failed rows are marked
+// `failed` so a future run can manually retry by resetting them to
+// `pending`. Rows that ran successfully but found no text are marked
+// `empty` (distinct from `failed`).
+//
+// Batch size defaults to OCR_BACKFILL_BATCH_SIZE (50) — Phase 4.4 raised
+// this from the original 50/page LLM-limited cap because PaddleOCR is an
+// order of magnitude faster per image. Override per-call via ?batch=N
+// (clamped to 1..500).
 //
 // Trigger: external cron with `X-Cron-Secret: <CRON_SECRET>`.
 export const dynamic = "force-dynamic";
@@ -13,7 +21,11 @@ import { eq, and, isNotNull } from "drizzle-orm";
 import { runOcrForAsset } from "@/lib/processing";
 import { plexoEnsureWorkspace, plexoAvailable } from "@/lib/plexo";
 
-const DEFAULT_BATCH_SIZE = 50;
+const DEFAULT_BATCH_SIZE = (() => {
+  const fromEnv = parseInt(process.env.OCR_BACKFILL_BATCH_SIZE ?? "", 10);
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 50;
+})();
+const MAX_BATCH_SIZE = 500;
 
 export async function POST(request: NextRequest) {
   const secret = request.headers.get("X-Cron-Secret");
@@ -28,7 +40,7 @@ export async function POST(request: NextRequest) {
   const url = new URL(request.url);
   const batch = Math.min(
     Math.max(parseInt(url.searchParams.get("batch") ?? `${DEFAULT_BATCH_SIZE}`, 10), 1),
-    200
+    MAX_BATCH_SIZE
   );
 
   // Pick up pending image assets. Join workspaces to fish out the user_id
@@ -78,13 +90,16 @@ export async function POST(request: NextRequest) {
         continue;
       }
       await runOcrForAsset(r.assetId, plexoWs);
-      // runOcrForAsset transitions ocr_state to 'ready' or 'failed' itself.
+      // runOcrForAsset transitions ocr_state to 'ready', 'empty', or
+      // 'failed' itself. 'empty' counts as success — PaddleOCR ran and
+      // honestly returned no text (e.g. solid-colour photo).
       const [refreshed] = await db
         .select({ s: schema.assets.ocrState })
         .from(schema.assets)
         .where(eq(schema.assets.id, r.assetId))
         .limit(1);
-      if (refreshed?.s === "ready") ok++; else fail++;
+      if (refreshed?.s === "ready" || refreshed?.s === "empty") ok++;
+      else fail++;
     } catch (err) {
       console.error("[fonto] ocr-backfill: row failed", r.assetId, err);
       fail++;

@@ -268,8 +268,18 @@ export async function runOcrForAsset(
     return;
   }
 
-  const result = await plexoVisionOcr(plexoWorkspaceId, signedUrl);
-  if (!result) {
+  // Phase 4.4 — observe the OCR step with the shared processing-duration
+  // histogram. Labels: paddle | llm-fallback | empty | skip | failure.
+  // This is in addition to the per-pipeline observation in `processAsset`,
+  // and is the only place that records the OCR sub-step (used both inline
+  // by the worker and by the nightly backfill cron).
+  const endTimer = assetProcessingDurationSeconds.startTimer();
+  let result: Awaited<ReturnType<typeof plexoVisionOcr>>;
+  try {
+    result = await plexoVisionOcr(plexoWorkspaceId, signedUrl);
+  } catch (err) {
+    endTimer({ outcome: "failure" });
+    console.warn("[fonto] OCR failed for asset", assetId, err);
     await db
       .update(schema.assets)
       .set({ ocrState: "failed" })
@@ -277,20 +287,50 @@ export async function runOcrForAsset(
     return;
   }
 
+  if (!result) {
+    // Neither path was attempted (vision unavailable, fallback disabled).
+    endTimer({ outcome: "skip" });
+    await db
+      .update(schema.assets)
+      .set({ ocrState: "failed" })
+      .where(eq(schema.assets.id, assetId));
+    return;
+  }
+
+  // Distinguish "ran but no text" from "ran and got text". Phase 4.4:
+  // PaddleOCR happily returns an empty result for solid-colour photos /
+  // abstract art — that's not a failure.
+  const hadText = result.text.length > 0;
+  // `lines: []` + non-empty text => the legacy LLM fallback path produced
+  // this result. Useful for grafana labelling so you can see how often the
+  // fallback fires.
+  const usedFallback = hadText && result.lines.length === 0;
+  endTimer({
+    outcome: hadText
+      ? usedFallback
+        ? "llm-fallback"
+        : "paddle"
+      : "empty",
+  });
+
   await db
     .update(schema.assets)
     .set({
       ocrText: result.text,
-      ocrState: "ready",
+      ocrState: hadText ? "ready" : "empty",
+      // Per-line boxes only meaningful when PaddleOCR ran. The LLM
+      // fallback path returns `lines: []`.
+      ocrBoxes: result.lines.length > 0 ? result.lines : null,
     })
     .where(eq(schema.assets.id, assetId));
 
-  if (result.text.length > 0) {
+  if (hadText) {
     void plexoPublishEvent("ext.fonto.asset.ocr_extracted", {
       assetId,
       filename: asset.filename,
       textLength: result.text.length,
       model: result.model,
+      lineCount: result.lines.length,
     });
   }
 }
