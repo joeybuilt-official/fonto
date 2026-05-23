@@ -24,11 +24,9 @@ import {
   hammingDistance,
   type PaletteColor,
 } from "@/lib/perceptual";
-import {
-  findNearestAssetByPhashGraph,
-  fontoGraphConfigured,
-  mirrorAssetToGraph,
-} from "@/lib/fonto-graph";
+// fonto-graph (FalkorDB mirror) was retired in Phase 4.3 (ADR 0002) in favor
+// of pgvector. The module and its callers are gone; pHash NN now happens
+// in-DB via findPHashNearDuplicate() above.
 import { extractExif } from "@/lib/exif";
 import { assetProcessingQueue, clipDedupCheckQueue, JobNames } from "@/lib/queue";
 import { emitWebhook } from "@/lib/webhooks/emit";
@@ -433,30 +431,6 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
         confidence: phashConfidence(match.distance),
       };
     }
-    // Shadow-mode pHash NN against the FalkorDB index (ADR 0027). Read-only.
-    if (fontoGraphConfigured()) {
-      void (async () => {
-        try {
-          const graphMatch = await findNearestAssetByPhashGraph({
-            workspaceId,
-            phash,
-            scoreThreshold: Math.sqrt(PHASH_DUPLICATE_THRESHOLD),
-          });
-          const pgId = match?.id ?? null;
-          const gId = graphMatch?.assetId ?? null;
-          if (pgId !== gId) {
-            console.warn("[fonto-graph] phash NN disagreement", {
-              workspaceId,
-              postgres: pgId,
-              graph: gId,
-              graphScore: graphMatch?.score,
-            });
-          }
-        } catch (err) {
-          console.warn("[fonto-graph] shadow phash NN failed:", err);
-        }
-      })();
-    }
   }
 
   // Phase 2.3 — allocate this row's delta-sync seq before insert so it
@@ -587,18 +561,6 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
     } else if (visionServiceConfigured()) {
       void tryEnqueueClipDedupCheck(asset.id, workspaceId);
     }
-  }
-
-  // Phase D-Fonto-1 (ADR 0027): mirror to fonto graph for vector NN.
-  if (phash != null && fontoGraphConfigured()) {
-    void mirrorAssetToGraph({
-      workspaceId,
-      assetId: asset.id,
-      filename,
-      mimeType,
-      lifecycleState: "active",
-      phash,
-    }).catch((err) => console.warn("[fonto-graph] asset mirror failed:", err));
   }
 
   assetIngestTotal.labels({ mime_class: classifyMime(mimeType) }).inc(1);
