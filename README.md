@@ -342,6 +342,17 @@ the regular upload path. The new `assetId` is returned to clients in the
 The R2 bucket needs the standard tus CORS doc applied (PUT/POST/PATCH/HEAD/
 DELETE on the upload prefix). See `docs/r2-cors.json` (lands with Phase 1.2).
 
+## API Documentation
+
+Fonto's REST API is described by a [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) document generated at runtime from the same Zod schemas used for request validation. Two surfaces are exposed:
+
+- **`/docs/api`** — interactive [Scalar](https://scalar.com/) reference UI. Try requests against your running instance straight from the browser.
+- **`/api/v1/openapi.json`** — raw spec, suitable for `openapi-generator`/`oapi-codegen`/etc. to produce typed clients.
+
+Authentication is documented in the spec via three schemes: session cookie (web client), `Authorization: Bearer fonto_pat_...` (personal access token), and the equivalent `x-api-key` header. PATs land with Phase 2.1.
+
+If you add a `/api/v1/*` route, register it in `lib/openapi/routes.ts`. The `scripts/check-openapi-coverage.ts` script diffs the registry against the filesystem; run it with `tsx scripts/check-openapi-coverage.ts`.
+
 ## Built on Plexo
 
 Fonto is a [Plexo](https://getplexo.com) App Profile. Asset classification, tag suggestions, and image description all route through Plexo's model gateway. Plexo also adds persistent memory — Fonto remembers tag preferences and classification corrections across sessions. See `lib/plexo.ts` and `lib/plexo-registration.ts` for the integration surface.
