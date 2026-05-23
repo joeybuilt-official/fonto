@@ -342,3 +342,56 @@ export const shareLinks = fontoSchema.table(
     index("share_links_asset_id_idx").on(table.assetId),
   ]
 );
+
+// Phase 2.1: Personal Access Tokens (PATs).
+//
+// Programmatic API auth for mobile + CLI clients. The plaintext token is shown
+// to the user exactly once at creation time; only a SHA-256 digest is stored.
+// The format on the wire is `fonto_pat_<id>_<secret>` — we prefix-route to
+// this table and verify by recomputing the digest and timing-safe-comparing.
+//
+// Rationale: Better Auth's apiKey plugin doesn't ship in 1.6.9 (the installed
+// version), so we own the table and the verifier. The shape mirrors what the
+// plugin would have given us (id, name, prefix, hash, last_used_at, scopes,
+// expires_at) so a future swap to the plugin would be a column-rename, not a
+// rewrite. Token shape is what the plan calls for: `fonto_pat_` prefix, both
+// `Authorization: Bearer` and `x-api-key` accepted, scopes = read/write/admin.
+export const apiKeys = fontoSchema.table(
+  "api_keys",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    // Owner of the token. Foreign key into Better Auth's `auth.user` table —
+    // we don't enforce the FK here (cross-schema), but the column matches
+    // Better Auth's `user.id` (text). On user-delete the orchestration layer
+    // is expected to revoke; if it doesn't, `verifyPat` returns null because
+    // the loaded user comes from `auth.api.getUserById`.
+    userId: text("user_id").notNull(),
+    // Human-readable label for the UI ("Macbook CLI", "iPhone backup").
+    name: text("name").notNull(),
+    // Public, low-entropy prefix used to identify the key class at a glance.
+    // Defaults to `fonto_pat_` (per the parity plan).
+    prefix: text("prefix").notNull().default("fonto_pat_"),
+    // First 4 chars of the secret (NOT the prefix) shown in the UI so users
+    // can identify a key without revealing it. Pure UX, not a security feature.
+    firstFour: text("first_four").notNull(),
+    // Last 4 chars of the secret shown in the UI.
+    lastFour: text("last_four").notNull(),
+    // SHA-256 hex digest of the secret portion (the part after the prefix and
+    // the id). Verification: re-hash the candidate secret, timing-safe compare.
+    secretHash: text("secret_hash").notNull(),
+    // Granted scopes — subset of ["read","write","admin"]. Stored as JSONB so
+    // we can grow the vocabulary without a migration (e.g. add "delete" later).
+    scopes: jsonb("scopes").notNull().default(sql`'["read"]'::jsonb`),
+    // Free-form metadata (e.g. originating client, last-known IP). Off by
+    // default; enabled per-token via `metadata` field on create.
+    metadata: jsonb("metadata"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("api_keys_user_id_idx").on(table.userId),
+    index("api_keys_secret_hash_idx").on(table.secretHash),
+  ]
+);

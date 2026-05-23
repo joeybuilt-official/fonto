@@ -86,6 +86,75 @@ aws s3api put-bucket-cors \
 | Background Jobs | BullMQ + Redis/Valkey |
 | UI | Tailwind CSS v4, shadcn/ui |
 
+## Authentication
+
+Fonto supports two authentication modes:
+
+| Caller | Mode | Header |
+|---|---|---|
+| Web app | Session cookie (Better Auth) | (automatic via browser) |
+| CLI, mobile, 3rd-party | Personal Access Token (PAT) | `Authorization: Bearer fonto_pat_…` or `x-api-key: fonto_pat_…` |
+
+### Creating a Personal Access Token
+
+1. Sign in to the web app and open **Settings → Personal access tokens**
+   (`/app/settings/tokens`).
+2. Click **Create token**. Pick a name (e.g. *MacBook CLI*), one or more
+   scopes, and an expiry (30 / 90 / 365 days, or never).
+3. The full token is shown **exactly once**. Copy it to a password manager
+   immediately — Fonto stores only a SHA-256 hash and cannot recover it.
+
+Tokens are formatted as `fonto_pat_<id>_<secret>` so they are recognizable
+in logs and `grep`-able in source. Treat them like passwords: never commit
+to source control, never share, rotate if leaked.
+
+### Sending a token
+
+Either header works. `x-api-key` takes precedence when both are present:
+
+```bash
+# Bearer
+curl -H "Authorization: Bearer fonto_pat_..." https://your-fonto/api/v1/assets
+
+# Or x-api-key
+curl -H "x-api-key: fonto_pat_..." https://your-fonto/api/v1/assets
+```
+
+### Scopes
+
+Three coarse scopes; higher scopes imply lower ones (`admin` ⊃ `write` ⊃ `read`):
+
+| Scope | Grants |
+|---|---|
+| `read` | List, read, search assets / collections / tags |
+| `write` | Upload, edit, delete assets; manage collections |
+| `admin` | Manage workspace settings; manage members (Phase 3+) |
+
+Routes that mutate state call `requireScope(token, 'write')` (or `'admin'`).
+Read-only routes require no scope check — `read` is the default scope on
+every key.
+
+### Rate limiting
+
+Each key gets **600 requests / 60 seconds** (≈ 10 rps) by default. The
+window is per-key and sliding; it resets on process restart. Exceeding it
+returns 401. Distributed / fleet-wide rate limiting belongs at the edge
+(Caddy / Cloudflare) and is not the same control.
+
+### Revoking a token
+
+From **Settings → Personal access tokens**, click **Revoke** on any active
+token. The key is marked revoked immediately and the next API call using
+it gets `401 Unauthorized`. Revocation is soft (audit-friendly); to purge,
+delete the row in `fonto.api_keys`.
+
+### Token management is session-only
+
+`POST` / `DELETE` on `/api/v1/tokens` accept **session auth only**, not PAT
+auth. A PAT cannot mint or revoke other PATs — physical browser-session
+ownership is the only path to new credentials. This blocks the obvious
+privilege-escalation path of a leaked PAT minting a longer-lived one.
+
 ## Background Jobs (Worker Container)
 
 Asset processing (classification, OCR, perceptual hash, tag suggestion) runs
