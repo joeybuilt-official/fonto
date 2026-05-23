@@ -41,6 +41,7 @@ import {
   FolderListingSchema,
   ClipSearchEnvelopeSchema,
   MemoriesEnvelopeSchema,
+  MapAssetsEnvelopeSchema,
   StackSchema,
   StackEnvelopeSchema,
   StackSuggestionsEnvelopeSchema,
@@ -1366,6 +1367,49 @@ registry.registerPath({
 });
 
 // ---------------------------------------------------------------------------
+// /api/v1/assets/within-bbox — Phase 5.2 map viewport query
+// ---------------------------------------------------------------------------
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/assets/within-bbox",
+  summary: "List geo-tagged assets inside a lat/lon bounding box",
+  description:
+    "Drives the map page's marker / supercluster rendering. Scoped to the " +
+    "caller's primary workspace; reads `assets_lat_lon_idx` for the range " +
+    "scan. Returns a trimmed projection (id, lat, lon, thumbnailUrl, " +
+    "capturedAt, placeName) — capped at 5000 rows; default 2000. Pan/zoom " +
+    "the client far enough out that the cap kicks in and the front end " +
+    "shows a 'zoom in to load' nudge rather than spamming.",
+  tags: ["Assets"],
+  security: AUTH_SECURITY,
+  request: {
+    query: z.object({
+      minLat: z.string().openapi({ example: "51.40" }),
+      maxLat: z.string().openapi({ example: "51.60" }),
+      minLon: z.string().openapi({ example: "-0.20" }),
+      maxLon: z.string().openapi({ example: "0.00" }),
+      limit: z
+        .string()
+        .optional()
+        .openapi({
+          description: "Max rows returned (default 2000, hard cap 5000).",
+          example: "2000",
+        }),
+    }),
+  },
+  responses: {
+    200: json(
+      MapAssetsEnvelopeSchema,
+      "Assets in the requested bbox, capturedAt desc."
+    ),
+    400: errorResponse(
+      "Missing/malformed bbox params or out-of-range coordinates."
+    ),
+    401: errorResponse("Not authenticated."),
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Cron endpoints (admin-only; called by Kubernetes/cron scheduler)
 // ---------------------------------------------------------------------------
 registry.registerPath({
@@ -1634,6 +1678,7 @@ export const REGISTERED_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/v1/assets",
   "POST /api/v1/assets",
   "POST /api/v1/assets/init",
+  "GET /api/v1/assets/within-bbox",
   "PATCH /api/v1/assets/{id}",
   "DELETE /api/v1/assets/{id}",
   "POST /api/v1/assets/{id}/complete",
