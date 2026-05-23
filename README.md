@@ -342,6 +342,117 @@ the regular upload path. The new `assetId` is returned to clients in the
 The R2 bucket needs the standard tus CORS doc applied (PUT/POST/PATCH/HEAD/
 DELETE on the upload prefix). See `docs/r2-cors.json` (lands with Phase 1.2).
 
+## Webhooks
+
+Fonto can POST signed JSON payloads to your endpoints when workspace state
+changes. Manage subscriptions at **Settings → Webhooks** in the app, or via
+the REST API:
+
+- `GET    /api/v1/webhooks` — list workspace endpoints
+- `POST   /api/v1/webhooks` — create endpoint (returns `signingSecret` once)
+- `PATCH  /api/v1/webhooks/:id` — update `url` / `enabledEvents` / `description` / `enabled`
+- `DELETE /api/v1/webhooks/:id` — delete endpoint
+- `POST   /api/v1/webhooks/:id/test` — enqueue a synthetic `ping` event
+- `GET    /api/v1/webhooks/:id/deliveries?limit=50` — recent delivery log
+
+### Event types
+
+| Event | Fires when |
+|---|---|
+| `asset.uploaded` | A new asset row is inserted (post-dedup). |
+| `asset.processed` | The asset-processing pipeline finishes (classification + description). |
+| `asset.deleted` | An asset is soft-deleted or purged. |
+| `tag.created` | A new tag is created in the workspace. |
+| `collection.created` | A new collection is created. |
+| `collection.shared` | A collection is shared via a public link. |
+
+Every payload is wrapped in a stable envelope:
+
+```json
+{
+  "id": "<uuid>",
+  "type": "asset.uploaded",
+  "createdAt": "2026-05-22T17:00:00Z",
+  "data": { /* event-specific shape, see lib/webhooks/events.ts */ }
+}
+```
+
+### Signature verification
+
+Each POST carries three headers:
+
+- `X-Fonto-Event` — the event type (e.g. `asset.uploaded`)
+- `X-Fonto-Delivery` — the delivery row id (use for idempotency on your side)
+- `X-Fonto-Signature` — `t=<unix>,v1=<hex_hmac>` (Stripe-style)
+
+The HMAC is `SHA-256("{timestamp}.{raw_body}")` keyed by the endpoint's
+signing secret. Always compare in constant time.
+
+**Node.js:**
+
+```js
+import { createHmac, timingSafeEqual } from "crypto";
+
+function verifyFontoSignature(rawBody, header, secret, toleranceSec = 300) {
+  const parts = Object.fromEntries(
+    header.split(",").map((kv) => kv.split("=", 2))
+  );
+  const ts = parseInt(parts.t, 10);
+  const sig = parts.v1;
+  if (!ts || !sig) return false;
+  if (Math.abs(Date.now() / 1000 - ts) > toleranceSec) return false;
+  const expected = createHmac("sha256", secret)
+    .update(`${ts}.${rawBody}`)
+    .digest("hex");
+  const a = Buffer.from(expected, "hex");
+  const b = Buffer.from(sig, "hex");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+```
+
+**Python:**
+
+```python
+import hmac, hashlib, time
+
+def verify_fonto_signature(raw_body: bytes, header: str, secret: str,
+                           tolerance_sec: int = 300) -> bool:
+    parts = dict(p.split("=", 1) for p in header.split(","))
+    try:
+        ts = int(parts["t"])
+        sig = parts["v1"]
+    except (KeyError, ValueError):
+        return False
+    if abs(time.time() - ts) > tolerance_sec:
+        return False
+    expected = hmac.new(
+        secret.encode(),
+        f"{ts}.".encode() + raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, sig)
+```
+
+### Retry schedule
+
+If a delivery returns a non-2xx status or times out (default 10s), Fonto
+retries with exponential backoff: **1 min, 5 min, 15 min, 1 h, 6 h**.
+Attempts cap at 6 total; after that the row is marked `failed` and no further
+retries fire. Subscribers should respond with `2xx` as quickly as possible —
+do heavy work asynchronously after acknowledging.
+
+### Security notes
+
+- **Always verify the signature.** A leaked URL alone shouldn't let anyone
+  forge events.
+- **Always check the timestamp tolerance.** Without it, a replayed body is
+  indistinguishable from a fresh one. 5 minutes is a reasonable default.
+- **Use `crypto.timingSafeEqual` / `hmac.compare_digest`.** String `==` on
+  HMACs leaks timing information.
+- **Treat `X-Fonto-Delivery` as an idempotency key.** Retries reuse it, so
+  your handler can deduplicate.
+- **Pin to HTTPS** for endpoint URLs in production.
+
 ## Built on Plexo
 
 Fonto is a [Plexo](https://getplexo.com) App Profile. Asset classification, tag suggestions, and image description all route through Plexo's model gateway. Plexo also adds persistent memory — Fonto remembers tag preferences and classification corrections across sessions. See `lib/plexo.ts` and `lib/plexo-registration.ts` for the integration surface.

@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { eq, inArray } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
+import { emitWebhook } from "@/lib/webhooks/emit";
 
 export async function GET() {
   const user = await getAuthUser();
@@ -41,6 +42,16 @@ export async function POST(request: NextRequest) {
       color: body.color ?? "#6366f1",
     })
     .returning();
+
+  // Phase 2.4 — outbound webhook (tag.created).
+  await emitWebhook(workspaceId, "tag.created", {
+    tagId: tag.id,
+    workspaceId,
+    name: tag.name,
+    color: tag.color,
+    aiSuggested: tag.aiSuggested,
+    createdAt: tag.createdAt.toISOString(),
+  });
 
   return NextResponse.json({ tag }, { status: 201 });
 }

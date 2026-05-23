@@ -51,6 +51,18 @@ export type ClassifyJob = z.infer<typeof ClassifyJobSchema>;
 export const ReapStuckAssetsJobSchema = z.object({}).strict();
 export type ReapStuckAssetsJob = z.infer<typeof ReapStuckAssetsJobSchema>;
 
+// Phase 2.4 — outbound webhook delivery. Payload references a row in
+// fonto.webhook_deliveries; the worker rehydrates everything else from
+// Postgres so the job stays tiny + crash-safe.
+export const WebhookDeliveryJobSchema = z.object({
+  deliveryId: z.string().uuid(),
+  // Attempt number this job represents. The worker also reads the row's
+  // current `attempts` column — this field is for log/debug parity and is
+  // 1-indexed for legibility (first attempt = 1).
+  attempt: z.number().int().min(1),
+});
+export type WebhookDeliveryJob = z.infer<typeof WebhookDeliveryJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -63,6 +75,8 @@ export const JobNames = {
   GenerateThumbnails: "generate-thumbnails",
   Classify: "classify",
   ReapStuckAssets: "reap-stuck-assets",
+  // Phase 2.4 — outbound webhook delivery (one job per delivery attempt).
+  DeliverWebhook: "deliver-webhook",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

@@ -5,6 +5,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
+import { emitWebhook } from "@/lib/webhooks/emit";
 
 export async function GET() {
   const user = await getAuthUser();
@@ -44,6 +45,15 @@ export async function POST(request: NextRequest) {
       description: String(body.description ?? ""),
     })
     .returning();
+
+  // Phase 2.4 — outbound webhook (collection.created).
+  await emitWebhook(workspaces[0].id, "collection.created", {
+    collectionId: collection.id,
+    workspaceId: workspaces[0].id,
+    name: collection.name,
+    description: collection.description,
+    createdAt: collection.createdAt.toISOString(),
+  });
 
   return NextResponse.json({ collection }, { status: 201 });
 }

@@ -31,6 +31,7 @@ import {
 } from "@/lib/fonto-graph";
 import { extractExif } from "@/lib/exif";
 import { assetProcessingQueue, JobNames } from "@/lib/queue";
+import { emitWebhook } from "@/lib/webhooks/emit";
 // Phase 1.1 `thumbnailQueue` + `JobNames.GenerateThumbnails` resolved
 // dynamically below so this module stays buildable if those exports
 // disappear in a future refactor (or in a parallel-worktree merge with
@@ -308,6 +309,19 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
     sizeBytes,
     sha256,
     source,
+  });
+
+  // Phase 2.4 — outbound webhook (asset.uploaded). Best-effort: emitWebhook
+  // swallows its own failures so a Redis hiccup never breaks an upload.
+  await emitWebhook(workspaceId, "asset.uploaded", {
+    assetId: asset.id,
+    workspaceId,
+    filename,
+    mimeType,
+    sizeBytes,
+    sha256,
+    source,
+    uploadedAt: asset.createdAt.toISOString(),
   });
 
   // Enqueue main asset-processing pipeline.
