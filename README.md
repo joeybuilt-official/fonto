@@ -915,6 +915,60 @@ module is now a stubbed no-op (every export returns `false` / `null`)
 kept for binary compatibility while the call sites in
 `lib/assets/createAssetRow.ts` get cleaned up in a follow-up PR.
 
+## Auto-classification
+
+Every image is classified into a top-level category (`photo`, `document`,
+`screenshot`, `meme`, `art`, `screenshot-receipt`, `id-card`, `cover-art`,
+`whiteboard`) and, where applicable, a sub-category (e.g. `food`, `portrait`,
+`pets`). The classification is written to `assets.classification` and the
+sub-level to `assets.sub_classification`. Sub-categories also carry a small
+set of curated tag suggestions, which land as `ai_suggested = true` rows in
+the `tags` table.
+
+**How it works.** Two paths exist:
+
+1. **Zero-shot CLIP** (the cheap path). Every taxonomy prompt is embedded
+   once at boot via the Plexo vision service and cached on disk at
+   `~/.fonto/classify-vectors.json` (override with
+   `CLASSIFY_VECTOR_CACHE_PATH`). Classification is then a cosine-similarity
+   argmax against the image's CLIP embedding — ms-scale, free.
+2. **LLM fallback** (the smart path). When the top-1 cosine falls below
+   `CLASSIFY_CONFIDENCE_THRESHOLD` (default `0.18`), or when the gap to
+   the runner-up is < 0.05, we defer to the vision-LLM classifier
+   (`plexoClassifyAsset`). Slower (~1-3s) and costs tokens (~$0.001/image)
+   but reliably better when CLIP is uncertain. Per ADR 0001 this is the
+   one case where the LLM is genuinely worth its cost.
+
+`assets.classify_method` records which path ran (`"clip"` or
+`"llm-fallback"`); `assets.classify_confidence` records the top-1 cosine
+(or 0 for the LLM fallback path); `assets.auto_tagged_at` stamps each
+successful auto-tag pass.
+
+**Tuning the threshold.** The Prometheus histogram
+`fonto_zero_shot_confidence_buckets` records the top-1 cosine for every
+classify attempt — including the ones that took the LLM fallback. If most
+mass sits below `0.18`, you're sending too much to the LLM; consider
+lowering the threshold (`CLASSIFY_CONFIDENCE_THRESHOLD=0.15`) once you've
+spot-checked a few low-confidence classifications and they look reasonable.
+
+**Extending the taxonomy.** Edit `lib/classify/taxonomy.ts` — add a new
+top-level `TopCategory` or a new `SubCategory` under an existing one
+(with a CLIP prompt and tag-suggestion list). Delete
+`~/.fonto/classify-vectors.json` to force a re-embed on next boot. Taxonomy
+keys are intentionally stable across deploys — the rest of the codebase
+(document-event triggers, receipt detection, smart-collection chips)
+relies on them.
+
+**Smart-collection facets.** The smart-collection DSL accepts
+`{ "subClassification": "food" }` and `{ "classifyMethod": "clip" }` as
+top-level keys (alongside `favorite` and `ratingMin`). Both AND with the
+user's other conditions.
+
+**Graceful degradation.** If the vision service is unreachable at boot,
+every image takes the LLM-fallback path. If the LLM is also unavailable,
+the worker falls back to a MIME-based heuristic (`image/*` → `photo`,
+everything else → `document`). Uploads + search never break.
+
 ## Audit log
 
 Every mutating action a user performs against a workspace (asset uploads,

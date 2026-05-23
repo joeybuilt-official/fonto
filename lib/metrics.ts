@@ -49,12 +49,32 @@ export const httpRequestDurationSeconds = new Histogram({
 /**
  * Post-upload processing pipeline duration. Observed in
  * `lib/processing/processAsset.ts` around the full pipeline.
+ *
+ * Phase 4.6 added the `classify_method` label so we can compare the cheap
+ * CLIP path (≈free, ms-scale) against the LLM-fallback path (~$0.001 +
+ * ~1-3s). `skip` covers non-image assets and the pre-CLIP-vec early-out.
  */
 export const assetProcessingDurationSeconds = new Histogram({
   name: "fonto_asset_processing_duration_seconds",
-  help: "Asset processing pipeline duration in seconds, labeled by outcome.",
-  labelNames: ["outcome"] as const,
+  help:
+    "Asset processing pipeline duration in seconds, labeled by outcome and classify_method.",
+  labelNames: ["outcome", "classify_method"] as const,
   buckets: [0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
+  registers: [register],
+});
+
+/**
+ * Phase 4.6 — distribution of CLIP top-1 cosine scores. We sample every
+ * classify attempt (including ones that ended up taking the LLM fallback).
+ * Useful for tuning `CLASSIFY_CONFIDENCE_THRESHOLD`: if the bulk of the
+ * mass sits below the threshold we know we're throwing too many cases at
+ * the LLM. Buckets bias toward the low end since CLIP image+text cosine
+ * rarely exceeds 0.3.
+ */
+export const zeroShotConfidenceBuckets = new Histogram({
+  name: "fonto_zero_shot_confidence_buckets",
+  help: "Distribution of zero-shot CLIP top-1 cosine confidence scores.",
+  buckets: [0.05, 0.1, 0.15, 0.18, 0.2, 0.22, 0.25, 0.3, 0.4, 0.5],
   registers: [register],
 });
 

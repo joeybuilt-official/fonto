@@ -26,6 +26,7 @@ import {
 } from "@/lib/plexo";
 import { assetProcessingDurationSeconds } from "@/lib/metrics";
 import { emitWebhook } from "@/lib/webhooks/emit";
+import { classifyAsset } from "@/lib/classify/classify";
 
 const DOCUMENT_CLASSIFICATIONS = new Set([
   "document",
@@ -55,16 +56,24 @@ export interface ProcessAssetParams {
  */
 export async function processAsset(params: ProcessAssetParams): Promise<void> {
   const endTimer = assetProcessingDurationSeconds.startTimer();
+  // Phase 4.6 — populated mid-pipeline so the timer can record which classify
+  // path we took (clip / llm-fallback / skip for non-image).
+  const ctx: { classifyMethod: "clip" | "llm-fallback" | "skip" } = {
+    classifyMethod: "skip",
+  };
   try {
-    await processAssetInner(params);
-    endTimer({ outcome: "success" });
+    await processAssetInner(params, ctx);
+    endTimer({ outcome: "success", classify_method: ctx.classifyMethod });
   } catch (err) {
-    endTimer({ outcome: "failure" });
+    endTimer({ outcome: "failure", classify_method: ctx.classifyMethod });
     throw err;
   }
 }
 
-async function processAssetInner(params: ProcessAssetParams): Promise<void> {
+async function processAssetInner(
+  params: ProcessAssetParams,
+  ctx: { classifyMethod: "clip" | "llm-fallback" | "skip" },
+): Promise<void> {
   const { assetId, userId, email, filename, mimeType, extractedText } = params;
 
   await db
@@ -73,20 +82,52 @@ async function processAssetInner(params: ProcessAssetParams): Promise<void> {
     .where(eq(schema.assets.id, assetId));
 
   let classification: string;
+  let subClassification: string | null = null;
+  let classifyMethodLabel: "clip" | "llm-fallback" | null = null;
+  let classifyConfidence: number | null = null;
+  let clipSuggestedTags: string[] = [];
   let description: string | null = null;
   let plexoWorkspaceId: string | null = null;
 
   if (plexoAvailable()) {
     plexoWorkspaceId = await plexoEnsureWorkspace(userId, email);
-    classification = await plexoClassifyAsset(
-      plexoWorkspaceId,
-      filename,
-      mimeType,
-      extractedText ?? undefined
-    );
 
     if (mimeType.startsWith("image/")) {
+      // Phase 4.6 — try zero-shot CLIP first; fall back to vision-LLM
+      // classification if confidence is too low (or CLIP is unavailable).
+      const clipVec = await waitForClipVec(assetId);
+      const workspaceIdForLlm = plexoWorkspaceId;
+      const result = await classifyAsset(clipVec, {
+        classify: async () => {
+          const topLevel = await plexoClassifyAsset(
+            workspaceIdForLlm,
+            filename,
+            mimeType,
+            extractedText ?? undefined,
+          );
+          // Tag suggestions are produced downstream once we have a
+          // `description`; nothing to attach here.
+          return { topLevel };
+        },
+      });
+      classification = result.topLevel;
+      subClassification = result.subLevel;
+      classifyMethodLabel = result.method;
+      classifyConfidence = result.confidence;
+      clipSuggestedTags = result.suggestedTags;
+      ctx.classifyMethod = result.method;
+
       description = await plexoDescribeImage(plexoWorkspaceId, filename, mimeType);
+    } else {
+      // Non-image: keep the legacy LLM-based document classifier.
+      classification = await plexoClassifyAsset(
+        plexoWorkspaceId,
+        filename,
+        mimeType,
+        extractedText ?? undefined,
+      );
+      classifyMethodLabel = "llm-fallback";
+      ctx.classifyMethod = "llm-fallback";
     }
   } else {
     classification = mimeType.startsWith("image/") ? "photo" : "document";
@@ -94,7 +135,14 @@ async function processAssetInner(params: ProcessAssetParams): Promise<void> {
 
   await db
     .update(schema.assets)
-    .set({ processingState: "extracted", classification, description })
+    .set({
+      processingState: "extracted",
+      classification,
+      description,
+      subClassification,
+      classifyMethod: classifyMethodLabel,
+      classifyConfidence,
+    })
     .where(eq(schema.assets.id, assetId));
 
   await db
@@ -178,12 +226,24 @@ async function processAssetInner(params: ProcessAssetParams): Promise<void> {
       mimeType,
     });
 
-    const suggestedNames = await plexoSuggestTags(
+    const llmTags = await plexoSuggestTags(
       plexoWorkspaceId,
       filename,
       classification,
       description
     );
+    // Phase 4.6 — fold in zero-shot CLIP tag suggestions when CLIP was the
+    // chosen classifier. Dedupe case-insensitively but preserve the CLIP
+    // names' original casing (taxonomy curates these to be display-ready,
+    // e.g. "Portraits" not "portraits").
+    const seen = new Set<string>();
+    const suggestedNames: string[] = [];
+    for (const name of [...clipSuggestedTags, ...llmTags]) {
+      const key = name.toLowerCase().trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      suggestedNames.push(name);
+    }
     const [asset] = await db
       .select({ workspaceId: schema.assets.workspaceId })
       .from(schema.assets)
@@ -223,8 +283,51 @@ async function processAssetInner(params: ProcessAssetParams): Promise<void> {
           .values({ assetId, tagId })
           .onConflictDoNothing();
       }
+      // Phase 4.6 — stamp `auto_tagged_at` whenever a tag pass actually ran.
+      // A future re-tagging cron can find never-tagged rows with
+      // `WHERE auto_tagged_at IS NULL` once the taxonomy expands.
+      await db
+        .update(schema.assets)
+        .set({ autoTaggedAt: new Date() })
+        .where(eq(schema.assets.id, assetId));
     }
   }
+}
+
+/**
+ * Phase 4.6 — short-poll for `clip_vec` to land on an asset row. The CLIP
+ * embedding is produced by the Phase 4.2 worker, which may race with this
+ * pipeline. Cap the wait at ~3s; if it doesn't show up by then we let
+ * `classifyAsset` see a null vec and fall back to the LLM classifier.
+ *
+ * Returns `null` if:
+ *   - the column doesn't exist yet (4.2 hasn't landed) — DB returns a
+ *     property-missing error which we swallow,
+ *   - the timeout elapses,
+ *   - the embedding worker explicitly stored a zero-length vector.
+ */
+async function waitForClipVec(assetId: string): Promise<number[] | null> {
+  const deadline = Date.now() + 3000;
+  const interval = 250;
+  while (Date.now() < deadline) {
+    try {
+      // TODO(4.2): once `assets.clip_vec` is part of the schema we can use
+      // the typed column selector. Until then, fall back to a raw select
+      // that doesn't fail if the column is missing.
+      const rows = (await db.execute(
+        (await import("drizzle-orm")).sql`select clip_vec from fonto.assets where id = ${assetId}::uuid limit 1`,
+      )) as unknown as { rows?: Array<{ clip_vec?: number[] | null }> };
+      const vec = rows.rows?.[0]?.clip_vec;
+      if (Array.isArray(vec) && vec.length > 0) {
+        return vec;
+      }
+    } catch {
+      // Column doesn't exist (pre-4.2) — give up immediately.
+      return null;
+    }
+    await new Promise((r) => setTimeout(r, interval));
+  }
+  return null;
 }
 
 /**

@@ -191,10 +191,17 @@ export const assets = fontoSchema.table(
     clipVec: vector("clip_vec", 512),
     // Phase 4.5 — timestamp the CLIP-similarity dedup pass last ran for this
     // asset (either inline at upload time or via the worker fallback). NULL
-    // means "not yet checked"; the worker only considers rows where this is
-    // NULL and `clip_vec` is non-NULL. Distinct from `phash` dedup which
-    // runs synchronously in `createAssetRow()` and has no stamped column.
+    // means "not yet checked".
     clipDedupCheckedAt: timestamp("clip_dedup_checked_at", { withTimezone: true }),
+    // Phase 4.6 — zero-shot CLIP classification metadata.
+    //   subClassification: chosen sub-taxonomy key (e.g. "food", "portrait").
+    //   classifyMethod: "clip" (cheap) | "llm-fallback" (CLIP was uncertain).
+    //   classifyConfidence: top-1 cosine in [0, 1].
+    //   autoTaggedAt: stamp on each successful auto-tag pass.
+    subClassification: text("sub_classification"),
+    classifyMethod: text("classify_method"),
+    classifyConfidence: real("classify_confidence"),
+    autoTaggedAt: timestamp("auto_tagged_at", { withTimezone: true }),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
