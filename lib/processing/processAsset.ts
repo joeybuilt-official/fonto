@@ -25,6 +25,7 @@ import {
   plexoVisionOcr,
 } from "@/lib/plexo";
 import { assetProcessingDurationSeconds } from "@/lib/metrics";
+import { emitWebhook } from "@/lib/webhooks/emit";
 
 const DOCUMENT_CLASSIFICATIONS = new Set([
   "document",
@@ -122,6 +123,30 @@ async function processAssetInner(params: ProcessAssetParams): Promise<void> {
   };
 
   void plexoPublishEvent("ext.fonto.asset.processed", assetPayload);
+
+  // Phase 2.4 — outbound webhook (asset.processed). We look up workspaceId
+  // here rather than threading it through ProcessAssetParams to keep this
+  // edit additive vs. parallel worktrees that touch the same param shape.
+  try {
+    const [row] = await db
+      .select({ workspaceId: schema.assets.workspaceId })
+      .from(schema.assets)
+      .where(eq(schema.assets.id, assetId))
+      .limit(1);
+    if (row) {
+      await emitWebhook(row.workspaceId, "asset.processed", {
+        assetId,
+        workspaceId: row.workspaceId,
+        filename,
+        mimeType,
+        classification: classification ?? null,
+        description: description ?? null,
+        processedAt: new Date().toISOString(),
+      });
+    }
+  } catch (err) {
+    console.warn("[fonto-webhooks] asset.processed emit failed:", err);
+  }
 
   const isDocClassification = DOCUMENT_CLASSIFICATIONS.has(classification);
   const isDocMime = DOCUMENT_TRIGGER_MIME.some((p) => mimeType.startsWith(p));

@@ -26,10 +26,14 @@ import {
   closeAllQueues,
   ProcessAssetJobSchema,
   GenerateThumbnailsJobSchema,
+  WebhookDeliveryJobSchema,
   maintenanceQueue,
+  webhookDeliveryQueue,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
+  type WebhookDeliveryJob,
 } from "@/lib/queue";
+import { signWebhookPayload } from "@/lib/webhooks/emit";
 import { processAsset, reapStuckAssets, generateThumbnails } from "@/lib/processing";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
@@ -42,6 +46,30 @@ const THUMBNAIL_CONCURRENCY = Math.max(
   parseInt(process.env.THUMBNAIL_WORKER_CONCURRENCY ?? "2", 10),
   1
 );
+// Phase 2.4 — outbound webhook delivery. Network-bound (HTTP POST + wait),
+// so concurrency can be higher than CPU-bound workers without contention.
+const WEBHOOK_CONCURRENCY = Math.max(
+  parseInt(process.env.WEBHOOK_DELIVERY_CONCURRENCY ?? "4", 10),
+  1
+);
+const WEBHOOK_TIMEOUT_MS = Math.max(
+  parseInt(process.env.WEBHOOK_TIMEOUT_MS ?? "10000", 10),
+  1000
+);
+
+// Exponential backoff for webhook delivery retries (in milliseconds).
+// One entry per delay between attempts: index 0 = delay before attempt 2,
+// index 1 = delay before attempt 3, etc. We cap total attempts at 6, so the
+// schedule is: attempt 1 (immediate), then waits of 1m, 5m, 15m, 1h, 6h.
+// If attempt 6 fails, the row is marked terminally `failed`.
+const WEBHOOK_BACKOFF_MS: readonly number[] = [
+  60_000, // 1 min   -> attempt 2
+  5 * 60_000, // 5 min   -> attempt 3
+  15 * 60_000, // 15 min  -> attempt 4
+  60 * 60_000, // 1 h     -> attempt 5
+  6 * 60 * 60_000, // 6 h     -> attempt 6
+];
+const WEBHOOK_MAX_ATTEMPTS = 6;
 const METRICS_PORT = Math.max(parseInt(process.env.WORKER_METRICS_PORT ?? "9464", 10), 1);
 
 // Reaper scheduler tick in milliseconds. Default 5 minutes. Configurable so
@@ -267,6 +295,196 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
 }
 
 /**
+ * Phase 2.4 — outbound webhook delivery worker. Pulls delivery rows by id,
+ * POSTs the payload with Stripe-style HMAC signature headers, and updates
+ * the row's state. On failure, increments `attempts`, computes the next
+ * `nextAttemptAt` from the backoff schedule, and re-enqueues with BullMQ's
+ * `delay` option. After WEBHOOK_MAX_ATTEMPTS, marks `failed` and stops.
+ *
+ * Network errors and non-2xx responses both count as failures. Body of the
+ * response is truncated to 8 KiB before persisting.
+ */
+function startWebhookDeliveryWorker(): Worker<WebhookDeliveryJob> {
+  const w = new Worker<WebhookDeliveryJob>(
+    QueueNames.WebhookDelivery,
+    async (job: Job<WebhookDeliveryJob>) => {
+      const log = logger.child({
+        queue: QueueNames.WebhookDelivery,
+        jobId: job.id,
+        deliveryId: job.data?.deliveryId,
+        attempt: job.data?.attempt,
+      });
+
+      const parsed = WebhookDeliveryJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid webhook delivery payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const { deliveryId } = parsed.data;
+
+      const [delivery] = await db
+        .select()
+        .from(schema.webhookDeliveries)
+        .where(eq(schema.webhookDeliveries.id, deliveryId))
+        .limit(1);
+      if (!delivery) {
+        log.warn("delivery row missing — dropping job");
+        return;
+      }
+      if (delivery.state === "delivered" || delivery.state === "failed") {
+        log.info({ state: delivery.state }, "delivery already terminal — skipping");
+        return;
+      }
+
+      const [endpoint] = await db
+        .select()
+        .from(schema.webhookEndpoints)
+        .where(eq(schema.webhookEndpoints.id, delivery.endpointId))
+        .limit(1);
+      if (!endpoint) {
+        log.warn("endpoint missing — marking failed");
+        await db
+          .update(schema.webhookDeliveries)
+          .set({ state: "failed", lastAttemptAt: new Date() })
+          .where(eq(schema.webhookDeliveries.id, deliveryId));
+        return;
+      }
+      if (endpoint.disabledAt) {
+        log.info("endpoint disabled — marking failed");
+        await db
+          .update(schema.webhookDeliveries)
+          .set({ state: "failed", lastAttemptAt: new Date() })
+          .where(eq(schema.webhookDeliveries.id, deliveryId));
+        return;
+      }
+
+      const body = JSON.stringify(delivery.payload);
+      const eventType = delivery.eventType;
+      const sig = signWebhookPayload(body, endpoint.signingSecret);
+
+      const attemptNumber = delivery.attempts + 1;
+      let responseStatus: number | null = null;
+      let responseBody: string | null = null;
+      let success = false;
+      let errMsg: string | null = null;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
+      try {
+        const res = await fetch(endpoint.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Fonto-Event": eventType,
+            "X-Fonto-Delivery": deliveryId,
+            "X-Fonto-Signature": sig.header,
+            "User-Agent": "Fonto-Webhook/1.0",
+          },
+          body,
+          signal: controller.signal,
+        });
+        responseStatus = res.status;
+        try {
+          const text = await res.text();
+          responseBody = text.slice(0, 8 * 1024);
+        } catch {
+          responseBody = null;
+        }
+        success = res.status >= 200 && res.status < 300;
+        if (!success) {
+          errMsg = `non-2xx status ${res.status}`;
+        }
+      } catch (err) {
+        errMsg = err instanceof Error ? err.message : String(err);
+      } finally {
+        clearTimeout(timer);
+      }
+
+      const now = new Date();
+      if (success) {
+        await db
+          .update(schema.webhookDeliveries)
+          .set({
+            state: "delivered",
+            attempts: attemptNumber,
+            lastAttemptAt: now,
+            lastResponseStatus: responseStatus,
+            lastResponseBody: responseBody,
+          })
+          .where(eq(schema.webhookDeliveries.id, deliveryId));
+        log.info({ status: responseStatus }, "webhook delivered");
+        return;
+      }
+
+      // Failure path: either retry or mark failed.
+      if (attemptNumber >= WEBHOOK_MAX_ATTEMPTS) {
+        await db
+          .update(schema.webhookDeliveries)
+          .set({
+            state: "failed",
+            attempts: attemptNumber,
+            lastAttemptAt: now,
+            lastResponseStatus: responseStatus,
+            lastResponseBody: responseBody ?? (errMsg ? errMsg.slice(0, 8 * 1024) : null),
+            nextAttemptAt: null,
+          })
+          .where(eq(schema.webhookDeliveries.id, deliveryId));
+        log.warn({ err: errMsg, status: responseStatus }, "webhook delivery exhausted");
+        return;
+      }
+
+      // Schedule next attempt.
+      const delayMs = WEBHOOK_BACKOFF_MS[attemptNumber - 1] ?? WEBHOOK_BACKOFF_MS[WEBHOOK_BACKOFF_MS.length - 1];
+      const nextAt = new Date(Date.now() + delayMs);
+      await db
+        .update(schema.webhookDeliveries)
+        .set({
+          state: "pending",
+          attempts: attemptNumber,
+          lastAttemptAt: now,
+          lastResponseStatus: responseStatus,
+          lastResponseBody: responseBody ?? (errMsg ? errMsg.slice(0, 8 * 1024) : null),
+          nextAttemptAt: nextAt,
+        })
+        .where(eq(schema.webhookDeliveries.id, deliveryId));
+      try {
+        await webhookDeliveryQueue().add(
+          JobNames.DeliverWebhook,
+          { deliveryId, attempt: attemptNumber + 1 },
+          { delay: delayMs }
+        );
+      } catch (err) {
+        log.error({ err: err instanceof Error ? err.message : String(err) }, "failed to re-enqueue webhook retry");
+      }
+      log.info(
+        { err: errMsg, status: responseStatus, nextAttemptAt: nextAt.toISOString() },
+        "webhook delivery retry scheduled"
+      );
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: WEBHOOK_CONCURRENCY,
+    }
+  );
+
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.WebhookDelivery,
+        jobId: job?.id,
+        err: err.message,
+      },
+      "webhook delivery worker error"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.WebhookDelivery, err: err.message }, "webhook worker error")
+  );
+
+  return w;
+}
+
+/**
  * BullMQ marker class to opt out of retries. Re-implemented here to avoid
  * importing the named export by path — the type lives at the package root
  * but has historically shifted between versions.
@@ -377,6 +595,8 @@ async function main(): Promise<void> {
     {
       concurrency: CONCURRENCY,
       thumbnailConcurrency: THUMBNAIL_CONCURRENCY,
+      webhookConcurrency: WEBHOOK_CONCURRENCY,
+      webhookTimeoutMs: WEBHOOK_TIMEOUT_MS,
       metricsPort: METRICS_PORT,
       redisUrl: (process.env.REDIS_URL ?? "redis://valkey:6379").replace(/\/\/[^@]*@/, "//***@"),
     },
@@ -393,6 +613,8 @@ async function main(): Promise<void> {
   // primary worker so a boot-time failure here doesn't block asset
   // processing — the reaper is belt-and-braces, not load-bearing.
   workers.push(startMaintenanceWorker());
+  // Phase 2.4 — outbound webhook delivery.
+  workers.push(startWebhookDeliveryWorker());
   try {
     await ensureReaperSchedule();
   } catch (err) {

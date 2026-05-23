@@ -7,7 +7,13 @@
 
 import { Queue, type JobsOptions } from "bullmq";
 import { getRedisConnection } from "./connection";
-import type { ProcessAssetJob, OcrJob, ThumbnailJob, ClassifyJob } from "./jobs";
+import type {
+  ProcessAssetJob,
+  OcrJob,
+  ThumbnailJob,
+  ClassifyJob,
+  WebhookDeliveryJob,
+} from "./jobs";
 
 export const QueueNames = {
   AssetProcessing: "asset-processing",
@@ -20,6 +26,10 @@ export const QueueNames = {
   // reap-stuck-assets sweep). Kept on its own queue so its single-concurrency
   // worker never contends with asset-processing throughput.
   Maintenance: "maintenance",
+  // Phase 2.4 — outbound webhook delivery. Retries are managed at the
+  // application level (we re-enqueue with `delay` based on attempt number)
+  // so we use a low BullMQ-level `attempts` value.
+  WebhookDelivery: "webhook-delivery",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -84,6 +94,28 @@ export function classifyQueue(): Queue<ClassifyJob> {
  * Uses `maintenanceJobOptions` (attempts: 1) since these jobs are idempotent
  * sweeps that the scheduler will re-run on the next tick anyway.
  */
+/**
+ * Webhook delivery queue. Retries are handled by the worker (it re-enqueues
+ * with an explicit `delay` calculated from the row's `attempts` count), so
+ * BullMQ-level `attempts` stays at 1 — a BullMQ retry would lose the
+ * exponential-backoff schedule we encode in the row's `nextAttemptAt`.
+ */
+export function webhookDeliveryQueue(): Queue<WebhookDeliveryJob> {
+  const name = QueueNames.WebhookDelivery;
+  const existing = cache.get(name);
+  if (existing) return existing as Queue<WebhookDeliveryJob>;
+  const q = new Queue<WebhookDeliveryJob>(name, {
+    connection: getRedisConnection(),
+    defaultJobOptions: {
+      attempts: 1,
+      removeOnComplete: 1000,
+      removeOnFail: 1000,
+    },
+  });
+  cache.set(name, q);
+  return q;
+}
+
 export function maintenanceQueue(): Queue<Record<string, never>> {
   const name = QueueNames.Maintenance;
   const existing = cache.get(name);
@@ -104,6 +136,7 @@ export function allQueues(): Queue[] {
   thumbnailQueue();
   classifyQueue();
   maintenanceQueue();
+  webhookDeliveryQueue();
   return Array.from(cache.values());
 }
 
