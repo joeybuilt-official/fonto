@@ -503,6 +503,43 @@ export const WorkspaceInvitationEnvelopeSchema = z.object({
   invitations: z.array(WorkspaceInvitationSchema),
 });
 
+// Phase 4.2 — CLIP text-to-image search result envelope.
+export const ClipSearchResultSchema = registry.register(
+  "ClipSearchResult",
+  z
+    .object({
+      asset: AssetSchema,
+      similarity: z.number().openapi({
+        description:
+          "Cosine similarity ∈ [-1, 1] between the query text embedding " +
+          "and the asset's image embedding. Higher = better match. CLIP " +
+          "results typically fall in [0, 0.4] for related images.",
+        example: 0.27,
+      }),
+    })
+    .openapi({
+      description:
+        "A single hit from `/api/v1/search/clip`. The `asset` shape matches " +
+        "the `Asset` component; `similarity` is the cosine score the hit was " +
+        "ranked on.",
+    })
+);
+
+export const ClipSearchEnvelopeSchema = z
+  .object({
+    results: z.array(ClipSearchResultSchema),
+    unavailable: z.boolean().optional().openapi({
+      description:
+        "True when the vision service is unreachable or not configured. " +
+        "The route degrades gracefully (200 with empty `results`) rather than " +
+        "returning 5xx in that case.",
+    }),
+    reason: z.string().optional().openapi({
+      description: "Human-readable explanation present whenever `unavailable` is true.",
+    }),
+  })
+  .openapi({ description: "Response envelope for the CLIP text-to-image search route." });
+
 // Phase 3.5 — folder listing.
 export const FolderListingSchema = registry.register(
   "FolderListing",

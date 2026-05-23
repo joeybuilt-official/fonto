@@ -200,6 +200,27 @@ async function tryEnqueueThumbnail(assetId: string, workspaceId: string, mimeTyp
 }
 
 /**
+ * Phase 4.2 — try to enqueue a CLIP image embedding job. Same dynamic-import
+ * pattern as `tryEnqueueThumbnail` so an export drift (or the queue helper
+ * being temporarily absent during a refactor) degrades to a console warning
+ * rather than breaking uploads. Non-image MIME types short-circuit.
+ */
+async function tryEnqueueClipEmbed(assetId: string, workspaceId: string, mimeType: string): Promise<void> {
+  if (!mimeType.startsWith("image/")) return;
+  try {
+    const mod = (await import("@/lib/queue")) as unknown as {
+      clipEmbeddingQueue?: () => { add: (n: string, p: unknown) => Promise<unknown> };
+      JobNames?: Record<string, string>;
+    };
+    if (typeof mod.clipEmbeddingQueue !== "function") return;
+    const jobName = mod.JobNames?.EmbedAsset ?? "embed-asset";
+    await mod.clipEmbeddingQueue().add(jobName, { assetId, workspaceId });
+  } catch (err) {
+    console.warn("[fonto] clip embed enqueue skipped:", err);
+  }
+}
+
+/**
  * Insert (or short-circuit-return existing) an asset row from an in-memory
  * buffer. Both `/api/v1/assets` (legacy multipart) and
  * `/api/v1/assets/:id/complete` (presigned PUT) funnel through here.
@@ -356,6 +377,10 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
 
   // Phase 1.1 thumbnail enqueue — optional; resolved dynamically.
   await tryEnqueueThumbnail(asset.id, workspaceId, mimeType);
+
+  // Phase 4.2 — CLIP image embedding enqueue (fire-and-forget). Skips for
+  // non-image MIME types; degrades to a warning if the queue export drifts.
+  void tryEnqueueClipEmbed(asset.id, workspaceId, mimeType);
 
   // Phase D-Fonto-1 (ADR 0027): mirror to fonto graph for vector NN.
   if (phash != null && fontoGraphConfigured()) {
