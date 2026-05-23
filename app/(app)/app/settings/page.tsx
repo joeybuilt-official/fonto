@@ -104,6 +104,24 @@ export default function SettingsPage() {
       </div>
 
       <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+        <h2 className="text-sm font-semibold text-foreground">API access</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-foreground">Personal access tokens</p>
+            <p className="text-xs text-muted-foreground">
+              For the CLI, mobile app, and 3rd-party integrations.
+            </p>
+          </div>
+          <Link
+            href="/app/settings/tokens"
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+          >
+            Manage tokens
+          </Link>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
         <h2 className="text-sm font-semibold text-foreground">Data</h2>
         <div className="flex items-center justify-between">
           <div>
