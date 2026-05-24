@@ -620,13 +620,44 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
 }
 
 /**
- * JSON-safe asset serializer. Converts the native BigInt phash to string.
+ * Recursively replace any BigInt values inside a structure with a JSON-safe
+ * representation. exifr stashes raw EXIF tags into nested objects/arrays and
+ * some of those (file offsets, large IFD values, certain manufacturer tags)
+ * come back as BigInt — which JSON.stringify rejects with
+ * "Do not know how to serialize a BigInt", crashing the whole response.
+ *
+ * Values that fit inside Number.MAX_SAFE_INTEGER are converted to a regular
+ * number so consumers don't have to parse strings for the common case; the
+ * giant ones (rare, but real) are stringified to preserve precision.
+ */
+function jsonSafe(value: unknown): unknown {
+  if (typeof value === "bigint") {
+    const n = Number(value);
+    return Number.isSafeInteger(n) ? n : value.toString();
+  }
+  if (Array.isArray(value)) return value.map(jsonSafe);
+  if (value && typeof value === "object") {
+    if (value instanceof Date) return value;
+    if (Buffer.isBuffer(value)) return value.toString("base64");
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = jsonSafe(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * JSON-safe asset serializer. Converts the native BigInt phash to string and
+ * walks any nested fields (notably `exif`) to scrub embedded BigInts before
+ * they reach JSON.stringify.
  */
 export function serializeAsset<T extends { phash?: bigint | null }>(
   asset: T
 ): T & { phash: string | null } {
   return {
-    ...asset,
+    ...(jsonSafe(asset) as T),
     phash: asset.phash != null ? asset.phash.toString() : null,
   };
 }
