@@ -22,6 +22,15 @@
 const DEFAULT_TIMEOUT_MS = 15_000;
 const OCR_TIMEOUT_MS = 30_000;
 
+/**
+ * Stable CLIP model identifier — matches the `modelId` field returned by
+ * plexo-vision (`apps/vision/src/models/clip.ts`). Used by the zero-shot
+ * classify cache (`lib/classify/vectors.ts`) to invalidate its on-disk
+ * taxonomy embeddings whenever the embedding-space owner changes models.
+ * Keep in sync with plexo's `DEFAULT_CLIP_MODEL` constant.
+ */
+export const EMBEDDING_MODEL_ID = "openclip-vit-b-32";
+
 let cachedModelId: string | null = null;
 
 function visionUrl(): string {
