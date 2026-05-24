@@ -99,23 +99,36 @@ function SyncBadge({ state }: { state: string }) {
   return <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-label="Syncing" />;
 }
 
-// Simple thumbnail that lazy-fetches URL for image assets
+// Simple thumbnail that lazy-fetches URL for image assets. Requests the
+// 256px `thumb` variant so the grid doesn't pull multi-MB originals; the
+// /url endpoint transparently falls back to the original if the
+// thumbnail_key isn't populated yet (legacy / unbackfilled / in-flight rows).
 function AssetThumbnail({ asset }: { asset: Asset }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [errored, setErrored] = useState(false);
 
   useEffect(() => {
     if (!asset.mimeType.startsWith("image/")) return;
-    fetch(`/api/v1/assets/${asset.id}/url`)
-      .then((r) => r.json())
-      .then((d) => setUrl(d.url ?? null))
-      .catch(() => {});
+    fetch(`/api/v1/assets/${asset.id}/url?variant=thumb`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.url) setUrl(d.url);
+        else setErrored(true);
+      })
+      .catch(() => setErrored(true));
   }, [asset.id, asset.mimeType]);
 
   return (
     <div className="aspect-square overflow-hidden rounded-lg bg-muted/30 flex items-center justify-center">
-      {url ? (
+      {url && !errored ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt={asset.filename} className="h-full w-full object-cover" loading="lazy" />
+        <img
+          src={url}
+          alt={asset.filename}
+          className="h-full w-full object-cover"
+          loading="lazy"
+          onError={() => setErrored(true)}
+        />
       ) : (
         <AssetIcon mimeType={asset.mimeType} />
       )}
@@ -480,9 +493,9 @@ export default function DashboardPage() {
           {assets.map((asset) => (
             <div
               key={asset.id}
-              className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card p-4 text-center hover:bg-muted/40 transition-colors"
+              className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 hover:bg-muted/40 transition-colors"
             >
-              <AssetIcon mimeType={asset.mimeType} />
+              <AssetThumbnail asset={asset} />
               <p
                 className="w-full truncate text-xs font-medium text-foreground"
                 title={asset.filename}
