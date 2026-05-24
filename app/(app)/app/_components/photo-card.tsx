@@ -124,12 +124,16 @@ function QuickActionsMenu({ asset, onAddToCollection, onRemove, showRemove }: Qu
 export interface PhotoCardProps {
   asset: Asset;
   selected?: boolean;
-  onSelect?: () => void;
+  onSelect?: (e?: React.MouseEvent) => void;
   selectMode?: boolean;
   showQuickActions?: boolean;
   onRemove?: (assetId: string) => void;
   onAddToCollection?: (assetId: string) => void;
   onClick?: () => void;
+  /** UX-3 — pre-resolved thumb URL from the batch URL endpoint. When set the
+   *  card skips its per-tile /api/v1/assets/:id/url fetch entirely. AssetGrid
+   *  uses this; legacy call-sites that pass nothing keep the old behavior. */
+  thumbUrl?: string | null;
 }
 
 export function PhotoCard({
@@ -141,12 +145,21 @@ export function PhotoCard({
   onRemove,
   onAddToCollection,
   onClick,
+  thumbUrl,
 }: PhotoCardProps) {
-  const [url, setUrl] = useState<string | null>(null);
+  // Two sources for the displayed url:
+  //   - `thumbUrl` prop (UX-3 batch URL endpoint): supplied by AssetGrid, wins.
+  //   - `fetchedUrl` state: legacy per-card fetch fallback for call-sites
+  //     that don't go through AssetGrid yet.
+  // Derived `url` keeps setState out of effects (React 19 compiler complains
+  // about effects that sync prop → state).
+  const [fetchedUrl, setFetchedUrl] = useState<string | null>(null);
+  const url = thumbUrl !== undefined ? thumbUrl : fetchedUrl;
   // Initialise from the mime so non-image rows never flash the spinner
-  // for the one frame between mount and effect-fire.
+  // for the one frame between mount and effect-fire. If a batch URL was
+  // already supplied we're never in loading state.
   const [loading, setLoading] = useState(() =>
-    asset.mimeType.startsWith("image/")
+    thumbUrl !== undefined ? false : asset.mimeType.startsWith("image/")
   );
   const [hovered, setHovered] = useState(false);
 
@@ -160,24 +173,26 @@ export function PhotoCard({
     asset.processingState === "extracted";
 
   useEffect(() => {
-    if (!asset.mimeType.startsWith("image/")) {
-      setLoading(false);
-      return;
-    }
+    // UX-3 — when a batch URL is supplied, derived `url` covers it; skip the
+    // legacy per-card fetch entirely.
+    if (thumbUrl !== undefined) return;
+    // Non-image rows never enter loading state (initial useState handles
+    // that), so nothing to do here either.
+    if (!asset.mimeType.startsWith("image/")) return;
     // Phase 1.1 — grid cells request the 256px thumb variant. The URL route
     // transparently falls back to the original if the derivative hasn't been
     // generated yet (legacy assets, in-flight backfill), so unbackfilled
     // rows still render — just slowly, like before.
     fetch(`/api/v1/assets/${asset.id}/url?variant=thumb`)
       .then((r) => r.json())
-      .then((d) => setUrl(d.url ?? null))
-      .catch(() => setUrl(null))
+      .then((d) => setFetchedUrl(d.url ?? null))
+      .catch(() => setFetchedUrl(null))
       .finally(() => setLoading(false));
-  }, [asset.id, asset.mimeType]);
+  }, [asset.id, asset.mimeType, thumbUrl]);
 
-  function handleClick() {
+  function handleClick(e: React.MouseEvent) {
     if (selectMode && onSelect) {
-      onSelect();
+      onSelect(e);
     } else if (onClick) {
       onClick();
     }
@@ -242,7 +257,7 @@ export function PhotoCard({
       {(selectMode || hovered || selected) && (
         <div
           className="absolute top-1.5 right-1.5 z-10"
-          onClick={(e) => { e.stopPropagation(); onSelect?.(); }}
+          onClick={(e) => { e.stopPropagation(); onSelect?.(e); }}
         >
           <div
             className={`h-5 w-5 rounded-full border-2 flex items-center justify-center transition-colors ${
