@@ -100,7 +100,7 @@ async function main(): Promise<void> {
         rows.map((r) => ({
           name: "generate-thumbnails",
           data: { assetId: r.id, workspaceId: r.workspace_id },
-          opts: { jobId: `backfill-thumb:${r.id}` },
+          opts: { jobId: `backfill-thumb-${r.id}` },
         }))
       );
     }
