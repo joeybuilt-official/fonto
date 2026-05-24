@@ -119,7 +119,7 @@ async function main(): Promise<void> {
       await queue.addBulk(
         rows.map((r) => ({
           name: "face-detect",
-          data: { assetId: r.id },
+          data: { assetId: r.id, workspaceId: r.workspace_id },
           opts: { jobId: `backfill-faces-${r.id}` },
         }))
       );
