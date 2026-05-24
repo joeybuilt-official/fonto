@@ -19,8 +19,27 @@ export function plexoAvailable(): boolean {
   return sdk.isConfigured
 }
 
-export const plexoEnsureWorkspace = (userId: string, email?: string) =>
-  sdk.ensureWorkspace(userId, email)
+// Process-lifetime cache for ensureWorkspace results. The Plexo workspace
+// id for a (userId, email) tuple is stable — once Plexo has minted one it
+// will keep returning the same id forever. Without this cache the worker
+// hits Plexo's per-IP `/api/auth/*` rate limiter (10 req/min) once per
+// asset processed, which manifests as `429 rate limited` failures and
+// rows that stall in processing_state='captured' until a human notices.
+const ensureWorkspaceCache = new Map<string, Promise<string>>()
+
+export const plexoEnsureWorkspace = (userId: string, email?: string) => {
+  const key = `${userId}\x00${email ?? ""}`
+  let inflight = ensureWorkspaceCache.get(key)
+  if (!inflight) {
+    inflight = sdk.ensureWorkspace(userId, email).catch((err) => {
+      // Drop failed lookups from the cache so the next call retries.
+      ensureWorkspaceCache.delete(key)
+      throw err
+    })
+    ensureWorkspaceCache.set(key, inflight)
+  }
+  return inflight
+}
 
 export const plexoPublishEvent = (
   eventType: string,
