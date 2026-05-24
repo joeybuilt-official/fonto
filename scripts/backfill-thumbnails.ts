@@ -55,19 +55,37 @@ async function main(): Promise<void> {
     `[backfill-thumbnails] start (batch=${batchSize}${dryRun ? ", dry-run" : ""})`
   );
 
-  // Scan in descending creation order so the most recently uploaded (the most
-  // visible to users) get thumbnails first. The NULL predicate shrinks the
-  // working set each pass, so a re-run after Ctrl-C resumes naturally.
-  while (true) {
-    const rows = (await sql`
-      SELECT id, workspace_id
-      FROM fonto.assets
-      WHERE lifecycle_state = 'active'
-        AND mime_type LIKE 'image/%'
-        AND thumbnail_key IS NULL
-      ORDER BY created_at DESC
-      LIMIT ${batchSize}
-    `) as unknown as AssetRow[];
+  // Single-pass keyset paginate over (created_at, id) descending. We DO NOT
+  // re-select on `thumbnail_key IS NULL` per batch because this script only
+  // ENQUEUES — the worker writes `thumbnail_key` asynchronously. A naive
+  // select-then-reselect loop re-enqueues every row every batch until the
+  // worker drains, which is how a prior run ballooned to 1.7M jobs against
+  // 35 actual rows. With `jobId: backfill-thumb:<id>` on each enqueue,
+  // BullMQ dedupes re-runs while previous jobs are still in flight, so
+  // it's safe to run this script back-to-back as new rows arrive.
+  let cursorCreatedAt: string | null = null;
+  let cursorId: string | null = null;
+  for (;;) {
+    const rows = (cursorCreatedAt && cursorId
+      ? await sql`
+          SELECT id, workspace_id, created_at::text AS created_at
+          FROM fonto.assets
+          WHERE lifecycle_state = 'active'
+            AND mime_type LIKE 'image/%'
+            AND thumbnail_key IS NULL
+            AND (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
+          ORDER BY created_at DESC, id DESC
+          LIMIT ${batchSize}
+        `
+      : await sql`
+          SELECT id, workspace_id, created_at::text AS created_at
+          FROM fonto.assets
+          WHERE lifecycle_state = 'active'
+            AND mime_type LIKE 'image/%'
+            AND thumbnail_key IS NULL
+          ORDER BY created_at DESC, id DESC
+          LIMIT ${batchSize}
+        `) as unknown as Array<AssetRow & { created_at: string }>;
 
     if (rows.length === 0) break;
     stats.batches++;
@@ -77,22 +95,26 @@ async function main(): Promise<void> {
       for (const r of rows) {
         console.log(`[backfill-thumbnails] would enqueue ${r.id} ws=${r.workspace_id}`);
       }
-      // In dry-run mode we'd loop forever (no writes shrink the set). Break
-      // after the first batch.
-      break;
+    } else {
+      await queue.addBulk(
+        rows.map((r) => ({
+          name: "generate-thumbnails",
+          data: { assetId: r.id, workspaceId: r.workspace_id },
+          opts: { jobId: `backfill-thumb:${r.id}` },
+        }))
+      );
     }
-
-    await queue.addBulk(
-      rows.map((r) => ({
-        name: "generate-thumbnails",
-        data: { assetId: r.id, workspaceId: r.workspace_id },
-      }))
-    );
     stats.enqueued += rows.length;
+
+    const last = rows[rows.length - 1];
+    cursorCreatedAt = last.created_at;
+    cursorId = last.id;
 
     console.log(
       `[backfill-thumbnails] batch ${stats.batches} enqueued ${rows.length}; running total ${stats.enqueued}`
     );
+
+    if (rows.length < batchSize) break;
   }
 
   await queue.close();
