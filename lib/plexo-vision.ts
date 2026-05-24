@@ -20,7 +20,12 @@
 // shipping them inside our own ONNX runtime is fine with an AGPL app.
 
 const DEFAULT_TIMEOUT_MS = 15_000;
-const OCR_TIMEOUT_MS = 30_000;
+// OCR can be backed by a CPU-only VLM (Ollama Qwen2.5-VL) which routinely
+// takes 10–30 s/image — earlier 30 s cap was tuned for PaddleOCR's <2 s
+// per call and aborted every VLM run. 120 s gives slow images headroom
+// without pinning a worker forever; the per-asset BullMQ retry policy
+// handles genuinely stuck calls.
+const OCR_TIMEOUT_MS = 300_000;
 
 /**
  * Stable CLIP model identifier — matches the `modelId` field returned by
