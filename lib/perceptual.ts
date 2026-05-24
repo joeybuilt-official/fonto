@@ -128,6 +128,9 @@ export async function computePHash(buffer: Buffer): Promise<bigint> {
 
 /**
  * Hamming distance between two 64-bit pHashes. 0 = identical, 64 = inverted.
+ * Inputs are the canonical UNSIGNED 64-bit BigInt produced by computePHash().
+ * If you read a phash back from Postgres (signed bigint), normalise it with
+ * `phashFromDb()` first.
  */
 export function hammingDistance(a: bigint, b: bigint): number {
   let x = a ^ b;
@@ -137,6 +140,31 @@ export function hammingDistance(a: bigint, b: bigint): number {
     count++;
   }
   return count;
+}
+
+/* ─── Postgres I/O boundary ─────────────────────────────────────────────
+ *
+ * `computePHash()` returns an UNSIGNED 64-bit BigInt (0 .. 2^64 - 1). The
+ * `assets.phash` column is Postgres BIGINT, which is SIGNED int8 (-2^63 ..
+ * 2^63 - 1). For ~50% of images the top bit is set and the unsigned value
+ * overflows signed int8, causing the INSERT to fail with "bigint out of
+ * range" / "value too large".
+ *
+ * Round-trip via two's-complement: values >= 2^63 map to a negative signed
+ * representation. The bit pattern is identical, so XOR-based Hamming
+ * distance still works as long as both sides use the same convention.
+ */
+const TWO_POW_63 = 1n << 63n;
+const TWO_POW_64 = 1n << 64n;
+
+/** Unsigned 64-bit pHash → signed BIGINT for Postgres storage. */
+export function phashToDb(unsigned: bigint): bigint {
+  return unsigned >= TWO_POW_63 ? unsigned - TWO_POW_64 : unsigned;
+}
+
+/** Signed BIGINT from Postgres → unsigned 64-bit pHash for in-process math. */
+export function phashFromDb(signed: bigint): bigint {
+  return signed < 0n ? signed + TWO_POW_64 : signed;
 }
 
 /* ─── Color palette ─────────────────────────────────────────────────── */

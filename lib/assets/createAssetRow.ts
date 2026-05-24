@@ -22,6 +22,8 @@ import {
   computePHash,
   extractPalette,
   hammingDistance,
+  phashToDb,
+  phashFromDb,
   type PaletteColor,
 } from "@/lib/perceptual";
 // fonto-graph (FalkorDB mirror) was retired in Phase 4.3 (ADR 0002) in favor
@@ -209,7 +211,7 @@ async function findPHashNearDuplicate(
   for (const row of candidates) {
     if (row.phash == null) continue;
     if (excludeAssetId && row.id === excludeAssetId) continue;
-    const d = hammingDistance(BigInt(row.phash), newPHash);
+    const d = hammingDistance(phashFromDb(BigInt(row.phash)), newPHash);
     if (d <= PHASH_DUPLICATE_THRESHOLD && (!best || d < best.distance)) {
       best = {
         id: row.id,
@@ -500,7 +502,12 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
       source,
       extractedText,
       capturedAt: exifData.capturedAt ?? new Date(),
-      phash,
+      // Convert the unsigned 64-bit pHash to signed two's-complement before
+      // handing it to Drizzle — Postgres BIGINT is signed int8 and overflows
+      // when the high bit is set (~50% of natural images). phashFromDb()
+      // reverses this on read so in-process Hamming math sees the canonical
+      // unsigned value.
+      phash: phash != null ? phashToDb(phash) : null,
       colors,
       exif: exifData.raw,
       latitude: exifData.latitude,
@@ -649,15 +656,17 @@ function jsonSafe(value: unknown): unknown {
 }
 
 /**
- * JSON-safe asset serializer. Converts the native BigInt phash to string and
- * walks any nested fields (notably `exif`) to scrub embedded BigInts before
- * they reach JSON.stringify.
+ * JSON-safe asset serializer. Converts the native BigInt phash to a string
+ * representation of the canonical UNSIGNED 64-bit value (regardless of how
+ * Postgres stored it as a signed int8 — see lib/perceptual.ts). Also walks
+ * any nested fields (notably `exif`) to scrub embedded BigInts before they
+ * reach JSON.stringify.
  */
 export function serializeAsset<T extends { phash?: bigint | null }>(
   asset: T
 ): T & { phash: string | null } {
   return {
     ...(jsonSafe(asset) as T),
-    phash: asset.phash != null ? asset.phash.toString() : null,
+    phash: asset.phash != null ? phashFromDb(BigInt(asset.phash)).toString() : null,
   };
 }
