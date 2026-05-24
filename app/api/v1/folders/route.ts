@@ -84,7 +84,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   //   /Photos/2024/Iceland    -> "2024"
   //   /Photos/2023/Trip       -> "2023"
   //   /Documents/Taxes        -> not matched (LIKE filter excludes)
-  const prefixLikeOperand = prefix === "" ? "/%" : `${prefix}/%`;
+  // Require ≥1 char after the trailing slash via `_%` so we never have to
+  // filter empty suffixes in HAVING (Postgres rejects HAVING expressions
+  // that reference ungrouped columns even when the expression is identical
+  // to the GROUP BY key — "column \"directory_path\" must appear in the
+  // GROUP BY clause or be used in an aggregate function").
+  const prefixLikeOperand = prefix === "" ? "/_%" : `${prefix}/_%`;
   const offsetIntoPath = prefix.length + 2; // len(prefix) + len("/") + 1 (1-indexed)
 
   const folderRows = (await db.execute(sql`
@@ -97,7 +102,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       AND directory_path IS NOT NULL
       AND directory_path LIKE ${prefixLikeOperand}
     GROUP BY name
-    HAVING split_part(substring(directory_path FROM ${offsetIntoPath}), '/', 1) <> ''
     ORDER BY name ASC
   `)) as unknown as Array<{ name: string; asset_count: number | string }>;
 
