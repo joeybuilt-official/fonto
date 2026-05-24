@@ -44,6 +44,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { sql } from "drizzle-orm";
+import { pgArray } from "@/lib/db/sql-helpers";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
 
 // Day-of-year fuzz window. ±3 means "May 23 also pulls in May 20..May 26".
@@ -149,7 +150,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         ${schema.assets.workspaceId} = ${workspaceId}
         AND ${schema.assets.lifecycleState} = 'active'
         AND ${schema.assets.capturedAt} IS NOT NULL
-        AND fonto.captured_mmdd_utc(${schema.assets.capturedAt}) = ANY(${mmddList}::text[])
+        AND fonto.captured_mmdd_utc(${schema.assets.capturedAt}) = ANY(${pgArray(mmddList)}::text[])
         AND EXTRACT(YEAR FROM ${schema.assets.capturedAt} AT TIME ZONE 'UTC')
             < EXTRACT(YEAR FROM (CURRENT_DATE AT TIME ZONE 'UTC'))
       `

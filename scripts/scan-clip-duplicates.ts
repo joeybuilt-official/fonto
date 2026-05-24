@@ -42,7 +42,14 @@ function arg(name: string): string | true | null {
 interface CandidateRow {
   id: string;
   workspace_id: string;
-  clip_vec: number[] | null;
+  // postgres-js returns pgvector as its text literal (`"[0.1,0.2,...]"`) —
+  // drizzle's customType parses it for app queries, but this script talks to
+  // postgres-js directly and has to parse the column itself.
+  clip_vec: string | null;
+}
+
+function parseVector(raw: string): number[] {
+  return JSON.parse(raw) as number[];
 }
 
 async function main(): Promise<void> {
@@ -113,9 +120,11 @@ async function main(): Promise<void> {
 
       for (const row of rows) {
         if (!row.clip_vec || row.clip_vec.length === 0) continue;
+        const queryVec = parseVector(row.clip_vec);
+        if (queryVec.length === 0) continue;
         let matches: Awaited<ReturnType<typeof nearestNeighbors>> = [];
         try {
-          matches = (await nearestNeighbors(row.workspace_id, row.clip_vec, 5, threshold)).filter(
+          matches = (await nearestNeighbors(row.workspace_id, queryVec, 5, threshold)).filter(
             (m) => m.assetId !== row.id
           );
         } catch (err) {

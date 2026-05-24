@@ -30,7 +30,7 @@
 // next tick. The terminal-failure branch sets processing_state='failed', which
 // also drops the row out of the scan predicate.
 
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { assetProcessingQueue, thumbnailQueue } from "@/lib/queue/queues";
@@ -103,7 +103,7 @@ export async function reapStuckAssets(): Promise<ReapResult> {
     ? await db
         .select({ id: schema.workspaces.id, userId: schema.workspaces.userId })
         .from(schema.workspaces)
-        .where(sql`${schema.workspaces.id} = ANY(${workspaceIds}::uuid[])`)
+        .where(inArray(schema.workspaces.id, workspaceIds))
     : [];
   const workspaceUser = new Map(workspaces.map((w) => [w.id, w.userId]));
 

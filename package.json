@@ -18,7 +18,8 @@
     "backfill:clip": "tsx scripts/backfill-clip-embeddings.ts",
     "backfill:faces": "tsx scripts/backfill-faces.ts",
     "backfill:places": "tsx scripts/backfill-place-names.ts",
-    "scan:clip-duplicates": "tsx scripts/scan-clip-duplicates.ts"
+    "scan:clip-duplicates": "tsx scripts/scan-clip-duplicates.ts",
+    "cluster:faces": "tsx scripts/cluster-faces.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",
