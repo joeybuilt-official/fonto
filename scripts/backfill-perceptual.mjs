@@ -220,16 +220,35 @@ async function main() {
   /* pHash + colors backfill */
   if (phashMode) {
     console.log("[backfill] pHash + colors: starting");
-    while (true) {
-      const rows = await sql`
-        SELECT id, workspace_id, filename, mime_type
-        FROM fonto.assets
-        WHERE lifecycle_state = 'active'
-          AND mime_type LIKE 'image/%'
-          AND phash IS NULL
-        ORDER BY created_at DESC
-        LIMIT ${batchSize}
-      `;
+    // Single-pass keyset on (created_at, id) DESC so failed rows (R2 fetch
+    // error, both pHash and palette returning null) get skipped past via the
+    // cursor instead of being re-selected forever on `phash IS NULL`. The
+    // `phash IS NULL` predicate still narrows the working set within a pass;
+    // the cursor guarantees forward progress across failures. Re-runs start
+    // from the top and will retry transient failures.
+    let cursorCreatedAt = null;
+    let cursorId = null;
+    for (;;) {
+      const rows = cursorCreatedAt && cursorId
+        ? await sql`
+            SELECT id, workspace_id, filename, mime_type, created_at::text AS created_at
+            FROM fonto.assets
+            WHERE lifecycle_state = 'active'
+              AND mime_type LIKE 'image/%'
+              AND phash IS NULL
+              AND (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
+            ORDER BY created_at DESC, id DESC
+            LIMIT ${batchSize}
+          `
+        : await sql`
+            SELECT id, workspace_id, filename, mime_type, created_at::text AS created_at
+            FROM fonto.assets
+            WHERE lifecycle_state = 'active'
+              AND mime_type LIKE 'image/%'
+              AND phash IS NULL
+            ORDER BY created_at DESC, id DESC
+            LIMIT ${batchSize}
+          `;
       if (rows.length === 0) break;
       for (const r of rows) {
         stats.phash.tried++;
@@ -251,6 +270,10 @@ async function main() {
           stats.phash.fail++;
         }
       }
+      const last = rows[rows.length - 1];
+      cursorCreatedAt = last.created_at;
+      cursorId = last.id;
+      if (rows.length < batchSize) break;
     }
     console.log("[backfill] pHash:", JSON.stringify(stats.phash));
   }
