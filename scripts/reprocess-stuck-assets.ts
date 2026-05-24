@@ -104,6 +104,12 @@ async function main(): Promise<void> {
   `) as Array<{ id: string; user_id: string }>;
   const wsUser = new Map(wsRows.map((w) => [w.id, w.user_id]));
 
+  // Per-invocation suffix so re-running after a Plexo 429 / rate-limit
+  // wave actually re-enqueues. BullMQ dedupes by `jobId`, and a failed
+  // job lingers in the queue's failed set — repeating the same jobId
+  // silently no-ops. The runId makes each invocation unique.
+  const runId = Date.now().toString(36);
+
   let enqueuedProcess = 0;
   let enqueuedThumb = 0;
   for (const r of rows) {
@@ -124,7 +130,7 @@ async function main(): Promise<void> {
         mimeType: r.mime_type,
         extractedText: null,
       },
-      { jobId: `reprocess-stuck-${r.id}` }
+      { jobId: `reprocess-stuck-${runId}-${r.id}` }
     );
     enqueuedProcess++;
 
@@ -132,7 +138,7 @@ async function main(): Promise<void> {
       await thumbQueue.add(
         "thumbnail",
         { assetId: r.id, workspaceId: r.workspace_id },
-        { jobId: `reprocess-stuck-thumb-${r.id}` }
+        { jobId: `reprocess-stuck-thumb-${runId}-${r.id}` }
       );
       enqueuedThumb++;
     }

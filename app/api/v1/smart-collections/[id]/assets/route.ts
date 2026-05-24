@@ -11,6 +11,7 @@ import { eq, and, or, inArray, ilike, gte, lte, sql, SQL, isNull } from "drizzle
 import { visionConfigured } from "@/lib/plexo-vision";
 import { getCachedClipTextEmbedding, nearestNeighbors } from "@/lib/vectors";
 import { deltaE76, parseHex, rgbToLab } from "@/lib/perceptual";
+import { pgArray } from "@/lib/db/sql-helpers";
 
 type Condition = {
   field: string;
@@ -48,12 +49,11 @@ type SmartQuery = {
   //     clause is silently dropped (graceful degradation; same shape as
   //     /api/v1/search/clip's `{ unavailable: true }` response). Top-K
   //     for the kNN is 200 with similarity threshold 0.18.
-  //   personIds: filter to assets that have a face_instance row whose
-  //     personId is in this list. Depends on Phase 5.1's `face_instances`
-  //     table; until that ships the clause is a no-op (does not error).
+  //   personIds: filter to assets that have a non-hidden face_instance
+  //     row whose personId is in this list. Wired against
+  //     fonto.face_instances (Phase 5.1) via an EXISTS subquery.
   //   hasFaces: true ⇒ keep only assets with at least one non-hidden
-  //     face_instance; false ⇒ keep only assets with none. Same dep on
-  //     Phase 5.1 — no-op until merged.
+  //     face_instance; false ⇒ keep only assets with none.
   //   dominantColor + tolerance: filter by the top entry in `assets.colors`
   //     within ΔE76 (CIE76 Lab Euclidean) of the target hex. `tolerance`
   //     is in ΔE units; default 30 ≈ "same hue family". `colors` itself
@@ -205,27 +205,22 @@ export async function GET(
     // If !visionConfigured the clause is silently dropped.
   }
 
-  // Phase 5.4 — personIds / hasFaces: depends on Phase 5.1's
-  // `face_instances` table. Until that ships, both clauses are no-ops
-  // and we record a TODO marker via a single trace-friendly comment.
-  // When 5.1 lands, replace the `false &&` guards below with real
-  // EXISTS clauses against `schema.faceInstances`.
-  const faceInstancesAvailable = (schema as Record<string, unknown>)
-    .faceInstances !== undefined;
-  if (faceInstancesAvailable && Array.isArray(q.personIds) && q.personIds.length > 0) {
-    // TODO(phase-5.1): wire when face_instances merges. Until then this
-    // branch is unreachable because `faceInstancesAvailable` is false.
-    // Intentional shape preview:
-    //   conditions.push(sql`EXISTS (SELECT 1 FROM fonto.face_instances fi
-    //     WHERE fi.asset_id = ${schema.assets.id}
-    //       AND fi.hidden = false
-    //       AND fi.person_id = ANY(${q.personIds}))`);
+  // Phase 5.4 — personIds / hasFaces (Phase 5.1's `face_instances` now
+  // ships). EXISTS subqueries against fonto.face_instances let us keep
+  // the result `assets` rather than join + DISTINCT.
+  if (Array.isArray(q.personIds) && q.personIds.length > 0) {
+    const ids = q.personIds;
+    conditions.push(
+      sql`EXISTS (SELECT 1 FROM ${schema.faceInstances} fi
+            WHERE fi.asset_id = ${schema.assets.id}
+              AND fi.hidden = false
+              AND fi.person_id = ANY(${pgArray(ids)}::uuid[]))`
+    );
   }
-  if (faceInstancesAvailable && typeof q.hasFaces === "boolean") {
-    // TODO(phase-5.1): wire when face_instances merges.
-    //   const exists = sql`EXISTS (SELECT 1 FROM fonto.face_instances fi
-    //     WHERE fi.asset_id = ${schema.assets.id} AND fi.hidden = false)`;
-    //   conditions.push(q.hasFaces ? exists : sql`NOT ${exists}`);
+  if (typeof q.hasFaces === "boolean") {
+    const facesExists = sql`EXISTS (SELECT 1 FROM ${schema.faceInstances} fi
+      WHERE fi.asset_id = ${schema.assets.id} AND fi.hidden = false)`;
+    conditions.push(q.hasFaces ? facesExists : sql`NOT ${facesExists}`);
   }
   // Phase 5.5 — stacks: default to primary-only unless the saved query
   // explicitly opts in to expansion. Same correlated-subquery shape as the
@@ -238,10 +233,6 @@ export async function GET(
       )!
     );
   }
-
-  // Touch `sql` so the import is not flagged as unused while the face
-  // predicates remain stubbed. Removed when Phase 5.1 wires the EXISTS.
-  void sql;
 
   const rawAssets = await db
     .select()

@@ -143,10 +143,21 @@ export function PhotoCard({
   onClick,
 }: PhotoCardProps) {
   const [url, setUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Initialise from the mime so non-image rows never flash the spinner
+  // for the one frame between mount and effect-fire.
+  const [loading, setLoading] = useState(() =>
+    asset.mimeType.startsWith("image/")
+  );
   const [hovered, setHovered] = useState(false);
 
-  const isProcessing = asset.processingState !== "ready";
+  // Only pulse for states the worker is *actively* moving through. "captured"
+  // is the initial post-upload state — if it stays there it means the worker
+  // never picked the row up, which is a stuck condition we don't want to
+  // animate forever (that's the flashing the user sees across the grid).
+  // "failed" is terminal and also gets no pulse.
+  const isProcessing =
+    asset.processingState === "processing" ||
+    asset.processingState === "extracted";
 
   useEffect(() => {
     if (!asset.mimeType.startsWith("image/")) {
