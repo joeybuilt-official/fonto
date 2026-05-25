@@ -108,18 +108,38 @@ export async function GET(request: NextRequest) {
       ? limitParsed
       : null;
 
+  // UX-3 / Phase 5.5 — surface the stack member count alongside each
+  // asset so PhotoCard can render a "Stack of N" badge without a per-tile
+  // round trip. Correlated subquery returns NULL for standalone assets
+  // (cheap: indexed by `assets_workspace_stack_idx`). The serialized
+  // shape carries it under `stackMemberCount`.
+  const stackMemberCountSql = sql<number | null>`(
+    CASE WHEN ${schema.assets.stackId} IS NULL THEN NULL
+    ELSE (SELECT COUNT(*)::int FROM ${schema.assets} a2
+          WHERE a2.stack_id = ${schema.assets.stackId})
+    END
+  )`.as("stack_member_count");
+
   const query = db
-    .select()
+    .select({
+      asset: schema.assets,
+      stackMemberCount: stackMemberCountSql,
+    })
     .from(schema.assets)
     .where(and(...where))
     .orderBy(desc(schema.assets.createdAt));
   const rows = limit != null ? await query.limit(limit) : await query;
 
   const filtered = rows
-    .filter((a) => !mimeFilter || a.mimeType.startsWith(mimeFilter))
-    .filter((a) => !subtypeFilter || a.classification === subtypeFilter);
+    .filter((r) => !mimeFilter || r.asset.mimeType.startsWith(mimeFilter))
+    .filter((r) => !subtypeFilter || r.asset.classification === subtypeFilter);
 
-  return NextResponse.json({ assets: filtered.map(serializeAsset) });
+  return NextResponse.json({
+    assets: filtered.map((r) => ({
+      ...serializeAsset(r.asset),
+      stackMemberCount: r.stackMemberCount,
+    })),
+  });
 }
 
 /**

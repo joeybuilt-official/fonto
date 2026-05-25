@@ -3,7 +3,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star } from "lucide-react";
+import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers } from "lucide-react";
 
 export interface Asset {
   id: string;
@@ -23,6 +23,10 @@ export interface Asset {
   // timeline only shows the primary; clicking opens the lightbox which
   // surfaces a "stack of N" badge with inline carousel of all members.
   stackId?: string | null;
+  // Phase 5.5 — when this asset is the primary of a stack, the list
+  // endpoint includes the member count so PhotoCard can render a badge
+  // without a per-tile round trip. NULL for standalone assets.
+  stackMemberCount?: number | null;
 }
 
 interface QuickActionsProps {
@@ -232,6 +236,19 @@ export function PhotoCard({
           hovered || selected || selectMode ? "opacity-100" : "opacity-0"
         }`}
       />
+
+      {/* Phase 5.5 — stack badge. Top-right when no checkbox, slides
+          left to make room for the checkbox when select mode is on. */}
+      {asset.stackMemberCount != null && asset.stackMemberCount > 1 && (
+        <div
+          className={`absolute top-1.5 z-10 flex items-center gap-0.5 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white pointer-events-none ${
+            selectMode || hovered || selected ? "right-8" : "right-1.5"
+          }`}
+        >
+          <Layers className="h-2.5 w-2.5" />
+          {asset.stackMemberCount}
+        </div>
+      )}
 
       {/* Phase 3.4 — favorite heart (always visible when set; subtle).
           Lives bottom-left so it doesn't fight with checkbox (top-right)
