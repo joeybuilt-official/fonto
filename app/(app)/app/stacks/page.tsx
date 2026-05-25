@@ -17,6 +17,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Image as ImageIcon, Layers, Loader2, Check, X } from "lucide-react";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
@@ -166,6 +167,7 @@ function SuggestionRow({
 }
 
 function StacksContent() {
+  const router = useRouter();
   const toolbar = useToolbarState({
     page: "stacks",
     availableFilters: [],
@@ -374,11 +376,7 @@ function StacksContent() {
                   filename={s.primaryFilename}
                   count={s.memberCount}
                   name={s.name}
-                  onClick={() => {
-                    // Until /app/stacks/[id] lands, deep-link into Photos
-                    // with the primary highlighted via expandStacks=1.
-                    window.location.href = `/app/photos?expandStacks=1`;
-                  }}
+                  onClick={() => router.push(`/app/stacks/${s.id}`)}
                 />
               ))}
             </div>
