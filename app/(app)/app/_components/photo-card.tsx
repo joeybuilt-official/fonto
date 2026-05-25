@@ -3,7 +3,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers } from "lucide-react";
+import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play } from "lucide-react";
 
 export interface Asset {
   id: string;
@@ -27,6 +27,21 @@ export interface Asset {
   // endpoint includes the member count so PhotoCard can render a badge
   // without a per-tile round trip. NULL for standalone assets.
   stackMemberCount?: number | null;
+  // Phase 8a — video probe output. NULL for non-video assets.
+  durationSeconds?: number | null;
+  videoCodec?: string | null;
+  videoWidth?: number | null;
+  videoHeight?: number | null;
+}
+
+/** Phase 8a — "1:23" / "12:34" / "1:02:03". Plays nicely w/ the grid chip. */
+function formatDuration(sec: number): string {
+  const s = Math.round(sec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  const p2 = (n: number) => n.toString().padStart(2, "0");
+  return h > 0 ? `${h}:${p2(m)}:${p2(ss)}` : `${m}:${p2(ss)}`;
 }
 
 interface QuickActionsProps {
@@ -237,6 +252,27 @@ export function PhotoCard({
           <ImageIcon className="h-8 w-8 text-muted-foreground" />
         )}
       </div>
+
+      {/* Phase 8a — video play-icon overlay + duration chip. Renders for
+          any video/* mime; duration shows only when probed. Bottom-right
+          chip uses the same visual weight as the stack-count badge. */}
+      {asset.mimeType.startsWith("video/") && (
+        <>
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+            <div className="rounded-full bg-black/60 p-2.5">
+              <Play
+                className="h-5 w-5 text-white"
+                fill="currentColor"
+              />
+            </div>
+          </div>
+          {asset.durationSeconds != null && (
+            <div className="pointer-events-none absolute bottom-1.5 right-1.5 z-10 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+              {formatDuration(asset.durationSeconds)}
+            </div>
+          )}
+        </>
+      )}
 
       {/* Hover overlay */}
       <div

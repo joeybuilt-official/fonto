@@ -12,9 +12,13 @@
 // with the same content and re-stamps the timestamp. Safe to call from the
 // worker, the reaper, or the backfill script.
 //
-// Non-image MIME types (`video/*`, `application/*`, ...) are skipped silently
-// — videos get their own pipeline in Phase 8.
+// Non-image MIME types (`application/*`, ...) are skipped silently —
+// video/* takes the video branch (probe + ffmpeg keyframe extraction
+// → same WebP encode pipeline).
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import sharp from "sharp";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { eq } from "drizzle-orm";
@@ -22,6 +26,8 @@ import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { assetDerivativeKey, assetStorageKey, getS3Client } from "@/lib/r2";
 import { decodeToBuffer } from "@/lib/processing/decode";
+import { probeVideo } from "@/lib/processing/probeVideo";
+import { extractVideoThumbnail } from "@/lib/processing/extractVideoThumbnail";
 
 const THUMB_LONG_EDGE_PX = 256;
 const PREVIEW_LONG_EDGE_PX = 1080;
@@ -126,10 +132,13 @@ export async function generateThumbnails(
     return { skipped: true, reason: "asset-missing" };
   }
 
-  // Defer videos & opaque blobs to later phases. Done silently — the job
-  // succeeds so the queue doesn't retry forever for an immutable mime type.
-  if (!asset.mimeType.startsWith("image/")) {
-    log.info({ mimeType: asset.mimeType }, "non-image asset — skipping");
+  // Phase 8a — video assets take a different decode path: ffprobe for
+  // metadata, ffmpeg keyframe extraction for the thumbnail. The
+  // extracted JPEG is then handed to the same sharp encode pipeline as
+  // images so thumb/preview keys + cache headers stay uniform.
+  const isVideo = asset.mimeType.startsWith("video/");
+  if (!asset.mimeType.startsWith("image/") && !isVideo) {
+    log.info({ mimeType: asset.mimeType }, "non-image / non-video — skipping");
     return { skipped: true, reason: "non-image" };
   }
 
@@ -137,22 +146,56 @@ export async function generateThumbnails(
   const original = await downloadOriginal(bucket, originalKey);
   log.info({ bytes: original.length }, "downloaded original");
 
-  // Phase 1.3 — route HEIC + RAW through the decoder dispatcher so sharp gets
-  // a buffer it can actually read. For web formats (JPEG/PNG/WebP/...) this is
-  // a passthrough; for HEIC it uses sharp(libheif) or heif-convert; for RAW
-  // it shells out to dcraw_emu. Failures here are real (corrupt input) and
-  // should fail the job so the reaper can retry / mark failed.
-  const decoded = await decodeToBuffer(original, asset.mimeType, asset.filename);
-  log.info(
-    { sourceFormat: decoded.sourceFormat, decodedBytes: decoded.buffer.length },
-    "decoded"
-  );
+  let decodedBuffer: Buffer;
+  if (isVideo) {
+    // ffmpeg's accurate-seek wants a file path; pipe-via-stdin defeats
+    // keyframe seeking. Write to a tmp file, probe, extract, unlink.
+    const tmp = path.join(os.tmpdir(), `fonto-vid-${assetId}.bin`);
+    await fs.promises.writeFile(tmp, original);
+    try {
+      const probe = await probeVideo(tmp);
+      log.info(probe, "probed video");
+      const thumbAt = probe.durationSec
+        ? Math.max(probe.durationSec * 0.1, 1)
+        : 1;
+      decodedBuffer = await extractVideoThumbnail(tmp, {
+        atSec: thumbAt,
+        maxWidth: PREVIEW_LONG_EDGE_PX,
+      });
+      // Stamp probe metadata onto the row alongside the thumbnail keys
+      // (single UPDATE below covers both — set them on the asset first
+      // here so a downstream failure still preserves the probe.)
+      await db
+        .update(schema.assets)
+        .set({
+          durationSeconds: probe.durationSec,
+          videoCodec: probe.codec,
+          videoWidth: probe.width,
+          videoHeight: probe.height,
+        })
+        .where(eq(schema.assets.id, assetId));
+    } finally {
+      await fs.promises.unlink(tmp).catch(() => {});
+    }
+  } else {
+    // Phase 1.3 — route HEIC + RAW through the decoder dispatcher so sharp
+    // gets a buffer it can actually read. For web formats (JPEG/PNG/WebP/...)
+    // this is a passthrough; for HEIC it uses sharp(libheif) or heif-convert;
+    // for RAW it shells out to dcraw_emu. Failures here are real (corrupt
+    // input) and should fail the job so the reaper can retry / mark failed.
+    const decoded = await decodeToBuffer(original, asset.mimeType, asset.filename);
+    log.info(
+      { sourceFormat: decoded.sourceFormat, decodedBytes: decoded.buffer.length },
+      "decoded"
+    );
+    decodedBuffer = decoded.buffer;
+  }
 
   // Encode both variants in parallel — sharp pipelines are independent. CPU
   // contention is bounded by the worker's `THUMBNAIL_WORKER_CONCURRENCY`.
   const [thumb, preview] = await Promise.all([
-    encodeVariant(decoded.buffer, THUMB_LONG_EDGE_PX, THUMB_QUALITY),
-    encodeVariant(decoded.buffer, PREVIEW_LONG_EDGE_PX, PREVIEW_QUALITY),
+    encodeVariant(decodedBuffer, THUMB_LONG_EDGE_PX, THUMB_QUALITY),
+    encodeVariant(decodedBuffer, PREVIEW_LONG_EDGE_PX, PREVIEW_QUALITY),
   ]);
 
   const thumbnailKey = assetDerivativeKey(workspaceId, assetId, "thumb");

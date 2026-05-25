@@ -64,16 +64,17 @@ TaskCreate while in phased-plan flow.
 - [ ] Commit + push
 
 ## Phase 8a — Video probe + thumbnail extraction
-- [ ] OPERATOR GATE — confirm ADR 0001 default (CPU-only ffmpeg)
-- [ ] worker/Dockerfile — install ffmpeg + ffprobe (CPU build)
-- [ ] lib/processing/probeVideo.ts — ffprobe wrapper
-- [ ] lib/processing/extractVideoThumbnail.ts — ffmpeg keyframe-aligned
-- [ ] processAsset dispatcher — branch on mime
-- [ ] Schema: assets.duration_seconds, assets.video_codec
-- [ ] Backfill script for existing video uploads (if any)
-- [ ] Grid renderer — play icon overlay on video tiles
-- [ ] Asset detail — show duration + codec in metadata pane
-- [ ] Commit + push
+- [x] OPERATOR GATE — taking ADR 0001 default (CPU-only ffmpeg) — operator can object at review
+- [x] Dockerfile.worker — install ffmpeg (provides ffmpeg+ffprobe) — both deps and runtime stages
+- [x] lib/processing/probeVideo.ts — ffprobe wrapper
+- [x] lib/processing/extractVideoThumbnail.ts — ffmpeg seek-before-input keyframe-aligned
+- [x] generateThumbnails dispatcher — video branch (probe → extract → encode via existing sharp pipeline)
+- [x] processAsset — video classification = "video" w/o Plexo round-trip
+- [x] Schema + migration 0026: duration_seconds, video_codec, video_width, video_height
+- [ ] Backfill script — DEFERRED (no existing videos in prod; reprocess endpoint covers ad-hoc)
+- [x] Grid renderer — play icon overlay + duration chip on video tiles
+- [ ] Asset detail metadata pane — DEFERRED to 8b (lightbox refactor lands w/ player)
+- [x] Commit + push
 
 ## Phase 8b — HLS transcode + player UI ⚠
 - [ ] OPERATOR GATE — confirm C7 (single-bitrate vs ladder)

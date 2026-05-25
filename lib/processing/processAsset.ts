@@ -118,8 +118,15 @@ async function processAssetInner(
       ctx.classifyMethod = result.method;
 
       description = await plexoDescribeImage(plexoWorkspaceId, filename, mimeType);
+    } else if (mimeType.startsWith("video/")) {
+      // Phase 8a — video classification is deterministic by mime, no
+      // round-trip to Plexo. (A future revision could ask Plexo to
+      // describe the keyframe; for v1 the filename is enough metadata.)
+      classification = "video";
+      classifyMethodLabel = "llm-fallback";
+      ctx.classifyMethod = "llm-fallback";
     } else {
-      // Non-image: keep the legacy LLM-based document classifier.
+      // Non-image, non-video: keep the legacy LLM-based document classifier.
       classification = await plexoClassifyAsset(
         plexoWorkspaceId,
         filename,
@@ -130,7 +137,11 @@ async function processAssetInner(
       ctx.classifyMethod = "llm-fallback";
     }
   } else {
-    classification = mimeType.startsWith("image/") ? "photo" : "document";
+    classification = mimeType.startsWith("image/")
+      ? "photo"
+      : mimeType.startsWith("video/")
+        ? "video"
+        : "document";
   }
 
   await db

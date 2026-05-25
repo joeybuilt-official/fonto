@@ -213,6 +213,11 @@ export const assets = fontoSchema.table(
     // `?expandStacks=true`). FK is soft-enforced in SQL (matches the same
     // approach as `correspondentId` / `documentTypeId`).
     stackId: uuid("stack_id"),
+    // Phase 8a — video probe output. NULL for non-video assets.
+    durationSeconds: doublePrecision("duration_seconds"),
+    videoCodec: text("video_codec"),
+    videoWidth: integer("video_width"),
+    videoHeight: integer("video_height"),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
