@@ -1,27 +1,53 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Joeybuilt LLC
+//
+// /search — UX-3 sweep. Adopts AssetPageToolbar so the q input is the
+// shared debounced input (no more letter-drop under fast typing); puts
+// classification / date range / tag / color in the shared FilterPopover.
+// Search-specific toggles (OCR-only, semantic, dual CLIP results panel)
+// stay inline next to the toolbar because they have no analogue on
+// other pages.
+//
+// Smart-collection mode (?smartCollection=<id>) renders a simpler shell:
+// the toolbar becomes a read-only header and the results come from the
+// smart-collections preview endpoint.
+
 "use client";
 
-import { useState, useCallback, useEffect, useRef, Suspense } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import { Search, File, Image as ImageIcon, FileText, Loader2, SlidersHorizontal, X, Sparkles, ScanText, Palette } from "lucide-react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  File,
+  Image as ImageIcon,
+  FileText,
+  ScanText,
+  Sparkles,
+} from "lucide-react";
 import { DocumentViewer } from "@/components/document-viewer";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
-// 12 representative quick-pick colors for the palette filter. Chosen to span
-// the hue wheel + neutrals so the user can land on the right family in one tap.
-const QUICK_COLORS = [
-  "#ef4444", // red
-  "#f97316", // orange
-  "#f59e0b", // amber
-  "#eab308", // yellow
-  "#84cc16", // lime
-  "#22c55e", // green
-  "#14b8a6", // teal
-  "#06b6d4", // cyan
-  "#3b82f6", // blue
-  "#8b5cf6", // violet
-  "#ec4899", // pink
-  "#000000", // black (catches dark photos)
+// Phase 4.2 — heuristic for "fire a CLIP search alongside the text search".
+// Queries with >3 words usually describe a scene rather than name a file,
+// and queries containing one of these visual verbs almost always want a
+// semantic match. False positives just produce an extra section.
+const SEMANTIC_VERBS = [
+  "show", "find", "with", "wearing", "holding", "near", "looking", "of",
+  "containing", "featuring", "during", "at",
 ];
+
+function looksSemantic(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return false;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length > 3) return true;
+  const lower = trimmed.toLowerCase();
+  return SEMANTIC_VERBS.some(
+    (v) => lower.includes(` ${v} `) || lower.startsWith(`${v} `)
+  );
+}
 
 interface Asset {
   id: string;
@@ -36,28 +62,7 @@ interface Asset {
   createdAt: string;
 }
 
-interface Tag { id: string; name: string; color: string }
-
 interface ClipHit { asset: Asset; similarity: number }
-
-// Phase 4.2 — heuristic for "fire a CLIP search alongside the text search".
-// Two cheap signals: queries with >3 words usually describe a scene rather
-// than name a file, and queries containing one of these visual verbs
-// almost always want a semantic match. We keep this dumb on purpose —
-// the user-facing fallout of a false positive is just an extra section.
-const SEMANTIC_VERBS = [
-  "show", "find", "with", "wearing", "holding", "near", "looking", "of",
-  "containing", "featuring", "during", "at",
-];
-
-function looksSemantic(query: string): boolean {
-  const trimmed = query.trim();
-  if (!trimmed) return false;
-  const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length > 3) return true;
-  const lower = trimmed.toLowerCase();
-  return SEMANTIC_VERBS.some((v) => lower.includes(` ${v} `) || lower.startsWith(`${v} `));
-}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -66,106 +71,116 @@ function formatBytes(bytes: number): string {
 }
 
 function AssetIcon({ mimeType }: { mimeType: string }) {
-  if (mimeType.startsWith("image/")) return <ImageIcon className="h-5 w-5 text-blue-400" />;
+  if (mimeType.startsWith("image/"))
+    return <ImageIcon className="h-5 w-5 text-blue-400" />;
   if (mimeType === "application/pdf" || mimeType.startsWith("text/"))
     return <FileText className="h-5 w-5 text-orange-400" />;
   return <File className="h-5 w-5 text-muted-foreground" />;
 }
 
-const CLASSIFICATION_OPTIONS = [
-  "photo", "screenshot", "mockup", "logo", "icon",
-  "receipt", "contract", "letter", "report", "form", "document", "scan",
-];
+function ResultRow({
+  asset,
+  similarity,
+  onOpen,
+}: {
+  asset: Asset;
+  similarity?: number;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      onClick={onOpen}
+      className="flex w-full items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted/40 transition-colors"
+    >
+      <AssetIcon mimeType={asset.mimeType} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">{asset.filename}</p>
+        {asset.description && (
+          <p className="truncate text-xs text-muted-foreground">{asset.description}</p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          {asset.classification ?? asset.mimeType} · {formatBytes(asset.sizeBytes)}
+        </p>
+      </div>
+      {similarity != null ? (
+        <span className="text-xs text-amber-400/80 whitespace-nowrap font-mono">
+          {(similarity * 100).toFixed(0)}%
+        </span>
+      ) : (
+        <span className="text-xs text-muted-foreground whitespace-nowrap">
+          {new Date(asset.capturedAt ?? asset.createdAt).toLocaleDateString()}
+        </span>
+      )}
+    </button>
+  );
+}
 
-function SearchInner() {
-  const searchParams = useSearchParams();
+function SearchContent() {
   const router = useRouter();
-  const smartCollectionId = searchParams.get("smartCollection") ?? "";
+  const urlParams = useSearchParams();
+  const smartCollectionId = urlParams.get("smartCollection") ?? "";
 
-  const [query, setQuery] = useState("");
+  const toolbar = useToolbarState({
+    page: "search",
+    availableFilters: ["type", "from", "to", "color", "tagIds"],
+  });
+
   const [results, setResults] = useState<Asset[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
-  const [semantic, setSemantic] = useState(false);
   const [ocrOnly, setOcrOnly] = useState(false);
-
-  // Filter state
-  const [classification, setClassification] = useState("");
-  const [tagId, setTagId] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [color, setColor] = useState("");
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [tags, setTags] = useState<Tag[]>([]);
-  const colorPickerRef = useRef<HTMLDivElement>(null);
-
-  // Document viewer
-  const [viewerAsset, setViewerAsset] = useState<Asset | null>(null);
-
-  // Phase 4.2 — CLIP semantic results (fired alongside text search for
-  // "natural-language-looking" queries). `null` = not run; `[]` = ran but
-  // unavailable or no hits.
+  const [semantic, setSemantic] = useState(false);
   const [clipHits, setClipHits] = useState<ClipHit[] | null>(null);
   const [clipUnavailable, setClipUnavailable] = useState(false);
+  const [viewerAsset, setViewerAsset] = useState<Asset | null>(null);
 
-  useEffect(() => {
-    fetch("/api/v1/tags")
-      .then((r) => r.json())
-      .then((d) => setTags(d.tags ?? []))
-      .catch(() => {});
-  }, []);
-
-  // Close color picker on outside click.
-  useEffect(() => {
-    if (!showColorPicker) return;
-    function onClick(e: MouseEvent) {
-      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
-        setShowColorPicker(false);
-      }
+  function openAsset(a: Asset) {
+    const isDoc = !a.mimeType.startsWith("image/");
+    if (isDoc && (a.mimeType === "application/pdf" || a.extractedText)) {
+      setViewerAsset(a);
+    } else if (a.mimeType.startsWith("image/")) {
+      router.push("/app/photos");
+    } else {
+      router.push("/app/documents");
     }
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [showColorPicker]);
+  }
 
-  const doSearch = useCallback(async (opts?: {
-    q?: string; cl?: string; tid?: string; df?: string; dt?: string; sem?: boolean; scId?: string;
-    ocr?: boolean; col?: string;
-  }) => {
-    const q = opts?.q ?? query;
-    const cl = opts?.cl ?? classification;
-    const tid = opts?.tid ?? tagId;
-    const df = opts?.df ?? dateFrom;
-    const dt = opts?.dt ?? dateTo;
-    const sem = opts?.sem ?? semantic;
-    const ocr = opts?.ocr ?? ocrOnly;
-    const col = opts?.col ?? color;
-    const scId = opts?.scId ?? smartCollectionId;
+  const doSearch = useCallback(async () => {
+    // Smart-collection mode: ignore filters, fetch the preview.
+    if (smartCollectionId) {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/v1/smart-collections/${smartCollectionId}/assets`);
+        if (res.ok) {
+          const data = (await res.json()) as { assets?: Asset[] };
+          setResults(data.assets ?? []);
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    const q = toolbar.filters.q.trim();
+    const cl = toolbar.filters.type ?? "";
+    const df = toolbar.filters.from ?? "";
+    const dt = toolbar.filters.to ?? "";
+    const col = toolbar.filters.color ?? "";
+    const tid = toolbar.filters.tagIds[0] ?? "";
+
+    if (!q && !cl && !tid && !df && !dt && !ocrOnly && !col) {
+      setResults(null);
+      setClipHits(null);
+      setClipUnavailable(false);
+      return;
+    }
 
     setLoading(true);
     try {
-      if (scId) {
-        const res = await fetch(`/api/v1/smart-collections/${scId}/assets`);
-        if (res.ok) {
-          const data = await res.json();
-          setResults(data.assets ?? []);
-        }
-        return;
-      }
-
-      if (!q.trim() && !cl && !tid && !df && !dt && !ocr && !col) {
-        setResults(null);
-        setClipHits(null);
-        setClipUnavailable(false);
-        return;
-      }
-
-      // Phase 4.2 — kick off the CLIP search in parallel for "natural" queries.
-      // We don't await here; the section appears under the text results when
-      // the response arrives. Failures are silent — the section just doesn't
-      // render. Skipping when other structured filters are active keeps the
-      // semantic block out of pure-filter views like "tag=foo".
-      if (q.trim() && looksSemantic(q) && !tid && !cl && !col) {
-        const clipParams = new URLSearchParams({ q: q.trim(), limit: "24" });
+      // Phase 4.2 — kick off the CLIP search in parallel for "natural"
+      // queries. Skipping when other structured filters are active keeps
+      // the semantic block out of pure-filter views like "tag=foo".
+      if (q && looksSemantic(q) && !tid && !cl && !col) {
+        const clipParams = new URLSearchParams({ q, limit: "24" });
         fetch(`/api/v1/search/clip?${clipParams.toString()}`)
           .then((r) => (r.ok ? r.json() : null))
           .then((d) => {
@@ -187,303 +202,141 @@ function SearchInner() {
       }
 
       const params = new URLSearchParams();
-      if (q.trim()) params.set("q", q.trim());
+      if (q) params.set("q", q);
       if (cl) params.set("classification", cl);
       if (tid) params.set("tagId", tid);
       if (df) params.set("dateFrom", df);
       if (dt) params.set("dateTo", dt);
-      if (sem) params.set("semantic", "true");
-      if (ocr) params.set("ocrOnly", "true");
+      if (semantic) params.set("semantic", "true");
+      if (ocrOnly) params.set("ocrOnly", "true");
       if (col) params.set("color", col);
 
       const res = await fetch(`/api/v1/search?${params.toString()}`);
       if (res.ok) {
-        const data = await res.json();
+        const data = (await res.json()) as { assets?: Asset[] };
         setResults(data.assets ?? []);
       }
     } finally {
       setLoading(false);
     }
-  }, [query, classification, tagId, dateFrom, dateTo, semantic, ocrOnly, color, smartCollectionId]);
+  }, [
+    smartCollectionId,
+    toolbar.filters.q,
+    toolbar.filters.type,
+    toolbar.filters.from,
+    toolbar.filters.to,
+    toolbar.filters.color,
+    toolbar.filters.tagIds,
+    ocrOnly,
+    semantic,
+  ]);
 
-  // Execute smart collection query on mount if smartCollectionId present
   useEffect(() => {
-    if (smartCollectionId) doSearch({ scId: smartCollectionId });
-  }, [smartCollectionId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const hasFilters = classification || tagId || dateFrom || dateTo || color || ocrOnly;
-
-  function clearFilters() {
-    setClassification("");
-    setTagId("");
-    setDateFrom("");
-    setDateTo("");
-    setColor("");
-    setOcrOnly(false);
-    doSearch({ cl: "", tid: "", df: "", dt: "", col: "", ocr: false });
-  }
+    void doSearch();
+  }, [doSearch]);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Search</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {smartCollectionId ? "Smart collection results" : "Search by filename, description, extracted text, or classification"}
-        </p>
-      </div>
+    <div className="space-y-3">
+      <AssetPageToolbar
+        title={smartCollectionId ? "Smart Collection" : "Search"}
+        count={loading ? undefined : results?.length}
+        toolbar={toolbar}
+        searchPlaceholder="Search filenames, descriptions, OCR text…"
+        sortOptions={[]}
+        filterKeys={smartCollectionId ? [] : ["type", "from", "to", "color", "tagIds"]}
+        showDensity={false}
+        showSelect={false}
+      />
 
-      {!smartCollectionId && (
-        <div className="flex gap-2 items-center">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => { setQuery(e.target.value); doSearch({ q: e.target.value }); }}
-              placeholder="Search assets…"
-              autoFocus
-              className="w-full rounded-lg border border-border bg-background pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <button
-            onClick={() => setShowFilters((f) => !f)}
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors ${hasFilters || showFilters ? "border-foreground text-foreground" : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"}`}
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-            Filters
-            {hasFilters && <span className="rounded-full bg-foreground text-background text-xs w-4 h-4 flex items-center justify-center">!</span>}
-          </button>
-          <button
-            onClick={() => { setOcrOnly((o) => !o); doSearch({ ocr: !ocrOnly }); }}
-            title="Search OCR text only — matches words extracted from image content"
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors ${ocrOnly ? "border-foreground text-foreground" : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"}`}
-          >
-            <ScanText className="h-3.5 w-3.5" />
-          </button>
-          <div ref={colorPickerRef} className="relative">
-            <button
-              onClick={() => setShowColorPicker((v) => !v)}
-              title="Filter by dominant color"
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors ${color ? "border-foreground text-foreground" : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"}`}
+      <div className="px-4 space-y-4">
+        {!smartCollectionId && (
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Search-specific toggles. These three have no analogue on
+                other pages so they live next to the toolbar instead of
+                inside FilterPopover. */}
+            <Button
+              variant={ocrOnly ? "default" : "outline"}
+              size="sm"
+              onClick={() => setOcrOnly((v) => !v)}
+              title="Search OCR text only — matches words extracted from image content"
             >
-              {color ? (
-                <span className="h-3.5 w-3.5 rounded-sm border border-border" style={{ backgroundColor: color }} />
-              ) : (
-                <Palette className="h-3.5 w-3.5" />
+              <ScanText className="h-3.5 w-3.5" />
+              OCR only
+            </Button>
+            <Button
+              variant={semantic ? "default" : "outline"}
+              size="sm"
+              onClick={() => setSemantic((v) => !v)}
+              title="Semantic search via Plexo AI"
+              className={cn(semantic && "bg-amber-500 text-white hover:bg-amber-500/90")}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Semantic
+            </Button>
+          </div>
+        )}
+
+        {smartCollectionId && (
+          <p className="text-sm text-muted-foreground">
+            Smart collection results — filters disabled
+          </p>
+        )}
+
+        {/* Empty / loading / no-results states */}
+        {results === null && !smartCollectionId && !loading ? (
+          <p className="text-sm text-muted-foreground text-center py-8">
+            Type to search your assets, or set a filter.
+          </p>
+        ) : results?.length === 0 && !loading ? (
+          <p className="text-sm text-muted-foreground text-center py-8">
+            No assets found.
+          </p>
+        ) : results ? (
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted-foreground">
+              {results.length} result{results.length !== 1 ? "s" : ""}
+            </p>
+            {results.map((asset) => (
+              <ResultRow key={asset.id} asset={asset} onOpen={() => openAsset(asset)} />
+            ))}
+          </div>
+        ) : null}
+
+        {/* Phase 4.2 — CLIP semantic results, rendered under text matches
+            any time a CLIP search has been run for the current query (even
+            with 0 hits) so the user knows semantic matching contributed. */}
+        {clipHits !== null && (
+          <div className="space-y-2 pt-2">
+            <div className="flex items-center gap-2 border-t border-border pt-4">
+              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Visually similar
+              </p>
+              {clipUnavailable && (
+                <span className="text-xs text-muted-foreground">
+                  (semantic search service unavailable)
+                </span>
               )}
-            </button>
-            {showColorPicker && (
-              <div className="absolute right-0 top-full mt-2 z-30 w-56 rounded-lg border border-border bg-popover p-3 shadow-lg">
-                <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Color</p>
-                <div className="grid grid-cols-6 gap-1.5">
-                  {QUICK_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => { setColor(c); setShowColorPicker(false); doSearch({ col: c }); }}
-                      className={`h-7 w-7 rounded-md border-2 transition-all ${color === c ? "border-foreground scale-110" : "border-transparent hover:border-border"}`}
-                      style={{ backgroundColor: c }}
-                      title={c}
-                      aria-label={`Filter by ${c}`}
+            </div>
+            {clipHits.length === 0
+              ? !clipUnavailable && (
+                  <p className="text-sm text-muted-foreground">No semantic matches.</p>
+                )
+              : (
+                <div className="space-y-1.5">
+                  {clipHits.map((hit) => (
+                    <ResultRow
+                      key={`clip-${hit.asset.id}`}
+                      asset={hit.asset}
+                      similarity={hit.similarity}
+                      onOpen={() => openAsset(hit.asset)}
                     />
                   ))}
                 </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={color}
-                    onChange={(e) => setColor(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && /^#?[0-9a-f]{3,6}$/i.test(color)) {
-                        const norm = color.startsWith("#") ? color : `#${color}`;
-                        setColor(norm); setShowColorPicker(false); doSearch({ col: norm });
-                      }
-                    }}
-                    placeholder="#rrggbb"
-                    className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  {color && (
-                    <button
-                      onClick={() => { setColor(""); setShowColorPicker(false); doSearch({ col: "" }); }}
-                      className="rounded p-1 text-muted-foreground hover:text-foreground"
-                      title="Clear color filter"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
+              )}
           </div>
-          <button
-            onClick={() => { setSemantic((s) => !s); doSearch({ sem: !semantic }); }}
-            title="Semantic search via Plexo AI"
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors ${semantic ? "border-amber-400 text-amber-400" : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"}`}
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-          </button>
-          {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0" />}
-        </div>
-      )}
-
-      {showFilters && !smartCollectionId && (
-        <div className="rounded-xl border border-border bg-card p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-foreground">Filters</p>
-            {hasFilters && (
-              <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-                <X className="h-3 w-3" /> Clear all
-              </button>
-            )}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Classification</label>
-              <select
-                value={classification}
-                onChange={(e) => { setClassification(e.target.value); doSearch({ cl: e.target.value }); }}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="">Any</option>
-                {CLASSIFICATION_OPTIONS.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            {tags.length > 0 && (
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Tag</label>
-                <select
-                  value={tagId}
-                  onChange={(e) => { setTagId(e.target.value); doSearch({ tid: e.target.value }); }}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="">Any tag</option>
-                  {tags.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">From</label>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => { setDateFrom(e.target.value); doSearch({ df: e.target.value }); }}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">To</label>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => { setDateTo(e.target.value); doSearch({ dt: e.target.value }); }}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {results === null && !smartCollectionId ? (
-        <p className="text-sm text-muted-foreground text-center py-8">Type to search your assets</p>
-      ) : results?.length === 0 ? (
-        <p className="text-sm text-muted-foreground text-center py-8">No assets found.</p>
-      ) : results ? (
-        <div className="space-y-1.5">
-          <p className="text-xs text-muted-foreground">{results.length} result{results.length !== 1 ? "s" : ""}</p>
-          {results.map((asset) => (
-            <button
-              key={asset.id}
-              onClick={() => {
-                const isDoc = !asset.mimeType.startsWith("image/");
-                if (isDoc && (asset.mimeType === "application/pdf" || asset.extractedText)) {
-                  setViewerAsset(asset);
-                } else if (asset.mimeType.startsWith("image/")) {
-                  router.push("/app/photos");
-                } else {
-                  router.push("/app/documents");
-                }
-              }}
-              className="flex w-full items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted/40 transition-colors"
-            >
-              <AssetIcon mimeType={asset.mimeType} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">{asset.filename}</p>
-                {asset.description && (
-                  <p className="truncate text-xs text-muted-foreground">{asset.description}</p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  {asset.classification ?? asset.mimeType} · {formatBytes(asset.sizeBytes)}
-                </p>
-              </div>
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                {new Date(asset.capturedAt ?? asset.createdAt).toLocaleDateString()}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {/* Phase 4.2 — CLIP semantic results, rendered under the text matches.
-          We render the section any time a CLIP search has been run for the
-          current query, even with 0 results, so the user can see whether
-          semantic matching contributed. */}
-      {clipHits !== null && (
-        <div className="space-y-2 pt-2">
-          <div className="flex items-center gap-2 border-t border-border pt-4">
-            <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-              Visually similar
-            </p>
-            {clipUnavailable && (
-              <span className="text-xs text-muted-foreground">
-                (semantic search service unavailable)
-              </span>
-            )}
-          </div>
-          {clipHits.length === 0 ? (
-            !clipUnavailable && (
-              <p className="text-sm text-muted-foreground">No semantic matches.</p>
-            )
-          ) : (
-            <div className="space-y-1.5">
-              {clipHits.map((hit) => (
-                <button
-                  key={`clip-${hit.asset.id}`}
-                  onClick={() => {
-                    const a = hit.asset;
-                    const isDoc = !a.mimeType.startsWith("image/");
-                    if (isDoc && (a.mimeType === "application/pdf" || a.extractedText)) {
-                      setViewerAsset(a);
-                    } else if (a.mimeType.startsWith("image/")) {
-                      router.push("/app/photos");
-                    } else {
-                      router.push("/app/documents");
-                    }
-                  }}
-                  className="flex w-full items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted/40 transition-colors"
-                >
-                  <AssetIcon mimeType={hit.asset.mimeType} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground">{hit.asset.filename}</p>
-                    {hit.asset.description && (
-                      <p className="truncate text-xs text-muted-foreground">{hit.asset.description}</p>
-                    )}
-                    <p className="text-xs text-muted-foreground">
-                      {hit.asset.classification ?? hit.asset.mimeType} · {formatBytes(hit.asset.sizeBytes)}
-                    </p>
-                  </div>
-                  <span className="text-xs text-amber-400/80 whitespace-nowrap font-mono">
-                    {(hit.similarity * 100).toFixed(0)}%
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        )}
+      </div>
 
       {viewerAsset && (
         <DocumentViewer
@@ -500,8 +353,8 @@ function SearchInner() {
 
 export default function SearchPage() {
   return (
-    <Suspense>
-      <SearchInner />
+    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+      <SearchContent />
     </Suspense>
   );
 }
