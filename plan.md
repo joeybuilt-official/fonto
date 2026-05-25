@@ -54,7 +54,7 @@ Each is a sign-off gate before the phase that consumes it.
 - Exit: tile tap opens detail; swipe works; trash + favorite roundtrip
   to server; share sheet opens with a valid `https://myfonto.com/share/...`
   URL.
-- Status: pending
+- Status: see checklist.md
 
 ## Phase 6.2b — Mobile background upload queue
 
@@ -65,7 +65,7 @@ Each is a sign-off gate before the phase that consumes it.
 - Subagents: none.
 - Exit: lock the phone mid-upload — upload completes; opening the app
   shows the now-uploaded asset; queue is empty.
-- Status: pending
+- Status: see checklist.md
 
 ## Phase 6.2c — Mobile tests + CI ⚠ (one-way door: signing certs)
 
@@ -77,7 +77,7 @@ Each is a sign-off gate before the phase that consumes it.
 - Subagents: none.
 - Exit: PR pipeline runs widget + integration tests on iOS sim + Android
   emulator; signed IPA + APK artifact produced per push.
-- Status: pending — BLOCKED on operator gate
+- Status: see checklist.md — BLOCKED on operator gate
 
 ---
 
@@ -94,7 +94,7 @@ Each is a sign-off gate before the phase that consumes it.
   (needs comments-count badge there).
 - Exit: user A comments on asset; user B sees it in-app immediately,
   in the daily digest the next morning.
-- Status: pending — BLOCKED on C4
+- Status: see checklist.md — BLOCKED on C4
 
 ## Phase 7b — Cross-workspace sharing + commenter/contributor roles ⚠ (CHECK migration)
 
@@ -109,7 +109,7 @@ Each is a sign-off gate before the phase that consumes it.
   is called — those need to learn about the new roles.
 - Exit: user A shares asset X from workspace Foo to workspace Bar; user B
   in Bar can view X but cannot delete; X still lives in Foo's storage.
-- Status: pending — BLOCKED on C5
+- Status: see checklist.md — BLOCKED on C5
 
 ---
 
@@ -124,7 +124,7 @@ Each is a sign-off gate before the phase that consumes it.
   add a video branch.
 - Exit: upload a `.mp4` → thumbnail appears in grid; metadata shows
   duration; processing state advances to `processed`.
-- Status: pending
+- Status: see checklist.md
 
 ## Phase 8b — HLS transcode + player UI ⚠ (storage commitment)
 
@@ -137,7 +137,7 @@ Each is a sign-off gate before the phase that consumes it.
   on video tiles.
 - Exit: click a video tile → plays in-grid; hover the scrubber → sprite
   preview; seeking works without re-buffering.
-- Status: pending — BLOCKED on C7
+- Status: see checklist.md — BLOCKED on C7
 
 ---
 
@@ -154,7 +154,7 @@ Each is a sign-off gate before the phase that consumes it.
 - Exit: open Grafana → see 4+ dashboards (overview, processing, queue
   depth, API latency); pull power on a worker → Alertmanager fires
   within 60s.
-- Status: pending
+- Status: see checklist.md
 
 ## Phase 9b — Worker autoscale ⚠ (touches docker compose live)
 
@@ -167,7 +167,7 @@ Each is a sign-off gate before the phase that consumes it.
 - Subagents: none.
 - Exit: enqueue 100 jobs → autoscaler scales worker to 4; queue drains
   → autoscaler scales back to 1 after dampening period.
-- Status: pending — BLOCKED on C2
+- Status: see checklist.md — BLOCKED on C2
 
 ## Phase 9c — Backups + restore drill
 
@@ -178,25 +178,28 @@ Each is a sign-off gate before the phase that consumes it.
 - Deps: 9a (alerts need to exist before we lean on them).
 - Subagents: none.
 - Exit: drill passes once on demand + once on schedule.
-- Status: pending
+- Status: see checklist.md
 
 ---
 
 ## Sequencing summary
 
 ```
-6.2a → 6.2b → 6.2c⚠
-                 (mobile track done)
+6.2a ✓ → 6.2b ✓ → 6.2c⚠ (blocked — signing certs)
+                  (mobile track 2/3 done)
 
-7a → 7b⚠
-        (collab track done)
+7a⚠ (blocked — C4) → 7b⚠
+                        (collab track 0/2 done)
 
-8a → 8b⚠
-        (video track done)
+8a ✓ → 8b⚠ (blocked — C7)
+              (video track 1/2 done)
 
-9a → 9b⚠ + 9c
-              (ops track done)
+9a ✓ → 9b⚠ (blocked — C2) + 9c ✓
+                                (ops track 2/3 done)
 ```
+
+5 of 9 phases shipped + deployed this session. Remaining 4 phases all
+gated on operator decisions enumerated above.
 
 Mobile, collab, video, ops tracks are independent — sessions can pick
 whichever is unblocked. ⚠ phases need operator sign-off before they

@@ -1,0 +1,1 @@
+Resume Fonto parity. Read /workspace/fonto/plan.md + /workspace/fonto/checklist.md. All remaining phases (6.2c, 7a, 7b, 8b, 9b) blocked on operator decisions enumerated in plan.md "Operator-gated conflicts" + ADR 0002 cert provisioning. Next: collect the 6 gate answers (C1, C2, C4, C5, C6, C7) + cert upload, then resume w/ whichever track unblocks first.
