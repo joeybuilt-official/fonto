@@ -2,45 +2,118 @@
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { Trash2, RotateCcw, File, Image as ImageIcon, FileText } from "lucide-react";
+import { Suspense, useEffect, useState } from "react";
+import { RotateCcw, Trash2, X } from "lucide-react";
 import { ConfirmButton } from "@/components/confirm-button";
+import { type Asset } from "../_components/photo-card";
+import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { AssetGrid } from "../_components/asset-grid";
+import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
-interface Asset {
-  id: string;
-  filename: string;
-  mimeType: string;
-  sizeBytes: number;
-  deletedAt: string | null;
+// Trash extends the shared Asset shape with the trash-only deletedAt
+// column the list endpoint surfaces for lifecycle=trashed rows.
+interface TrashedAsset extends Asset {
+  deletedAt?: string | null;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+function BulkBar({
+  count,
+  onRestore,
+  onDelete,
+  onClear,
+}: {
+  count: number;
+  onRestore: () => void;
+  onDelete: () => void;
+  onClear: () => void;
+}) {
+  if (count === 0) return null;
+  return (
+    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-xl border border-border bg-card/95 backdrop-blur px-4 py-2.5 shadow-xl">
+      <span className="text-sm font-medium text-foreground mr-2">
+        {count} {count === 1 ? "item" : "items"} selected
+      </span>
+      <button
+        onClick={onRestore}
+        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-primary/10 hover:text-primary transition-colors"
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+        Restore
+      </button>
+      <ConfirmButton
+        onConfirm={onDelete}
+        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
+        armedClassName="bg-destructive/15 ring-1 ring-destructive"
+        confirmLabel={
+          <span className="flex items-center gap-1 font-bold">
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete {count} forever?
+          </span>
+        }
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        Delete forever
+      </ConfirmButton>
+      <button
+        onClick={onClear}
+        className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        title="Clear selection"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
 }
 
-function AssetIcon({ mimeType }: { mimeType: string }) {
-  if (mimeType.startsWith("image/")) return <ImageIcon className="h-5 w-5 text-blue-400" />;
-  if (mimeType === "application/pdf" || mimeType.startsWith("text/"))
-    return <FileText className="h-5 w-5 text-orange-400" />;
-  return <File className="h-5 w-5 text-muted-foreground" />;
-}
+function TrashContent() {
+  const toolbar = useToolbarState({
+    page: "trash",
+    availableFilters: ["mime", "favorite"],
+    // Trash defaults to oldest-first so users see the about-to-purge rows
+    // up top once the retention countdown lands.
+    defaults: { sort: "oldest", viewMode: "list" },
+  });
 
-export default function TrashPage() {
-  const [items, setItems] = useState<Asset[]>([]);
+  const [items, setItems] = useState<TrashedAsset[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(() => {
-    fetch("/api/v1/assets?lifecycle=trashed")
-      .then((r) => r.json())
-      .then((d) => setItems(d.assets ?? []))
-      .finally(() => setLoading(false));
-  }, []);
+  useEffect(() => {
+    void (async () => {
+      const sp = new URLSearchParams();
+      sp.set("lifecycle", "trashed");
+      if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
+      if (toolbar.filters.favorite) sp.set("favorite", "1");
+      try {
+        const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        const d = (await r.json()) as { assets?: TrashedAsset[] };
+        let list = (d.assets ?? []) as TrashedAsset[];
+        if (toolbar.filters.sort === "oldest") {
+          list = [...list].sort(
+            (a, b) =>
+              new Date(a.deletedAt ?? a.createdAt).getTime() -
+              new Date(b.deletedAt ?? b.createdAt).getTime()
+          );
+        } else if (toolbar.filters.sort === "name") {
+          list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
+        } else {
+          list = [...list].sort(
+            (a, b) =>
+              new Date(b.deletedAt ?? b.createdAt).getTime() -
+              new Date(a.deletedAt ?? a.createdAt).getTime()
+          );
+        }
+        if (toolbar.filters.q) {
+          const needle = toolbar.filters.q.toLowerCase();
+          list = list.filter((a) => a.filename.toLowerCase().includes(needle));
+        }
+        setItems(list);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [toolbar.filters.mime, toolbar.filters.favorite, toolbar.filters.sort, toolbar.filters.q]);
 
-  useEffect(() => { load(); }, [load]);
-
-  async function restore(assetId: string) {
+  async function restoreOne(assetId: string) {
     await fetch(`/api/v1/assets/${assetId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -49,69 +122,71 @@ export default function TrashPage() {
     setItems((prev) => prev.filter((a) => a.id !== assetId));
   }
 
-  async function deletePermanently(assetId: string) {
+  async function deleteOne(assetId: string) {
     await fetch(`/api/v1/assets/${assetId}`, { method: "DELETE" });
     setItems((prev) => prev.filter((a) => a.id !== assetId));
   }
 
+  async function bulkRestore() {
+    const ids = Array.from(toolbar.selectedIds);
+    await Promise.all(ids.map(restoreOne));
+    toolbar.clearSelection();
+  }
+
+  async function bulkDelete() {
+    const ids = Array.from(toolbar.selectedIds);
+    await Promise.all(ids.map(deleteOne));
+    toolbar.clearSelection();
+  }
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Trash</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Trashed assets · restore or permanently delete
-        </p>
-      </div>
+    <div className="space-y-3">
+      <AssetPageToolbar
+        title="Trash"
+        count={items.length}
+        toolbar={toolbar}
+        searchPlaceholder="Search trash…"
+        sortOptions={["newest", "oldest", "name"]}
+        filterKeys={["mime", "favorite"]}
+        viewModes={["grid", "list"]}
+        showDensity
+        showSelect
+      />
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : items.length === 0 ? (
+        <p className="px-4 py-4 text-sm text-muted-foreground">Loading…</p>
+      ) : items.length === 0 && !toolbar.filters.q && !toolbar.filters.mime ? (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
           <Trash2 className="h-10 w-10 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">Trash is empty.</p>
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {items.map((asset) => (
-            <div
-              key={asset.id}
-              className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-card px-4 py-3 opacity-70 hover:opacity-100 transition-opacity"
-            >
-              <AssetIcon mimeType={asset.mimeType} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">{asset.filename}</p>
-                <p className="text-xs text-muted-foreground">
-                  {formatBytes(asset.sizeBytes)}
-                  {asset.deletedAt && ` · Trashed ${new Date(asset.deletedAt).toLocaleDateString()}`}
-                </p>
-              </div>
-              <div className="flex gap-2 shrink-0">
-                <button
-                  onClick={() => restore(asset.id)}
-                  className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium border border-border text-muted-foreground hover:text-foreground hover:border-foreground transition-colors"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Restore
-                </button>
-                <ConfirmButton
-                  onConfirm={() => deletePermanently(asset.id)}
-                  className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium border border-red-500/50 text-red-500 hover:bg-red-500/10 transition-colors"
-                  armedClassName="bg-red-500/15 ring-1 ring-red-500"
-                  confirmLabel={
-                    <span className="flex items-center gap-1 font-bold">
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Delete forever?
-                    </span>
-                  }
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Delete
-                </ConfirmButton>
-              </div>
-            </div>
-          ))}
+        <div className="px-4">
+          <AssetGrid
+            assets={items}
+            toolbar={toolbar}
+            onAssetClick={(_id) => undefined}
+          />
         </div>
       )}
+
+      {/* Per-row inline actions live inside the bulk bar — trash rows use
+          select-then-act rather than hover-menus, which is safer for the
+          delete-forever action. */}
+      <BulkBar
+        count={toolbar.selectedIds.size}
+        onRestore={bulkRestore}
+        onDelete={bulkDelete}
+        onClear={() => toolbar.clearSelection()}
+      />
     </div>
+  );
+}
+
+export default function TrashPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+      <TrashContent />
+    </Suspense>
   );
 }

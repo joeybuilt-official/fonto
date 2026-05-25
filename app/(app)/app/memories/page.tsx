@@ -3,25 +3,24 @@
 //
 // Phase 5.3 — Memories ("On this day") detail page.
 //
-// Defaults to today. The date picker re-queries `/api/v1/memories?date=...`.
-// Each year is rendered as its own section with a "N years ago — Mon DD, YYYY"
-// header and a grid of thumbnails. Empty state shows a friendly hint.
+// UX-3 sweep: shares AssetPageToolbar + AssetGrid across all year sections.
+// Toolbar drives q/sort/select; selection spans years so the bulk-action
+// bar can act on a multi-year set. Date picker lives in the primaryAction
+// slot. Year-jump rail per audit §4 is deferred.
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { Calendar as CalendarIcon, ImageIcon } from "lucide-react";
-
-interface MemoryAsset {
-  id: string;
-  filename: string;
-  mimeType: string;
-  capturedAt: string | null;
-}
+import { type Asset } from "../_components/photo-card";
+import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { AssetGrid } from "../_components/asset-grid";
+import { AssetAskPanel } from "../_components/asset-ask-panel";
+import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 interface MemoryYear {
   year: number;
   count: number;
-  assets: MemoryAsset[];
+  assets: Asset[];
 }
 
 function todayISO(): string {
@@ -33,8 +32,6 @@ function todayISO(): string {
 }
 
 function formatMonthDay(date: string): string {
-  // date is YYYY-MM-DD; we only show the MM-DD portion in the section
-  // headers since the year varies per section.
   const [, mm, dd] = date.split("-");
   const month = new Date(2000, Number(mm) - 1, 1).toLocaleString(undefined, {
     month: "long",
@@ -50,130 +47,190 @@ function yearsAgo(year: number, refDate: string): string {
   return `${diff} years ago`;
 }
 
-function AssetTile({ asset }: { asset: MemoryAsset }) {
-  const [url, setUrl] = useState<string | null>(null);
+function MemoriesContent() {
+  const toolbar = useToolbarState({
+    page: "memories",
+    availableFilters: ["favorite", "ratingMin"],
+  });
+
+  const [date, setDate] = useState<string>(todayISO());
+  const [years, setYears] = useState<MemoryYear[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [askOpen, setAskOpen] = useState(false);
+
   useEffect(() => {
-    if (!asset.mimeType.startsWith("image/")) return;
-    let cancelled = false;
-    fetch(`/api/v1/assets/${asset.id}/url`)
-      .then((r) => r.json())
-      .then((d: { url?: string }) => {
-        if (!cancelled) setUrl(d.url ?? null);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [asset.id, asset.mimeType]);
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/v1/memories?date=${date}`);
+        if (!res.ok) {
+          setError(`Failed to load memories (${res.status}).`);
+          setYears([]);
+          return;
+        }
+        const data = (await res.json()) as { years: MemoryYear[] };
+        setYears(data.years ?? []);
+      } catch {
+        setError("Network error loading memories.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [date]);
+
+  const headline = useMemo(() => formatMonthDay(date), [date]);
+  const totalCount = years.reduce((sum, y) => sum + y.count, 0);
+
+  // Client-side q / sort filtering per year, since the memories endpoint
+  // doesn't accept those today. Each year's filtered list rolls up to
+  // visibleTotal so the toolbar count reflects the filter result.
+  const visibleYears = useMemo<MemoryYear[]>(() => {
+    return years.map((y) => {
+      let list = y.assets;
+      if (toolbar.filters.favorite) {
+        list = list.filter((a) => a.isFavorite);
+      }
+      if (toolbar.filters.ratingMin != null) {
+        list = list.filter((a) => (a.rating ?? 0) >= toolbar.filters.ratingMin!);
+      }
+      if (toolbar.filters.q) {
+        const needle = toolbar.filters.q.toLowerCase();
+        list = list.filter(
+          (a) =>
+            a.filename.toLowerCase().includes(needle) ||
+            (a.description?.toLowerCase().includes(needle) ?? false)
+        );
+      }
+      if (toolbar.filters.sort === "name") {
+        list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
+      } else if (toolbar.filters.sort === "rating") {
+        list = [...list].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+      }
+      return { ...y, assets: list, count: list.length };
+    });
+  }, [years, toolbar.filters.favorite, toolbar.filters.ratingMin, toolbar.filters.q, toolbar.filters.sort]);
+
+  const visibleTotal = visibleYears.reduce((s, y) => s + y.count, 0);
+
+  function askContextIds(): string[] {
+    if (toolbar.selectedIds.size > 0) return Array.from(toolbar.selectedIds).slice(0, 200);
+    const all: string[] = [];
+    for (const y of visibleYears) {
+      for (const a of y.assets) {
+        if (all.length >= 200) break;
+        all.push(a.id);
+      }
+    }
+    return all;
+  }
 
   return (
-    <div className="aspect-square overflow-hidden rounded-lg bg-muted/30 flex items-center justify-center relative">
-      {url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={url}
-          alt={asset.filename}
-          className="h-full w-full object-cover"
-          loading="lazy"
-        />
-      ) : (
-        <ImageIcon className="h-8 w-8 text-muted-foreground" />
-      )}
+    <div className="space-y-3">
+      <AssetPageToolbar
+        title="Memories"
+        count={loading ? undefined : visibleTotal}
+        toolbar={toolbar}
+        searchPlaceholder={`Search ${headline}…`}
+        sortOptions={["newest", "name", "rating"]}
+        filterKeys={["favorite", "ratingMin"]}
+        showDensity
+        showSelect
+        onAskAI={() => setAskOpen(true)}
+        getAskContextIds={askContextIds}
+        primaryAction={{
+          label: headline,
+          icon: <CalendarIcon className="h-3.5 w-3.5" />,
+          variant: "outline",
+          onClick: () => {
+            // Toolbar buttons render as buttons, so the date picker can't be
+            // a child input directly — instead clicking opens the native
+            // picker on the hidden <input> below.
+            const input = document.getElementById("memories-date") as HTMLInputElement | null;
+            input?.showPicker?.();
+          },
+        }}
+      />
+
+      {/* Hidden picker driven by the primaryAction button click. Lives
+          outside the toolbar so it doesn't disrupt the sticky layout. */}
+      <input
+        id="memories-date"
+        type="date"
+        value={date}
+        onChange={(e) => e.target.value && setDate(e.target.value)}
+        className="sr-only"
+      />
+
+      <div className="px-4 space-y-6">
+        {loading && (
+          <p className="text-sm text-muted-foreground">Loading memories…</p>
+        )}
+
+        {error && !loading && <p className="text-sm text-destructive">{error}</p>}
+
+        {!loading && !error && totalCount === 0 && (
+          <div className="rounded-lg border border-dashed border-border p-8 text-center">
+            <p className="text-sm text-muted-foreground">
+              No memories from {headline} in prior years yet.
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Upload photos with capture dates to start building memories.
+            </p>
+          </div>
+        )}
+
+        {!loading && !error && totalCount > 0 && visibleTotal === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No matches for the current filters.
+          </p>
+        )}
+
+        {visibleYears.map((y) =>
+          y.assets.length === 0 ? null : (
+            <section key={y.year} className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <h2 className="font-heading text-base font-semibold text-foreground">
+                  {yearsAgo(y.year, date)}
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                    — {headline}, {y.year}
+                  </span>
+                </h2>
+                <span className="text-xs text-muted-foreground">
+                  {y.count} {y.count === 1 ? "asset" : "assets"}
+                </span>
+              </div>
+              <AssetGrid
+                assets={y.assets}
+                toolbar={toolbar}
+                viewMode="grid"
+                density={toolbar.view.density}
+                emptyState={
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <ImageIcon className="h-4 w-4" /> No items
+                  </div>
+                }
+              />
+            </section>
+          )
+        )}
+      </div>
+
+      <AssetAskPanel
+        open={askOpen}
+        onClose={() => setAskOpen(false)}
+        contextAssetIds={askContextIds()}
+        contextLabel={`memories from ${headline} (${visibleTotal})`}
+      />
     </div>
   );
 }
 
 export default function MemoriesPage() {
-  const [date, setDate] = useState<string>(todayISO());
-  const [years, setYears] = useState<MemoryYear[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async (d: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/v1/memories?date=${d}`);
-      if (!res.ok) {
-        setError(`Failed to load memories (${res.status}).`);
-        setYears([]);
-        return;
-      }
-      const data = (await res.json()) as { years: MemoryYear[] };
-      setYears(data.years ?? []);
-    } catch {
-      setError("Network error loading memories.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load(date);
-  }, [date, load]);
-
-  const headline = useMemo(() => formatMonthDay(date), [date]);
-
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Memories</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            On this day — {headline}
-          </p>
-        </div>
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <CalendarIcon className="h-4 w-4" />
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => e.target.value && setDate(e.target.value)}
-            className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
-          />
-        </label>
-      </div>
-
-      {loading && (
-        <p className="text-sm text-muted-foreground">Loading memories…</p>
-      )}
-
-      {error && !loading && (
-        <p className="text-sm text-red-500">{error}</p>
-      )}
-
-      {!loading && !error && years.length === 0 && (
-        <div className="rounded-lg border border-dashed border-border p-8 text-center">
-          <p className="text-sm text-muted-foreground">
-            No memories from {headline} in prior years yet.
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Upload photos with capture dates to start building memories.
-          </p>
-        </div>
-      )}
-
-      {years.map((y) => (
-        <section key={y.year} className="space-y-3">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-lg font-semibold text-foreground">
-              {yearsAgo(y.year, date)}
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                — {headline}, {y.year}
-              </span>
-            </h2>
-            <span className="text-xs text-muted-foreground">
-              {y.count} {y.count === 1 ? "asset" : "assets"}
-            </span>
-          </div>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-8">
-            {y.assets.map((asset) => (
-              <AssetTile key={asset.id} asset={asset} />
-            ))}
-          </div>
-        </section>
-      ))}
-
-    </div>
+    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+      <MemoriesContent />
+    </Suspense>
   );
 }
