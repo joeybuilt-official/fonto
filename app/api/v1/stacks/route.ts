@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Phase 5.5 — POST /api/v1/stacks.
-//
-// Body: { assetIds: string[], primaryAssetId: string, name?: string }
-// Creates a stack from a confirmed group of assets (typically a user-
-// accepted suggestion). All members must live in the same workspace as
-// the caller and must not already be members of another stack. Editor
-// role required.
+// Phase 5.5 — /api/v1/stacks.
+//   GET  → list every stack in the caller's primary workspace, with the
+//          primary asset's filename + thumb key and the member count.
+//          Used by the /app/stacks UI.
+//   POST → create a stack from a confirmed group of assets (typically a
+//          user-accepted suggestion). All members must live in the same
+//          workspace as the caller and must not already be members of
+//          another stack. Editor role required.
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
@@ -15,12 +16,57 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { createStack } from "@/lib/stacks/operations";
 import { db, schema } from "@/lib/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql, desc } from "drizzle-orm";
 
 interface CreateBody {
   assetIds?: unknown;
   primaryAssetId?: unknown;
   name?: unknown;
+}
+
+export async function GET() {
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const workspaces = await getUserWorkspaces(user.id);
+  if (!workspaces.length) return NextResponse.json({ stacks: [] });
+  const workspaceId = workspaces[0].id;
+
+  // Join stacks → primary asset for filename + capturedAt; member count
+  // comes from a correlated count over the assets.stack_id column.
+  // (The fonto.stacks.member_count denorm could replace this subquery if
+  // we add it; for the V1 UI a per-stack count(*) is cheap.)
+  const rows = await db
+    .select({
+      id: schema.stacks.id,
+      name: schema.stacks.name,
+      primaryAssetId: schema.stacks.primaryAssetId,
+      createdAt: schema.stacks.createdAt,
+      primaryFilename: schema.assets.filename,
+      primaryMimeType: schema.assets.mimeType,
+      primaryCapturedAt: schema.assets.capturedAt,
+      memberCount: sql<number>`(SELECT COUNT(*) FROM ${schema.assets} WHERE ${schema.assets.stackId} = ${schema.stacks.id})`,
+    })
+    .from(schema.stacks)
+    .leftJoin(
+      schema.assets,
+      eq(schema.stacks.primaryAssetId, schema.assets.id)
+    )
+    .where(eq(schema.stacks.workspaceId, workspaceId))
+    .orderBy(desc(schema.stacks.createdAt));
+
+  return NextResponse.json({
+    stacks: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      primaryAssetId: r.primaryAssetId,
+      primaryFilename: r.primaryFilename,
+      primaryMimeType: r.primaryMimeType,
+      primaryCapturedAt: r.primaryCapturedAt,
+      memberCount: Number(r.memberCount),
+      createdAt: r.createdAt,
+    })),
+  });
 }
 
 export async function POST(request: NextRequest) {

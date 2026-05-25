@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Users, Map } from "lucide-react";
+import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Users, Map, Layers } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import { useRouter } from "next/navigation";
@@ -28,6 +28,9 @@ const navItems = [
   { href: "/app/collections", label: "Albums", icon: FolderOpen },
   { href: "/app/projects", label: "Projects", icon: Folder },
   { href: "/app/smart-collections", label: "Smart Collections", icon: Zap },
+  // Phase 5.5 — Stacks (RAW+JPEG pairs, bursts, edits). Sits next to
+  // Smart Collections since both are derived/grouping surfaces.
+  { href: "/app/stacks", label: "Stacks", icon: Layers },
   { href: "/app/search", label: "Search", icon: Search },
   { href: "/app/trash", label: "Trash", icon: Trash2 },
   { href: "/app/settings", label: "Settings", icon: Settings },
