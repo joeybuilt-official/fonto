@@ -207,6 +207,14 @@ export function PhotoCard({
       onClick={handleClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      // UX-2 — drag handle for the /folders drop target. Carries the
+      // asset id under a fonto-scoped MIME type so other drop zones
+      // can recognise it without sniffing text payloads.
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("application/x-fonto-asset", asset.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
       className={`relative cursor-pointer overflow-hidden rounded-lg transition-all ${
         selected
           ? "ring-2 ring-primary ring-offset-1"

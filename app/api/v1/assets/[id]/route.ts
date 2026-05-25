@@ -9,6 +9,7 @@ import { getS3Client, assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { plexoPublishEvent } from "@/lib/plexo";
 import { nextSeq } from "@/lib/db/seq";
+import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 const LIFECYCLE_EVENTS: Record<string, string> = {
@@ -35,6 +36,9 @@ export async function PATCH(
     restore?: boolean;
     isFavorite?: boolean;
     rating?: number;
+    // UX-2 — drag-drop a single asset between folders. Pass `null` to
+    // move it to the workspace root.
+    directoryPath?: string | null;
   };
 
   const updates: Record<string, unknown> = {};
@@ -84,6 +88,29 @@ export async function PATCH(
       );
     }
     updates.rating = body.rating;
+  }
+
+  // UX-2 — directoryPath move (drag-drop). `null` strips the asset to
+  // the workspace root; a string is normalised through the same helper
+  // every upload site uses so a bogus path won't poison the tree.
+  if (body.directoryPath !== undefined) {
+    if (body.directoryPath === null || body.directoryPath === "" || body.directoryPath === "/") {
+      updates.directoryPath = null;
+    } else if (typeof body.directoryPath !== "string") {
+      return NextResponse.json(
+        { error: "directoryPath must be a string or null" },
+        { status: 400 }
+      );
+    } else {
+      const normalised = normalizeDirectoryPath(body.directoryPath);
+      if (!normalised) {
+        return NextResponse.json(
+          { error: "Invalid directoryPath" },
+          { status: 400 }
+        );
+      }
+      updates.directoryPath = normalised;
+    }
   }
 
   if (Object.keys(updates).length === 0) {
