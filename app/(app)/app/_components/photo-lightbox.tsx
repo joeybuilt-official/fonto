@@ -352,6 +352,11 @@ export function PhotoLightbox({
   const [stackMembers, setStackMembers] = useState<Asset[] | null>(null);
   const [stackOpen, setStackOpen] = useState(false);
   const [stackLoading, setStackLoading] = useState(false);
+  // When a stack member is clicked in the carousel we swap the displayed
+  // image to that member without leaving the lightbox. Metadata panel +
+  // share / favorite / rating stay keyed to the primary asset for now —
+  // those actions are stack-level by design. Reset on prop asset change.
+  const [viewMemberId, setViewMemberId] = useState<string | null>(null);
 
   useEffect(() => {
     setIsFavorite(!!asset.isFavorite);
@@ -359,6 +364,7 @@ export function PhotoLightbox({
     // Reset stack expansion when the visible asset changes.
     setStackMembers(null);
     setStackOpen(false);
+    setViewMemberId(null);
   }, [asset.id, asset.isFavorite, asset.rating]);
 
   // Phase 5.5 — fetch the members of `asset.stackId` once, on demand.
@@ -388,17 +394,22 @@ export function PhotoLightbox({
     }
   }
 
+  // Picks the asset whose image is currently rendered. Defaults to the
+  // prop `asset` (the primary in stack mode) but swaps to a clicked
+  // stack member when set.
+  const displayedAssetId = viewMemberId ?? asset.id;
+
   useEffect(() => {
     setUrl(null);
     setUrlLoading(true);
     // Phase 1.1 — lightbox renders the 1080px preview variant. Falls back to
     // original on the server side if the derivative is missing.
-    fetch(`/api/v1/assets/${asset.id}/url?variant=preview`)
+    fetch(`/api/v1/assets/${displayedAssetId}/url?variant=preview`)
       .then((r) => r.json())
       .then((d) => setUrl(d.url ?? null))
       .catch(() => setUrl(null))
       .finally(() => setUrlLoading(false));
-  }, [asset.id]);
+  }, [displayedAssetId]);
 
   useEffect(() => {
     fetch(`/api/v1/assets/${asset.id}/tags`)
@@ -753,7 +764,10 @@ export function PhotoLightbox({
                     <StackThumb
                       key={m.id}
                       asset={m}
-                      active={m.id === asset.id}
+                      active={m.id === displayedAssetId}
+                      onClick={() =>
+                        setViewMemberId(m.id === asset.id ? null : m.id)
+                      }
                     />
                   ))}
                 </div>
@@ -794,9 +808,18 @@ export function PhotoLightbox({
 
 // Phase 5.5 — small thumbnail used inside the stack carousel. Fetches the
 // 256px grid variant via the same `?variant=thumb` endpoint the photo
-// cards use. Pure presentation — clicks are not wired (members live
-// behind the same lightbox; switching is left to the parent's prev/next).
-function StackThumb({ asset, active }: { asset: Asset; active: boolean }) {
+// cards use. Clicks swap the displayed image in the lightbox (handled by
+// the parent via viewMemberId); metadata panel + favorite / rating /
+// share stay keyed to the stack's primary asset.
+function StackThumb({
+  asset,
+  active,
+  onClick,
+}: {
+  asset: Asset;
+  active: boolean;
+  onClick?: () => void;
+}) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     if (!asset.mimeType.startsWith("image/")) return;
@@ -806,9 +829,10 @@ function StackThumb({ asset, active }: { asset: Asset; active: boolean }) {
       .catch(() => setSrc(null));
   }, [asset.id, asset.mimeType]);
   return (
-    <div
-      className={`relative h-14 w-14 shrink-0 overflow-hidden rounded ${
-        active ? "ring-2 ring-white" : "ring-1 ring-white/20"
+    <button
+      onClick={onClick}
+      className={`relative h-14 w-14 shrink-0 overflow-hidden rounded transition-all ${
+        active ? "ring-2 ring-white" : "ring-1 ring-white/20 hover:ring-white/60"
       }`}
       title={asset.filename}
     >
@@ -820,6 +844,6 @@ function StackThumb({ asset, active }: { asset: Asset; active: boolean }) {
           <Layers className="h-4 w-4 text-white/40" />
         </div>
       )}
-    </div>
+    </button>
   );
 }
