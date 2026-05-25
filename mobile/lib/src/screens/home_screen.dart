@@ -14,6 +14,7 @@ import "package:image_picker/image_picker.dart";
 import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "../state/auth_store.dart";
+import "asset_detail_screen.dart";
 import "search_screen.dart";
 
 const _kPageSize = 60;
@@ -192,6 +193,25 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _openDetail(int i) async {
+    final result = await Navigator.of(context).push<Map<String, dynamic>?>(
+      MaterialPageRoute(
+        builder: (_) => AssetDetailScreen(
+          client: _client,
+          assets: _assets,
+          initialIndex: i,
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    // Detail popped w/ a trashed id — drop it from our local list so the
+    // grid reflects the action without a full refresh.
+    final trashedId = result["trashedId"] as String?;
+    if (trashedId != null) {
+      setState(() => _assets.removeWhere((a) => a.id == trashedId));
+    }
+  }
+
   void _selectFolder(String? folder) {
     Navigator.of(context).pop(); // close drawer
     if (folder == _folder) return;
@@ -287,6 +307,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   (context, i) => _AssetTile(
                     asset: _assets[i],
                     url: _thumbs[_assets[i].id],
+                    onTap: () => _openDetail(i),
                   ),
                   childCount: _assets.length,
                 ),
@@ -342,19 +363,29 @@ class _StatsBar extends StatelessWidget {
 }
 
 class _AssetTile extends StatelessWidget {
-  const _AssetTile({required this.asset, required this.url});
+  const _AssetTile({
+    required this.asset,
+    required this.url,
+    required this.onTap,
+  });
   final Asset asset;
   final String? url;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    if (url == null) return Container(color: Colors.black12);
-    return CachedNetworkImage(
-      imageUrl: url!,
-      fit: BoxFit.cover,
-      placeholder: (_, __) => Container(color: Colors.black12),
-      errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
-    );
+    final inner = url == null
+        ? Container(color: Colors.black12)
+        : Hero(
+            tag: asset.id,
+            child: CachedNetworkImage(
+              imageUrl: url!,
+              fit: BoxFit.cover,
+              placeholder: (_, __) => Container(color: Colors.black12),
+              errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
+            ),
+          );
+    return GestureDetector(onTap: onTap, child: inner);
   }
 }
 

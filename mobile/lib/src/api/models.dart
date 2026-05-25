@@ -15,6 +15,8 @@ class Asset {
     this.classification,
     this.capturedAt,
     this.directoryPath,
+    this.isFavorite,
+    this.rating,
   });
 
   final String id;
@@ -25,6 +27,8 @@ class Asset {
   final String? classification;
   final DateTime? capturedAt;
   final String? directoryPath;
+  final bool? isFavorite;
+  final int? rating;
 
   static Asset fromJson(Map<String, dynamic> j) => Asset(
         id: j["id"] as String,
@@ -37,6 +41,8 @@ class Asset {
             ? null
             : DateTime.parse(j["capturedAt"] as String),
         directoryPath: j["directoryPath"] as String?,
+        isFavorite: j["isFavorite"] as bool?,
+        rating: (j["rating"] as num?)?.toInt(),
       );
 }
 

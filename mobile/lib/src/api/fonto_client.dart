@@ -162,5 +162,38 @@ class FontoClient {
     return Asset.fromJson(j["asset"] as Map<String, dynamic>);
   }
 
+  /// Generic PATCH /assets/:id. Server accepts subset of
+  /// { trash, restore, isFavorite, rating, directoryPath }. Returns
+  /// the refreshed asset row.
+  Future<Asset> patchAsset(String id, Map<String, dynamic> body) async {
+    final res = await _http.patch(
+      _uri("/api/v1/assets/$id"),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode(body),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+    final j = json.decode(res.body) as Map<String, dynamic>;
+    return Asset.fromJson(j["asset"] as Map<String, dynamic>);
+  }
+
+  Future<Asset> setFavorite(String id, bool isFavorite) =>
+      patchAsset(id, {"isFavorite": isFavorite});
+
+  Future<Asset> trashAsset(String id) => patchAsset(id, {"trash": true});
+
+  Future<Asset> restoreAsset(String id) => patchAsset(id, {"restore": true});
+
+  /// POST /shares — mints a public share link for one asset. Returns
+  /// the full URL ready for OS share-intent.
+  Future<String> createAssetShare(String id) async {
+    final j = await _postJson("/api/v1/shares", {
+      "targetType": "asset",
+      "targetId": id,
+    });
+    return j["url"] as String;
+  }
+
   void close() => _http.close();
 }

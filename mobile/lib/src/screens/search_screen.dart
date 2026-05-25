@@ -10,6 +10,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "asset_detail_screen.dart";
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key, required this.client});
@@ -101,6 +102,25 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  Future<void> _openDetail(int i) async {
+    final result = await Navigator.of(context).push<Map<String, dynamic>?>(
+      MaterialPageRoute(
+        builder: (_) => AssetDetailScreen(
+          client: widget.client,
+          assets: _results,
+          initialIndex: i,
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    final trashedId = result["trashedId"] as String?;
+    if (trashedId != null) {
+      setState(
+        () => _results = _results.where((a) => a.id != trashedId).toList(),
+      );
+    }
+  }
+
   Widget _buildBody() {
     if (_busy) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
@@ -125,12 +145,21 @@ class _SearchScreenState extends State<SearchScreen> {
       itemBuilder: (context, i) {
         final a = _results[i];
         final url = _thumbs[a.id];
-        if (url == null) return Container(color: Colors.black12);
-        return CachedNetworkImage(
-          imageUrl: url,
-          fit: BoxFit.cover,
-          placeholder: (_, __) => Container(color: Colors.black12),
-          errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
+        final tile = url == null
+            ? Container(color: Colors.black12)
+            : Hero(
+                tag: a.id,
+                child: CachedNetworkImage(
+                  imageUrl: url,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Container(color: Colors.black12),
+                  errorWidget: (_, __, ___) =>
+                      const Icon(Icons.broken_image),
+                ),
+              );
+        return GestureDetector(
+          onTap: () => _openDetail(i),
+          child: tile,
         );
       },
     );
