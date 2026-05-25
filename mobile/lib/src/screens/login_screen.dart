@@ -8,6 +8,7 @@
 
 import "package:flutter/material.dart";
 
+import "../../main.dart" show registerUploadDrain;
 import "../api/fonto_client.dart";
 import "../state/auth_store.dart";
 
@@ -50,6 +51,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await client.stats();
       if (!mounted) return;
+      await registerUploadDrain();
       widget.onLoggedIn();
     } on ApiException catch (e) {
       await widget.auth.clear();

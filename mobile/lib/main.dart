@@ -6,15 +6,41 @@
 // via AuthStore; screen swapping is just a Navigator replacement.
 
 import "package:flutter/material.dart";
+import "package:workmanager/workmanager.dart";
 
 import "src/state/auth_store.dart";
+import "src/state/upload_queue.dart";
+import "src/state/workmanager_dispatcher.dart";
 import "src/screens/login_screen.dart";
 import "src/screens/home_screen.dart";
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Open the upload DB eagerly so the cache is warm + schema migrations
+  // run before any screen tries to enqueue.
+  await UploadQueue.open();
+  await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
   final auth = await AuthStore.load();
+  // Register the periodic drain only if we're already signed in;
+  // LoginScreen re-registers after first successful login.
+  if (auth.isConfigured) {
+    await registerUploadDrain();
+  }
   runApp(FontoApp(auth: auth));
+}
+
+/// Idempotent — Workmanager dedupes by uniqueName.
+Future<void> registerUploadDrain() async {
+  await Workmanager().registerPeriodicTask(
+    kUploadDrainTask,
+    kUploadDrainTask,
+    frequency: const Duration(minutes: 15),
+    constraints: Constraints(
+      networkType: NetworkType.connected,
+      requiresBatteryNotLow: true,
+    ),
+    existingWorkPolicy: ExistingWorkPolicy.keep,
+  );
 }
 
 class FontoApp extends StatefulWidget {

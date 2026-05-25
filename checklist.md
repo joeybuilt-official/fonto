@@ -14,15 +14,15 @@ TaskCreate while in phased-plan flow.
 - [x] Commit + push
 
 ## Phase 6.2b — Mobile background upload queue
-- [ ] sqflite-backed upload queue table
-- [ ] Enqueue on capture/pick instead of immediate upload
-- [ ] Workmanager (Android) periodic task — drain queue
-- [ ] BGTaskScheduler (iOS) — register + drain on opportunity
-- [ ] sha256 dedupe (don't re-queue identical bytes)
-- [ ] Retry w/ exponential backoff, max 5
-- [ ] "Queued: N" badge in home_screen app bar
-- [ ] Background test: lock phone mid-upload, verify completion
-- [ ] Commit + push
+- [x] sqflite-backed upload queue table
+- [x] Enqueue on capture/pick instead of immediate upload
+- [x] Workmanager (Android) periodic task — drain queue
+- [x] BGTaskScheduler (iOS) — register + drain on opportunity (via workmanager plugin)
+- [x] sha256 dedupe (UNIQUE on sha256, INSERT OR IGNORE)
+- [x] Retry — max 5 attempts; Workmanager native backoff on `return false`
+- [x] "Queued: N" badge in home_screen app bar
+- [ ] Background test — DEFERRED to operator (needs real device + sleeping screen)
+- [x] Commit + push
 
 ## Phase 6.2c — Mobile tests + CI ⚠
 - [ ] OPERATOR GATE — signing certs + provisioning profiles uploaded to Codemagic

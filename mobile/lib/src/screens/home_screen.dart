@@ -14,6 +14,7 @@ import "package:image_picker/image_picker.dart";
 import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "../state/auth_store.dart";
+import "../state/upload_queue.dart";
 import "asset_detail_screen.dart";
 import "search_screen.dart";
 
@@ -53,6 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _scroll.addListener(_maybeLoadMore);
     _refresh();
+    _refreshQueueBadge();
   }
 
   @override
@@ -160,23 +162,46 @@ class _HomeScreenState extends State<HomeScreen> {
     if (picked == null) return;
     setState(() => _uploading = true);
     try {
-      await _client.uploadFile(
-        File(picked.path),
+      final file = File(picked.path);
+      final hash = await UploadQueue.hashFile(file);
+      final queue = await UploadQueue.open();
+      final inserted = await queue.enqueue(
+        filePath: file.path,
         virtualPath: _folder ?? "/",
+        sha256Hex: hash,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Uploaded.")),
+        SnackBar(
+          content: Text(
+            inserted == null ? "Already queued." : "Queued for upload.",
+          ),
+        ),
       );
-      await _refresh();
-    } on ApiException catch (e) {
+      await _refreshQueueBadge();
+      // Foreground drain — quick win when the device is awake + online.
+      // Workmanager keeps draining in the background even if we close.
+      final ok = await UploadQueue.drain();
+      if (!mounted) return;
+      await _refreshQueueBadge();
+      if (ok > 0) await _refresh();
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Upload failed: ${e.status} ${e.message}")),
+        SnackBar(content: Text("Enqueue failed: $e")),
       );
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  int _queuedCount = 0;
+
+  Future<void> _refreshQueueBadge() async {
+    final q = await UploadQueue.open();
+    final c = await q.pendingCount();
+    if (!mounted) return;
+    setState(() => _queuedCount = c);
   }
 
   Future<void> _signOut() async {
@@ -226,6 +251,17 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Text(title, overflow: TextOverflow.ellipsis),
         actions: [
+          if (_queuedCount > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Center(
+                child: Chip(
+                  label: Text("$_queuedCount ↑"),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                ),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.search),
             tooltip: "Search",
