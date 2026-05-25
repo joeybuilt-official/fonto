@@ -304,19 +304,29 @@ export default function MapPage() {
   // Hydrate the lightbox-ready Asset shape from a MapAsset. Most fields are
   // unknown to the bbox query (description, classification, etc.) but the
   // lightbox tolerates nulls / undefined for those.
+  // Audit bug §UX-4 fix: never show the asset UUID as the filename.
+  // Falls back to placeName, then a capturedAt date stamp, then "Photo".
   const lightboxAsset: Asset | null =
     lightboxIndex != null && assets[lightboxIndex]
-      ? {
-          id: assets[lightboxIndex].id,
-          filename: assets[lightboxIndex].placeName ?? assets[lightboxIndex].id,
-          mimeType: "image/*",
-          sizeBytes: 0,
-          description: null,
-          classification: null,
-          processingState: "ready",
-          capturedAt: assets[lightboxIndex].capturedAt,
-          createdAt: assets[lightboxIndex].capturedAt ?? new Date().toISOString(),
-        }
+      ? (() => {
+          const m = assets[lightboxIndex];
+          const filename =
+            m.placeName ??
+            (m.capturedAt
+              ? `Photo · ${new Date(m.capturedAt).toLocaleDateString()}`
+              : "Photo");
+          return {
+            id: m.id,
+            filename,
+            mimeType: "image/*",
+            sizeBytes: 0,
+            description: null,
+            classification: null,
+            processingState: "ready",
+            capturedAt: m.capturedAt,
+            createdAt: m.capturedAt ?? new Date().toISOString(),
+          };
+        })()
       : null;
 
   return (
