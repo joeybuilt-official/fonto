@@ -2,26 +2,14 @@
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Image as ImageIcon, MousePointer2, X, FolderPlus, Download, Trash2, CheckSquare, Loader2 } from "lucide-react";
-import { Suspense } from "react";
-import { PhotoCard, type Asset } from "../_components/photo-card";
+import { useEffect, useState, useCallback, Suspense } from "react";
+import { X, FolderPlus, Download, Trash2, Loader2 } from "lucide-react";
+import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
-
-const IMAGE_SUBTYPES = ["photo", "screenshot", "mockup", "logo", "icon"] as const;
-const SUBTYPE_LABELS: Record<string, string> = {
-  photo: "Photos",
-  screenshot: "Screenshots",
-  mockup: "Mockups",
-  logo: "Logos",
-  icon: "Icons",
-};
-
-const SORT_OPTIONS = [
-  { value: "newest", label: "Newest" },
-  { value: "oldest", label: "Oldest" },
-] as const;
+import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { AssetGrid } from "../_components/asset-grid";
+import { AssetAskPanel } from "../_components/asset-ask-panel";
+import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 interface Collection {
   id: string;
@@ -122,19 +110,25 @@ function AddToCollectionModal({
 }
 
 function PhotosContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const typeParam = searchParams.get("type") ?? "";
-  const sortParam = (searchParams.get("sort") ?? "newest") as "newest" | "oldest";
+  // UX-3 — single toolbar state for search, sort, filter, density, view,
+  // selection. URL stays the source of truth for filters; localStorage
+  // remembers density. Replaces the hand-rolled useSearchParams +
+  // useState(selectMode) + useRef(lastClickedIndex) wiring this page used
+  // to carry.
+  const toolbar = useToolbarState({
+    page: "photos",
+    // Only the filter slots that GET /api/v1/assets actually respects today
+    // are exposed. Color / date range / personIds / tagIds will land when
+    // the list endpoint adopts the same predicates as smart-collections.
+    availableFilters: ["type", "favorite", "ratingMin"],
+  });
 
   const [photos, setPhotos] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const [selectMode, setSelectMode] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [collections, setCollections] = useState<Collection[]>([]);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
-  const lastClickedIndex = useRef<number | null>(null);
+  const [askOpen, setAskOpen] = useState(false);
 
   useEffect(() => {
     fetch("/api/v1/collections")
@@ -142,42 +136,57 @@ function PhotosContent() {
       .then((d) => setCollections(d.collections ?? []));
   }, []);
 
+  // Fetch on every filter change. `type` is the classification subtype;
+  // `favorite` and `ratingMin` ride along server-side. Sort is applied
+  // client-side because the list endpoint always returns desc(created_at).
+  // No abort/cancel: filter changes are user-initiated and infrequent;
+  // race conditions resolve last-wins, which is the right semantic here.
   useEffect(() => {
-    setLoading(true);
-    const url = typeParam
-      ? `/api/v1/assets?mime=image/&subtype=${typeParam}`
-      : "/api/v1/assets?mime=image/";
-    fetch(url)
-      .then((r) => r.json())
-      .then((d) => {
+    void (async () => {
+      const sp = new URLSearchParams();
+      sp.set("mime", "image/");
+      if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
+      if (toolbar.filters.favorite) sp.set("favorite", "1");
+      if (toolbar.filters.ratingMin != null) sp.set("ratingMin", String(toolbar.filters.ratingMin));
+      try {
+        const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        const d = (await r.json()) as { assets?: Asset[] };
         let list = (d.assets ?? []) as Asset[];
-        if (sortParam === "oldest") {
+        if (toolbar.filters.sort === "oldest") {
           list = [...list].sort(
             (a, b) =>
               new Date(a.capturedAt ?? a.createdAt).getTime() -
               new Date(b.capturedAt ?? b.createdAt).getTime()
           );
+        } else if (toolbar.filters.sort === "name") {
+          list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
+        } else if (toolbar.filters.sort === "rating") {
+          list = [...list].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+        }
+        // Client-side text search across filename + description. The list
+        // endpoint has no q= param; until it does, this keeps search useful.
+        if (toolbar.filters.q) {
+          const needle = toolbar.filters.q.toLowerCase();
+          list = list.filter(
+            (a) =>
+              a.filename.toLowerCase().includes(needle) ||
+              (a.description?.toLowerCase().includes(needle) ?? false)
+          );
         }
         setPhotos(list);
-      })
-      .finally(() => setLoading(false));
-  }, [typeParam, sortParam]);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [
+    toolbar.filters.type,
+    toolbar.filters.favorite,
+    toolbar.filters.ratingMin,
+    toolbar.filters.sort,
+    toolbar.filters.q,
+  ]);
 
-  function setFilter(type: string | null, sort?: string) {
-    const params = new URLSearchParams();
-    if (type) params.set("type", type);
-    if (sort ?? sortParam) params.set("sort", sort ?? sortParam);
-    router.replace(`/app/photos?${params.toString()}`);
-  }
-
-  function setSort(sort: string) {
-    const params = new URLSearchParams();
-    if (typeParam) params.set("type", typeParam);
-    params.set("sort", sort);
-    router.replace(`/app/photos?${params.toString()}`);
-  }
-
-  const openLightbox = useCallback((index: number) => {
+  const openLightbox = useCallback((_id: string, index: number) => {
     setLightboxIndex(index);
   }, []);
 
@@ -187,39 +196,9 @@ function PhotosContent() {
     if (next >= 0 && next < photos.length) setLightboxIndex(next);
   }
 
-  function handleCardClick(index: number, e: React.MouseEvent) {
-    if (selectMode) {
-      if (e.shiftKey && lastClickedIndex.current !== null) {
-        // Range select
-        const from = Math.min(lastClickedIndex.current, index);
-        const to = Math.max(lastClickedIndex.current, index);
-        setSelected((prev) => {
-          const next = new Set(prev);
-          for (let i = from; i <= to; i++) next.add(photos[i].id);
-          return next;
-        });
-      } else {
-        setSelected((prev) => {
-          const next = new Set(prev);
-          if (next.has(photos[index].id)) next.delete(photos[index].id);
-          else next.add(photos[index].id);
-          return next;
-        });
-      }
-      lastClickedIndex.current = index;
-    } else {
-      openLightbox(index);
-    }
-  }
-
-  function handleToggleSelectMode() {
-    setSelectMode((v) => !v);
-    setSelected(new Set());
-  }
-
   async function handleBatchAddToCollection(collectionId: string) {
     await Promise.all(
-      Array.from(selected).map((assetId) =>
+      Array.from(toolbar.selectedIds).map((assetId) =>
         fetch(`/api/v1/collections/${collectionId}/assets`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -228,32 +207,35 @@ function PhotosContent() {
       )
     );
     setShowCollectionModal(false);
-    setSelected(new Set());
+    toolbar.clearSelection();
   }
 
   async function handleBatchDownload() {
-    // Download each selected photo individually
-    for (const assetId of selected) {
-      const asset = photos.find((p) => p.id === assetId);
-      if (!asset) continue;
-      const res = await fetch(`/api/v1/assets/${assetId}/url`);
-      if (res.ok) {
-        const d = await res.json();
-        if (d.url) {
-          const a = document.createElement("a");
-          a.href = d.url;
-          a.download = asset.filename;
-          a.click();
-          // small delay to avoid browser blocking multiple downloads
-          await new Promise((r) => setTimeout(r, 200));
-        }
-      }
+    // Batch-resolve URLs in one call rather than the previous N round-trips.
+    const ids = Array.from(toolbar.selectedIds);
+    const r = await fetch("/api/v1/assets/urls", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, variant: "original" }),
+    });
+    const d = (await r.json()) as { urls?: Record<string, string> };
+    for (const id of ids) {
+      const url = d.urls?.[id];
+      if (!url) continue;
+      const asset = photos.find((p) => p.id === id);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = asset?.filename ?? id;
+      a.click();
+      // Small delay to avoid browser blocking sequential downloads.
+      await new Promise((res) => setTimeout(res, 200));
     }
   }
 
   async function handleBatchTrash() {
+    const ids = Array.from(toolbar.selectedIds);
     await Promise.all(
-      Array.from(selected).map((assetId) =>
+      ids.map((assetId) =>
         fetch(`/api/v1/assets/${assetId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -261,8 +243,8 @@ function PhotosContent() {
         })
       )
     );
-    setPhotos((prev) => prev.filter((p) => !selected.has(p.id)));
-    setSelected(new Set());
+    setPhotos((prev) => prev.filter((p) => !toolbar.selectedIds.has(p.id)));
+    toolbar.clearSelection();
   }
 
   function handleLightboxTrash(assetId: string) {
@@ -270,119 +252,55 @@ function PhotosContent() {
     setLightboxIndex(null);
   }
 
+  // Context for the Ask panel: selected ids if any, otherwise the full
+  // visible result set. Capped at 200 — past that the prompt token cost
+  // outweighs the marginal recall.
+  function getAskContextIds(): string[] {
+    if (toolbar.selectedIds.size > 0) {
+      return Array.from(toolbar.selectedIds).slice(0, 200);
+    }
+    return photos.slice(0, 200).map((p) => p.id);
+  }
+
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Photos</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {photos.length} image{photos.length !== 1 ? "s" : ""}
-          </p>
-        </div>
-        <button
-          onClick={handleToggleSelectMode}
-          className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-            selectMode
-              ? "bg-primary text-primary-foreground"
-              : "border border-border text-muted-foreground hover:text-foreground hover:border-foreground"
-          }`}
-        >
-          {selectMode ? (
-            <>
-              <X className="h-3.5 w-3.5" />
-              Cancel
-            </>
-          ) : (
-            <>
-              <CheckSquare className="h-3.5 w-3.5" />
-              Select
-            </>
-          )}
-        </button>
-      </div>
+    <div className="space-y-3">
+      <AssetPageToolbar
+        title="Photos"
+        count={photos.length}
+        toolbar={toolbar}
+        searchPlaceholder="Search photos…"
+        sortOptions={["newest", "oldest", "name", "rating"]}
+        filterKeys={["type", "favorite", "ratingMin"]}
+        showDensity
+        showSelect
+        onAskAI={() => setAskOpen(true)}
+        getAskContextIds={getAskContextIds}
+      />
 
-      {/* Filter bar */}
-      {!loading && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            onClick={() => setFilter(null)}
-            className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-              !typeParam
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            All
-          </button>
-          {IMAGE_SUBTYPES.map((subtype) => (
-            <button
-              key={subtype}
-              onClick={() => setFilter(typeParam === subtype ? null : subtype)}
-              className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-                typeParam === subtype
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {SUBTYPE_LABELS[subtype]}
-            </button>
-          ))}
-          <div className="ml-auto">
-            <select
-              value={sortParam}
-              onChange={(e) => setSort(e.target.value)}
-              className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      )}
-
-      {/* Grid */}
       {loading ? (
-        <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading photos...
         </div>
-      ) : photos.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <ImageIcon className="h-10 w-10 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">No photos yet. Upload images from the Dashboard.</p>
-        </div>
       ) : (
-        <div className="grid grid-cols-2 gap-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {photos.map((photo, index) => (
-            <div key={photo.id} onClick={(e) => handleCardClick(index, e)}>
-              <PhotoCard
-                asset={photo}
-                selected={selected.has(photo.id)}
-                onSelect={() => {
-                  setSelected((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(photo.id)) next.delete(photo.id);
-                    else next.add(photo.id);
-                    return next;
-                  });
-                }}
-                selectMode={selectMode}
-                showQuickActions={!selectMode}
-                onAddToCollection={(assetId) => {
-                  setSelected(new Set([assetId]));
-                  setShowCollectionModal(true);
-                }}
-              />
-            </div>
-          ))}
+        <div className="px-4">
+          <AssetGrid
+            assets={photos}
+            toolbar={toolbar}
+            viewMode="grid"
+            onAssetClick={openLightbox}
+            onAddToCollection={(assetId) => {
+              toolbar.setSelectMode(true);
+              // Stage the single asset as the selection so the modal handler
+              // works for both per-card and batch invocations.
+              toolbar.clearSelection();
+              toolbar.toggleSelect(assetId);
+              setShowCollectionModal(true);
+            }}
+          />
         </div>
       )}
 
-      {/* Lightbox */}
       {lightboxIndex !== null && (
         <PhotoLightbox
           asset={photos[lightboxIndex]}
@@ -395,16 +313,14 @@ function PhotosContent() {
         />
       )}
 
-      {/* Batch action bar */}
       <BatchActionBar
-        count={selected.size}
+        count={toolbar.selectedIds.size}
         onAddToCollection={() => setShowCollectionModal(true)}
         onDownload={handleBatchDownload}
         onTrash={handleBatchTrash}
-        onClear={() => setSelected(new Set())}
+        onClear={() => toolbar.clearSelection()}
       />
 
-      {/* Add to collection modal */}
       {showCollectionModal && (
         <AddToCollectionModal
           collections={collections}
@@ -412,6 +328,13 @@ function PhotosContent() {
           onClose={() => setShowCollectionModal(false)}
         />
       )}
+
+      <AssetAskPanel
+        open={askOpen}
+        onClose={() => setAskOpen(false)}
+        contextAssetIds={getAskContextIds()}
+        contextLabel={`${photos.length} photo${photos.length === 1 ? "" : "s"}`}
+      />
     </div>
   );
 }

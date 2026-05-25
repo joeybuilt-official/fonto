@@ -146,10 +146,26 @@ function loadView(page: string): ViewState {
   }
 }
 
+// Per-page snapshot cache. Required because useSyncExternalStore calls the
+// snapshot getter on every render and compares with Object.is — a fresh
+// object literal each call triggers an infinite re-render loop. The cache
+// holds the last-read value per page key; persistView invalidates it so the
+// next read sees the new value.
+const viewSnapshotCache = new Map<string, ViewState>();
+
+function readViewSnapshot(page: string, defaults: ViewState): ViewState {
+  const cached = viewSnapshotCache.get(page);
+  if (cached) return cached;
+  const fresh = { ...defaults, ...loadView(page) };
+  viewSnapshotCache.set(page, fresh);
+  return fresh;
+}
+
 function persistView(page: string, view: ViewState): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(storageKey(page), JSON.stringify(view));
+    viewSnapshotCache.delete(page);
     // Notify same-tab subscribers — the native `storage` event only fires
     // cross-tab. Custom event keeps the useSyncExternalStore subscription
     // alive when the toolbar is the writer.
@@ -161,10 +177,16 @@ function persistView(page: string, view: ViewState): void {
 
 function subscribeToView(callback: () => void): () => void {
   if (typeof window === "undefined") return () => undefined;
-  window.addEventListener("storage", callback);
+  // Cross-tab `storage` event landed: assume any toolbar key may have
+  // changed and invalidate the whole cache so the next snapshot re-reads.
+  const onStorage = () => {
+    viewSnapshotCache.clear();
+    callback();
+  };
+  window.addEventListener("storage", onStorage);
   window.addEventListener("fonto:toolbar:view-changed", callback);
   return () => {
-    window.removeEventListener("storage", callback);
+    window.removeEventListener("storage", onStorage);
     window.removeEventListener("fonto:toolbar:view-changed", callback);
   };
 }
@@ -243,7 +265,7 @@ export function useToolbarState(
     [defaults.density, defaults.viewMode]
   );
   const getViewSnapshot = useCallback(
-    () => ({ ...viewDefaults, ...loadView(page) }),
+    () => readViewSnapshot(page, viewDefaults),
     [page, viewDefaults]
   );
   const getServerSnapshot = useCallback(() => viewDefaults, [viewDefaults]);

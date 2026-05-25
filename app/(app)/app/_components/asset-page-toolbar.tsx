@@ -113,12 +113,16 @@ export function AssetPageToolbar({
     toolbar;
 
   // Local mirror of `q` so typing stays smooth even though URL writes are
-  // debounced — without this every keystroke would either commit to URL
-  // (laggy) or fight the controlled value (caret jump).
+  // debounced. The input is the source of truth while the user is typing;
+  // we only sync back FROM the URL when the input is unfocused (e.g. back
+  // button after the user has tabbed away). The old "always sync on
+  // filters.q change" pattern fought the typist — a debounced setFilters
+  // round-trip 250ms later overwrote characters typed during that window,
+  // producing dropped/reordered letters.
   const [q, setQ] = useState(filters.q);
+  const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    // Sync from URL when the toolbar's `q` changes outside the input (back
-    // button, reset, deep link). Skip if we're the source of truth already.
+    if (inputRef.current && document.activeElement === inputRef.current) return;
     setQ(filters.q);
   }, [filters.q]);
 
@@ -130,7 +134,9 @@ export function AssetPageToolbar({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-    // setFilters identity is stable via useCallback in the hook
+    // setFilters identity is stable via useCallback in the hook; depending
+    // on it would re-arm the debounce on every render and re-introduce the
+    // letter-dropping bug.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
@@ -154,6 +160,7 @@ export function AssetPageToolbar({
           <div className="relative">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
+              ref={inputRef}
               type="search"
               value={q}
               onChange={(e) => setQ(e.target.value)}
