@@ -1,0 +1,88 @@
+# Prometheus alerting rules for Fonto. Loaded by the prometheus
+# container via --config.file pointing at a prometheus.yml that does:
+#   rule_files: ["/etc/prometheus/rules.yml"]
+# (mount this file at that path; see compose addition).
+#
+# All rules carry a `severity` label: page = wake-someone; warn =
+# investigate during business hours. Alertmanager routes on severity.
+
+groups:
+  - name: fonto.queue
+    interval: 30s
+    rules:
+      - alert: FontoQueueBackedUp
+        expr: sum(fonto_asset_processing_queue_depth) > 200
+        for: 5m
+        labels:
+          severity: warn
+          service: fonto
+        annotations:
+          summary: "Fonto asset queue > 200 items for 5 min"
+          description: "Sustained backlog. Drain rate may be insufficient; consider scaling fonto-worker or checking Plexo throughput."
+
+      - alert: FontoQueueGrowing
+        expr: |
+          (sum(fonto_asset_processing_queue_depth) -
+           sum(fonto_asset_processing_queue_depth offset 30m)) > 500
+        for: 10m
+        labels:
+          severity: page
+          service: fonto
+        annotations:
+          summary: "Fonto asset queue grew by 500+ in 30 min"
+          description: "Backlog is accelerating. Likely a worker stall or external dependency (Plexo, R2) is down."
+
+  - name: fonto.latency
+    interval: 30s
+    rules:
+      - alert: FontoHttpP99High
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(fonto_http_request_duration_seconds_bucket[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warn
+          service: fonto
+        annotations:
+          summary: "Fonto HTTP p99 > 2s for 10 min"
+          description: "Latency regression. Check DB connection pool, R2 latency, and CPU saturation on fonto container."
+
+      - alert: FontoHttp5xxRate
+        expr: |
+          sum(rate(fonto_http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+          / sum(rate(fonto_http_request_duration_seconds_count[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: page
+          service: fonto
+        annotations:
+          summary: "Fonto 5xx error rate > 1% for 5 min"
+          description: "Sustained server errors. Check logs immediately."
+
+  - name: fonto.processing
+    interval: 30s
+    rules:
+      - alert: FontoProcessingFailing
+        expr: |
+          sum(rate(fonto_asset_processing_duration_seconds_count{outcome="failure"}[5m]))
+          / sum(rate(fonto_asset_processing_duration_seconds_count[5m])) > 0.10
+        for: 10m
+        labels:
+          severity: warn
+          service: fonto
+        annotations:
+          summary: "Fonto asset processing failure rate > 10%"
+          description: "Worker is failing assets at an elevated rate. Likely a broken upstream (Plexo OOM, Ollama down)."
+
+      - alert: FontoProcessingStalled
+        expr: |
+          sum(rate(fonto_asset_processing_duration_seconds_count[10m])) == 0
+          and sum(fonto_asset_processing_queue_depth) > 0
+        for: 5m
+        labels:
+          severity: page
+          service: fonto
+        annotations:
+          summary: "Fonto worker stalled — queue has work but throughput is zero"
+          description: "Worker may be crash-looping or stuck. Inspect fonto-worker logs."

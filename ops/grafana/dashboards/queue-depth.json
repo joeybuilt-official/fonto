@@ -1,0 +1,61 @@
+{
+  "title": "Fonto — Queue depth",
+  "uid": "fonto-queue-depth",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "tags": ["fonto"],
+  "time": { "from": "now-3h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Queue depth per queue",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "fonto_asset_processing_queue_depth",
+          "legendFormat": "{{queue}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total queued (now)",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(fonto_asset_processing_queue_depth)", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Backlog grew last 30m",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(fonto_asset_processing_queue_depth) - sum(fonto_asset_processing_queue_depth offset 30m)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Drain rate / min (5m avg)",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(fonto_asset_processing_duration_seconds_count{outcome=\"success\"}[5m])) * 60",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

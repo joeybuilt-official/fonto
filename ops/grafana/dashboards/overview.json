@@ -1,0 +1,93 @@
+{
+  "title": "Fonto — Overview",
+  "uid": "fonto-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "tags": ["fonto"],
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Assets ingested (last 24h)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(fonto_asset_ingest_total[24h]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Queue depth (now)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(fonto_asset_processing_queue_depth)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "HTTP p99 (5m)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(fonto_http_request_duration_seconds_bucket[5m])))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "HTTP error rate (5m)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(fonto_http_request_duration_seconds_count{status_code=~\"5..\"}[5m])) / sum(rate(fonto_http_request_duration_seconds_count[5m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Ingest rate per MIME class",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (mime_class) (rate(fonto_asset_ingest_total[5m]))",
+          "legendFormat": "{{mime_class}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "HTTP request rate",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (status_code) (rate(fonto_http_request_duration_seconds_count[5m]))",
+          "legendFormat": "{{status_code}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

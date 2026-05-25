@@ -1,0 +1,24 @@
+# Prometheus config — scrapes Fonto's /api/metrics + worker's
+# embedded prom listener. Add new targets as services grow.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: fonto-app
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ["fonto:3500"]
+
+  - job_name: fonto-worker
+    static_configs:
+      - targets: ["fonto-worker:9090"]

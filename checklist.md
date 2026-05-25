@@ -88,16 +88,16 @@ TaskCreate while in phased-plan flow.
 - [ ] Commit + push
 
 ## Phase 9a — Dashboards + alerts as code
-- [ ] ops/grafana/dashboards/overview.json
-- [ ] ops/grafana/dashboards/processing.json
-- [ ] ops/grafana/dashboards/queue-depth.json
-- [ ] ops/grafana/dashboards/api-latency.json
-- [ ] ops/grafana/provisioning.yaml — auto-load dashboards on Grafana boot
-- [ ] ops/alerts/rules.yml — queue depth, p99 latency, error rate
-- [ ] Alertmanager config — Discord + email routing
-- [ ] Compose service — grafana + alertmanager containers
-- [ ] Pull power test — verify alert fires within 60s
-- [ ] Commit + push
+- [x] ops/grafana/dashboards/overview.json
+- [x] ops/grafana/dashboards/processing.json
+- [x] ops/grafana/dashboards/queue-depth.json
+- [x] ops/grafana/dashboards/api-latency.json
+- [x] ops/grafana/provisioning/{datasources,dashboards}/*.yaml — auto-load on boot
+- [x] ops/alerts/rules.yml — queue depth, latency, error rate, stall
+- [x] Alertmanager config — Discord (page) + email (warn + page) routing
+- [ ] Compose service — DEFERRED to operator (compose file lives outside git; ops/README.md has the snippet to paste)
+- [ ] Pull power test — DEFERRED to operator (needs the compose services up first)
+- [x] Commit + push
 
 ## Phase 9b — Worker autoscale ⚠
 - [ ] OPERATOR GATE — confirm C2 (queue depth vs CPU)

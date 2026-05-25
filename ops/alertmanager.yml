@@ -1,0 +1,47 @@
+# Alertmanager config — routes Prometheus alerts to Discord webhook
+# (page severity) and email (warn + page). Webhook URL + SMTP creds
+# live in environment vars on the alertmanager container; never
+# checked in here.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default-email
+  group_by: ["alertname", "service"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity = "page"
+      receiver: discord-page
+      continue: true   # also fan out to email
+    - matchers:
+        - severity = "page"
+      receiver: default-email
+
+receivers:
+  - name: discord-page
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/discord-webhook
+        send_resolved: true
+
+  - name: default-email
+    email_configs:
+      - to: dustin@joeybuilt.local
+        from: alerts@myfonto.com
+        smarthost: smtp.personal-vps:587
+        require_tls: true
+        auth_username_file: /etc/alertmanager/secrets/smtp-username
+        auth_password_file: /etc/alertmanager/secrets/smtp-password
+        send_resolved: true
+
+inhibit_rules:
+  # When a page-severity alert fires for a service, suppress warn-severity
+  # for the same service — don't double-notify on the same outage.
+  - source_matchers:
+      - severity = "page"
+    target_matchers:
+      - severity = "warn"
+    equal: ["service"]
