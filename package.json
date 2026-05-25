@@ -21,6 +21,7 @@
     "scan:clip-duplicates": "tsx scripts/scan-clip-duplicates.ts",
     "cluster:faces": "tsx scripts/cluster-faces.ts",
     "reprocess:stuck": "tsx scripts/reprocess-stuck-assets.ts",
+    "reprocess:one": "tsx scripts/reprocess-one.ts",
     "import:s3": "tsx scripts/import-from-s3.ts"
   },
   "dependencies": {
