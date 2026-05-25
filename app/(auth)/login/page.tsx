@@ -58,7 +58,7 @@ function LoginPageInner() {
           return;
         }
       }
-      router.push(safeCallback ?? "/app/dashboard");
+      router.push(safeCallback ?? "/app/home");
     } catch {
       setError("Something went wrong");
     } finally {

@@ -4,14 +4,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Users, Map, Layers } from "lucide-react";
+import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Users, Map, Layers, Home, Inbox } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import { useRouter } from "next/navigation";
 import type { User } from "@/lib/auth/types";
 
 const navItems = [
-  { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  // UX-1 Inbox/Home split: /home is the landing (stats + memory of day +
+  // quick-jump), /dashboard is the Inbox (upload + recent + queue).
+  { href: "/app/home", label: "Home", icon: Home },
+  { href: "/app/dashboard", label: "Inbox", icon: Inbox },
   { href: "/app/timeline", label: "Timeline", icon: Clock },
   // Phase 5.3 — Memories ("On this day"). Logically a sibling of Timeline
   // (both are time-axis browsing); the plan calls for it under Map, but Map
