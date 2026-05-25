@@ -11,47 +11,6 @@ import Link from "next/link";
 import { directUploadEnabled, uploadDirect } from "@/lib/upload-client";
 import { MemoryCard } from "./memory-card";
 
-const SUBTYPE_LABELS: Record<string, string> = {
-  photo: "Photo",
-  screenshot: "Screenshot",
-  mockup: "Mockup",
-  logo: "Logo",
-  icon: "Icon",
-  receipt: "Receipt",
-  contract: "Contract",
-  letter: "Letter",
-  report: "Report",
-  form: "Form",
-  document: "Document",
-  scan: "Scan",
-};
-
-const SUBTYPE_COLORS: Record<string, string> = {
-  photo: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  screenshot: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  mockup: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
-  logo: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
-  icon: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  receipt: "bg-green-500/10 text-green-600 dark:text-green-400",
-  contract: "bg-slate-500/10 text-slate-600 dark:text-slate-400",
-  letter: "bg-pink-500/10 text-pink-600 dark:text-pink-400",
-  report: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
-  form: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
-  document: "bg-muted text-muted-foreground",
-  scan: "bg-muted text-muted-foreground",
-};
-
-function ClassificationBadge({ classification }: { classification: string | null }) {
-  if (!classification) return null;
-  const label = SUBTYPE_LABELS[classification] ?? classification;
-  const color = SUBTYPE_COLORS[classification] ?? "bg-muted text-muted-foreground";
-  return (
-    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${color}`}>
-      {label}
-    </span>
-  );
-}
-
 interface Asset {
   id: string;
   filename: string;
@@ -89,14 +48,6 @@ function AssetIcon({ mimeType }: { mimeType: string }) {
   if (mimeType === "application/pdf" || mimeType.startsWith("text/"))
     return <FileText className="h-8 w-8 text-orange-400" />;
   return <File className="h-8 w-8 text-muted-foreground" />;
-}
-
-function SyncBadge({ state }: { state: string }) {
-  if (state === "synced")
-    return <CheckCircle className="h-3 w-3 text-green-500" aria-label="Synced" />;
-  if (state === "error")
-    return <XCircle className="h-3 w-3 text-red-500" aria-label="Error" />;
-  return <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-label="Syncing" />;
 }
 
 // Simple thumbnail that lazy-fetches URL for image assets. Requests the
@@ -187,7 +138,10 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [dragOver, setDragOver] = useState(false);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
-  const [subtypeFilter, setSubtypeFilter] = useState<string | null>(null);
+  // Lingers from the pre-Inbox-split version; was used by the now-removed
+  // full-library grid + filter chips. Kept as a no-op placeholder until
+  // fetchAssets is also stripped.
+  const [subtypeFilter] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [duplicatePrompts, setDuplicatePrompts] = useState<DuplicatePrompt[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -228,8 +182,8 @@ export default function DashboardPage() {
     }
   }
 
-  useEffect(() => { fetchAssets(); }, [subtypeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchRecentUploads(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void fetchAssets(); }, [subtypeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchRecentUploads(); }, []);
 
   // Paste from clipboard
   useEffect(() => {
@@ -435,37 +389,14 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Subtype filter */}
-      {!loading && assets.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            onClick={() => setSubtypeFilter(null)}
-            className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-              !subtypeFilter ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            All
-          </button>
-          {Object.keys(SUBTYPE_LABELS).map((subtype) => (
-            <button
-              key={subtype}
-              onClick={() => setSubtypeFilter(subtypeFilter === subtype ? null : subtype)}
-              className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-                subtypeFilter === subtype
-                  ? "bg-primary text-primary-foreground"
-                  : `${SUBTYPE_COLORS[subtype] ?? "bg-muted text-muted-foreground"} hover:opacity-80`
-              }`}
-            >
-              {SUBTYPE_LABELS[subtype]}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* UX-1 — the full-library asset grid + subtype filter that used
+          to live here duplicated /photos; pulled out as part of the
+          Inbox/Home split. The page is now strictly upload-side: upload
+          zone, per-file progress, recent uploads, duplicate prompts. */}
 
-      {/* Asset grid */}
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Loading assets…</p>
-      ) : assets.length === 0 ? (
+      {/* Empty-library welcome — only shown when we know there are no
+          assets yet (recentUploads empty means a fresh workspace). */}
+      {!loading && recentUploads.length === 0 && uploadItems.length === 0 && (
         <div className="rounded-xl border border-primary/20 bg-primary/5 p-8 text-center space-y-4">
           <div className="text-4xl">👋</div>
           <div>
@@ -490,33 +421,6 @@ export default function DashboardPage() {
           <p className="text-xs text-muted-foreground pt-2">
             Start by dropping files in the upload zone above ↑
           </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {assets.map((asset) => (
-            <div
-              key={asset.id}
-              className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 hover:bg-muted/40 transition-colors"
-            >
-              <AssetThumbnail asset={asset} />
-              <p
-                className="w-full truncate text-xs font-medium text-foreground"
-                title={asset.filename}
-              >
-                {asset.filename}
-              </p>
-              <p className="text-xs text-muted-foreground">{formatBytes(asset.sizeBytes)}</p>
-              {asset.classification && (
-                <ClassificationBadge classification={asset.classification} />
-              )}
-              <div className="flex items-center gap-1">
-                <SyncBadge state={asset.syncState} />
-                {asset.processingState !== "captured" && asset.processingState !== "ready" && (
-                  <span className="text-[10px] text-muted-foreground">{asset.processingState}</span>
-                )}
-              </div>
-            </div>
-          ))}
         </div>
       )}
 
