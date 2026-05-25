@@ -1,33 +1,84 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
+//
+// UX-1 — /documents 3-column rebuild.
+//
+//   ┌─────────────┬──────────────────────┬───────────────────────┐
+//   │ Type rail   │ Doc list (toolbar +  │ Persistent preview    │
+//   │ (Receipts,  │  searchable rows w/  │ (PDF iframe / text    │
+//   │  Contracts, │  thumbs)             │  / fallback "Open")   │
+//   │  …)         │                      │                       │
+//   └─────────────┴──────────────────────┴───────────────────────┘
+//
+// The audit (docs/ux-asset-page-audit-2026-05.md §4) flagged the prior
+// 1-column list + modal-overlay preview as the worst wasted-space page
+// in the app (score 5/5). The 3-pane shell here lets the user scan +
+// preview without losing context, and the preview is deep-linkable via
+// ?selected=<id>.
+//
+// Bug §UX-4 carried forward: when a subtype filter is set, the server
+// can return any asset with that classification (e.g. a screenshot
+// tagged "receipt" by the classifier). We still re-filter client-side
+// by the doc-mime allowlist so images can't leak into the list.
+
 "use client";
 
-import { useEffect, useState } from "react";
-import { FileText, X, ExternalLink, Loader2 } from "lucide-react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  ExternalLink,
+  FileText,
+  Loader2,
+  X,
+  ChevronRight,
+} from "lucide-react";
+import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
+import { cn } from "@/lib/utils";
 
-const DOC_SUBTYPES = ["receipt", "contract", "letter", "report", "form", "document", "scan"] as const;
+const DOC_SUBTYPES = [
+  "receipt",
+  "contract",
+  "letter",
+  "report",
+  "form",
+  "document",
+  "scan",
+] as const;
+
 const SUBTYPE_LABELS: Record<string, string> = {
-  receipt: "Receipt", contract: "Contract", letter: "Letter",
-  report: "Report", form: "Form", document: "Document", scan: "Scan",
-};
-const SUBTYPE_COLORS: Record<string, string> = {
-  receipt: "bg-green-500/10 text-green-600 dark:text-green-400",
-  contract: "bg-slate-500/10 text-slate-600 dark:text-slate-400",
-  letter: "bg-pink-500/10 text-pink-600 dark:text-pink-400",
-  report: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
-  form: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
-  document: "bg-muted text-muted-foreground",
-  scan: "bg-muted text-muted-foreground",
+  receipt: "Receipts",
+  contract: "Contracts",
+  letter: "Letters",
+  report: "Reports",
+  form: "Forms",
+  document: "Documents",
+  scan: "Scans",
 };
 
-function SubtypeBadge({ classification }: { classification: string | null }) {
-  if (!classification) return null;
-  const label = SUBTYPE_LABELS[classification] ?? classification;
-  const color = SUBTYPE_COLORS[classification] ?? "bg-muted text-muted-foreground";
-  return (
-    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${color}`}>{label}</span>
-  );
-}
+const SUBTYPE_COLORS: Record<string, string> = {
+  receipt: "text-green-600 dark:text-green-400",
+  contract: "text-slate-600 dark:text-slate-400",
+  letter: "text-pink-600 dark:text-pink-400",
+  report: "text-teal-600 dark:text-teal-400",
+  form: "text-cyan-600 dark:text-cyan-400",
+  document: "text-muted-foreground",
+  scan: "text-muted-foreground",
+};
+
+const DOC_MIME_TYPES = new Set<string>([
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
 
 interface Asset {
   id: string;
@@ -41,200 +92,383 @@ interface Asset {
   createdAt: string;
 }
 
+function isDocMime(mimeType: string): boolean {
+  return DOC_MIME_TYPES.has(mimeType) || mimeType.startsWith("text/");
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const DOC_MIME_TYPES = [
-  "application/pdf",
-  "text/plain",
-  "text/markdown",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-];
+// ---- Type rail (left column) ---------------------------------------------
 
-function DocPreview({ asset, onClose }: { asset: Asset; onClose: () => void }) {
+function TypeRail({
+  counts,
+  selected,
+  onSelect,
+}: {
+  counts: Record<string, number>;
+  selected: string | null;
+  onSelect: (subtype: string | null) => void;
+}) {
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  return (
+    <aside className="w-44 shrink-0 border-r border-border px-2 py-3">
+      <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Type
+      </p>
+      <button
+        onClick={() => onSelect(null)}
+        className={cn(
+          "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+          selected === null
+            ? "bg-primary/10 text-primary"
+            : "text-foreground hover:bg-muted"
+        )}
+      >
+        <span>All</span>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {total}
+        </span>
+      </button>
+      {DOC_SUBTYPES.map((s) => {
+        const count = counts[s] ?? 0;
+        const active = selected === s;
+        return (
+          <button
+            key={s}
+            onClick={() => onSelect(s)}
+            className={cn(
+              "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+              active
+                ? "bg-primary/10 text-primary"
+                : `${SUBTYPE_COLORS[s]} hover:bg-muted`
+            )}
+          >
+            <span>{SUBTYPE_LABELS[s]}</span>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {count}
+            </span>
+          </button>
+        );
+      })}
+    </aside>
+  );
+}
+
+// ---- Doc list (middle column) --------------------------------------------
+
+function DocRow({
+  doc,
+  active,
+  onClick,
+}: {
+  doc: Asset;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors",
+        active ? "bg-primary/10" : "hover:bg-muted/50"
+      )}
+    >
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
+        <FileText className="h-4 w-4 text-orange-400" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">
+          {doc.filename}
+        </p>
+        <p className="truncate text-[11px] text-muted-foreground">
+          {SUBTYPE_LABELS[doc.classification ?? ""] ?? doc.mimeType} ·{" "}
+          {formatBytes(doc.sizeBytes)} ·{" "}
+          {new Date(doc.capturedAt ?? doc.createdAt).toLocaleDateString()}
+        </p>
+        {doc.extractedText && (
+          <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground/70">
+            {doc.extractedText.slice(0, 140)}
+          </p>
+        )}
+      </div>
+      {active && (
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-primary" />
+      )}
+    </button>
+  );
+}
+
+// ---- Persistent preview (right column) -----------------------------------
+
+function PreviewPane({
+  doc,
+  onClose,
+}: {
+  doc: Asset | null;
+  onClose: () => void;
+}) {
   const [url, setUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/v1/assets/${asset.id}/url`)
-      .then((r) => r.json())
-      .then((d) => setUrl(d.url ?? null))
-      .catch(() => setUrl(null))
-      .finally(() => setLoading(false));
+    if (!doc) return;
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      setUrl(null);
+      try {
+        const r = await fetch(`/api/v1/assets/${doc.id}/url`);
+        const d = (await r.json()) as { url?: string };
+        if (!cancelled) setUrl(d.url ?? null);
+      } catch {
+        // ignore — preview falls back to "could not load"
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [doc?.id]);
 
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [asset.id, onClose]);
+  if (!doc) {
+    return (
+      <section className="hidden flex-1 flex-col items-center justify-center border-l border-border text-sm text-muted-foreground md:flex">
+        <FileText className="mb-2 h-10 w-10 opacity-40" />
+        Select a document to preview.
+      </section>
+    );
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="relative flex flex-col w-[90vw] max-w-4xl h-[90vh] bg-background rounded-xl border border-border overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-          <FileText className="h-4 w-4 text-orange-400 shrink-0" />
-          <span className="flex-1 truncate text-sm font-medium">{asset.filename}</span>
-          {url && (
+    <section className="flex flex-1 flex-col border-l border-border">
+      <header className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <FileText className="h-4 w-4 shrink-0 text-orange-400" />
+        <span className="flex-1 truncate text-sm font-medium text-foreground">
+          {doc.filename}
+        </span>
+        {url && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded p-1 text-muted-foreground hover:text-foreground"
+            title="Open in new tab"
+          >
+            <ExternalLink className="h-4 w-4" />
+          </a>
+        )}
+        <button
+          onClick={onClose}
+          className="rounded p-1 text-muted-foreground hover:text-foreground md:hidden"
+          aria-label="Close preview"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </header>
+
+      <div className="flex-1 overflow-auto">
+        {loading ? (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : doc.mimeType === "application/pdf" && url ? (
+          <iframe src={url} className="h-full w-full" title={doc.filename} />
+        ) : doc.extractedText ? (
+          <pre className="p-4 text-sm text-foreground whitespace-pre-wrap font-mono leading-relaxed">
+            {doc.extractedText}
+          </pre>
+        ) : url ? (
+          <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
+            <FileText className="h-16 w-16 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              Preview not available for this file type.
+            </p>
             <a
               href={url}
               target="_blank"
               rel="noopener noreferrer"
-              className="rounded p-1 text-muted-foreground hover:text-foreground"
-              title="Open in new tab"
+              className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             >
               <ExternalLink className="h-4 w-4" />
+              Open file
             </a>
-          )}
-          <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:text-foreground">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-auto">
-          {loading ? (
-            <div className="flex h-full items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : asset.mimeType === "application/pdf" && url ? (
-            <iframe src={url} className="h-full w-full" title={asset.filename} />
-          ) : asset.extractedText ? (
-            <pre className="p-4 text-sm text-foreground whitespace-pre-wrap font-mono leading-relaxed">
-              {asset.extractedText}
-            </pre>
-          ) : url ? (
-            <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
-              <FileText className="h-16 w-16 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Preview not available for this file type.</p>
-              <a
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                <ExternalLink className="h-4 w-4" />
-                Open File
-              </a>
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center">
-              <p className="text-sm text-muted-foreground">Could not load file.</p>
-            </div>
-          )}
-        </div>
-
-        {(asset.description || asset.extractedText) && (
-          <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
-            {asset.description && <p>{asset.description}</p>}
-            <p>{formatBytes(asset.sizeBytes)} · {asset.mimeType}</p>
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <p className="text-sm text-muted-foreground">
+              Could not load file.
+            </p>
           </div>
         )}
+      </div>
+
+      {(doc.description || doc.extractedText) && (
+        <footer className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+          {doc.description && <p className="truncate">{doc.description}</p>}
+          <p>
+            {formatBytes(doc.sizeBytes)} · {doc.mimeType}
+          </p>
+        </footer>
+      )}
+    </section>
+  );
+}
+
+// ---- Page shell -----------------------------------------------------------
+
+function DocumentsContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectedId = searchParams.get("selected");
+
+  const toolbar = useToolbarState({
+    page: "documents",
+    availableFilters: ["favorite"],
+  });
+
+  const [docs, setDocs] = useState<Asset[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [subtype, setSubtype] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const sp = new URLSearchParams();
+        if (subtype) sp.set("subtype", subtype);
+        const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        const d = (await r.json()) as { assets?: Asset[] };
+        const list = (d.assets ?? []).filter((a) =>
+          // Audit bug §UX-4 — even when a subtype filter is set we
+          // re-check the mime so an image misclassified as "receipt"
+          // can't leak into the documents list.
+          isDocMime(a.mimeType)
+        );
+        setDocs(list);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [subtype]);
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const s of DOC_SUBTYPES) c[s] = 0;
+    for (const d of docs) {
+      if (d.classification && c[d.classification] != null) {
+        c[d.classification]++;
+      }
+    }
+    return c;
+  }, [docs]);
+
+  const visible = useMemo(() => {
+    let list = docs;
+    if (toolbar.filters.q) {
+      const needle = toolbar.filters.q.toLowerCase();
+      list = list.filter(
+        (d) =>
+          d.filename.toLowerCase().includes(needle) ||
+          (d.description?.toLowerCase().includes(needle) ?? false) ||
+          (d.extractedText?.toLowerCase().includes(needle) ?? false)
+      );
+    }
+    if (toolbar.filters.sort === "oldest") {
+      list = [...list].sort(
+        (a, b) =>
+          new Date(a.capturedAt ?? a.createdAt).getTime() -
+          new Date(b.capturedAt ?? b.createdAt).getTime()
+      );
+    } else if (toolbar.filters.sort === "name") {
+      list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
+    } else if (toolbar.filters.sort === "largest") {
+      list = [...list].sort((a, b) => b.sizeBytes - a.sizeBytes);
+    } else {
+      list = [...list].sort(
+        (a, b) =>
+          new Date(b.capturedAt ?? b.createdAt).getTime() -
+          new Date(a.capturedAt ?? a.createdAt).getTime()
+      );
+    }
+    return list;
+  }, [docs, toolbar.filters.q, toolbar.filters.sort]);
+
+  const selectedDoc = useMemo<Asset | null>(() => {
+    if (!selectedId) return null;
+    return docs.find((d) => d.id === selectedId) ?? null;
+  }, [docs, selectedId]);
+
+  const setSelected = useCallback(
+    (id: string | null) => {
+      const sp = new URLSearchParams(searchParams.toString());
+      if (id) sp.set("selected", id);
+      else sp.delete("selected");
+      const qs = sp.toString();
+      router.replace(qs ? `/app/documents?${qs}` : "/app/documents");
+    },
+    [router, searchParams]
+  );
+
+  return (
+    <div className="flex h-[calc(100vh-1rem)] flex-col">
+      <AssetPageToolbar
+        title="Documents"
+        count={loading ? undefined : visible.length}
+        toolbar={toolbar}
+        searchPlaceholder="Search documents, OCR text…"
+        sortOptions={["newest", "oldest", "name", "largest"]}
+        filterKeys={["favorite"]}
+        showDensity={false}
+        showSelect={false}
+      />
+
+      <div className="flex flex-1 min-h-0">
+        <TypeRail counts={counts} selected={subtype} onSelect={setSubtype} />
+
+        <section className="flex w-96 max-w-md shrink-0 flex-col border-r border-border">
+          <div className="flex-1 overflow-auto px-2 py-2">
+            {loading ? (
+              <p className="px-2 py-4 text-sm text-muted-foreground">
+                Loading documents…
+              </p>
+            ) : visible.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 py-12 text-center">
+                <FileText className="h-8 w-8 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  {toolbar.filters.q || subtype
+                    ? "No documents match."
+                    : "No documents yet."}
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-0.5">
+                {visible.map((doc) => (
+                  <DocRow
+                    key={doc.id}
+                    doc={doc}
+                    active={doc.id === selectedId}
+                    onClick={() => setSelected(doc.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <PreviewPane doc={selectedDoc} onClose={() => setSelected(null)} />
       </div>
     </div>
   );
 }
 
 export default function DocumentsPage() {
-  const [docs, setDocs] = useState<Asset[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [preview, setPreview] = useState<Asset | null>(null);
-  const [subtypeFilter, setSubtypeFilter] = useState<string | null>(null);
-
-  useEffect(() => {
-    setLoading(true);
-    const url = subtypeFilter ? `/api/v1/assets?subtype=${subtypeFilter}` : "/api/v1/assets";
-    fetch(url)
-      .then((r) => r.json())
-      .then((d) => {
-        const assets: Asset[] = d.assets ?? [];
-        setDocs(
-          subtypeFilter
-            ? assets
-            : assets.filter(
-                (a) => DOC_MIME_TYPES.includes(a.mimeType) || a.mimeType.startsWith("text/")
-              )
-        );
-      })
-      .finally(() => setLoading(false));
-  }, [subtypeFilter]);
-
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Documents</h1>
-        <p className="text-sm text-muted-foreground mt-1">PDFs, text files, and documents</p>
-      </div>
-
-      {!loading && (
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            onClick={() => setSubtypeFilter(null)}
-            className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-              !subtypeFilter ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            All
-          </button>
-          {DOC_SUBTYPES.map((subtype) => (
-            <button
-              key={subtype}
-              onClick={() => setSubtypeFilter(subtypeFilter === subtype ? null : subtype)}
-              className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-                subtypeFilter === subtype
-                  ? "bg-primary text-primary-foreground"
-                  : `${SUBTYPE_COLORS[subtype] ?? "bg-muted text-muted-foreground"} hover:opacity-80`
-              }`}
-            >
-              {SUBTYPE_LABELS[subtype]}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Loading documents…</p>
-      ) : docs.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <FileText className="h-10 w-10 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            No documents yet. Upload PDFs or text files from the Dashboard.
-          </p>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {docs.map((doc) => (
-            <button
-              key={doc.id}
-              onClick={() => setPreview(doc)}
-              className="flex items-center gap-4 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted/40 transition-colors"
-            >
-              <FileText className="h-5 w-5 shrink-0 text-orange-400" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <p className="truncate text-sm font-medium text-foreground">{doc.filename}</p>
-                  <SubtypeBadge classification={doc.classification} />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {formatBytes(doc.sizeBytes)}
-                  {doc.description && ` · ${doc.description}`}
-                </p>
-              </div>
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                {new Date(doc.capturedAt ?? doc.createdAt).toLocaleDateString()}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {preview && <DocPreview asset={preview} onClose={() => setPreview(null)} />}
-    </div>
+    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+      <DocumentsContent />
+    </Suspense>
   );
 }
