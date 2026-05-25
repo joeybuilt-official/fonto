@@ -14,7 +14,9 @@ import { search } from "./commands/search.js";
 import { upload } from "./commands/upload.js";
 import { download } from "./commands/download.js";
 import { trash, restore } from "./commands/trash.js";
-import { scList, scRun } from "./commands/smart-collection.js";
+import { scList, scRun, scCreate } from "./commands/smart-collection.js";
+import { stacksList, stacksSuggestions, stacksAccept } from "./commands/stacks.js";
+import { folderMv, folderRm } from "./commands/folder.js";
 import { sync } from "./commands/sync.js";
 
 const program = new Command();
@@ -22,7 +24,7 @@ const program = new Command();
 program
   .name("fonto")
   .description("Fonto CLI — terminal interface to your Fonto instance")
-  .version("0.2.0");
+  .version("0.3.0");
 
 program
   .command("login")
@@ -93,7 +95,7 @@ program
 
 const sc = program
   .command("sc")
-  .description("smart-collection ops (list, run)");
+  .description("smart-collection ops (list, run, create)");
 sc.command("list")
   .description("list saved smart collections")
   .option("--json", "raw JSON output")
@@ -107,13 +109,68 @@ sc.command("run <id>")
   .action(async (id: string, opts) => {
     await scRun(id, opts);
   });
+sc.command("create <name>")
+  .description("create a new smart collection from a JSON query file")
+  .option("--query <file>", "path to a JSON file with the query DSL (default stdin)")
+  .option("--json", "raw JSON response")
+  .action(async (name: string, opts) => {
+    await scCreate(name, opts);
+  });
+
+const stacks = program
+  .command("stacks")
+  .description("stack ops (list, suggestions, accept)");
+stacks
+  .command("list")
+  .description("list existing stacks")
+  .option("--json", "raw JSON output")
+  .action(async (opts) => {
+    await stacksList(opts);
+  });
+stacks
+  .command("suggestions")
+  .description("show RAW+JPEG / burst stack suggestions")
+  .option("--limit <n>", "cap suggestion count")
+  .option("--json", "raw JSON output")
+  .action(async (opts) => {
+    await stacksSuggestions(opts);
+  });
+stacks
+  .command("accept <ids...>")
+  .description("accept a suggestion and create the stack")
+  .option("--primary <id>", "asset id to mark as primary (default: first)")
+  .option("--name <name>", "optional stack name")
+  .option("--json", "raw JSON response")
+  .action(async (ids: string[], opts) => {
+    await stacksAccept(ids, opts);
+  });
+
+const folder = program
+  .command("folder")
+  .description("folder ops (mv, rm) — folders are derived from asset paths");
+folder
+  .command("mv <path> <newParent>")
+  .description("move a folder (and its descendants) under newParent")
+  .option("--json", "raw JSON response")
+  .action(async (p: string, newParent: string, opts) => {
+    await folderMv(p, newParent, opts);
+  });
+folder
+  .command("rm <path>")
+  .description("delete a folder — defaults to trashing every asset under it")
+  .option("--orphan", "leave assets in place but clear their directory_path")
+  .option("--json", "raw JSON response")
+  .action(async (p: string, opts) => {
+    await folderRm(p, opts);
+  });
 
 program
   .command("sync <dir>")
-  .description("incremental upload of <dir> tree (one-way local → remote)")
+  .description("sync <dir> with the remote (push by default; --pull = bidir)")
   .option("--remote-prefix <path>", "virtual folder root on the remote (default /)")
   .option("--state <path>", "state file (default <dir>/.fonto-sync.json)")
-  .option("--dry-run", "report what would upload without sending anything")
+  .option("--dry-run", "report what would change without writing anything")
+  .option("--pull", "pull remote deltas before pushing (bidirectional)")
   .action(async (dir: string, opts) => {
     await sync(dir, opts);
   });

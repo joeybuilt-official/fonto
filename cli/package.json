@@ -1,6 +1,6 @@
 {
   "name": "@joeybuilt/fonto-cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Fonto CLI — terminal interface to your Fonto instance",
   "type": "module",
   "private": false,
