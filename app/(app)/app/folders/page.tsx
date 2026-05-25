@@ -1,25 +1,39 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Phase 3.5 — Folder view.
+// Phase 3.5 — Folder view (UX-3 sweep + N+1 fix).
 //
-// Browse uploads by their virtual directory path (Immich-style). Folders are
-// computed at read time from `assets.directory_path` prefixes by
-// `/api/v1/folders`; this page renders the listing + the assets that live
-// exactly at the current prefix.
+// Browse uploads by virtual directory path (Immich-style). The page
+// adopts AssetPageToolbar / AssetGrid; the breadcrumb + child-folder
+// row stays bespoke because folders aren't asset cards.
+//
+// N+1 fix (audit §UX-4): the old version fetched the ENTIRE asset list
+// on every folder click and filtered client-side. Now the list endpoint
+// gains ?directoryPath=<exact> so a folder click hits a single indexed
+// query.
 //
 // URL-driven so back/forward and deep-linking work naturally:
 //   /app/folders             -> root (workspace top level)
 //   /app/folders?path=/Photos
 //   /app/folders?path=/Photos/2024/Iceland
+
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ChevronRight, Folder as FolderIcon, Home, Image as ImageIcon, Loader2 } from "lucide-react";
-import { PhotoCard, type Asset } from "../_components/photo-card";
+import {
+  ChevronRight,
+  Folder as FolderIcon,
+  Home,
+  Image as ImageIcon,
+  Loader2,
+} from "lucide-react";
+import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
+import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { AssetGrid } from "../_components/asset-grid";
+import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 interface FolderEntry {
   name: string;
@@ -37,11 +51,6 @@ function folderHref(path: string): string {
   return `/app/folders?path=${encodeURIComponent(path)}`;
 }
 
-/**
- * Render a click-through breadcrumb from the root to the current prefix.
- * Each segment is its own link; the final segment is highlighted but still
- * a link (clicking does nothing visible — same page).
- */
 function Breadcrumb({ prefix }: { prefix: string }) {
   const segments = prefix.split("/").filter(Boolean);
   const accumulated: { name: string; path: string }[] = [];
@@ -103,9 +112,11 @@ function FoldersContent() {
   const searchParams = useSearchParams();
   const prefix = searchParams.get("path") ?? "";
 
-  // Carry the prefix the loaded data corresponds to alongside the data
-  // itself; `loading` is derived from `loadedPrefix !== prefix`. This avoids
-  // setting loading=true inside an effect (react-hooks/set-state-in-effect).
+  const toolbar = useToolbarState({
+    page: "folders",
+    availableFilters: ["mime", "type", "favorite", "ratingMin"],
+  });
+
   const [state, setState] = useState<{
     loadedPrefix: string | null;
     listing: FolderListing | null;
@@ -119,35 +130,51 @@ function FoldersContent() {
   useEffect(() => {
     let cancelled = false;
 
-    const url = prefix
+    const folderUrl = prefix
       ? `/api/v1/folders?prefix=${encodeURIComponent(prefix)}`
       : "/api/v1/folders";
 
+    // Server-side ?directoryPath filter replaces the previous fetch-all-
+    // then-filter pattern. Root (prefix === "") becomes directoryPath="/"
+    // which the endpoint maps to IS NULL.
+    const assetUrl = new URL("/api/v1/assets", window.location.origin);
+    assetUrl.searchParams.set("directoryPath", prefix || "/");
+    if (toolbar.filters.mime) assetUrl.searchParams.set("mime", toolbar.filters.mime);
+    if (toolbar.filters.type) assetUrl.searchParams.set("subtype", toolbar.filters.type);
+    if (toolbar.filters.favorite) assetUrl.searchParams.set("favorite", "1");
+    if (toolbar.filters.ratingMin != null)
+      assetUrl.searchParams.set("ratingMin", String(toolbar.filters.ratingMin));
+
     Promise.all([
-      fetch(url).then((r) => r.json()) as Promise<FolderListing>,
-      // Pull the asset list for this workspace and filter client-side to the
-      // current prefix. Server-side filtering would need a new query param
-      // on /api/v1/assets; given the typical folder size (hundreds of items)
-      // this is cheap and keeps the API surface small.
-      fetch("/api/v1/assets")
+      fetch(folderUrl).then((r) => r.json()) as Promise<FolderListing>,
+      fetch(assetUrl.toString())
         .then((r) => r.json())
-        .then(
-          (d) =>
-            (d.assets ?? []) as (Asset & {
-              directoryPath?: string | null;
-            })[]
-        ),
+        .then((d) => (d.assets ?? []) as Asset[]),
     ])
       .then(([folderData, assetData]) => {
         if (cancelled) return;
-        const wanted = prefix || null;
-        const filtered = assetData.filter(
-          (a) => (a.directoryPath ?? null) === wanted
-        );
+        let list = assetData;
+        if (toolbar.filters.q) {
+          const needle = toolbar.filters.q.toLowerCase();
+          list = list.filter(
+            (a) =>
+              a.filename.toLowerCase().includes(needle) ||
+              (a.description?.toLowerCase().includes(needle) ?? false)
+          );
+        }
+        if (toolbar.filters.sort === "oldest") {
+          list = [...list].sort(
+            (a, b) =>
+              new Date(a.capturedAt ?? a.createdAt).getTime() -
+              new Date(b.capturedAt ?? b.createdAt).getTime()
+          );
+        } else if (toolbar.filters.sort === "name") {
+          list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
+        }
         setState({
           loadedPrefix: prefix,
           listing: folderData,
-          assets: filtered,
+          assets: list,
         });
       })
       .catch(() => {
@@ -162,7 +189,15 @@ function FoldersContent() {
     return () => {
       cancelled = true;
     };
-  }, [prefix]);
+  }, [
+    prefix,
+    toolbar.filters.mime,
+    toolbar.filters.type,
+    toolbar.filters.favorite,
+    toolbar.filters.ratingMin,
+    toolbar.filters.q,
+    toolbar.filters.sort,
+  ]);
 
   function navLightbox(delta: number) {
     if (lightboxIndex === null) return;
@@ -170,74 +205,78 @@ function FoldersContent() {
     if (next >= 0 && next < assets.length) setLightboxIndex(next);
   }
 
+  const visibleTitle = prefix
+    ? prefix.split("/").filter(Boolean).pop() ?? "Folders"
+    : "Folders";
+
   return (
-    <div className="space-y-5">
-      <div>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold text-foreground">Folders</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Browse your library by the directory tree it came from.
-            </p>
+    <div className="space-y-3">
+      <AssetPageToolbar
+        title={visibleTitle}
+        count={loading ? undefined : (listing?.folders.length ?? 0) + assets.length}
+        toolbar={toolbar}
+        searchPlaceholder="Search this folder…"
+        sortOptions={["newest", "oldest", "name"]}
+        filterKeys={["mime", "type", "favorite", "ratingMin"]}
+        showDensity
+        showSelect
+      />
+
+      <div className="px-4 space-y-5">
+        <Breadcrumb prefix={listing?.prefix ?? prefix} />
+
+        {loading ? (
+          <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading folder…
           </div>
-        </div>
-      </div>
-
-      <Breadcrumb prefix={listing?.prefix ?? prefix} />
-
-      {loading ? (
-        <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading folder…
-        </div>
-      ) : (
-        <>
-          {listing && listing.folders.length > 0 && (
-            <section>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Folders
-              </h2>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {listing.folders.map((f) => (
-                  <FolderCard key={f.path} folder={f} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {assets.length > 0 && (
-            <section>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {assets.length} {assets.length === 1 ? "item" : "items"} at
-                this level
-              </h2>
-              <div className="grid grid-cols-2 gap-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {assets.map((asset, index) => (
-                  <div key={asset.id} onClick={() => setLightboxIndex(index)}>
-                    <PhotoCard asset={asset} showQuickActions={false} />
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {listing &&
-            listing.folders.length === 0 &&
-            assets.length === 0 && (
-              <div className="flex flex-col items-center gap-3 py-16 text-center">
-                <ImageIcon className="h-10 w-10 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  This folder is empty. Uploads carry their source directory
-                  via the <code className="text-foreground">X-Fonto-Path</code>{" "}
-                  header (multipart), the <code className="text-foreground">path</code>{" "}
-                  field on <code className="text-foreground">/assets/init</code>,
-                  or <code className="text-foreground">metadata.path</code> on
-                  tus.
-                </p>
-              </div>
+        ) : (
+          <>
+            {listing && listing.folders.length > 0 && (
+              <section>
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Folders
+                </h2>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {listing.folders.map((f) => (
+                    <FolderCard key={f.path} folder={f} />
+                  ))}
+                </div>
+              </section>
             )}
-        </>
-      )}
+
+            {assets.length > 0 && (
+              <section>
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {assets.length} {assets.length === 1 ? "item" : "items"} at
+                  this level
+                </h2>
+                <AssetGrid
+                  assets={assets}
+                  toolbar={toolbar}
+                  viewMode="grid"
+                  onAssetClick={(_id, index) => setLightboxIndex(index)}
+                />
+              </section>
+            )}
+
+            {listing &&
+              listing.folders.length === 0 &&
+              assets.length === 0 && (
+                <div className="flex flex-col items-center gap-3 py-16 text-center">
+                  <ImageIcon className="h-10 w-10 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground max-w-md">
+                    This folder is empty. Uploads carry their source directory
+                    via the <code className="text-foreground">X-Fonto-Path</code>{" "}
+                    header (multipart), the <code className="text-foreground">path</code>{" "}
+                    field on <code className="text-foreground">/assets/init</code>,
+                    or <code className="text-foreground">metadata.path</code> on tus.
+                  </p>
+                </div>
+              )}
+          </>
+        )}
+      </div>
 
       {lightboxIndex !== null && assets[lightboxIndex] && (
         <PhotoLightbox
@@ -255,11 +294,7 @@ function FoldersContent() {
 
 export default function FoldersPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="text-sm text-muted-foreground py-4">Loading…</div>
-      }
-    >
+    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
       <FoldersContent />
     </Suspense>
   );

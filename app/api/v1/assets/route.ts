@@ -5,7 +5,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, and, desc, gte, isNull, or, sql, SQL } from "drizzle-orm";
+import { eq, and, desc, gte, isNull, or, sql, SQL, like } from "drizzle-orm";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
@@ -50,12 +50,40 @@ export async function GET(request: NextRequest) {
   const expandStacks =
     expandStacksParam === "true" || expandStacksParam === "1";
 
+  // UX-3 — virtual-folder filter. Replaces the /folders page's "fetch
+  // entire library + filter client-side" pattern. Two modes:
+  //   ?directoryPath=/Photos/2024   → exact-match at that level only
+  //   ?directoryPathPrefix=/Photos  → recursive: everything under /Photos
+  // Empty / "/" treated as the root level (NULL directory_path).
+  // The (workspace_id, directory_path) btree handles the equality path
+  // index-driven; the prefix path uses `LIKE 'prefix/%'` which the same
+  // index can serve as a range scan.
+  const directoryPathRaw = searchParams.get("directoryPath");
+  const directoryPathPrefixRaw = searchParams.get("directoryPathPrefix");
+  const directoryPath =
+    directoryPathRaw == null ? null : directoryPathRaw.trim();
+  const directoryPathPrefix =
+    directoryPathPrefixRaw == null ? null : directoryPathPrefixRaw.trim();
+
   const where: SQL[] = [
     eq(schema.assets.workspaceId, workspaceId),
     eq(schema.assets.lifecycleState, lifecycleFilter),
   ];
   if (onlyFavorites) where.push(eq(schema.assets.isFavorite, true));
   if (ratingMin !== null) where.push(gte(schema.assets.rating, ratingMin));
+  if (directoryPath != null) {
+    if (directoryPath === "" || directoryPath === "/") {
+      where.push(isNull(schema.assets.directoryPath));
+    } else {
+      where.push(eq(schema.assets.directoryPath, directoryPath));
+    }
+  } else if (directoryPathPrefix != null && directoryPathPrefix !== "") {
+    // Recursive: anything under the prefix. Trailing slash is normalised
+    // off the request value so callers can pass either `/Photos` or
+    // `/Photos/`. The LIKE pattern uses `%` to match descendants.
+    const normalised = directoryPathPrefix.replace(/\/+$/, "");
+    where.push(like(schema.assets.directoryPath, `${normalised}/%`));
+  }
   if (!expandStacks) {
     // Show standalone assets OR the primary of each stack the asset
     // belongs to. Correlated subquery keeps everything index-driven via
@@ -68,11 +96,24 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const rows = await db
+  // UX-3 — `?limit=N` row cap. The dashboard's "recent uploads" row used
+  // to pull the entire workspace then `.slice(0, 8)` client-side (audit
+  // bug §UX-4); now it can ask for exactly what it needs. Mime / subtype
+  // filtering is post-fetch so the cap is approximate when those are set,
+  // but for the "show 8 newest of everything" pattern it's exact.
+  const limitRaw = searchParams.get("limit");
+  const limitParsed = limitRaw == null ? NaN : Number.parseInt(limitRaw, 10);
+  const limit =
+    Number.isInteger(limitParsed) && limitParsed > 0 && limitParsed <= 1000
+      ? limitParsed
+      : null;
+
+  const query = db
     .select()
     .from(schema.assets)
     .where(and(...where))
     .orderBy(desc(schema.assets.createdAt));
+  const rows = limit != null ? await query.limit(limit) : await query;
 
   const filtered = rows
     .filter((a) => !mimeFilter || a.mimeType.startsWith(mimeFilter))

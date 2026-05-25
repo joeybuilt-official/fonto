@@ -215,10 +215,13 @@ export default function DashboardPage() {
 
   async function fetchRecentUploads() {
     try {
-      const res = await fetch("/api/v1/assets?sort=newest");
+      // UX-3 / audit §UX-4 — was `/api/v1/assets?sort=newest` then
+      // `.slice(0, 8)`, which pulled the entire library to show 8 tiles.
+      // The list endpoint now honors `?limit=`; 8 is the visible count.
+      const res = await fetch("/api/v1/assets?limit=8");
       if (res.ok) {
         const data = (await res.json()) as { assets: Asset[] };
-        setRecentUploads((data.assets ?? []).slice(0, 8));
+        setRecentUploads(data.assets ?? []);
       }
     } catch {
       // ignore

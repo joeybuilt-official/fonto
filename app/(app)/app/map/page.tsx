@@ -321,27 +321,34 @@ export default function MapPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-baseline justify-between gap-3 px-4 py-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Map</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Geo-tagged photos clustered by viewport.
-          </p>
-        </div>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          {loading && <span>Loading…</span>}
-          {!loading && capped && (
-            <span>Showing {MAX_LIMIT.toLocaleString()} — zoom in for more.</span>
-          )}
-          {!loading && !capped && assets.length > 0 && (
-            <span>{assets.length.toLocaleString()} photos in view</span>
-          )}
-          {error && <span className="text-red-500">{error}</span>}
-        </div>
-      </div>
-
+      {/* Full-bleed map with floating title + stats chip overlay (audit §3).
+          The old header was a 60px+ block that competed with the map for
+          screen real estate even though it carried no interactive content
+          beyond the title. The chip stays out of the way and updates in
+          place as the viewport changes. */}
       <div className="relative flex-1">
         <div ref={containerRef} className="absolute inset-0" />
+
+        <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-2 rounded-lg bg-background/85 px-3 py-1.5 text-sm shadow-md backdrop-blur">
+          <h1 className="font-heading text-base font-semibold text-foreground">Map</h1>
+          <span className="text-xs text-muted-foreground">·</span>
+          {loading && <span className="text-xs text-muted-foreground">Loading…</span>}
+          {!loading && capped && (
+            <span className="text-xs text-muted-foreground">
+              {MAX_LIMIT.toLocaleString()} max — zoom in for more
+            </span>
+          )}
+          {!loading && !capped && assets.length > 0 && (
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {assets.length.toLocaleString()} in view
+            </span>
+          )}
+          {!loading && assets.length === 0 && !error && (
+            <span className="text-xs text-muted-foreground">No geo-tagged photos here</span>
+          )}
+          {error && <span className="text-xs text-destructive">{error}</span>}
+        </div>
+
         {assets.length === 0 && !loading && !error && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <div className="flex items-center gap-2 rounded-md bg-background/80 px-3 py-2 text-sm text-muted-foreground shadow">
