@@ -1,39 +1,56 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// PAT + base URL persistence. Mirrors the CLI's `conf`-based store:
-// the user mints a PAT in the web UI (/app/settings/tokens) and
-// pastes it into the login form. SharedPreferences is the simplest
-// cross-platform key/value bucket; secure-storage upgrade is a
-// follow-up once we add biometric gating.
+// PAT + base URL persistence. Hardware-backed: iOS Keychain on iOS,
+// Android Keystore on Android (via flutter_secure_storage). The PAT
+// grants full /api/v1 access, so SharedPreferences (plain shared_prefs
+// XML on Android, NSUserDefaults on iOS) was an unacceptable place to
+// keep it. Load is async because every read decrypts; values are
+// cached on the instance after load so screen builds stay sync.
 
-import "package:shared_preferences/shared_preferences.dart";
+import "package:flutter_secure_storage/flutter_secure_storage.dart";
 
 class AuthStore {
-  AuthStore._(this._prefs);
+  AuthStore._(this._storage, this._pat, this._baseUrl);
 
   static const _kPat = "fonto.pat";
   static const _kBaseUrl = "fonto.baseUrl";
   static const defaultBaseUrl = "https://myfonto.com";
 
-  final SharedPreferences _prefs;
+  static const _androidOpts = AndroidOptions(encryptedSharedPreferences: true);
+  static const _iosOpts = IOSOptions(
+    accessibility: KeychainAccessibility.first_unlock,
+  );
+
+  final FlutterSecureStorage _storage;
+  String? _pat;
+  String _baseUrl;
 
   static Future<AuthStore> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    return AuthStore._(prefs);
+    const storage = FlutterSecureStorage(
+      aOptions: _androidOpts,
+      iOptions: _iosOpts,
+    );
+    final pat = await storage.read(key: _kPat);
+    final baseUrl = await storage.read(key: _kBaseUrl);
+    return AuthStore._(storage, pat, baseUrl ?? defaultBaseUrl);
   }
 
-  String? get pat => _prefs.getString(_kPat);
-  String get baseUrl => _prefs.getString(_kBaseUrl) ?? defaultBaseUrl;
-  bool get isConfigured => (pat ?? "").isNotEmpty;
+  String? get pat => _pat;
+  String get baseUrl => _baseUrl;
+  bool get isConfigured => (_pat ?? "").isNotEmpty;
 
   Future<void> save({required String pat, required String baseUrl}) async {
-    await _prefs.setString(_kPat, pat);
-    await _prefs.setString(_kBaseUrl, baseUrl);
+    await _storage.write(key: _kPat, value: pat);
+    await _storage.write(key: _kBaseUrl, value: baseUrl);
+    _pat = pat;
+    _baseUrl = baseUrl;
   }
 
   Future<void> clear() async {
-    await _prefs.remove(_kPat);
-    await _prefs.remove(_kBaseUrl);
+    await _storage.delete(key: _kPat);
+    await _storage.delete(key: _kBaseUrl);
+    _pat = null;
+    _baseUrl = defaultBaseUrl;
   }
 }

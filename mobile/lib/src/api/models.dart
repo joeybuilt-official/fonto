@@ -40,6 +40,43 @@ class Asset {
       );
 }
 
+class AssetCursor {
+  AssetCursor({required this.createdBefore, required this.idBefore});
+  final String createdBefore;
+  final String idBefore;
+
+  static AssetCursor fromJson(Map<String, dynamic> j) => AssetCursor(
+        createdBefore: j["createdBefore"] as String,
+        idBefore: j["idBefore"] as String,
+      );
+}
+
+class AssetPage {
+  AssetPage({required this.assets, required this.nextCursor});
+  final List<Asset> assets;
+  final AssetCursor? nextCursor;
+  bool get hasMore => nextCursor != null;
+}
+
+/// Server-side row: one path with its own asset count (descendants not
+/// included). The tree is built client-side by splitting on `/`.
+class FolderLeaf {
+  FolderLeaf({required this.path, required this.assetCount});
+  final String path;
+  final int assetCount;
+
+  static FolderLeaf fromJson(Map<String, dynamic> j) => FolderLeaf(
+        path: j["path"] as String,
+        assetCount: (j["assetCount"] as num).toInt(),
+      );
+}
+
+class FolderTree {
+  FolderTree({required this.paths, required this.rootAssetCount});
+  final List<FolderLeaf> paths;
+  final int rootAssetCount;
+}
+
 class WorkspaceStats {
   WorkspaceStats({
     required this.total,

@@ -25,40 +25,52 @@ platform dirs and skips files that already exist (so `lib/`,
 
 ```
 mobile/
-  pubspec.yaml             # http, shared_preferences, image_picker,
+  pubspec.yaml             # http, flutter_secure_storage, image_picker,
                            # cached_network_image
   analysis_options.yaml
   lib/
     main.dart              # MaterialApp + login-vs-home swap
     src/
       api/
-        fonto_client.dart  # PAT-auth HTTP client
-        models.dart        # Asset, WorkspaceStats
+        fonto_client.dart  # PAT-auth HTTP client w/ keyset paging
+        models.dart        # Asset, AssetPage, AssetCursor,
+                           # WorkspaceStats, FolderTree, FolderLeaf
       state/
-        auth_store.dart    # SharedPreferences-backed PAT + base URL
+        auth_store.dart    # flutter_secure_storage (iOS Keychain /
+                           # Android Keystore) PAT + base URL
       screens/
         login_screen.dart  # PAT form, validates against /api/v1/stats
-        home_screen.dart   # stats bar + 3-col asset grid + camera FAB
+        home_screen.dart   # stats bar + paginated grid + drawer rail
+                           # + camera FAB + pull-to-refresh
+        search_screen.dart # text search over filename / description /
+                           # OCR
 ```
 
 ## What works after bootstrap
 
-- PAT login (saved across launches via SharedPreferences).
-- Stats bar + first 60 assets w/ cached thumbnails.
-- Camera-roll capture + multipart upload via the FAB.
-- Sign out (clears PAT).
+- PAT login (hardware-backed across launches via
+  `flutter_secure_storage` — iOS Keychain, Android Keystore).
+- Stats bar + workspace assets w/ cached thumbnails.
+- Keyset pagination — infinite scroll, no offset drift when uploads
+  land mid-session.
+- Pull-to-refresh.
+- Folder rail (drawer) — pick any folder to filter the grid by that
+  subtree prefix; "(root)" picks NULL-`directoryPath` assets.
+- Camera-roll capture + multipart upload via the FAB (uploads into
+  the currently selected folder).
+- Text search (filename / description / OCR).
+- Sign out (clears the PAT).
 
 ## What's stubbed / out-of-scope for the scaffold
 
-- **Pagination** — first page only. Wire `/api/v1/sync/assets?cursor=`
-  next.
-- **Folder browse** — flat grid. Add a left-drawer rail mirroring the
-  web folder tree.
-- **Search** — TextField + `/api/v1/search`.
-- **Secure storage** — PAT lives in plain SharedPreferences. Move to
-  `flutter_secure_storage` once we add biometric gate.
+- **Background upload queue** — captures fail if the app backgrounds
+  mid-upload. Wire Workmanager once we have platform shells to test
+  lifecycle behaviour.
+- **Asset detail view** — tile tap is a no-op today.
+- **Search pagination** — `/api/v1/search` doesn't cursor yet.
 - **CI on real devices** — separate session; needs Codemagic or
-  GitHub Actions w/ macOS runners for iOS.
+  GitHub Actions w/ macOS runners for iOS, plus signing certs +
+  provisioning profiles set up out-of-band.
 - **Theme + branding** — using the Material 3 default seed.
 - **Tests** — `flutter_test` is in dev deps but no specs yet.
 
@@ -73,9 +85,11 @@ impossible.
 
 Each of these is independently shippable:
 
-1. **Cursor pagination + pull-to-refresh** on the asset grid.
-2. **Folder rail** mirroring the web tree (`/api/v1/folders/tree`).
-3. **Search bar + results screen** (`/api/v1/search?q=`).
-4. **Background upload queue** so camera shots survive backgrounding.
-5. **iOS / Android CI** — Codemagic or GitHub macOS runner; needs
+1. **Background upload queue** so camera shots survive backgrounding
+   (Workmanager — needs platform shells to test lifecycle).
+2. **Asset detail view** — tap a tile → full-size + metadata + share /
+   trash / favorite actions.
+3. **Search pagination** — needs `/api/v1/search` to grow a cursor;
+   trivial server change once it does.
+4. **iOS / Android CI** — Codemagic or GitHub macOS runner; needs
    signing certs + provisioning profiles set up out-of-band.

@@ -5,7 +5,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, and, desc, gte, isNull, or, sql, SQL, like } from "drizzle-orm";
+import { eq, and, desc, gte, isNull, lt, or, sql, SQL, like } from "drizzle-orm";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
@@ -108,6 +108,35 @@ export async function GET(request: NextRequest) {
       ? limitParsed
       : null;
 
+  // Phase 6.2 — keyset pagination for the mobile grid (and any other
+  // client that wants stable "load more" semantics). Caller passes:
+  //   ?createdBefore=<iso>         — required to engage paging
+  //   ?idBefore=<uuid>             — tie-break when two rows share createdAt
+  // Returns rows strictly older than the cursor. Same DESC ordering as
+  // the unpaged path so the first page + a paged second page concatenate
+  // cleanly. Omitting both keeps the original head-of-list behaviour.
+  const createdBeforeRaw = searchParams.get("createdBefore");
+  const idBeforeRaw = searchParams.get("idBefore");
+  const createdBefore =
+    createdBeforeRaw && !Number.isNaN(Date.parse(createdBeforeRaw))
+      ? new Date(createdBeforeRaw)
+      : null;
+  if (createdBefore) {
+    if (idBeforeRaw) {
+      where.push(
+        or(
+          lt(schema.assets.createdAt, createdBefore),
+          and(
+            eq(schema.assets.createdAt, createdBefore),
+            lt(schema.assets.id, idBeforeRaw)
+          )
+        )!
+      );
+    } else {
+      where.push(lt(schema.assets.createdAt, createdBefore));
+    }
+  }
+
   // UX-3 / Phase 5.5 — surface the stack member count alongside each
   // asset so PhotoCard can render a "Stack of N" badge without a per-tile
   // round trip. Correlated subquery returns NULL for standalone assets
@@ -127,18 +156,32 @@ export async function GET(request: NextRequest) {
     })
     .from(schema.assets)
     .where(and(...where))
-    .orderBy(desc(schema.assets.createdAt));
+    .orderBy(desc(schema.assets.createdAt), desc(schema.assets.id));
   const rows = limit != null ? await query.limit(limit) : await query;
 
   const filtered = rows
     .filter((r) => !mimeFilter || r.asset.mimeType.startsWith(mimeFilter))
     .filter((r) => !subtypeFilter || r.asset.classification === subtypeFilter);
 
+  // Cursor for the *next* page: derived from the last *pre-filter* row
+  // (post-filter mime/subtype is approximate per the existing comment;
+  // using `filtered` here would skip server-side rows the next page
+  // still needs to walk past). Null when the page is empty or unbounded.
+  const lastRow = rows[rows.length - 1];
+  const nextCursor =
+    limit != null && lastRow && rows.length === limit
+      ? {
+          createdBefore: lastRow.asset.createdAt.toISOString(),
+          idBefore: lastRow.asset.id,
+        }
+      : null;
+
   return NextResponse.json({
     assets: filtered.map((r) => ({
       ...serializeAsset(r.asset),
       stackMemberCount: r.stackMemberCount,
     })),
+    nextCursor,
   });
 }
 

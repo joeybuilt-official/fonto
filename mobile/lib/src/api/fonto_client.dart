@@ -76,13 +76,54 @@ class FontoClient {
     return WorkspaceStats.fromJson(j);
   }
 
-  Future<List<Asset>> listAssets({String? mime, int? limit}) async {
-    final query = <String, String>{};
+  /// One page of assets ordered (createdAt DESC, id DESC). Pass back
+  /// `nextCursor` to fetch the next page. `directoryPathPrefix` filters
+  /// to a folder subtree (e.g. "/Photos").
+  Future<AssetPage> listAssets({
+    String? mime,
+    int limit = 60,
+    AssetCursor? after,
+    String? directoryPathPrefix,
+  }) async {
+    final query = <String, String>{"limit": "$limit"};
     if (mime != null) query["mime"] = mime;
-    if (limit != null) query["limit"] = "$limit";
-    final j = await _getJson("/api/v1/assets", query.isEmpty ? null : query);
+    if (after != null) {
+      query["createdBefore"] = after.createdBefore;
+      query["idBefore"] = after.idBefore;
+    }
+    if (directoryPathPrefix != null && directoryPathPrefix.isNotEmpty) {
+      query["directoryPathPrefix"] = directoryPathPrefix;
+    }
+    final j = await _getJson("/api/v1/assets", query);
+    final raw = (j["assets"] as List).cast<Map<String, dynamic>>();
+    final cursorJson = j["nextCursor"] as Map<String, dynamic>?;
+    return AssetPage(
+      assets: raw.map(Asset.fromJson).toList(),
+      nextCursor: cursorJson == null ? null : AssetCursor.fromJson(cursorJson),
+    );
+  }
+
+  /// Text search across filename / description / OCR. Single page; the
+  /// search endpoint doesn't paginate today.
+  Future<List<Asset>> search(String q) async {
+    final j = await _getJson("/api/v1/search", {"q": q});
     final raw = (j["assets"] as List).cast<Map<String, dynamic>>();
     return raw.map(Asset.fromJson).toList();
+  }
+
+  /// Folder tree — flat list `[{path, assetCount}]` plus a separate
+  /// `rootAssetCount` for assets with NULL directoryPath. Materialised
+  /// into a nested tree client-side.
+  Future<FolderTree> folderTree() async {
+    final j = await _getJson("/api/v1/folders/tree");
+    final paths = (j["paths"] as List)
+        .cast<Map<String, dynamic>>()
+        .map(FolderLeaf.fromJson)
+        .toList();
+    return FolderTree(
+      paths: paths,
+      rootAssetCount: (j["rootAssetCount"] as num?)?.toInt() ?? 0,
+    );
   }
 
   /// Batched presigned-URL fetch. Mirrors the web grid and CLI download
