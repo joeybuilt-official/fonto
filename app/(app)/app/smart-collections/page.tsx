@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Joeybuilt LLC
+//
+// UX-3 sweep: header → AssetPageToolbar. The create form + facet pickers
+// are left alone; only the title bar and the "new" button move into the
+// shared toolbar. Search filters the list by name (client-side, since
+// the smart-collections endpoint has no q= today).
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { Plus, Zap, Loader2, Trash2, ChevronRight } from "lucide-react";
+import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 type SmartCollection = {
   id: string;
@@ -21,7 +29,11 @@ const PRESET_QUERIES = [
   { label: "All PDFs", query: { conditions: [{ field: "mimeType", op: "eq", value: "application/pdf" }], logic: "and" } },
 ];
 
-export default function SmartCollectionsPage() {
+function SmartCollectionsContent() {
+  const toolbar = useToolbarState({
+    page: "smart-collections",
+    availableFilters: [],
+  });
   const [collections, setCollections] = useState<SmartCollection[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -124,24 +136,44 @@ export default function SmartCollectionsPage() {
     load();
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Smart Collections</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Saved searches that auto-update as assets change
-          </p>
-        </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 rounded-lg bg-foreground px-3 py-2 text-sm font-medium text-background hover:bg-foreground/90 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          New
-        </button>
-      </div>
+  const visible = useMemo(() => {
+    let list = collections;
+    if (toolbar.filters.q) {
+      const needle = toolbar.filters.q.toLowerCase();
+      list = list.filter((c) => c.name.toLowerCase().includes(needle));
+    }
+    if (toolbar.filters.sort === "oldest") {
+      list = [...list].sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+    } else if (toolbar.filters.sort === "name") {
+      list = [...list].sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      list = [...list].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    }
+    return list;
+  }, [collections, toolbar.filters.q, toolbar.filters.sort]);
 
+  return (
+    <div className="space-y-3">
+      <AssetPageToolbar
+        title="Smart Collections"
+        count={loading ? undefined : visible.length}
+        toolbar={toolbar}
+        searchPlaceholder="Search smart collections…"
+        sortOptions={["newest", "oldest", "name"]}
+        showDensity={false}
+        showSelect={false}
+        primaryAction={{
+          label: "New",
+          icon: <Plus className="h-3.5 w-3.5" />,
+          onClick: () => setShowForm(true),
+        }}
+      />
+
+      <div className="px-4 space-y-4">
       {showForm && (
         <form onSubmit={handleCreate} className="rounded-xl border border-border bg-card p-4 space-y-4">
           <h3 className="text-sm font-medium text-foreground">New smart collection</h3>
@@ -308,15 +340,17 @@ export default function SmartCollectionsPage() {
         <div className="flex justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
-      ) : collections.length === 0 ? (
+      ) : visible.length === 0 && !toolbar.filters.q ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16 text-center">
           <Zap className="h-10 w-10 text-muted-foreground mb-3" />
           <p className="text-sm font-medium text-foreground">No smart collections yet</p>
           <p className="text-xs text-muted-foreground mt-1">Create saved searches that stay up to date automatically</p>
         </div>
+      ) : visible.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No matches.</p>
       ) : (
         <div className="space-y-2">
-          {collections.map((sc) => (
+          {visible.map((sc) => (
             <div key={sc.id} className="group flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 hover:bg-muted/20 transition-colors">
               <Zap className="h-4 w-4 shrink-0 text-amber-400" />
               <Link href={`/app/search?smartCollection=${sc.id}`} className="flex-1 min-w-0">
@@ -337,6 +371,15 @@ export default function SmartCollectionsPage() {
           ))}
         </div>
       )}
+      </div>
     </div>
+  );
+}
+
+export default function SmartCollectionsPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+      <SmartCollectionsContent />
+    </Suspense>
   );
 }

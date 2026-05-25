@@ -3,18 +3,17 @@
 //
 // Phase 5.1 — People grid.
 //
-// Lists every clustered identity for the caller's workspace. Each card
-// shows the cover-face crop (rendered from the bbox over the asset's
-// preview), the name (or "Unnamed") and the instance count.
-//
-// "Run clustering" triggers `POST /api/v1/faces/cluster` — owner-only on
-// the server, but we don't gate it in the UI; non-owners just see a 403
-// toast and can ignore the button.
+// UX-3 sweep: shared toolbar at top. PrimaryAction = "Run clustering"
+// (was the only prior page action; keeps the existing endpoint hit and
+// toast state). FaceCrop card unchanged. Audit §4 calls for a
+// needs-review bucket + drag-merge + inline rename — deferred.
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Loader2, Users, Play } from "lucide-react";
+import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 interface PersonGridEntry {
   id: string;
@@ -51,15 +50,9 @@ function FaceCrop({ entry }: { entry: PersonGridEntry }) {
     );
   }
 
-  // Render the bbox by oversizing the background image and offsetting it.
-  // The bbox is normalised (0..1) — scaling the image so the bbox fills the
-  // square is `1 / bbox.w` along x (we pick the smaller of x/y so the crop
-  // never undershoots).
   const { x, y, w, h } = entry.coverBbox;
   const scale = 1 / Math.max(w, h);
   const bgSize = `${scale * 100}%`;
-  // Translate so the bbox top-left lines up with (0, 0); negative offsets
-  // shift the image up + left.
   const bgPositionX = `${-(x * scale * 100)}%`;
   const bgPositionY = `${-(y * scale * 100)}%`;
 
@@ -79,7 +72,12 @@ function FaceCrop({ entry }: { entry: PersonGridEntry }) {
   );
 }
 
-export default function PeoplePage() {
+function PeopleContent() {
+  const toolbar = useToolbarState({
+    page: "people",
+    availableFilters: [],
+  });
+
   const [persons, setPersons] = useState<PersonGridEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [clustering, setClustering] = useState(false);
@@ -106,7 +104,7 @@ export default function PeoplePage() {
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   const runCluster = useCallback(async () => {
@@ -133,73 +131,105 @@ export default function PeoplePage() {
     }
   }, [load]);
 
+  const visible = useMemo(() => {
+    let list = persons;
+    if (toolbar.filters.q) {
+      const needle = toolbar.filters.q.toLowerCase();
+      list = list.filter((p) =>
+        (p.name ?? "unnamed").toLowerCase().includes(needle)
+      );
+    }
+    if (toolbar.filters.sort === "name") {
+      list = [...list].sort((a, b) =>
+        (a.name ?? "").localeCompare(b.name ?? "")
+      );
+    } else if (toolbar.filters.sort === "oldest") {
+      // "oldest" → fewest faces first (smallest cluster). Useful for
+      // finding outliers / clusters that may need merging.
+      list = [...list].sort((a, b) => a.instanceCount - b.instanceCount);
+    } else {
+      // Default newest = most-active = largest cluster.
+      list = [...list].sort((a, b) => b.instanceCount - a.instanceCount);
+    }
+    return list;
+  }, [persons, toolbar.filters.q, toolbar.filters.sort]);
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">People</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Faces clustered into identities. Run clustering to refresh after
-            new uploads.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={runCluster}
-          disabled={clustering}
-          className="inline-flex items-center gap-2 rounded border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-sidebar-accent disabled:opacity-60"
-        >
-          {clustering ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+    <div className="space-y-3">
+      <AssetPageToolbar
+        title="People"
+        count={loading ? undefined : visible.length}
+        toolbar={toolbar}
+        searchPlaceholder="Search people by name…"
+        sortOptions={["newest", "oldest", "name"]}
+        showDensity={false}
+        showSelect={false}
+        primaryAction={{
+          label: clustering ? "Clustering…" : "Run clustering",
+          icon: clustering ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
-            <Play className="h-4 w-4" />
-          )}
-          Run clustering
-        </button>
-      </div>
+            <Play className="h-3.5 w-3.5" />
+          ),
+          variant: "outline",
+          onClick: () => void runCluster(),
+        }}
+      />
 
-      {toast && (
-        <div className="rounded border border-border bg-muted/30 px-3 py-2 text-sm text-foreground">
-          {toast}
-        </div>
-      )}
+      <div className="px-4 space-y-4">
+        {toast && (
+          <div className="rounded border border-border bg-muted/30 px-3 py-2 text-sm text-foreground">
+            {toast}
+          </div>
+        )}
 
-      {loading && (
-        <p className="text-sm text-muted-foreground">Loading people…</p>
-      )}
+        {loading && (
+          <p className="text-sm text-muted-foreground">Loading people…</p>
+        )}
 
-      {error && !loading && (
-        <p className="text-sm text-red-500">{error}</p>
-      )}
+        {error && !loading && <p className="text-sm text-destructive">{error}</p>}
 
-      {!loading && !error && persons.length === 0 && (
-        <div className="rounded-lg border border-dashed border-border p-8 text-center">
-          <p className="text-sm text-muted-foreground">
-            No people yet. Upload photos with faces and click
-            &ldquo;Run clustering&rdquo; to build cluster cards.
-          </p>
-        </div>
-      )}
+        {!loading && !error && persons.length === 0 && (
+          <div className="rounded-lg border border-dashed border-border p-8 text-center">
+            <p className="text-sm text-muted-foreground">
+              No people yet. Upload photos with faces and click
+              &ldquo;Run clustering&rdquo; to build cluster cards.
+            </p>
+          </div>
+        )}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-        {persons.map((p) => (
-          <Link
-            key={p.id}
-            href={`/app/people/${p.id}`}
-            className="group block space-y-2"
-          >
-            <FaceCrop entry={p} />
-            <div className="px-1">
-              <div className="truncate text-sm font-medium text-foreground group-hover:underline">
-                {p.name ?? "Unnamed person"}
+        {!loading && !error && persons.length > 0 && visible.length === 0 && (
+          <p className="text-sm text-muted-foreground">No matches.</p>
+        )}
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+          {visible.map((p) => (
+            <Link
+              key={p.id}
+              href={`/app/people/${p.id}`}
+              className="group block space-y-2"
+            >
+              <FaceCrop entry={p} />
+              <div className="px-1">
+                <div className="truncate text-sm font-medium text-foreground group-hover:underline">
+                  {p.name ?? "Unnamed person"}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {p.instanceCount} {p.instanceCount === 1 ? "face" : "faces"}
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground">
-                {p.instanceCount} {p.instanceCount === 1 ? "face" : "faces"}
-              </div>
-            </div>
-          </Link>
-        ))}
+            </Link>
+          ))}
+        </div>
       </div>
     </div>
+  );
+}
+
+export default function PeoplePage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+      <PeopleContent />
+    </Suspense>
   );
 }
