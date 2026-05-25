@@ -75,6 +75,17 @@ groups:
           summary: "Fonto asset processing failure rate > 10%"
           description: "Worker is failing assets at an elevated rate. Likely a broken upstream (Plexo OOM, Ollama down)."
 
+      - alert: FontoRestoreDrillStale
+        expr: |
+          (time() - fonto_restore_drill_last_success_timestamp) > 86400 * 40
+        for: 1h
+        labels:
+          severity: warn
+          service: fonto
+        annotations:
+          summary: "Fonto restore drill has not succeeded in 40+ days"
+          description: "The monthly restore drill is either failing silently or not running. Backups are untested. Run /workspace/fonto/ops/backup/restore-drill.sh manually."
+
       - alert: FontoProcessingStalled
         expr: |
           sum(rate(fonto_asset_processing_duration_seconds_count[10m])) == 0

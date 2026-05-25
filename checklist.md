@@ -110,12 +110,12 @@ TaskCreate while in phased-plan flow.
 - [ ] Commit + push
 
 ## Phase 9c — Backups + restore drill
-- [ ] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
-- [ ] ops/backup/r2-sync.sh — rclone sync R2 → offsite
-- [ ] Cron schedule — nightly 0300 UTC
-- [ ] ops/backup/restore-drill.sh — spin up postgres-drill container, load, smoke, teardown
-- [ ] Drill cron schedule — monthly first Sunday 0500 UTC
-- [ ] Alertmanager — drill-failure alert
-- [ ] Manual run — drill passes once on demand
-- [ ] Manual run — drill passes once on schedule
-- [ ] Commit + push
+- [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
+- [x] ops/backup/r2-sync.sh — rclone sync R2 → offsite
+- [x] Cron schedule — nightly 0300 UTC (ops/backup/crontab.example)
+- [x] ops/backup/restore-drill.sh — spin up postgres-drill container, load, smoke, teardown
+- [x] Drill cron schedule — monthly first Sunday 0500 UTC
+- [x] Alertmanager rule — FontoRestoreDrillStale (>40 days since last drill success)
+- [ ] Manual run — drill passes once on demand — DEFERRED to operator (needs rclone + offsite configured)
+- [ ] Manual run — drill passes once on schedule — DEFERRED to operator
+- [x] Commit + push
