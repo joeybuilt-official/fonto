@@ -29,9 +29,26 @@ saved config — useful in CI.
 | `fonto ls [--mime] [--favorite] [--limit] [--json]` | List assets. |
 | `fonto search <query> [--json]` | Filename / description / OCR search. |
 | `fonto upload <file> [--path <virtual>] [--json]` | Multipart upload. |
+| `fonto download <id> [--out <path>] [--variant thumb\|preview\|original]` | Save an asset to disk. |
+| `fonto trash <id…>` / `fonto restore <id…>` | Toggle lifecycle on one or more assets. |
+| `fonto sc list [--json]` | Enumerate saved smart collections. |
+| `fonto sc run <id> [--limit] [--json]` | Execute a smart collection. |
+| `fonto sync <dir> [--remote-prefix <path>] [--state <path>] [--dry-run]` | One-way local → remote incremental upload. |
 
 `--json` on listing commands emits the raw API response so the CLI is
 pipeable into `jq`.
+
+### `fonto sync`
+
+Walks `<dir>` recursively and uploads new or edited files into the
+matching virtual folder on the remote (rooted at `--remote-prefix`,
+default `/`). State lives at `<dir>/.fonto-sync.json` so reruns are
+cheap. Honours hard ignores (`.git`, `node_modules`, `.DS_Store`,
+`Thumbs.db`) plus a `.fontoignore` file with one glob per line. Use
+`--dry-run` to preview.
+
+Direction is local → remote only. A `--pull` mode pulling remote
+changes down to disk is on the roadmap.
 
 ## Development
 
@@ -45,14 +62,14 @@ node dist/index.js whoami
 
 ## Roadmap
 
-Today's set covers read + upload. Follow-ups (each its own cmd file):
+v0.2 covers read, upload, download, trash/restore, smart-collection
+list/run, and one-way sync. Follow-ups:
 
-- `fonto download <id>` — pull an asset by id.
-- `fonto trash <id>` / `fonto restore <id>`.
-- `fonto smart-collection list` / `fonto smart-collection run <id>`.
+- `fonto sync --pull` — bidirectional, fetch remote changes since the
+  state file's last upload.
 - `fonto stacks suggestions` / `fonto stacks accept <ids…>`.
-- `fonto sync` — folder bidirectional sync, modelled on the upload-script
-  pattern (`pnpm import:s3` in the parent repo).
+- `fonto sc create` from a JSON DSL file.
+- `fonto folder mv / rm` mirroring the UX-2 web ops.
 
 Auth is intentionally PAT-only: the `/api/v1/tokens` endpoints that mint
 PATs are session-gated to keep PAT → PAT escalation impossible.

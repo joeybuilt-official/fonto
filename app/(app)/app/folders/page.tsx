@@ -37,6 +37,7 @@ import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
+import { FolderTree } from "../_components/folder-tree";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 import { cn } from "@/lib/utils";
 
@@ -419,7 +420,17 @@ function FoldersContent() {
     : "Folders";
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-[calc(100vh-3.5rem)]">
+      <FolderTree
+        currentPath={prefix}
+        onAssetDrop={(folderPath, assetId) =>
+          handleAssetDrop(
+            { name: folderPath.split("/").filter(Boolean).pop() ?? "", path: folderPath, assetCount: 0 },
+            assetId
+          )
+        }
+      />
+      <div className="flex-1 min-w-0 space-y-3">
       <AssetPageToolbar
         title={visibleTitle}
         count={loading ? undefined : (listing?.folders.length ?? 0) + assets.length}
@@ -505,6 +516,7 @@ function FoldersContent() {
           hasNext={lightboxIndex < assets.length - 1}
         />
       )}
+      </div>
     </div>
   );
 }

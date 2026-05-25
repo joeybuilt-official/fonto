@@ -12,13 +12,17 @@ import { whoami } from "./commands/whoami.js";
 import { ls } from "./commands/ls.js";
 import { search } from "./commands/search.js";
 import { upload } from "./commands/upload.js";
+import { download } from "./commands/download.js";
+import { trash, restore } from "./commands/trash.js";
+import { scList, scRun } from "./commands/smart-collection.js";
+import { sync } from "./commands/sync.js";
 
 const program = new Command();
 
 program
   .name("fonto")
   .description("Fonto CLI — terminal interface to your Fonto instance")
-  .version("0.1.0");
+  .version("0.2.0");
 
 program
   .command("login")
@@ -62,6 +66,56 @@ program
   .option("--json", "raw JSON response")
   .action(async (file: string, opts) => {
     await upload(file, opts);
+  });
+
+program
+  .command("download <id>")
+  .description("download an asset to disk")
+  .option("--out <path>", "destination file (default: server-side filename in cwd)")
+  .option("--variant <kind>", "thumb | preview | original (default original)")
+  .action(async (id: string, opts) => {
+    await download(id, opts);
+  });
+
+program
+  .command("trash <ids...>")
+  .description("move one or more assets to trash")
+  .action(async (ids: string[]) => {
+    await trash(ids);
+  });
+
+program
+  .command("restore <ids...>")
+  .description("restore one or more assets from trash")
+  .action(async (ids: string[]) => {
+    await restore(ids);
+  });
+
+const sc = program
+  .command("sc")
+  .description("smart-collection ops (list, run)");
+sc.command("list")
+  .description("list saved smart collections")
+  .option("--json", "raw JSON output")
+  .action(async (opts) => {
+    await scList(opts);
+  });
+sc.command("run <id>")
+  .description("execute a smart collection and print matched assets")
+  .option("--limit <n>", "cap row count")
+  .option("--json", "raw JSON output")
+  .action(async (id: string, opts) => {
+    await scRun(id, opts);
+  });
+
+program
+  .command("sync <dir>")
+  .description("incremental upload of <dir> tree (one-way local → remote)")
+  .option("--remote-prefix <path>", "virtual folder root on the remote (default /)")
+  .option("--state <path>", "state file (default <dir>/.fonto-sync.json)")
+  .option("--dry-run", "report what would upload without sending anything")
+  .action(async (dir: string, opts) => {
+    await sync(dir, opts);
   });
 
 program.parseAsync(process.argv).catch((err: Error) => {
