@@ -23,7 +23,9 @@
     "reprocess:stuck": "tsx scripts/reprocess-stuck-assets.ts",
     "reprocess:one": "tsx scripts/reprocess-one.ts",
     "backfill:classify-method": "tsx scripts/backfill-classify-method.ts",
-    "import:s3": "tsx scripts/import-from-s3.ts"
+    "import:s3": "tsx scripts/import-from-s3.ts",
+    "autoscaler:start": "tsx ops/autoscaler/index.ts",
+    "autoscaler:enqueue": "tsx ops/autoscaler/test-enqueue.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",

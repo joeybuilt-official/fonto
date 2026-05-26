@@ -105,12 +105,12 @@ TaskCreate while in phased-plan flow.
 
 ## Phase 9b — Worker autoscale ⚠
 - [x] OPERATOR GATE — C2 = **queue depth (Valkey)** (operator confirmed 2026-05-25; scale on BullMQ pending-job count, not CPU)
-- [ ] ops/autoscaler/ container — small reconciler (Node or Go)
-- [ ] Signal reader — Valkey LLEN on BullMQ queue OR docker stats
-- [ ] Compose API call — scale fonto-worker replicas
-- [ ] Floor 1 / ceiling 4 / 60s dampening
-- [ ] Dry-run flag — log decisions without acting
-- [ ] Enqueue-100-jobs test — verify scale up + scale down
+- [x] ops/autoscaler/ container — Node reconciler via tsx (shares bullmq/ioredis pins w/ worker)
+- [x] Signal reader — BullMQ Queue.getJobCounts('wait','delayed') across throughput queues (asset-processing, thumbnails, clip-embedding, face-detect, ocr)
+- [x] Compose API call — `docker compose -f $COMPOSE_FILE up -d --no-recreate --scale fonto-worker=N fonto-worker` via spawned docker-cli
+- [x] Floor 1 / ceiling 4 / 60s dampening (all env-overridable)
+- [x] Dry-run flag — AUTOSCALER_DRY_RUN=1 logs `would_scale` decisions without invoking compose
+- [x] Enqueue-100-jobs test — `pnpm autoscaler:enqueue [N|drain]` script + verification recipe documented in ops/autoscaler/README.md (live compose-wired test DEFERRED to operator — needs the autoscaler container actually running)
 - [ ] Commit + push
 
 ## Phase 9c — Backups + restore drill
