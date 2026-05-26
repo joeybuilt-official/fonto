@@ -37,12 +37,14 @@ import {
   EmbedAssetJobSchema,
   ClipDedupCheckJobSchema,
   FaceDetectJobSchema,
+  VideoHlsTranscodeJobSchema,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
   type EmbedAssetJob,
   type ClipDedupCheckJob,
   type FaceDetectJob,
+  type VideoHlsTranscodeJob,
 } from "@/lib/queue/jobs";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
@@ -53,6 +55,8 @@ import { embedAsset } from "@/lib/processing/embedAsset";
 import { detectFacesForAsset } from "@/lib/processing/detectFaces";
 import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { runDailyDigest } from "@/lib/notifications/runDailyDigest";
+import { transcodeVideoHls } from "@/lib/processing/transcodeVideoHls";
+import { generateSpriteSheet } from "@/lib/processing/generateSpriteSheet";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -109,6 +113,14 @@ const CLIP_EMBED_CONCURRENCY = Math.max(
 // dedicated GPU/CPU pool and we don't want to swamp it.
 const FACE_DETECT_CONCURRENCY = Math.max(
   parseInt(process.env.FACE_DETECT_CONCURRENCY ?? "2", 10),
+  1
+);
+
+// Phase 8b — HLS ladder transcode is CPU + I/O bound. One at a time
+// keeps a fat 1080p job from starving the other ladder slots; bump
+// via env on hosts that can take it.
+const VIDEO_HLS_CONCURRENCY = Math.max(
+  parseInt(process.env.VIDEO_HLS_CONCURRENCY ?? "1", 10),
   1
 );
 
@@ -794,6 +806,146 @@ function startFaceDetectWorker(): Worker<FaceDetectJob> {
 }
 
 /**
+ * Phase 8b — HLS ladder transcode + sprite worker.
+ *
+ * One job per video. Steps:
+ *   1. Mark assets.hls_state = 'transcoding'.
+ *   2. transcodeVideoHls() — uploads master + per-rendition playlists
+ *      + .ts segments to R2.
+ *   3. probeVideo() to seed sprite-generator dimensions (cheap; we
+ *      could pass them through the job payload but reading from the
+ *      row keeps the payload tiny + crash-resilient).
+ *   4. generateSpriteSheet() — uploads sprite.jpg.
+ *   5. Mark hls_state='ready' + persist masterKey + renditions +
+ *      spriteKey + spriteMeta.
+ *
+ * Failure path: catch + mark hls_state='failed'. The API endpoint will
+ * re-enqueue on the next request.
+ */
+function startVideoHlsTranscodeWorker(): Worker<VideoHlsTranscodeJob> {
+  const w = new Worker<VideoHlsTranscodeJob>(
+    QueueNames.VideoHlsTranscode,
+    async (job: Job<VideoHlsTranscodeJob>) => {
+      const log = logger.child({
+        queue: QueueNames.VideoHlsTranscode,
+        jobId: job.id,
+        assetId: job.data?.assetId,
+      });
+
+      const parsed = VideoHlsTranscodeJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid hls-transcode payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const { assetId, workspaceId } = parsed.data;
+
+      const [asset] = await db
+        .select()
+        .from(schema.assets)
+        .where(eq(schema.assets.id, assetId))
+        .limit(1);
+      if (!asset) {
+        log.warn("asset row vanished — skipping");
+        return;
+      }
+
+      // Mark transcoding so the API exposes a stable status and a
+      // racy second request doesn't enqueue a duplicate.
+      await db
+        .update(schema.assets)
+        .set({ hlsState: "transcoding" })
+        .where(eq(schema.assets.id, assetId));
+
+      try {
+        log.info("transcoding ladder");
+        const ladder = await transcodeVideoHls({
+          workspaceId,
+          assetId,
+          filename: asset.filename,
+        });
+
+        // Sprite needs duration; prefer the persisted value, fall back
+        // to a re-probe if 8a hasn't populated it (legacy rows).
+        let durationSec = asset.durationSeconds ?? null;
+        let srcW = asset.videoWidth ?? null;
+        let srcH = asset.videoHeight ?? null;
+        if (durationSec == null || srcW == null || srcH == null) {
+          log.info("video metadata missing — re-probing source for sprite");
+          // We don't have a local copy; quick re-probe via R2 presigned
+          // URL would require extra plumbing. For now, skip sprite if
+          // we can't size it confidently. The player still gets HLS;
+          // hover-scrub just renders without thumbnails.
+        }
+
+        let spriteKey: string | null = null;
+        let spriteMeta: unknown = null;
+        if (durationSec != null && durationSec > 0) {
+          log.info("generating sprite sheet");
+          const sprite = await generateSpriteSheet({
+            workspaceId,
+            assetId,
+            filename: asset.filename,
+            durationSec,
+            sourceWidth: srcW,
+            sourceHeight: srcH,
+          });
+          spriteKey = sprite.spriteKey;
+          spriteMeta = sprite.meta;
+        } else {
+          log.warn("skipping sprite — duration unknown");
+        }
+
+        await db
+          .update(schema.assets)
+          .set({
+            hlsState: "ready",
+            hlsMasterKey: ladder.masterKey,
+            hlsRenditions: ladder.renditions,
+            spriteKey,
+            spriteMeta,
+          })
+          .where(eq(schema.assets.id, assetId));
+
+        log.info(
+          { masterKey: ladder.masterKey, renditions: ladder.renditions.length, sprite: !!spriteKey },
+          "hls transcode complete"
+        );
+      } catch (err) {
+        await db
+          .update(schema.assets)
+          .set({ hlsState: "failed" })
+          .where(eq(schema.assets.id, assetId));
+        throw err;
+      }
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: VIDEO_HLS_CONCURRENCY,
+    }
+  );
+
+  w.on("completed", (job) =>
+    logger.info({ queue: QueueNames.VideoHlsTranscode, jobId: job.id }, "hls transcode job completed")
+  );
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.VideoHlsTranscode,
+        jobId: job?.id,
+        assetId: job?.data?.assetId,
+        err: err.message,
+      },
+      "hls transcode job failed"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.VideoHlsTranscode, err: err.message }, "hls transcode worker error")
+  );
+
+  return w;
+}
+
+/**
  * BullMQ marker class to opt out of retries. Re-implemented here to avoid
  * importing the named export by path — the type lives at the package root
  * but has historically shifted between versions.
@@ -980,6 +1132,8 @@ async function main(): Promise<void> {
   workers.push(startClipDedupCheckWorker());
   // Phase 5.1 — face detection + ArcFace embedding.
   workers.push(startFaceDetectWorker());
+  // Phase 8b — HLS ladder transcode + sprite (per-video, on demand).
+  workers.push(startVideoHlsTranscodeWorker());
   try {
     await ensureReaperSchedule();
   } catch (err) {

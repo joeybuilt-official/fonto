@@ -100,6 +100,18 @@ export const FaceDetectJobSchema = z.object({
 });
 export type FaceDetectJob = z.infer<typeof FaceDetectJobSchema>;
 
+// Phase 8b — on-demand HLS ladder transcode (+ sprite). Triggered by
+// the first /api/v1/assets/:id/hls request when hls_state='idle'.
+// Worker downloads source from R2, runs the ffmpeg ladder, uploads
+// renditions + master playlist + sprite, and flips hls_state to
+// 'ready'. Single-flight via the row's hls_state column — the API
+// handler only enqueues when state is 'idle' (or 'failed' on retry).
+export const VideoHlsTranscodeJobSchema = z.object({
+  assetId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+});
+export type VideoHlsTranscodeJob = z.infer<typeof VideoHlsTranscodeJobSchema>;
+
 // Phase 7a — daily activity digest. Iterates every (workspaceMember,
 // workspace) pair, computes the events since their last digest cursor
 // (skipping muted scopes), and dispatches one email per member with
@@ -136,6 +148,8 @@ export const JobNames = {
   FaceDetect: "face-detect",
   // Phase 7a — daily activity digest dispatch.
   DailyDigest: "daily-digest",
+  // Phase 8b — HLS ladder transcode + sprite generation for one video.
+  VideoHlsTranscode: "video-hls-transcode",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

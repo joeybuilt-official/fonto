@@ -49,3 +49,33 @@ export function assetDerivativeKey(
 ): string {
   return `fonto/${workspaceId}/${assetId}/derivatives/${variant}.webp`;
 }
+
+/**
+ * Phase 8b — HLS storage layout.
+ *
+ *   fonto/{ws}/{asset}/hls/master.m3u8
+ *   fonto/{ws}/{asset}/hls/{rendition}.m3u8
+ *   fonto/{ws}/{asset}/hls/{rendition}_NNN.ts          (segments)
+ *   fonto/{ws}/{asset}/hls/sprite.jpg                  (hover-scrub)
+ *
+ * Keep stable — stored on `assets.hls_master_key` + `sprite_key`.
+ */
+export function hlsMasterKey(workspaceId: string, assetId: string): string {
+  return `fonto/${workspaceId}/${assetId}/hls/master.m3u8`;
+}
+
+export function hlsRenditionKey(
+  workspaceId: string,
+  assetId: string,
+  rendition: string
+): string {
+  return `fonto/${workspaceId}/${assetId}/hls/${rendition}.m3u8`;
+}
+
+export function hlsSegmentKeyPrefix(workspaceId: string, assetId: string): string {
+  return `fonto/${workspaceId}/${assetId}/hls/`;
+}
+
+export function hlsSpriteKey(workspaceId: string, assetId: string): string {
+  return `fonto/${workspaceId}/${assetId}/hls/sprite.jpg`;
+}

@@ -4,11 +4,56 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectsV2Command,
+} from "@aws-sdk/client-s3";
 import { db, schema } from "@/lib/db";
 import { eq, and, lt, isNotNull } from "drizzle-orm";
-import { getS3Client, assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
+import {
+  getS3Client,
+  assetStorageKey,
+  assetStorageKeyLegacy,
+  hlsSegmentKeyPrefix,
+} from "@/lib/r2";
 import { plexoPublishEvent } from "@/lib/plexo";
+
+/**
+ * Phase 8b — delete every R2 object under fonto/{ws}/{asset}/hls/.
+ * Includes master + per-rendition playlists + .ts segments + sprite.
+ * Safe to call when no HLS exists (ListObjectsV2 returns empty).
+ */
+async function purgeHlsObjects(workspaceId: string, assetId: string): Promise<number> {
+  const bucket = process.env.R2_BUCKET!;
+  const s3 = getS3Client();
+  const prefix = hlsSegmentKeyPrefix(workspaceId, assetId);
+  let totalDeleted = 0;
+  let continuationToken: string | undefined;
+  do {
+    const list = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      })
+    );
+    const keys = (list.Contents ?? [])
+      .map((c) => c.Key)
+      .filter((k): k is string => !!k);
+    if (keys.length > 0) {
+      await s3.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: keys.map((Key) => ({ Key })) },
+        })
+      );
+      totalDeleted += keys.length;
+    }
+    continuationToken = list.IsTruncated ? list.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return totalDeleted;
+}
 
 const GRACE_DAYS = 30;
 
@@ -44,6 +89,17 @@ export async function POST(request: NextRequest) {
         await getS3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
       } catch {
         await getS3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: legacyKey }));
+      }
+
+      // Phase 8b — wipe any HLS ladder + sprite under fonto/{ws}/{id}/hls/.
+      // Best-effort: a failure here doesn't block the purge; the keys
+      // become R2 orphans that the next nightly sweep (when one
+      // exists) can mop up.
+      try {
+        const n = await purgeHlsObjects(asset.workspaceId, asset.id);
+        if (n > 0) console.log(`[fonto] purge-trashed: deleted ${n} HLS keys for ${asset.id}`);
+      } catch (err) {
+        console.warn(`[fonto] purge-trashed: HLS purge failed for ${asset.id}:`, err);
       }
 
       await db

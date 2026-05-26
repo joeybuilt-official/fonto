@@ -12,6 +12,7 @@ import { ConfirmButton } from "@/components/confirm-button";
 import { ShareDialog } from "./share-dialog";
 import { CommentsPanel } from "./comments-panel";
 import { AssetWorkspaceShare } from "./asset-workspace-share";
+import { VideoPlayer } from "./video-player";
 import { useSession } from "@/lib/auth/client";
 
 function formatBytes(bytes: number): string {
@@ -751,7 +752,16 @@ export function PhotoLightbox({
               <ChevronRight className="h-5 w-5" />
             </button>
           )}
-          {urlLoading ? (
+          {asset.mimeType.startsWith("video/") ? (
+            // Phase 8b — HLS playback. The preview URL doubles as a
+            // poster so the user sees the 10%-mark thumbnail (from
+            // 8a) while the transcode completes on first play.
+            <VideoPlayer
+              assetId={displayedAssetId}
+              durationSec={asset.durationSeconds ?? null}
+              posterUrl={url}
+            />
+          ) : urlLoading ? (
             <Loader2 className="h-10 w-10 animate-spin text-white/40" />
           ) : url ? (
             // eslint-disable-next-line @next/next/no-img-element

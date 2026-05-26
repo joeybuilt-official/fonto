@@ -218,6 +218,31 @@ export const assets = fontoSchema.table(
     videoCodec: text("video_codec"),
     videoWidth: integer("video_width"),
     videoHeight: integer("video_height"),
+    // Phase 8b — HLS ladder transcode state.
+    //   'idle'         — no transcode has been requested yet.
+    //   'transcoding'  — job is in flight; the player UI shows a
+    //                    progress spinner.
+    //   'ready'        — all renditions in R2, master.m3u8 written;
+    //                    `hlsMasterKey` + `hlsRenditions` are non-null.
+    //   'failed'       — last attempt threw; safe to re-enqueue
+    //                    (transcoder is idempotent + overwrites).
+    // CHECK constraint enforced in migration 0029.
+    hlsState: text("hls_state").notNull().default("idle"),
+    hlsMasterKey: text("hls_master_key"),
+    // Array of { name, key, width, height, bitrateKbps, codec }. One
+    // element per rendition in the ladder (typically 3: 360p/720p/
+    // 1080p — see lib/processing/transcodeVideoHls.ts for the canonical
+    // ladder definition). Future-proof for adaptive additions w/o a
+    // schema change.
+    hlsRenditions: jsonb("hls_renditions"),
+    // 10s-interval thumbnail sprite for hover-scrub preview on the
+    // video scrubber. Generated alongside the HLS transcode so the
+    // player has it on first ready.
+    spriteKey: text("sprite_key"),
+    // { interval, columns, rows, tileWidth, tileHeight, totalFrames }.
+    // The hover-scrub UI multiplies hover % * totalFrames to pick a
+    // tile, then derives row/col from columns to set background-position.
+    spriteMeta: jsonb("sprite_meta"),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),

@@ -16,6 +16,7 @@ import type {
   WebhookDeliveryJob,
   EmbedAssetJob,
   FaceDetectJob,
+  VideoHlsTranscodeJob,
 } from "./jobs";
 
 export const QueueNames = {
@@ -44,6 +45,9 @@ export const QueueNames = {
   // Phase 5.1 — face detection + ArcFace embedding. Separate queue so a
   // sidecar outage on /v1/faces/detect doesn't backlog the CLIP queue.
   FaceDetect: "face-detect",
+  // Phase 8b — HLS ladder transcode. Heavy CPU + I/O job; isolated so
+  // a flood of new-video uploads doesn't drown asset-processing.
+  VideoHlsTranscode: "video-hls-transcode",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -212,6 +216,34 @@ export async function addFaceDetectJob(payload: FaceDetectJob): Promise<void> {
   await faceDetectQueue().add("face-detect", payload);
 }
 
+/**
+ * Phase 8b — HLS ladder transcode queue. CPU-bound; concurrency low by
+ * default (one transcode at a time). Single attempt — failures flip the
+ * row's hls_state to 'failed' and the user can retry via re-issuing the
+ * /hls endpoint.
+ */
+export function videoHlsTranscodeQueue(): Queue<VideoHlsTranscodeJob> {
+  const name = QueueNames.VideoHlsTranscode;
+  const existing = cache.get(name);
+  if (existing) return existing as Queue<VideoHlsTranscodeJob>;
+  const q = new Queue<VideoHlsTranscodeJob>(name, {
+    connection: getRedisConnection(),
+    defaultJobOptions: {
+      attempts: 1,
+      removeOnComplete: 500,
+      removeOnFail: 200,
+    },
+  });
+  cache.set(name, q);
+  return q;
+}
+
+export async function addVideoHlsTranscodeJob(payload: VideoHlsTranscodeJob): Promise<void> {
+  // Job name = JobNames.VideoHlsTranscode (string literal kept in sync
+  // via the const map in jobs.ts).
+  await videoHlsTranscodeQueue().add("video-hls-transcode", payload);
+}
+
 export function maintenanceQueue(): Queue<Record<string, never>> {
   const name = QueueNames.Maintenance;
   const existing = cache.get(name);
@@ -236,6 +268,7 @@ export function allQueues(): Queue[] {
   clipEmbeddingQueue();
   clipDedupCheckQueue();
   faceDetectQueue();
+  videoHlsTranscodeQueue();
   return Array.from(cache.values());
 }
 

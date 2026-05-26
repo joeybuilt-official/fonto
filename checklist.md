@@ -81,14 +81,14 @@ TaskCreate while in phased-plan flow.
 
 ## Phase 8b — HLS transcode + player UI ⚠
 - [x] OPERATOR GATE — C7 = **ladder day-one** (operator confirmed 2026-05-25; 360p/720p/1080p H.264 renditions per video, hls.js picks based on bandwidth — overrides plan.md's single-bitrate scope)
-- [ ] lib/processing/transcodeVideoHls.ts — single-bitrate H.264 HLS
-- [ ] On-demand trigger — first play request enqueues transcode job
-- [ ] R2 storage layout — `<assetId>/hls/playlist.m3u8` + segments
-- [ ] GET /api/v1/assets/:id/hls — returns presigned playlist URL
-- [ ] Sprite generator — 10s-interval thumbnail strip for hover-scrub
-- [ ] Web UI — hls.js player in asset detail
-- [ ] Web UI — hover-scrub preview via sprite
-- [ ] Cleanup — orphan HLS purger (when asset trashed)
+- [x] lib/processing/transcodeVideoHls.ts — 3-rendition H.264 HLS ladder (360p/720p/1080p, single ffmpeg invocation w/ split filter); master.m3u8 hand-assembled
+- [x] On-demand trigger — GET /api/v1/assets/:id/hls flips hls_state=transcoding + enqueues VideoHlsTranscode job; idempotent
+- [x] R2 storage layout — fonto/{ws}/{asset}/hls/{master.m3u8, 360p.m3u8, 360p_NNN.ts, 720p…, 1080p…, sprite.jpg}
+- [x] GET /api/v1/assets/:id/hls — returns same-origin playback URL through auth-gated proxy (not direct R2 presigned, so segment access stays gated)
+- [x] Sprite generator — 10s-interval (capped at 200 tiles), sharp-composited grid; sprite_meta { interval, columns, rows, tileWidth, tileHeight, totalFrames } persisted
+- [x] Web UI — VideoPlayer w/ hls.js (native HLS fallback for Safari/iOS); auto-attaches in PhotoLightbox when mimeType starts with video/
+- [x] Web UI — hover-scrub sprite preview tile above the scrubber band
+- [x] Cleanup — purge-trashed cron extended to enumerate + delete every key under fonto/{ws}/{id}/hls/ via ListObjectsV2 + DeleteObjects
 - [ ] Commit + push
 
 ## Phase 9a — Dashboards + alerts as code
