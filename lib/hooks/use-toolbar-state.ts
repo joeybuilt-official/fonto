@@ -31,6 +31,8 @@ export type ViewMode = "grid" | "list" | "map" | "timeline";
 
 export type Density = "comfortable" | "compact" | "dense";
 
+export type Lifecycle = "active" | "archived" | "trashed";
+
 export interface FilterState {
   q: string;
   sort: SortKey;
@@ -43,6 +45,14 @@ export interface FilterState {
   ratingMin: number | null;     // 1..5
   personIds: string[];
   tagIds: string[];
+  // Phase 1 (UX consolidation) — replaces the dedicated Trash route.
+  // 'active' (default), 'archived', 'trashed' map 1:1 to assets.lifecycle_state.
+  lifecycle: Lifecycle;
+  // Phase 1 (UX consolidation) — replaces the dedicated Folders route.
+  // null = no folder filter; "" / "/" = root level; otherwise an exact
+  // path. Pair with `directoryPathPrefix` for recursive scope.
+  directoryPath: string | null;
+  directoryPathPrefix: string | null;
 }
 
 export interface ViewState {
@@ -62,6 +72,9 @@ const DEFAULT_FILTERS: FilterState = {
   ratingMin: null,
   personIds: [],
   tagIds: [],
+  lifecycle: "active",
+  directoryPath: null,
+  directoryPathPrefix: null,
 };
 
 const DEFAULT_VIEW: ViewState = {
@@ -79,6 +92,9 @@ function readFilters(sp: URLSearchParams): FilterState {
   };
   const ratingRaw = sp.get("rating");
   const ratingParsed = ratingRaw == null ? NaN : Number.parseInt(ratingRaw, 10);
+  const lcRaw = sp.get("lc");
+  const lifecycle: Lifecycle =
+    lcRaw === "archived" || lcRaw === "trashed" ? lcRaw : "active";
   return {
     q: sp.get("q") ?? "",
     sort: (sp.get("sort") as SortKey) || "newest",
@@ -94,6 +110,9 @@ function readFilters(sp: URLSearchParams): FilterState {
         : null,
     personIds: list("person"),
     tagIds: list("tag"),
+    lifecycle,
+    directoryPath: sp.get("path"),
+    directoryPathPrefix: sp.get("pathPrefix"),
   };
 }
 
@@ -114,6 +133,9 @@ function writeFilters(base: URLSearchParams, f: FilterState): URLSearchParams {
   setOrDel("rating", f.ratingMin != null ? String(f.ratingMin) : null);
   setOrDel("person", f.personIds.length ? f.personIds.join(",") : null);
   setOrDel("tag", f.tagIds.length ? f.tagIds.join(",") : null);
+  setOrDel("lc", f.lifecycle === "active" ? null : f.lifecycle);
+  setOrDel("path", f.directoryPath);
+  setOrDel("pathPrefix", f.directoryPathPrefix);
   return sp;
 }
 
@@ -340,7 +362,7 @@ export function useToolbarState(
     const sp = new URLSearchParams(searchParams.toString());
     // Drop every key the toolbar manages; preserve unrelated params (e.g. a
     // page's own ?folder= parameter).
-    for (const k of ["q", "sort", "type", "mime", "from", "to", "color", "fav", "rating", "person", "tag"]) {
+    for (const k of ["q", "sort", "type", "mime", "from", "to", "color", "fav", "rating", "person", "tag", "lc", "path", "pathPrefix"]) {
       sp.delete(k);
     }
     const qs = sp.toString();
