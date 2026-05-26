@@ -111,7 +111,7 @@ TaskCreate while in phased-plan flow.
 - [x] Floor 1 / ceiling 4 / 60s dampening (all env-overridable)
 - [x] Dry-run flag — AUTOSCALER_DRY_RUN=1 logs `would_scale` decisions without invoking compose
 - [x] Enqueue-100-jobs test — `pnpm autoscaler:enqueue [N|drain]` script + verification recipe documented in ops/autoscaler/README.md (live compose-wired test DEFERRED to operator — needs the autoscaler container actually running)
-- [ ] Commit + push
+- [x] Commit + push (c988536)
 
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
