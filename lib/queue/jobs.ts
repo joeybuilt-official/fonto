@@ -100,6 +100,14 @@ export const FaceDetectJobSchema = z.object({
 });
 export type FaceDetectJob = z.infer<typeof FaceDetectJobSchema>;
 
+// Phase 7a — daily activity digest. Iterates every (workspaceMember,
+// workspace) pair, computes the events since their last digest cursor
+// (skipping muted scopes), and dispatches one email per member with
+// content. Empty payload — the worker reads the world from Postgres on
+// each tick.
+export const DailyDigestJobSchema = z.object({}).strict();
+export type DailyDigestJob = z.infer<typeof DailyDigestJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -126,6 +134,8 @@ export const JobNames = {
   // Enqueued after thumbnails complete; the worker writes
   // `fonto.face_instances` rows.
   FaceDetect: "face-detect",
+  // Phase 7a — daily activity digest dispatch.
+  DailyDigest: "daily-digest",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

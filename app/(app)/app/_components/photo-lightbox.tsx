@@ -5,11 +5,13 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
-  Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star, Layers
+  Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star, Layers, MessageCircle
 } from "lucide-react";
 import type { Asset } from "./photo-card";
 import { ConfirmButton } from "@/components/confirm-button";
 import { ShareDialog } from "./share-dialog";
+import { CommentsPanel } from "./comments-panel";
+import { useSession } from "@/lib/auth/client";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -329,9 +331,17 @@ export function PhotoLightbox({
   onTrash,
   onAssetUpdate,
 }: PhotoLightboxProps) {
+  const session = useSession();
+  // Better Auth's hook shape: { data: { user: { id, ... } } | null, ... }
+  const currentUserId =
+    (session.data as { user?: { id?: string } } | null | undefined)?.user?.id ?? null;
   const [url, setUrl] = useState<string | null>(null);
   const [urlLoading, setUrlLoading] = useState(true);
   const [showPanel, setShowPanel] = useState(false);
+  // Phase 7a — comments side-drawer toggle. Coexists with the info panel
+  // so both can be open simultaneously on wide viewports; keyboard 'c'
+  // shortcut wired below for parity with 'i' (info).
+  const [showComments, setShowComments] = useState(false);
   const [tags, setTags] = useState<TagItem[]>([]);
   const [allTags, setAllTags] = useState<TagItem[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -508,6 +518,10 @@ export function PhotoLightbox({
       }
       if (e.key === "i") {
         setShowPanel((v) => !v);
+        return;
+      }
+      if (e.key === "c") {
+        setShowComments((v) => !v);
         return;
       }
       // Phase 3.4 — F toggles favorite, 0..5 sets rating.
@@ -691,6 +705,15 @@ export function PhotoLightbox({
         </div>
 
         <button
+          onClick={() => setShowComments((v) => !v)}
+          className={`rounded-full p-1.5 transition-colors shrink-0 ${
+            showComments ? "text-white bg-white/15" : "text-white/70 hover:text-white hover:bg-white/10"
+          }`}
+          title="Toggle comments (c)"
+        >
+          <MessageCircle className="h-5 w-5" />
+        </button>
+        <button
           onClick={() => setShowPanel((v) => !v)}
           className={`rounded-full p-1.5 transition-colors shrink-0 ${
             showPanel ? "text-white bg-white/15" : "text-white/70 hover:text-white hover:bg-white/10"
@@ -793,6 +816,13 @@ export function PhotoLightbox({
             shareState={{ url: shareUrl, copied: shareCopied, loading: shareLoading }}
             onRevokeShare={handleRevokeShare}
             onOpenShareDialog={() => setShareDialogOpen(true)}
+          />
+        )}
+        {showComments && (
+          <CommentsPanel
+            assetId={asset.id}
+            currentUserId={currentUserId}
+            canModerate={false}
           />
         )}
       </div>

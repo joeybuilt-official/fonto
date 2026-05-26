@@ -52,6 +52,7 @@ import { generateThumbnails } from "@/lib/processing/generateThumbnails";
 import { embedAsset } from "@/lib/processing/embedAsset";
 import { detectFacesForAsset } from "@/lib/processing/detectFaces";
 import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
+import { runDailyDigest } from "@/lib/notifications/runDailyDigest";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -137,6 +138,14 @@ const REAPER_INTERVAL_MS = Math.max(
 // so integration tests can dial it down to seconds.
 const AUDIT_PRUNE_INTERVAL_MS = Math.max(
   parseInt(process.env.AUDIT_PRUNE_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
+  1000
+);
+
+// Phase 7a — daily activity digest dispatch. Default once per day. Override
+// via DIGEST_INTERVAL_MS for local "tick every 30s and watch the logs"
+// development.
+const DIGEST_INTERVAL_MS = Math.max(
+  parseInt(process.env.DIGEST_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
   1000
 );
 
@@ -832,6 +841,13 @@ function startMaintenanceWorker(): Worker {
         const result = await pruneAuditLog();
         return result;
       }
+      if (job.name === JobNames.DailyDigest) {
+        // Phase 7a — daily activity digest. Iterates (member, workspace)
+        // pairs; emits one stub email per member-with-content.
+        const result = await runDailyDigest();
+        log.info(result, "daily digest tick complete");
+        return result;
+      }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");
       return null;
     },
@@ -890,6 +906,23 @@ async function ensureAuditPruneSchedule(): Promise<void> {
   logger.info(
     { intervalMs: AUDIT_PRUNE_INTERVAL_MS, jobName: JobNames.PruneAuditLog },
     "audit prune schedule registered"
+  );
+}
+
+/**
+ * Phase 7a — register the daily activity-digest dispatcher on the
+ * maintenance queue. Same idempotent `upsertJobScheduler` pattern; safe
+ * to re-run on boot.
+ */
+async function ensureDailyDigestSchedule(): Promise<void> {
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.DailyDigest,
+    { every: DIGEST_INTERVAL_MS },
+    { name: JobNames.DailyDigest }
+  );
+  logger.info(
+    { intervalMs: DIGEST_INTERVAL_MS, jobName: JobNames.DailyDigest },
+    "daily digest schedule registered"
   );
 }
 
@@ -961,6 +994,14 @@ async function main(): Promise<void> {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
       "failed to register audit prune schedule — retention disabled until next boot"
+    );
+  }
+  try {
+    await ensureDailyDigestSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register daily digest schedule — digests disabled until next boot"
     );
   }
 

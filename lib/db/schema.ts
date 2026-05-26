@@ -920,3 +920,150 @@ export const workspaceInvitations = fontoSchema.table(
     index("workspace_invitations_email_idx").on(table.email),
   ]
 );
+
+// Phase 7a — asset comments + threading.
+//
+// One row per posted comment. `parent_id` is a self-FK (soft) — NULL for a
+// top-level comment, otherwise points at the parent. We allow arbitrary
+// depth at the schema level; the UI flattens replies to a single nested
+// level (Immich parity) but a future "show full thread" toggle stays
+// schema-compatible.
+//
+// Soft-delete via `deleted_at`: a deleted comment keeps its row so child
+// replies don't orphan. The UI renders deleted bodies as "[deleted]";
+// the API zeroes the body string on read.
+//
+// Authorship is by Better Auth `user.id` (text, cross-schema soft FK —
+// matches the audit_log + workspace_memberships convention).
+export const comments = fontoSchema.table(
+  "comments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    assetId: uuid("asset_id").notNull(),
+    userId: text("user_id").notNull(),
+    body: text("body").notNull(),
+    parentId: uuid("parent_id"),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // Hot path: GET /api/v1/assets/:id/comments — fetch the full thread
+    // oldest-first so the UI can build the parent→reply tree in one pass.
+    index("comments_asset_created_idx").on(table.assetId, table.createdAt),
+    // Workspace-scoped digest aggregation: "all comments in workspace X
+    // since timestamp T".
+    index("comments_workspace_created_idx").on(table.workspaceId, table.createdAt),
+    // Threading lookup: "every reply to comment X".
+    index("comments_parent_idx").on(table.parentId),
+  ]
+);
+
+// Phase 7a — workspace activity feed.
+//
+// The union of "things worth telling workspace members about" — comment
+// posts, asset uploads, member joins, future share events. Surfaces in
+// /app/activity (cursor-paginated, newest-first) and feeds the daily
+// digest worker.
+//
+// `kind` is open-vocab (no CHECK constraint) so new event types land
+// without a migration. Current emitters:
+//   - 'comment.posted'  — POST /api/v1/assets/:id/comments
+//   - 'comment.deleted' — DELETE .../comments/:commentId
+//   - 'asset.uploaded'  — createAssetRow (Phase 7a hook)
+// Future kinds (member.joined, share.granted) land the same way.
+//
+// `payload` carries event-specific detail (comment body excerpt, asset
+// filename, etc.). Schema is per-kind by convention; the digest renderer
+// switches on `kind` to format each entry.
+export const activityEvents = fontoSchema.table(
+  "activity_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // Better Auth user.id of the actor. NULL = system-generated event.
+    actorUserId: text("actor_user_id"),
+    kind: text("kind").notNull(),
+    targetType: text("target_type"),
+    // Soft FK to whatever `target_type` names (asset, comment, member…).
+    // We keep this as uuid since every current target has a uuid id; if a
+    // future target uses a text id, switch to text + a `target_text_id`
+    // sibling column rather than coerce.
+    targetId: uuid("target_id"),
+    payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // Hot path: /app/activity — paginate workspace events newest-first.
+    index("activity_events_workspace_created_idx").on(
+      table.workspaceId,
+      sql`${table.createdAt} desc`
+    ),
+    // Digest job — "events newer than my last digest cursor".
+    index("activity_events_created_idx").on(table.createdAt),
+  ]
+);
+
+// Phase 7a — per-user notification mutes.
+//
+// Granular opt-OUT signal for the daily digest (and future realtime
+// channels). Per ADR 0003 the default is digest-on; absence of a row
+// here means "follow workspace default".
+//
+//   scope_type = 'asset'     — mute notifications for activity on a
+//                              specific asset (the "per-share mute" the
+//                              7a checklist calls out).
+//   scope_type = 'workspace' — mute the entire workspace's digest for
+//                              this user. `scope_id` MUST equal
+//                              `workspace_id` (enforced by CHECK in 0027
+//                              so the row stays interpretable).
+//
+// CHECK on scope_type lives in the migration.
+export const notificationMutes = fontoSchema.table(
+  "notification_mutes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    scopeType: text("scope_type").notNull(),
+    scopeId: uuid("scope_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("notification_mutes_user_scope_idx").on(
+      table.userId,
+      table.workspaceId,
+      table.scopeType,
+      table.scopeId
+    ),
+    index("notification_mutes_workspace_idx").on(table.workspaceId),
+  ]
+);
+
+// Phase 7a — digest cursor.
+//
+// One row per (user, workspace) once the user has been issued at least
+// one digest. Records the `created_at` of the newest activity_event the
+// last digest covered. On the next tick, the worker pulls events with
+// `created_at > cursor` and (if any are unmuted + visible) sends an
+// email + advances the cursor.
+//
+// Absence of a row means "never digested" — the worker treats this as
+// "send the past 24h then write a cursor", so a brand-new member doesn't
+// receive a backfill of every event since workspace creation.
+export const digestCursors = fontoSchema.table(
+  "digest_cursors",
+  {
+    workspaceId: uuid("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    lastEventAt: timestamp("last_event_at", { withTimezone: true }).notNull(),
+    lastSentAt: timestamp("last_sent_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("digest_cursors_user_workspace_idx").on(
+      table.userId,
+      table.workspaceId
+    ),
+  ]
+);

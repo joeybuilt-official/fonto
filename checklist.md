@@ -40,18 +40,18 @@ TaskCreate while in phased-plan flow.
 
 ## Phase 7a — Comments + activity feed
 - [x] OPERATOR GATE — C4 = **daily digest** (operator confirmed 2026-05-25, ADR 0003 default stands)
-- [ ] Schema: `comments` table (assetId, userId, body, parentId nullable, createdAt)
-- [ ] Schema: `activity_events` table (workspaceId, kind, payload, createdAt)
-- [ ] Hand-written migration under drizzle/migrations/
-- [ ] POST /api/v1/assets/:id/comments
-- [ ] GET /api/v1/assets/:id/comments (threaded)
-- [ ] DELETE /api/v1/assets/:id/comments/:commentId (own or workspace-editor)
-- [ ] GET /api/v1/workspace/activity (cursor-paginated)
-- [ ] Web UI — comments drawer in asset detail
-- [ ] Web UI — /app/activity page
-- [ ] Per-share mute setting
-- [ ] Daily-digest worker job (BullMQ scheduled)
-- [ ] Digest email template
+- [x] Schema: `comments` table (assetId, userId, body, parentId nullable, createdAt)
+- [x] Schema: `activity_events` table (workspaceId, kind, payload, createdAt)
+- [x] Hand-written migration under drizzle/migrations/ (0027_comments_activity.sql)
+- [x] POST /api/v1/assets/:id/comments
+- [x] GET /api/v1/assets/:id/comments (threaded)
+- [x] DELETE /api/v1/assets/:id/comments/:commentId (own or workspace-editor)
+- [x] GET /api/v1/workspace/activity (cursor-paginated)
+- [x] Web UI — comments drawer in asset detail (photo-lightbox 'c' shortcut)
+- [x] Web UI — /app/activity page
+- [x] Per-share mute setting (notification_mutes table + /api/v1/notifications/mutes routes)
+- [x] Daily-digest worker job (BullMQ scheduled, maintenance queue, DIGEST_INTERVAL_MS default 24h)
+- [x] Digest email template (stub matching invitations/email.ts pattern; transport deferred to Phase 7.3)
 - [ ] Commit + push
 
 ## Phase 7b — Cross-workspace sharing + new roles ⚠
