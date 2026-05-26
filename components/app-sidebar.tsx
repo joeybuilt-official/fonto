@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Users, Map, Layers, Home, Inbox } from "lucide-react";
+import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Users, Map, Layers, Home, Inbox, Activity, Share2 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import { useRouter } from "next/navigation";
@@ -35,6 +35,10 @@ const navItems = [
   // Smart Collections since both are derived/grouping surfaces.
   { href: "/app/stacks", label: "Stacks", icon: Layers },
   { href: "/app/search", label: "Search", icon: Search },
+  // Phase 7a — workspace activity feed (comments + uploads + future events).
+  { href: "/app/activity", label: "Activity", icon: Activity },
+  // Phase 7b — assets shared INTO this workspace from other workspaces.
+  { href: "/app/shared", label: "Shared with me", icon: Share2 },
   { href: "/app/trash", label: "Trash", icon: Trash2 },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
