@@ -52,7 +52,7 @@ TaskCreate while in phased-plan flow.
 - [x] Per-share mute setting (notification_mutes table + /api/v1/notifications/mutes routes)
 - [x] Daily-digest worker job (BullMQ scheduled, maintenance queue, DIGEST_INTERVAL_MS default 24h)
 - [x] Digest email template (stub matching invitations/email.ts pattern; transport deferred to Phase 7.3)
-- [ ] Commit + push
+- [x] Commit + push (b077f29)
 
 ## Phase 7b — Cross-workspace sharing + new roles ⚠
 - [x] OPERATOR GATE — C5 = **reference** (operator confirmed 2026-05-25; shared rows point at source workspace's R2 object, no duplication)
