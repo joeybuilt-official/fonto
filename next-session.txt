@@ -1,1 +1,23 @@
-Resume Fonto parity. Read /workspace/fonto/plan.md + /workspace/fonto/checklist.md. All remaining phases (6.2c, 7a, 7b, 8b, 9b) blocked on operator decisions enumerated in plan.md "Operator-gated conflicts" + ADR 0002 cert provisioning. Next: collect the 6 gate answers (C1, C2, C4, C5, C6, C7) + cert upload, then resume w/ whichever track unblocks first.
+Fonto parity status as of 2026-05-25:
+
+SHIPPED THIS SESSION (4 phases):
+- 7a (b077f29): comments + activity feed + daily-digest worker + stub email
+- 7b (f63c0b2): extended role ladder (commenter/contributor) + cross-workspace shares (reference model) + /app/shared page
+- 9b (c988536): worker autoscaler container w/ queue-depth signal + DRY_RUN
+- 8b (e8b70c2): HLS ladder (360p/720p/1080p) + hls.js player + hover-scrub sprite + orphan purger
+
+ONE-WAY-DOOR ACTION ON OPERATOR:
+- Android keystore generated on the host at /data/_secrets/fonto-keystore/
+  - scp hive:/data/_secrets/fonto-keystore/* ~/Downloads/
+  - Upload .jks + STORE_PASSWORD (from creds.txt) to Codemagic
+  - Tell Claude "delete the keystore" → wipes the NAS copy
+- Once uploaded + verified, Phase 6.2c-Android can run (codemagic.yaml + widget/integration tests). iOS half of 6.2c stays deferred (Android-only operator).
+
+OPERATOR-DEFERRED OPS WIRING (not blocking new code):
+- 9a: alertmanager compose service + pull-power test
+- 9b: autoscaler compose service + live scale-up/down test
+- 9c: rclone offsite + restore-drill manual + scheduled runs
+
+NEXT REASONABLE SESSION:
+- Operator completes keystore upload → resume w/ 6.2c-Android (only remaining feature work)
+- Or pivot: review the 4 shipped phases on a dev stack; run drizzle-kit migrate for 0027/0028/0029
