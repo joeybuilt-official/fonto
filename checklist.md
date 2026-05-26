@@ -89,7 +89,7 @@ TaskCreate while in phased-plan flow.
 - [x] Web UI — VideoPlayer w/ hls.js (native HLS fallback for Safari/iOS); auto-attaches in PhotoLightbox when mimeType starts with video/
 - [x] Web UI — hover-scrub sprite preview tile above the scrubber band
 - [x] Cleanup — purge-trashed cron extended to enumerate + delete every key under fonto/{ws}/{id}/hls/ via ListObjectsV2 + DeleteObjects
-- [ ] Commit + push
+- [x] Commit + push (e8b70c2)
 
 ## Phase 9a — Dashboards + alerts as code
 - [x] ops/grafana/dashboards/overview.json
