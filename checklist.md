@@ -25,7 +25,10 @@ TaskCreate while in phased-plan flow.
 - [x] Commit + push
 
 ## Phase 6.2c — Mobile tests + CI ⚠
-- [ ] OPERATOR GATE — signing certs + provisioning profiles uploaded to Codemagic
+- [x] OPERATOR GATE — C6 = **in-repo** (mobile/ios, mobile/android shells live alongside Flutter source, confirmed 2026-05-25)
+- [x] OPERATOR GATE — C1 = **first_unlock** (scaffold default stands; operator is Android-only, iOS Keychain class is not blocking — confirmed 2026-05-25)
+- [ ] OPERATOR GATE — Android keystore generated on the host + uploaded to Codemagic
+- [ ] OPERATOR GATE — iOS signing certs + provisioning profiles uploaded to Codemagic (DEFERRED — operator is Android-only; build iOS-CI later if/when iOS distribution becomes relevant)
 - [ ] Widget tests — login screen, home grid, search screen, asset detail
 - [ ] Integration test — full upload flow via image_picker mock
 - [ ] codemagic.yaml — iOS workflow (build + test + archive)
@@ -36,7 +39,7 @@ TaskCreate while in phased-plan flow.
 - [ ] Commit + push
 
 ## Phase 7a — Comments + activity feed
-- [ ] OPERATOR GATE — confirm C4 (digest vs per-comment vs off)
+- [x] OPERATOR GATE — C4 = **daily digest** (operator confirmed 2026-05-25, ADR 0003 default stands)
 - [ ] Schema: `comments` table (assetId, userId, body, parentId nullable, createdAt)
 - [ ] Schema: `activity_events` table (workspaceId, kind, payload, createdAt)
 - [ ] Hand-written migration under drizzle/migrations/
@@ -52,7 +55,7 @@ TaskCreate while in phased-plan flow.
 - [ ] Commit + push
 
 ## Phase 7b — Cross-workspace sharing + new roles ⚠
-- [ ] OPERATOR GATE — confirm C5 (reference vs copy-on-write)
+- [x] OPERATOR GATE — C5 = **reference** (operator confirmed 2026-05-25; shared rows point at source workspace's R2 object, no duplication)
 - [ ] Migration — extend role CHECK to add `commenter` + `contributor`
 - [ ] Schema: `shared_assets` table per chosen model
 - [ ] requireWorkspaceAccessOrResponse — teach about new roles
@@ -77,7 +80,7 @@ TaskCreate while in phased-plan flow.
 - [x] Commit + push
 
 ## Phase 8b — HLS transcode + player UI ⚠
-- [ ] OPERATOR GATE — confirm C7 (single-bitrate vs ladder)
+- [x] OPERATOR GATE — C7 = **ladder day-one** (operator confirmed 2026-05-25; 360p/720p/1080p H.264 renditions per video, hls.js picks based on bandwidth — overrides plan.md's single-bitrate scope)
 - [ ] lib/processing/transcodeVideoHls.ts — single-bitrate H.264 HLS
 - [ ] On-demand trigger — first play request enqueues transcode job
 - [ ] R2 storage layout — `<assetId>/hls/playlist.m3u8` + segments
@@ -101,7 +104,7 @@ TaskCreate while in phased-plan flow.
 - [x] Commit + push
 
 ## Phase 9b — Worker autoscale ⚠
-- [ ] OPERATOR GATE — confirm C2 (queue depth vs CPU)
+- [x] OPERATOR GATE — C2 = **queue depth (Valkey)** (operator confirmed 2026-05-25; scale on BullMQ pending-job count, not CPU)
 - [ ] ops/autoscaler/ container — small reconciler (Node or Go)
 - [ ] Signal reader — Valkey LLEN on BullMQ queue OR docker stats
 - [ ] Compose API call — scale fonto-worker replicas

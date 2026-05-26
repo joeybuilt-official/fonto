@@ -30,17 +30,21 @@ S3 import (#13) is explicitly excluded pending AWS account confirmation.
 - `adr/0003-notification-policy.md` — daily-digest default. Resolves C4
   (Tess vs Priya).
 
-## Operator-gated conflicts (still need a call)
+## Operator-gated conflicts — RESOLVED 2026-05-25
 
-- C1 — iOS Keychain accessibility: `first_unlock` (default in current
-  scaffold) vs `unlocked_this_device_only`. Aisha vs Hiroshi.
-- C2 — Autoscale signal: queue-depth vs CPU%. Marcus vs Lin.
-- C5 — Cross-workspace sharing model: copy-on-write vs reference. Aisha
-  vs Tess.
-- C6 — Mobile platform shells in-repo vs out-of-repo. Yuki vs Hiroshi.
-- C7 — Video HLS: single-bitrate first vs ladder day-one. Marcus vs Diego.
-
-Each is a sign-off gate before the phase that consumes it.
+- C1 — iOS Keychain: **first_unlock** (scaffold default stands; operator
+  is Android-only so iOS class is not personally blocking).
+- C2 — Autoscale signal: **queue-depth (Valkey BullMQ LLEN)**. Marcus wins.
+- C4 — Notification policy: **daily digest** (ADR 0003 default confirmed).
+- C5 — Cross-workspace sharing model: **reference (pointer, no copy)**.
+  Tess wins. Source workspace's R2 object is the canonical bytes; shared
+  rows in target workspace are FK references.
+- C6 — Mobile shells: **in-repo** (mobile/ios, mobile/android alongside
+  Flutter source). Yuki wins.
+- C7 — Video HLS: **ladder day-one** (360p/720p/1080p H.264 renditions).
+  Diego wins — overrides original Phase 8b "single-bitrate" scope.
+- ADR 0002 cert provisioning: Android keystore to be generated on the host
+  + scp'd off by operator. iOS signing deferred (Android-only operator).
 
 ---
 
@@ -128,10 +132,12 @@ Each is a sign-off gate before the phase that consumes it.
 
 ## Phase 8b — HLS transcode + player UI ⚠ (storage commitment)
 
-- Scope: single-bitrate H.264 HLS transcode, triggered lazily on first
-  play request (cached forever in R2 thereafter). Player UI uses
-  hls.js w/ keyboard scrubber, hover-scrub preview using 10s-interval
-  thumbnail sprite (also extracted in 8a as a one-time job). See C7.
+- Scope: **3-rendition H.264 HLS ladder** (360p ~800kbps, 720p ~2.5Mbps,
+  1080p ~5Mbps), triggered lazily on first play request (cached forever
+  in R2 thereafter). Master playlist references all three. Player UI
+  uses hls.js w/ keyboard scrubber, hover-scrub preview using
+  10s-interval thumbnail sprite (also extracted in 8a as a one-time
+  job). C7 RESOLVED — ladder day-one per operator 2026-05-25.
 - Deps: 8a. C7 confirmed by operator.
 - Subagents: Explore for the grid renderer — needs a play icon overlay
   on video tiles.
