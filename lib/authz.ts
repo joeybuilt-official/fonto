@@ -20,7 +20,24 @@ import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import type { User } from "@/lib/auth/types";
 
-export type WorkspaceRole = "owner" | "editor" | "viewer";
+// Phase 7b extended the ladder w/ two intermediate roles between viewer
+// and editor:
+//   viewer (1) < commenter (2) < contributor (3) < editor (4) < owner (5)
+// Semantics:
+//   - viewer:      read-only
+//   - commenter:   read + post/delete-own comments (Phase 7a + 7b)
+//   - contributor: read + comment + upload assets; NO delete/edit-others/share
+//   - editor:      contributor + edit (rename/tag/move/trash), delete, share
+//   - owner:       editor + member management + workspace settings + billing
+// The CHECK constraint in migration 0028 enforces this vocab at the DB
+// layer. Migration 0012's original CHECK was `IN ('owner','editor','viewer')`;
+// 0028 drops + recreates it with the new vocab so existing rows stay valid.
+export type WorkspaceRole =
+  | "owner"
+  | "editor"
+  | "contributor"
+  | "commenter"
+  | "viewer";
 
 export type AuthzFailure = "unauthenticated" | "forbidden";
 
@@ -31,8 +48,10 @@ export type AuthzResult =
 // Numeric rank for ordering comparisons. Higher = more authority.
 const ROLE_RANK: Record<WorkspaceRole, number> = {
   viewer: 1,
-  editor: 2,
-  owner: 3,
+  commenter: 2,
+  contributor: 3,
+  editor: 4,
+  owner: 5,
 };
 
 /**

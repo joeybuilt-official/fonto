@@ -60,8 +60,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   const workspaceId = workspaces[0].id;
 
-  // Phase 3.1 — editor or higher required to initiate uploads.
-  const gate = await requireWorkspaceAccessOrResponse(user.id, workspaceId, "editor");
+  // Phase 7b — relaxed editor → contributor (upload-only role).
+  const gate = await requireWorkspaceAccessOrResponse(user.id, workspaceId, "contributor");
   if (!gate.ok) return gate.response;
 
   let body: z.infer<typeof InitRequestSchema>;

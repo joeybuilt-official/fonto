@@ -224,8 +224,10 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
   }
   const workspaceId = workspaces[0].id;
 
-  // Phase 3.1 — editor or higher required to upload.
-  const gate = await requireWorkspaceAccessOrResponse(user.id, workspaceId, "editor");
+  // Phase 7b — upload relaxed editor → contributor. Contributors can
+  // upload but can't delete or share — see WorkspaceRole ladder in
+  // lib/authz.ts.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, workspaceId, "contributor");
   if (!gate.ok) return gate.response;
 
   // Idempotency: check X-Upload-Id header.

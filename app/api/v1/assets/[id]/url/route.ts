@@ -2,9 +2,7 @@
 // Copyright (C) 2026 Joeybuilt LLC
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
-import { getUserWorkspaces } from "@/lib/workspace";
-import { db, schema } from "@/lib/db";
-import { eq, and, inArray } from "drizzle-orm";
+import { resolveAssetAccess } from "@/lib/assets/access";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -28,22 +26,12 @@ export async function GET(
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const workspaces = await getUserWorkspaces(user.id);
-  if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
-  const workspaceIds = workspaces.map((w) => w.id);
-
-  const [asset] = await db
-    .select()
-    .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.id, id),
-        inArray(schema.assets.workspaceId, workspaceIds)
-      )
-    )
-    .limit(1);
-
-  if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // Phase 7b — resolve via either source-workspace membership OR an
+  // active cross-workspace share grant. Read-side routes allow both
+  // paths so shared recipients can render the asset's bytes.
+  const access = await resolveAssetAccess(user.id, id);
+  if (!access) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const asset = access.asset;
 
   const bucket = process.env.R2_BUCKET!;
   const variant = parseVariant(request.nextUrl.searchParams.get("variant"));

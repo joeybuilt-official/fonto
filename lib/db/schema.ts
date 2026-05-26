@@ -1041,6 +1041,55 @@ export const notificationMutes = fontoSchema.table(
   ]
 );
 
+// Phase 7b — cross-workspace asset sharing (reference model, C5).
+//
+// One row per (sourceWorkspace, asset, targetWorkspace) grant. The
+// asset's R2 object is NOT copied — both sides read from the source
+// workspace's storage. If the source workspace deletes the asset, the
+// share rows are reaped (worker sweep) and the target side loses
+// access. This is the deliberate tradeoff per ADR C5: storage-cheap +
+// always-fresh.
+//
+// `accessLevel` mirrors the WorkspaceRole vocabulary but caps at
+// 'editor' (a share grant never elevates the recipient above editor on
+// the foreign asset — owner/billing concepts don't transfer). Common
+// values: 'viewer', 'commenter', 'contributor'. Editor on a shared
+// asset means the recipient can also re-share / trash the local
+// reference, but NOT delete the underlying R2 object (that stays with
+// the source workspace's owner).
+//
+// `createdBy` is the source-workspace user who issued the share. Used
+// for the audit trail + the "shared by @alice" badge in the target
+// workspace's grid.
+export const sharedAssets = fontoSchema.table(
+  "shared_assets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    assetId: uuid("asset_id").notNull(),
+    sourceWorkspaceId: uuid("source_workspace_id").notNull(),
+    targetWorkspaceId: uuid("target_workspace_id").notNull(),
+    accessLevel: text("access_level").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    // One active share per (asset, target). Revoking sets revoked_at
+    // but keeps the row for audit; re-sharing inserts a new row (the
+    // unique index includes revoked_at via expression so revoked rows
+    // don't block re-grant).
+    uniqueIndex("shared_assets_asset_target_active_idx")
+      .on(table.assetId, table.targetWorkspaceId)
+      .where(sql`${table.revokedAt} IS NULL`),
+    // "What's been shared INTO this workspace?" — the target-side
+    // listing query joins assets ON shared_assets.asset_id.
+    index("shared_assets_target_idx").on(table.targetWorkspaceId, table.revokedAt),
+    // "What's been shared FROM this workspace?" — settings UI for the
+    // source workspace to audit outgoing shares.
+    index("shared_assets_source_idx").on(table.sourceWorkspaceId, table.revokedAt),
+  ]
+);
+
 // Phase 7a — digest cursor.
 //
 // One row per (user, workspace) once the user has been issued at least

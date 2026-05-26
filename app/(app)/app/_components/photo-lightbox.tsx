@@ -11,6 +11,7 @@ import type { Asset } from "./photo-card";
 import { ConfirmButton } from "@/components/confirm-button";
 import { ShareDialog } from "./share-dialog";
 import { CommentsPanel } from "./comments-panel";
+import { AssetWorkspaceShare } from "./asset-workspace-share";
 import { useSession } from "@/lib/auth/client";
 
 function formatBytes(bytes: number): string {
@@ -704,6 +705,12 @@ export function PhotoLightbox({
           </p>
         </div>
 
+        {/* Phase 7b — share to another workspace. Hidden when the asset
+            is being rendered through someone else's share (recipients
+            can't re-share onward). */}
+        {!asset.sharedFrom && asset.workspaceId && (
+          <AssetWorkspaceShare assetId={asset.id} sourceWorkspaceId={asset.workspaceId} />
+        )}
         <button
           onClick={() => setShowComments((v) => !v)}
           className={`rounded-full p-1.5 transition-colors shrink-0 ${

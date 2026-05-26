@@ -56,14 +56,14 @@ TaskCreate while in phased-plan flow.
 
 ## Phase 7b — Cross-workspace sharing + new roles ⚠
 - [x] OPERATOR GATE — C5 = **reference** (operator confirmed 2026-05-25; shared rows point at source workspace's R2 object, no duplication)
-- [ ] Migration — extend role CHECK to add `commenter` + `contributor`
-- [ ] Schema: `shared_assets` table per chosen model
-- [ ] requireWorkspaceAccessOrResponse — teach about new roles
-- [ ] Audit every callsite of requireWorkspaceAccessOrResponse (Explore subagent)
-- [ ] POST /api/v1/assets/:id/share — share to another workspace
-- [ ] DELETE /api/v1/assets/:id/share/:targetWorkspaceId — revoke
-- [ ] Web UI — "Share with workspace" action in asset detail
-- [ ] Visibility — shared assets appear in target workspace's listings with badge
+- [x] Migration — extend role CHECK to add `commenter` + `contributor` (0028; covers workspace_memberships + workspace_invitations)
+- [x] Schema: `shared_assets` table per chosen model (reference; partial unique on (asset, target) WHERE revoked_at IS NULL)
+- [x] requireWorkspaceAccessOrResponse — teach about new roles (WorkspaceRole + ROLE_RANK extended in lib/authz.ts)
+- [x] Audit every callsite of requireWorkspaceAccessOrResponse — Explore subagent; 4 relaxed (assets POST + init + complete → contributor; comments POST → commenter); 39 stay put
+- [x] POST /api/v1/assets/:id/share/workspaces — share to another workspace (path differs from plan to avoid public-share-LINK collision)
+- [x] DELETE /api/v1/assets/:id/share/workspaces/:targetWorkspaceId — revoke (soft, sets revoked_at)
+- [x] Web UI — "Share with workspace" action in asset detail (AssetWorkspaceShare popover in lightbox toolbar; hidden for shared-in assets)
+- [x] Visibility — shared assets appear in target workspace's listings with badge (/app/shared page + Share2 badge on PhotoCard reading asset.sharedFrom; /api/v1/assets/:id/url extended via lib/assets/access.ts to serve shared previews)
 - [ ] Commit + push
 
 ## Phase 8a — Video probe + thumbnail extraction

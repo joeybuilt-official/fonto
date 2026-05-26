@@ -3,10 +3,13 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play } from "lucide-react";
+import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play, Share2 } from "lucide-react";
 
 export interface Asset {
   id: string;
+  // Phase 7b — serializeAsset already includes this; declaring on the TS
+  // interface so UI components can pass it through to share controls.
+  workspaceId?: string;
   filename: string;
   mimeType: string;
   sizeBytes: number;
@@ -32,6 +35,17 @@ export interface Asset {
   videoCodec?: string | null;
   videoWidth?: number | null;
   videoHeight?: number | null;
+  // Phase 7b — populated when the asset is being rendered through a
+  // cross-workspace share (i.e. in the recipient's grid). Absent for
+  // assets the caller owns directly. Used to render the "shared from
+  // <workspace>" badge + tooltip.
+  sharedFrom?: {
+    workspaceId: string;
+    workspaceName: string;
+    accessLevel: string;
+    createdBy: string;
+    sharedAt: string;
+  } | null;
 }
 
 /** Phase 8a — "1:23" / "12:34" / "1:02:03". Plays nicely w/ the grid chip. */
@@ -303,6 +317,21 @@ export function PhotoCard({
             className="h-3.5 w-3.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]"
             fill="currentColor"
           />
+        </div>
+      )}
+
+      {/* Phase 7b — cross-workspace share badge. Shown only when the
+          asset is rendered through a share grant (recipient view). Sits
+          to the right of the favorite heart so both can coexist. */}
+      {asset.sharedFrom && (
+        <div
+          className={`absolute bottom-1.5 z-10 flex items-center gap-0.5 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white pointer-events-none ${
+            asset.isFavorite ? "left-7" : "left-1.5"
+          }`}
+          title={`Shared from ${asset.sharedFrom.workspaceName} (${asset.sharedFrom.accessLevel})`}
+        >
+          <Share2 className="h-2.5 w-2.5" />
+          {asset.sharedFrom.workspaceName}
         </div>
       )}
       {/* Phase 3.4 — star rating badge. Top-left, tiny. Only shown when

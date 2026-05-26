@@ -157,11 +157,10 @@ export async function POST(
     return NextResponse.json({ error: "Upload not found" }, { status: 404 });
   }
 
-  // Phase 3.1 — completing an upload requires editor or higher on the
-  // workspace the upload was initiated against. The check is redundant with
-  // the userId filter above (an editor can only init for workspaces they
-  // belong to) but defends against role-downgrade races.
-  const gate = await requireWorkspaceAccessOrResponse(user.id, upload.workspaceId, "editor");
+  // Phase 7b — relaxed editor → contributor. Completes the upload
+  // started by the same user; redundant w/ the userId filter above but
+  // defends against role-downgrade races mid-upload.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, upload.workspaceId, "contributor");
   if (!gate.ok) return gate.response;
 
   if (upload.state === "completed" && upload.assetId) {

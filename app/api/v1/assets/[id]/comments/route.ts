@@ -107,10 +107,9 @@ export async function POST(
     .limit(1);
   if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Posting a comment requires editor or higher. Viewer-only members
-  // surface 403; non-members never reach this code path (404 above).
-  // Phase 7b will relax this to `commenter` once that role lands.
-  const gate = await requireWorkspaceAccessOrResponse(user.id, asset.workspaceId, "editor");
+  // Phase 7b — relaxed from editor → commenter. Anyone at commenter or
+  // higher can post; viewer-only members get 403, non-members 404.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, asset.workspaceId, "commenter");
   if (!gate.ok) return gate.response;
 
   const body = (await request.json().catch(() => null)) as {
