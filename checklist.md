@@ -64,7 +64,7 @@ TaskCreate while in phased-plan flow.
 - [x] DELETE /api/v1/assets/:id/share/workspaces/:targetWorkspaceId — revoke (soft, sets revoked_at)
 - [x] Web UI — "Share with workspace" action in asset detail (AssetWorkspaceShare popover in lightbox toolbar; hidden for shared-in assets)
 - [x] Visibility — shared assets appear in target workspace's listings with badge (/app/shared page + Share2 badge on PhotoCard reading asset.sharedFrom; /api/v1/assets/:id/url extended via lib/assets/access.ts to serve shared previews)
-- [ ] Commit + push
+- [x] Commit + push (f63c0b2)
 
 ## Phase 8a — Video probe + thumbnail extraction
 - [x] OPERATOR GATE — taking ADR 0001 default (CPU-only ffmpeg) — operator can object at review
