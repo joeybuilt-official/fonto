@@ -43,3 +43,8 @@ next-env.d.ts
 
 # serena MCP local config (per-developer)
 /.serena/
+
+# FUSE leftover temp files (the dev fs is FUSE-backed; the kernel
+# leaves these behind when a file is replaced while another process
+# has it open). Not real artifacts — never commit.
+.fuse_hidden*
