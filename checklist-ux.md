@@ -19,14 +19,16 @@ Derived from `plan-ux.md`. Tick boxes as items complete.
 - [x] DEPLOYED to NAS 2026-05-25 — `/app/library` live, 307 to login when unauth, sidebar shows entry between Home and Inbox
 
 ## Phase 2 — Collections fan-out
-- [ ] OPERATOR GATE — confirm UX-C4 (Stacks under Collections)
-- [ ] Tab-bar wrapper at `app/(app)/app/collections/page.tsx`
-- [ ] My albums tab — relocate current Collections logic
-- [ ] Smart tab — relocate current Smart Collections logic
-- [ ] Projects tab — relocate current Projects logic
-- [ ] Stacks tab — relocate current Stacks logic; include suggestions sub-section
-- [ ] Direct routes (`/app/projects`, `/app/stacks`, `/app/smart-collections`) render w/ deprecation banner
-- [ ] Commit + push
+- [x] OPERATOR GATE — UX-C4 = **inside Collections** (operator approved plan-defaults 2026-05-25; Stacks tab + Suggestions sub-section land under /app/collections)
+- [x] Tab-bar primitive at `app/(app)/app/collections/_components/tab-bar.tsx` (anchor-tabs, ARIA tablist/tab/aria-selected/aria-current per Diego's UX-C3 contract)
+- [x] My albums tab — relocate current Collections logic → `_components/albums-tab.tsx`
+- [x] Smart tab — relocate current Smart Collections logic → `_components/smart-tab.tsx`
+- [x] Projects tab — relocate current Projects logic → `_components/projects-tab.tsx`
+- [x] Stacks tab — relocate current Stacks logic; inner "stacks / suggestions" split preserved → `_components/stacks-tab.tsx`
+- [x] Tab wrapper at `app/(app)/app/collections/page.tsx` — `?tab=albums|smart|projects|stacks` URL state, default = albums
+- [x] Direct routes (`/app/projects`, `/app/stacks`, `/app/smart-collections`) render w/ deprecation banner pointing at consolidated location (Phase 5 will replace these stubs with hard redirects in middleware)
+- [x] Commit + push (19c6fc4)
+- [x] DEPLOYED to NAS 2026-05-27 — `/app/collections` + `/app/collections?tab=smart|projects|stacks` live; deprecated `/app/smart-collections`, `/app/projects`, `/app/stacks` all 307 (unauth → login) and render banners when authed
 
 ## Phase 3 — Updates merge
 - [ ] OPERATOR GATE — confirm UX-C1 (Home stays) + UX-C5 (Activity merges)

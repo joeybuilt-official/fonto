@@ -163,7 +163,7 @@ Three plausible failure modes for this workstream:
 - Exit: `/app/collections` shows the four tabs. Direct routes
   (`/app/projects`, `/app/stacks`, `/app/smart-collections`) still
   load but show a deprecation banner.
-- Status: ready-to-start next session — recon complete; deploy chain documented in next-session.txt; Phase 1 shipped + live so the operator can validate the chip pattern before Phase 2 work begins
+- Status: **done 2026-05-27** — commit 19c6fc4, deployed to NAS. `/app/collections` renders the four-tab fan-out; URL state via `?tab=`. Deprecated routes (`/app/smart-collections`, `/app/projects`, `/app/stacks`) render their tab body with a deprecation banner (Phase 5 will replace with middleware redirects). Tab-bar primitive built fresh in `_components/tab-bar.tsx` with Diego's UX-C3 ARIA contract.
 
 ### Phase 2 implementation notes (from 2026-05-25 recon)
 
