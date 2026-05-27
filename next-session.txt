@@ -1,35 +1,3 @@
-Fonto parity status as of 2026-05-25:
+Resume Fonto UX consolidation. Read /workspace/fonto/plan-ux.md + /workspace/fonto/checklist-ux.md + /workspace/fonto/adr/0004-ux-nav-consolidation.md. Phase 1 (Library) done + deployed 2026-05-25 (commit 114801b). Continuing Phase 2 — Collections fan-out. Next: build the tab-bar primitive at app/(app)/app/collections/_components/tab-bar.tsx, then extract the four sub-tab Content components per the "Phase 2 implementation notes" block in plan-ux.md. Deploy chain (rsync /data/appdata/app-stack/workspace/fonto/ → /data/appdata/appdata/source/fonto/, docker compose build fonto, docker compose up -d --force-recreate fonto) documented in /workspace/fonto/next-session-deploy.md.
 
-SHIPPED THIS SESSION (4 phases + DEPLOYED to NAS):
-- 7a (b077f29): comments + activity feed + daily-digest worker
-- 7b (f63c0b2): extended role ladder + cross-workspace shares (reference) + /app/shared page
-- 9b (c988536): worker autoscaler container
-- 8b (e8b70c2): HLS ladder + hls.js player + hover-scrub sprite + orphan purger
-
-DEPLOY STATUS (2026-05-25 ~06:28 UTC):
-- NAS source/fonto rsynced clean from origin/main (a0ebeb8)
-- pg_dump backup at /data/_secrets/fonto-pushd-pre-deploy-20260526T061758Z.pgdump
-- Source backup at /data/_secrets/fonto-source-pre-deploy-20260526T061659Z.tar.gz
-- Compose backup at /data/_secrets/docker-compose-pre-autoscaler-20260526T062656Z.yml
-- Migrations 0027/0028/0029 applied in single transaction (raw psql, no drizzle journal)
-- fonto + fonto-worker + fonto-bullboard rebuilt + recreated
-- fonto-autoscaler new container running DRY_RUN=1 (logs every 30s; depth=0 → 'hold')
-- myfonto.com responding 200; new /api/v1/* endpoints returning 401 (auth gate alive)
-
-KNOWN DEPLOY NOTES:
-- Stray container `fonto-web` (Up 23h+) lives outside appdata compose. Not routed by tunnel. Operator may want to `docker rm -f fonto-web` to clean up.
-- Autoscaler is DRY_RUN=1 — to flip to live scaling, EITHER remove container_name from fonto-worker service AND set AUTOSCALER_DRY_RUN=0 in compose (custom container_name blocks compose --scale), OR leave dry-run on as an observability tool.
-
-ONE-WAY-DOOR ACTION ON OPERATOR:
-- Android keystore generated on the host at /data/_secrets/fonto-keystore/
-  - scp hive:/data/_secrets/fonto-keystore/* ~/Downloads/
-  - Upload .jks + STORE_PASSWORD (from creds.txt) to Codemagic
-  - Tell Claude "delete the keystore" → wipes the NAS copy
-- Once uploaded + verified, Phase 6.2c-Android can run (codemagic.yaml + widget/integration tests). iOS half deferred (Android-only operator).
-
-OPERATOR-DEFERRED OPS WIRING:
-- 9a: alertmanager compose service + pull-power test
-- 9c: rclone offsite + restore-drill manual + scheduled
-
-OUT OF SCOPE:
-- S3 import (#13) — pending AWS account confirmation, per plan.md line 7
+Parity-side outstanding (separate workstream): Android keystore at /data/_secrets/fonto-keystore/ awaiting operator Codemagic upload; 9a alertmanager + 9c rclone wiring operator-deferred. See /workspace/fonto/plan.md + /workspace/fonto/checklist.md for that side.

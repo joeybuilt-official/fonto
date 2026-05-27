@@ -142,7 +142,11 @@ Three plausible failure modes for this workstream:
 - Exit: `/app/library` ships. AssetGrid behaviour identical to
   `/app/photos` when no chips are active. Each chip combination maps
   to a stable URL query string.
-- Status: pending
+- Status: **done 2026-05-25** — commit 114801b, deployed to NAS,
+  `/app/library` live at myfonto.com. Deferred to a Phase 1.1
+  follow-up: full date popover, folder-tree popover, classification
+  chip strip (FilterPopover covers it today), E2E back-button
+  preservation test.
 
 ## Phase 2 — Collections fan-out (5 routes → 1 + sub-tabs)
 
@@ -154,12 +158,51 @@ Three plausible failure modes for this workstream:
 - Deps: Phase 1 shipped (so the operator can validate the chip
   pattern before we apply a similar fan-out pattern). UX-C4
   confirmed (Stacks under Collections).
-- Subagents: Explore for cross-imports of the four pages — any
-  other component reaches into them directly?
+- Subagents: Explore subagent for Phase 2 recon ran 2026-05-25; see
+  findings captured below this phase block.
 - Exit: `/app/collections` shows the four tabs. Direct routes
   (`/app/projects`, `/app/stacks`, `/app/smart-collections`) still
   load but show a deprecation banner.
-- Status: pending
+- Status: ready-to-start next session — recon complete; deploy chain documented in next-session.txt; Phase 1 shipped + live so the operator can validate the chip pattern before Phase 2 work begins
+
+### Phase 2 implementation notes (from 2026-05-25 recon)
+
+Source pages all follow identical pattern: `Content()` helper +
+`Page()` Suspense wrapper. Lines: collections 271, smart-collections
+385, projects 192, stacks 418.
+
+**Zero cross-imports** to those 4 page files anywhere else in the
+repo. Safe to refactor freely.
+
+**Naming collision:** existing `/app/collections` IS the "Albums"
+page today. Three places hardcode it:
+- `components/app-sidebar.tsx:35` (the "Albums" nav entry)
+- `app/(app)/app/collections/[id]/page.tsx` (breadcrumb back-link)
+- `app/(app)/app/projects/[id]/page.tsx` (comment-only)
+
+**No existing Tabs primitive** in `components/ui/`. Need to build a
+thin one alongside Phase 2 work — small (TabBar + TabTrigger), no
+animation, ARIA roles per Diego's contract from UX-C3.
+
+**Recommended file layout** (minimises duplication):
+```
+app/(app)/app/collections/
+├── _components/
+│   ├── tab-bar.tsx           (new, ~50 lines)
+│   ├── albums-tab.tsx        (move from current collections/page.tsx)
+│   ├── smart-tab.tsx         (move from smart-collections/page.tsx)
+│   ├── projects-tab.tsx      (move from projects/page.tsx)
+│   └── stacks-tab.tsx        (move from stacks/page.tsx)
+└── page.tsx                  (rewrite — tab wrapper)
+
+app/(app)/app/smart-collections/page.tsx  → re-exports SmartTab + deprecation banner
+app/(app)/app/projects/page.tsx           → re-exports ProjectsTab + deprecation banner
+app/(app)/app/stacks/page.tsx             → re-exports StacksTab + deprecation banner
+```
+
+URL state for sub-tab selection: `?tab=albums|smart|projects|stacks`
+(default = albums). Detail routes `collections/[id]`, `projects/[id]`,
+`stacks/[id]` stay untouched.
 
 ## Phase 3 — Updates merge (Inbox + Activity + Shared)
 

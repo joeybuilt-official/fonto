@@ -15,7 +15,8 @@ Derived from `plan-ux.md`. Tick boxes as items complete.
 - [x] URL query-string stability — chip changes round-trip through `useToolbarState`'s router.replace path (proven by existing FilterState pattern)
 - [ ] Back-button state preservation across chip changes (manual E2E test — DEFERRED to operator validation)
 - [x] Trash banner — red-accent destructive-tone banner above grid when lifecycle=trashed
-- [ ] Commit + push
+- [x] Commit + push (114801b)
+- [x] DEPLOYED to NAS 2026-05-25 — `/app/library` live, 307 to login when unauth, sidebar shows entry between Home and Inbox
 
 ## Phase 2 — Collections fan-out
 - [ ] OPERATOR GATE — confirm UX-C4 (Stacks under Collections)
