@@ -16,6 +16,7 @@
     "backfill:thumbnails": "tsx scripts/backfill-thumbnails.ts",
     "backfill:folders": "tsx scripts/backfill-directory-paths.ts",
     "backfill:clip": "tsx scripts/backfill-clip-embeddings.ts",
+    "verify:clip": "tsx scripts/verify-clip-classification.ts",
     "backfill:faces": "tsx scripts/backfill-faces.ts",
     "backfill:places": "tsx scripts/backfill-place-names.ts",
     "scan:clip-duplicates": "tsx scripts/scan-clip-duplicates.ts",
