@@ -306,7 +306,10 @@ sidebar / route changes.
 - Exit: viewport `<md` shows the bottom bar. Diego's a11y contract
   (UX-C3) verified: each tab is `<a>`, `aria-current="page"` is set
   on the active one, the bar has `role="navigation"`.
-- Status: pending
+- Status: **done 2026-05-27** — commit d2f4207. AppMobileBottomBar
+  + AppMobileAvatarMenu shipped; bar visible only on `<md`; avatar
+  menu hosts Home + Settings + Sign out (UX-C6 demotion). Mobile
+  header consolidated to a single strip.
 
 ## Phase 7 — Sidebar cleanup + final polish
 
@@ -322,4 +325,10 @@ sidebar / route changes.
 - Exit: sidebar shows 7 entries (Home, Library, Explore,
   Collections, Updates, Search, Settings). No deprecated routes
   visible. Pinned albums render under Collections.
-- Status: pending
+- Status (7a): **done 2026-05-27** — commit 924b28d. 13 entries
+  removed; surviving 7 reordered to match bottom-bar; sub-route
+  prefix-match + aria-current added.
+- Status (7b — pinned albums): **deferred** to its own workstream.
+  Needs a runtime fetch + a sub-list primitive under the
+  Collections nav item; static cleanup landed first so the ADR-0004
+  "down to 7" target is hit independent of the dynamic affordance.

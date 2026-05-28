@@ -56,8 +56,9 @@ Derived from `plan-ux.md`. Tick boxes as items complete.
 - [x] DEPLOYED to NAS 2026-05-27 — `/app/explore` + `/app/explore/things` live; sidebar entry visible; existing People + Map routes unchanged
 
 ### Phase 4.1 follow-up (deferred — not blocking 4 exit)
-- [ ] Investigate why `classify_method` is 100% `llm-fallback` in prod. Either the CLIP confidence threshold is set too strict, or the CLIP path isn't writing the column. Subagent: check the worker that owns Phase 4.6 classification + the threshold constant.
-- [ ] Backfill `clip_vec` on the 40% of classified rows that lack one — partial index will otherwise stay sparse and similarity-browse will be inconsistent.
+- [x] Investigate why `classify_method` is 100% `llm-fallback` in prod. **ROOT CAUSE: type-erased dynamic import in `lib/classify/vectors.ts:27–47` stubbed `embedText` as `Promise<number[]>` but real return is `Promise<{vector, modelId}>` — taxonomy cache stored objects, `cosine()` scored 0 every time, threshold never met.** Fix landed as commit 6e85410 + deployed to worker 2026-05-27.
+- [ ] Verify the fix in prod — wait for the next image upload after deploy; check `SELECT classify_method, count(*) FROM fonto.assets GROUP BY 1` shows `clip` > 0.
+- [ ] Backfill `clip_vec` on the 40% of classified rows that lack one — partial index will otherwise stay sparse and similarity-browse will be inconsistent. (`pnpm backfill:clip` per package.json:18)
 - [ ] Once corpus has ≥6 classes with ≥10 members each (today: 1), graduate Things from placeholder → live class-tile grid.
 
 ## Phase 5 — Redirect layer + changelog dialog ⚠
@@ -74,13 +75,26 @@ Derived from `plan-ux.md`. Tick boxes as items complete.
 - [x] DEPLOYED to NAS 2026-05-27 — `/app/photos`, `/app/timeline`, `/app/documents`, `/app/trash`, `/app/projects`, `/app/smart-collections`, `/app/stacks`, `/app/dashboard`, `/app/activity`, `/app/shared` all 307→consolidated routes; changelog dialog mounted in app-shell
 
 ## Phase 6 — Mobile bottom-bar nav
-- [ ] `components/app-mobile-bottom-bar.tsx` w/ 5 tabs
-- [ ] Visibility — `<md` breakpoint only
-- [ ] A11y contract (UX-C3) — `role="navigation"`, `<a aria-current="page">` for active tab, visible labels
-- [ ] Sidebar drawer collapsed to hamburger on mobile
-- [ ] Settings demoted to avatar menu on mobile (UX-C6)
-- [ ] Touch-target audit — each tab ≥44×44 px (iOS HIG minimum)
-- [ ] Commit + push
+- [x] `components/app-mobile-bottom-bar.tsx` w/ 5 tabs (Library, Explore, Collections, Updates, Search)
+- [x] Visibility — `<md` breakpoint only via `md:hidden`
+- [x] A11y contract (UX-C3) — `role="navigation"`, real `<a>` (not buttons), `aria-current="page"` on active, visible labels
+- [x] Sidebar drawer collapsed to hamburger on mobile (existing pattern preserved)
+- [x] Settings demoted to avatar menu on mobile (UX-C6) — new `components/app-mobile-avatar-menu.tsx`; carries Home + Settings + Sign out w/ Escape-to-close + backdrop dismiss
+- [x] Touch-target audit — each tab is `min-h-[56px]` + `flex-1` width; exceeds the 44×44 iOS HIG floor
+- [x] Mobile header consolidated to single strip (brand · plexo status · avatar) — was two strips before
+- [x] Commit + push (d2f4207)
+- [x] DEPLOYED to NAS 2026-05-27 — bundled with Phase 7a in combined web build; smoke `/` 200, all app routes 307 (unauth as expected)
+
+## Phase 7a — Sidebar cleanup + reorder
+- [x] Remove deprecated entries from `components/app-sidebar.tsx` — 13 removed (Photos, Timeline, Memories, Folders, Documents, Trash, Inbox, Activity, Shared with me, Projects, Smart Collections, Stacks, People, Map)
+- [x] Reorder surviving entries to match bottom-bar: Home → Library → Explore → Collections → Updates → Search → Settings
+- [x] aria-current="page" added to active item (consistency w/ Diego's UX-C3 contract)
+- [x] Sub-route prefix-match for active state (e.g. /app/collections/<id> keeps Collections highlighted)
+- [x] Commit + push (924b28d)
+- [x] DEPLOYED to NAS 2026-05-27 — bundled with Phase 6 in combined web build; sidebar now 7 entries live at myfonto.com
+
+### Phase 7b — Pin most-recent 3 albums under Collections (Immich pattern)
+- [ ] DEFERRED — needs a runtime fetch (recent albums) + a sub-list primitive under the Collections nav entry. Static-cleanup phase 7a landed first; 7b ships separately when the operator wants the Immich-style pinned-albums affordance.
 
 ## Phase 7 — Sidebar cleanup + polish
 - [ ] Remove deprecated entries from `components/app-sidebar.tsx` (Timeline, Memories, Folders, Photos, Documents, People, Map, Inbox, Activity, Shared with me, Projects, Smart Collections, Stacks, Trash)
