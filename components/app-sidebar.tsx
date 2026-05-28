@@ -18,6 +18,7 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import type { User } from "@/lib/auth/types";
+import type { RecentAlbum } from "@/lib/sidebar/recent-albums";
 
 // UX consolidation Phase 7a — the sidebar is the canonical desktop
 // surface; mobile relies on `app-mobile-bottom-bar.tsx` for the same
@@ -48,7 +49,15 @@ const navItems = [
   { href: "/app/settings",    label: "Settings",    icon: Settings },
 ];
 
-export function AppSidebar({ user, onClose }: { user: User; onClose?: () => void }) {
+export function AppSidebar({
+  user,
+  recentAlbums,
+  onClose,
+}: {
+  user: User;
+  recentAlbums: RecentAlbum[];
+  onClose?: () => void;
+}) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -88,21 +97,53 @@ export function AppSidebar({ user, onClose }: { user: User; onClose?: () => void
             item.href === "/app/home"
               ? pathname === item.href
               : pathname === item.href || pathname.startsWith(item.href + "/");
+          // Phase 7b — Collections entry hosts a pinned-albums sub-list
+          // (Immich pattern, ADR 0005 FU-C1). Sub-list renders only when
+          // there are albums to pin AND the operator is on desktop or
+          // already inside the Collections branch — we always render in
+          // the markup but the indent + smaller text keeps it cheap.
+          const isCollections = item.href === "/app/collections";
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={onClose}
-              aria-current={active ? "page" : undefined}
-              className={`flex items-center gap-2 rounded px-3 py-2.5 text-sm font-medium transition-colors ${
-                active
-                  ? "bg-sidebar-accent text-foreground"
-                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-              }`}
-            >
-              <item.icon className="h-4 w-4 shrink-0" />
-              {item.label}
-            </Link>
+            <div key={item.href}>
+              <Link
+                href={item.href}
+                onClick={onClose}
+                aria-current={active ? "page" : undefined}
+                className={`flex items-center gap-2 rounded px-3 py-2.5 text-sm font-medium transition-colors ${
+                  active
+                    ? "bg-sidebar-accent text-foreground"
+                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                }`}
+              >
+                <item.icon className="h-4 w-4 shrink-0" />
+                {item.label}
+              </Link>
+              {isCollections && recentAlbums.length > 0 && (
+                <ul className="mt-0.5 space-y-0.5 pl-7">
+                  {recentAlbums.map((album) => {
+                    const albumHref = `/app/collections/${album.id}`;
+                    const albumActive = pathname === albumHref;
+                    return (
+                      <li key={album.id}>
+                        <Link
+                          href={albumHref}
+                          onClick={onClose}
+                          aria-current={albumActive ? "page" : undefined}
+                          title={album.name}
+                          className={`block truncate rounded px-2 py-1 text-xs transition-colors ${
+                            albumActive
+                              ? "bg-sidebar-accent text-foreground"
+                              : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                          }`}
+                        >
+                          {album.name}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           );
         })}
       </nav>

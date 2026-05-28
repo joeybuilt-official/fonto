@@ -11,14 +11,23 @@ import { AppMobileAvatarMenu } from "@/components/app-mobile-avatar-menu";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 import { UiV2ChangelogDialog } from "@/app/(app)/app/_components/ui-v2-changelog-dialog";
 import type { User } from "@/lib/auth/types";
+import type { RecentAlbum } from "@/lib/sidebar/recent-albums";
 
-export function AppShell({ user, children }: { user: User; children: React.ReactNode }) {
+export function AppShell({
+  user,
+  recentAlbums,
+  children,
+}: {
+  user: User;
+  recentAlbums: RecentAlbum[];
+  children: React.ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <div className="flex h-dvh overflow-hidden">
       {/* Desktop sidebar - hidden on mobile */}
       <div className="hidden md:flex">
-        <AppSidebar user={user} />
+        <AppSidebar user={user} recentAlbums={recentAlbums} />
       </div>
 
       {/* Mobile overlay */}
@@ -29,7 +38,11 @@ export function AppShell({ user, children }: { user: User; children: React.React
             onClick={() => setOpen(false)}
           />
           <div className="fixed inset-y-0 left-0 z-50 md:hidden">
-            <AppSidebar user={user} onClose={() => setOpen(false)} />
+            <AppSidebar
+              user={user}
+              recentAlbums={recentAlbums}
+              onClose={() => setOpen(false)}
+            />
           </div>
         </>
       )}
