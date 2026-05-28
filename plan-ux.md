@@ -241,7 +241,38 @@ URL state for sub-tab selection: `?tab=albums|smart|projects|stacks`
   worth shipping in v1 or deferring.
 - Exit: `/app/explore` shows the three tiles. Things route exists
   even if sparse.
-- Status: pending
+- Status: **done 2026-05-27** — commit 5f0a72b, deployed to NAS.
+  Hub layout ships with People + Places tiles live and the Things
+  tile as a "Coming soon" placeholder, plus `/app/explore/things`
+  as a real explainer page that walks users to Search / Library
+  chips / Smart Collections as today's substitutes. Recon (under
+  ### Phase 4 recon below) drove the placeholder decision; the
+  Phase 4.1 followup is tracked in checklist-ux.md.
+
+### Phase 4 recon — CLIP-classification distribution (2026-05-27)
+
+Subagent ran read-only SELECTs against `postgres` and
+returned:
+
+- **Top-level class distribution (n=40 corpus):** photo 21, document
+  8, report 3, screenshot 3, icon 2, form 1, receipt 1, logo 1.
+  8 distinct classes; 1 clears the ≥10-member threshold.
+- **Null fraction:** 0/40 (100% of rows have some classification).
+- **`classify_method` split:** llm-fallback 40, clip 0. The CLIP
+  zero-shot path is producing zero confident hits in prod — either
+  the confidence threshold is too strict or the writeback isn't
+  happening. Phase 4.1 owns that investigation.
+- **`sub_classification`:** null across the entire table. Phase 4.6's
+  finer-grain field is unused so far.
+- **CLIP-vec coverage among classified rows:** 24/40 = 60%. A
+  similarity-browse-within-class would skip 40% of rows until a
+  backfill catches them up.
+
+Decision criterion was "≥6 classes with ≥10 members each → ship
+live Things in v1". Only one class clears, so Things ships as a
+placeholder explainer. The hub layout, tile UX, and explainer copy
+are designed so Phase 4.1 can swap in a live class-grid without any
+sidebar / route changes.
 
 ## Phase 5 — Redirect layer + changelog dialog ⚠ (user-facing migration)
 

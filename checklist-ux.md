@@ -45,13 +45,20 @@ Derived from `plan-ux.md`. Tick boxes as items complete.
 - [x] DEPLOYED to NAS 2026-05-27 — `/app/updates` + `?section=uploads|activity|shared` live; deprecated `/dashboard`, `/activity`, `/shared` all 307 (unauth) and render banners when authed
 
 ## Phase 4 — Explore hub
-- [ ] `app/(app)/app/explore/page.tsx` w/ three tiles
-- [ ] People tile — links to existing `/app/people`
-- [ ] Places tile — links to existing `/app/map`
-- [ ] Things tile — links to new `/app/explore/things`
-- [ ] Things route — top-N CLIP-classification cards w/ counts
-- [ ] CLIP-class distribution audit (subagent) — confirm there are ≥6 classes with ≥10 members worth surfacing
-- [ ] Commit + push
+- [x] CLIP-class distribution audit (subagent) — n=40, 8 distinct classes, only 1 (the "photo" bucket, n=21) clears ≥10. Verdict: ship Things as placeholder, defer live grid to Phase 4.1.
+- [x] `app/(app)/app/explore/page.tsx` w/ three tiles
+- [x] People tile — links to existing `/app/people`; surfaces count from `/api/v1/persons`
+- [x] Places tile — links to existing `/app/map`; surfaces count from `/api/v1/assets?hasGeo=1&limit=1`
+- [x] Things tile — links to new `/app/explore/things`; shows "Coming soon" badge instead of count
+- [x] Things route — placeholder explainer page (recon verdict ⇒ no live grid in v1)
+- [x] Sidebar — Explore entry added between Updates and Inbox
+- [x] Commit + push (5f0a72b)
+- [x] DEPLOYED to NAS 2026-05-27 — `/app/explore` + `/app/explore/things` live; sidebar entry visible; existing People + Map routes unchanged
+
+### Phase 4.1 follow-up (deferred — not blocking 4 exit)
+- [ ] Investigate why `classify_method` is 100% `llm-fallback` in prod. Either the CLIP confidence threshold is set too strict, or the CLIP path isn't writing the column. Subagent: check the worker that owns Phase 4.6 classification + the threshold constant.
+- [ ] Backfill `clip_vec` on the 40% of classified rows that lack one — partial index will otherwise stay sparse and similarity-browse will be inconsistent.
+- [ ] Once corpus has ≥6 classes with ≥10 members each (today: 1), graduate Things from placeholder → live class-tile grid.
 
 ## Phase 5 — Redirect layer + changelog dialog ⚠
 - [ ] Extend `middleware.ts` with old→new route map (every old route)
