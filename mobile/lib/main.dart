@@ -29,7 +29,7 @@ final _navigatorKey = GlobalKey<NavigatorState>();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await UploadQueue.open();
-  await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+  await Workmanager().initialize(callbackDispatcher);
   final auth = await AuthStore.load();
   if (auth.isConfigured) {
     await registerUploadDrain();
