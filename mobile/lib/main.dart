@@ -47,7 +47,7 @@ Future<void> registerUploadDrain() async {
       networkType: NetworkType.connected,
       requiresBatteryNotLow: true,
     ),
-    existingWorkPolicy: ExistingWorkPolicy.keep,
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
   );
 }
 
