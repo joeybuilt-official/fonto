@@ -18,9 +18,11 @@
 //      - collection: JSON-ish gallery of contained assets w/ thumbnail URLs.
 //      - set:        currently same shape as collection.
 
+import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { headers } from "next/headers";
+import { getAuthUser } from "@/lib/auth/server";
 import { db, schema } from "@/lib/db";
 import { and, asc, eq, or, sql } from "drizzle-orm";
 import {
@@ -116,6 +118,60 @@ async function presignThumb(workspaceId: string, assetId: string): Promise<strin
   }
 }
 
+export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
+  const { token } = await params;
+  const [link] = await db
+    .select()
+    .from(schema.shareLinks)
+    .where(or(eq(schema.shareLinks.slug, token), eq(schema.shareLinks.token, token)))
+    .limit(1);
+  if (!link || link.revoked || link.revokedAt) return { title: "Fonto — Shared" };
+
+  if (link.targetType === "asset") {
+    const [asset] = await db
+      .select()
+      .from(schema.assets)
+      .where(eq(schema.assets.id, link.targetId))
+      .limit(1);
+    if (!asset) return { title: "Fonto — Shared" };
+    const thumbUrl = await presignThumb(asset.workspaceId, asset.id);
+    const desc = asset.description ?? "Shared via Fonto";
+    return {
+      title: asset.filename,
+      description: desc,
+      openGraph: {
+        title: asset.filename,
+        description: desc,
+        images: thumbUrl ? [{ url: thumbUrl }] : [],
+        type: "website",
+      },
+      twitter: {
+        card: "summary_large_image",
+        title: asset.filename,
+        description: desc,
+        images: thumbUrl ? [thumbUrl] : [],
+      },
+    };
+  }
+
+  if (link.targetType === "collection") {
+    const [collection] = await db
+      .select()
+      .from(schema.collections)
+      .where(eq(schema.collections.id, link.targetId))
+      .limit(1);
+    if (!collection) return { title: "Fonto — Shared Collection" };
+    const desc = collection.description ?? "A collection shared via Fonto";
+    return {
+      title: collection.name,
+      description: desc,
+      openGraph: { title: collection.name, description: desc, type: "website" },
+    };
+  }
+
+  return { title: "Fonto — Shared" };
+}
+
 function RateLimitedPage({ resetSeconds }: { resetSeconds: number }) {
   return (
     <div className="min-h-screen bg-background grid place-items-center px-6">
@@ -198,6 +254,12 @@ export default async function SharePage({ params, searchParams }: SharePageProps
     // 410 Gone equivalent — surfaced as notFound() to keep the public surface
     // small (don't leak distinction between "no link" and "burned out link").
     notFound();
+  }
+
+  // Authenticated users with an asset target land directly in the app lightbox.
+  if (link.targetType === "asset") {
+    const authUser = await getAuthUser();
+    if (authUser) redirect(`/app/library?lb=${link.targetId}`);
   }
 
   // Password gate.

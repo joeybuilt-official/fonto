@@ -24,10 +24,20 @@ Derived from `plan-ux-followups.md`. Tick boxes as items complete.
 - [x] Commit + push
 
 ## Phase 1.1 — Library chip-strip polish + back-button E2E
-- [ ] OPERATOR GATE — confirm FU-C3 default (Tess — popover, not flat strip)
-- [ ] Wire date chip → date-range popover
-- [ ] Wire folder chip → folder-tree popover
-- [ ] Wire classification chip → popover w/ active class list
-- [ ] Back-button E2E — applies each chip, opens lightbox, asserts grid+state preserved
-- [ ] Commit + push
-- [ ] DEPLOYED to NAS — rsync + build fonto + force-recreate + smoke
+- [x] OPERATOR GATE — FU-C3 approved 2026-05-28 (Tess — popover, not flat strip)
+- [x] Wire date chip → date-range popover (always-visible, opens from/to picker)
+- [x] Wire folder chip → folder-tree popover (fetches /api/v1/folders/tree)
+- [x] Wire classification chip → popover w/ active class list (CLASSIFICATION_CHIPS)
+- [x] URL-based lightbox (?lb=<id>) so browser back closes lightbox + restores chip state
+- [x] Playwright E2E — auth setup + library-chips spec; 6 pass, 2 skip (corpus-conditional)
+- [x] Commit + push (9f93543, 49decdd)
+- [x] DEPLOYED to NAS — rsync + build fonto + force-recreate 2026-05-28; / 200, /app/library 307 ✓
+
+## Phase 5.2 — Lightbox deep-link + scroll-restore
+- [x] GET /api/v1/assets/:id — new single-asset endpoint (auth-gated, workspace-scoped)
+- [x] Direct external URL: cold-load ?lb=<id> opens lightbox; fallback fetches asset directly when not in filtered list
+- [x] Scroll-restore: openLightbox saves window.scrollY; useEffect restores on lightbox close; router.push w/ scroll:false prevents page jump on open
+- [x] OG meta tags: generateMetadata on /share/[token] — og:title, og:description, og:image (presigned thumb), twitter:card
+- [x] Share-link → lightbox: authenticated users hitting /share/<token> (asset target) redirect to /app/library?lb=<assetId>
+- [x] Commit + push
+- [x] DEPLOYED to NAS — rsync + build + force-recreate 2026-05-28; / 200, /app/library 307 ✓

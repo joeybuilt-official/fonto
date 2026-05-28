@@ -18,6 +18,33 @@ const LIFECYCLE_EVENTS: Record<string, string> = {
   purged: "ext.fonto.asset.purged",
 };
 
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const workspaces = await getUserWorkspaces(user.id);
+  if (!workspaces.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const workspaceIds = workspaces.map((w) => w.id);
+  const [asset] = await db
+    .select()
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.id, id),
+        inArray(schema.assets.workspaceId, workspaceIds)
+      )
+    )
+    .limit(1);
+
+  if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json({ asset });
+}
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

@@ -116,7 +116,15 @@ as llm-fallback; run this query after the corpus grows.
 - Exit: all three chips wired + visible in the Library toolbar.
   Each round-trips through `useToolbarState`. Back-button E2E
   passes on all chip combinations.
-- Status: pending
+- Status: **DONE 2026-05-28**
+  - DateRangeChip: always-visible chip opens from/to date picker popover
+  - FolderChip: always-visible chip opens folder list from /api/v1/folders/tree
+  - ClassificationChip: popover w/ SUBTYPE list; maps to FilterState.type (FU-C3 Tess default)
+  - Lightbox switched to URL-based (?lb=<id>) so browser back closes lightbox +
+    restores all chip filter URL params naturally
+  - Playwright E2E: auth setup + 8 tests; 6 pass, 2 skip corpus-conditional
+    (folder selection requires corpus w/ folders; lightbox test requires matching assets)
+  - Deployed: commit 49decdd; / 200, /app/library 307 ✓
 
 ---
 

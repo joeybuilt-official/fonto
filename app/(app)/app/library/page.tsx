@@ -21,7 +21,7 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon } from "lucide-react";
 import { type Asset } from "../_components/photo-card";
@@ -88,6 +88,9 @@ function LibraryContent() {
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [directAsset, setDirectAsset] = useState<Asset | null>(null);
+  const savedScrollRef = useRef(0);
+  const prevLbIndexRef = useRef<number | null>(null);
 
   // Lightbox is URL-based so back button restores chip state.
   // Opening pushes ?lb=<id>; closing calls router.back().
@@ -177,9 +180,10 @@ function LibraryContent() {
   ]);
 
   const openLightbox = useCallback((id: string, _index: number) => {
+    savedScrollRef.current = window.scrollY;
     const sp = new URLSearchParams(searchParams.toString());
     sp.set("lb", id);
-    router.push(`${pathname}?${sp.toString()}`);
+    router.push(`${pathname}?${sp.toString()}`, { scroll: false });
   }, [searchParams, router, pathname]);
 
   const navLightbox = useCallback((delta: number) => {
@@ -195,6 +199,38 @@ function LibraryContent() {
   const closeLightbox = useCallback(() => {
     router.back();
   }, [router]);
+
+  // Restore scroll position when lightbox closes.
+  useEffect(() => {
+    if (prevLbIndexRef.current !== null && lightboxIndex === null) {
+      const saved = savedScrollRef.current;
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: saved, behavior: "instant" });
+      });
+    }
+    prevLbIndexRef.current = lightboxIndex;
+  }, [lightboxIndex]);
+
+  // Fetch a specific asset by ID when it isn't in the current filtered list
+  // (e.g. archived asset opened via external deep-link URL).
+  useEffect(() => {
+    if (!lbId || loading) {
+      if (!lbId) setDirectAsset(null);
+      return;
+    }
+    if (lbIndex !== null && lbIndex >= 0) {
+      setDirectAsset(null);
+      return;
+    }
+    void (async () => {
+      try {
+        const r = await fetch(`/api/v1/assets/${lbId}`);
+        if (!r.ok) return;
+        const d = (await r.json()) as { asset?: Asset };
+        setDirectAsset(d.asset ?? null);
+      } catch { /* best-effort */ }
+    })();
+  }, [lbId, lbIndex, loading]);
 
   const isTrash = toolbar.filters.lifecycle === "trashed";
 
@@ -238,7 +274,7 @@ function LibraryContent() {
         </div>
       )}
 
-      {lightboxIndex !== null && (
+      {lightboxIndex !== null ? (
         <PhotoLightbox
           asset={assets[lightboxIndex]}
           onClose={closeLightbox}
@@ -247,7 +283,16 @@ function LibraryContent() {
           hasPrev={lightboxIndex > 0}
           hasNext={lightboxIndex < assets.length - 1}
         />
-      )}
+      ) : directAsset ? (
+        <PhotoLightbox
+          asset={directAsset}
+          onClose={closeLightbox}
+          onPrev={() => {}}
+          onNext={() => {}}
+          hasPrev={false}
+          hasNext={false}
+        />
+      ) : null}
     </div>
   );
 }
