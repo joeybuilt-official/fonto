@@ -22,6 +22,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
+import { eq } from "drizzle-orm";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 
@@ -80,6 +81,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       { error: `File too large. Maximum upload size is ${cap} bytes.`, maxBytes: cap },
       { status: 413 }
     );
+  }
+
+  // Phase 9.1 — quota preflight. Block uploads that would push the workspace
+  // past its quota_bytes limit. NULL quota = unlimited (no check needed).
+  const [ws] = await db
+    .select({ quotaBytes: schema.workspaces.quotaBytes, usageBytes: schema.workspaces.usageBytes })
+    .from(schema.workspaces)
+    .where(eq(schema.workspaces.id, workspaceId))
+    .limit(1);
+  if (ws?.quotaBytes != null) {
+    const wouldUse = (ws.usageBytes ?? 0) + body.sizeBytes;
+    if (wouldUse > ws.quotaBytes) {
+      return NextResponse.json(
+        {
+          error: "Storage quota exceeded",
+          quotaBytes: ws.quotaBytes,
+          usageBytes: ws.usageBytes ?? 0,
+        },
+        { status: 413 }
+      );
+    }
   }
 
   const uploadId = randomUUID();

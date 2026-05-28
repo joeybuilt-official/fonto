@@ -4,7 +4,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { getS3Client, assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { plexoPublishEvent } from "@/lib/plexo";
@@ -262,6 +262,12 @@ export async function DELETE(
   await db
     .delete(schema.assets)
     .where(and(eq(schema.assets.id, id), inArray(schema.assets.workspaceId, workspaceIds)));
+
+  // Phase 9.1 — decrement workspace usage (fire-and-forget; reconcile corrects drift).
+  void db
+    .update(schema.workspaces)
+    .set({ usageBytes: sql`GREATEST(0, ${schema.workspaces.usageBytes} - ${asset.sizeBytes})` })
+    .where(eq(schema.workspaces.id, asset.workspaceId));
 
   void plexoPublishEvent("ext.fonto.asset.purged", {
     assetId: id,

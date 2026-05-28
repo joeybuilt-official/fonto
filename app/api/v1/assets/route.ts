@@ -273,6 +273,22 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  // Phase 9.1 — quota preflight (same check as init route).
+  const [ws] = await db
+    .select({ quotaBytes: schema.workspaces.quotaBytes, usageBytes: schema.workspaces.usageBytes })
+    .from(schema.workspaces)
+    .where(eq(schema.workspaces.id, workspaceId))
+    .limit(1);
+  if (ws?.quotaBytes != null) {
+    const wouldUse = (ws.usageBytes ?? 0) + file.size;
+    if (wouldUse > ws.quotaBytes) {
+      return NextResponse.json(
+        { error: "Storage quota exceeded", quotaBytes: ws.quotaBytes, usageBytes: ws.usageBytes ?? 0 },
+        { status: 413 }
+      );
+    }
+  }
+
   const buffer = Buffer.from(await file.arrayBuffer());
   // Resolve the canonical mime. Browser-set `file.type` is often blank or
   // `application/octet-stream` for HEIC and camera-RAW uploads — `detectMime`
@@ -346,6 +362,12 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
       .update(schema.assets)
       .set({ syncState: "synced" })
       .where(eq(schema.assets.id, asset.id));
+
+    // Phase 9.1 — increment usage (fire-and-forget; reconcile corrects drift).
+    void db
+      .update(schema.workspaces)
+      .set({ usageBytes: sql`${schema.workspaces.usageBytes} + ${file.size}` })
+      .where(eq(schema.workspaces.id, workspaceId));
 
     if (sessionId) {
       await db

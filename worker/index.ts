@@ -1000,6 +1000,13 @@ function startMaintenanceWorker(): Worker {
         log.info(result, "daily digest tick complete");
         return result;
       }
+      if (job.name === JobNames.ReconcileStorageUsage) {
+        // Phase 9.1 — recompute usage_bytes for every workspace from the live
+        // asset table, correcting any drift from incremental updates.
+        const result = await reconcileStorageUsage();
+        log.info(result, "storage reconcile tick complete");
+        return result;
+      }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");
       return null;
     },
@@ -1076,6 +1083,54 @@ async function ensureDailyDigestSchedule(): Promise<void> {
     { intervalMs: DIGEST_INTERVAL_MS, jobName: JobNames.DailyDigest },
     "daily digest schedule registered"
   );
+}
+
+/** Phase 9.1 — nightly reconcile interval: 24 h (env-overridable for testing). */
+const RECONCILE_INTERVAL_MS = (() => {
+  const raw = process.env.RECONCILE_STORAGE_INTERVAL_MS;
+  if (!raw) return 24 * 60 * 60 * 1000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 24 * 60 * 60 * 1000;
+})();
+
+async function ensureStorageReconcileSchedule(): Promise<void> {
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.ReconcileStorageUsage,
+    { every: RECONCILE_INTERVAL_MS },
+    { name: JobNames.ReconcileStorageUsage }
+  );
+  logger.info(
+    { intervalMs: RECONCILE_INTERVAL_MS, jobName: JobNames.ReconcileStorageUsage },
+    "storage reconcile schedule registered"
+  );
+}
+
+/**
+ * Phase 9.1 — recompute usage_bytes for all workspaces from the live
+ * assets table. Runs at most a few hundred workspaces; each UPDATE is
+ * a single correlated sub-SELECT → safe in production load.
+ */
+async function reconcileStorageUsage(): Promise<{ workspacesUpdated: number }> {
+  const { db, schema } = await import("@/lib/db");
+  const { eq, sql, ne } = await import("drizzle-orm");
+  const workspaces = await db.select({ id: schema.workspaces.id }).from(schema.workspaces);
+  let updated = 0;
+  for (const ws of workspaces) {
+    const [row] = await db
+      .select({ total: sql<string>`COALESCE(SUM(${schema.assets.sizeBytes}), 0)` })
+      .from(schema.assets)
+      .where(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        sql`${schema.assets.workspaceId} = ${ws.id} AND ${schema.assets.lifecycleState} != 'purged'`
+      );
+    const newUsage = Number(row?.total ?? 0);
+    await db
+      .update(schema.workspaces)
+      .set({ usageBytes: newUsage })
+      .where(eq(schema.workspaces.id, ws.id));
+    updated++;
+  }
+  return { workspacesUpdated: updated };
 }
 
 async function shutdown(signal: string): Promise<void> {
@@ -1156,6 +1211,14 @@ async function main(): Promise<void> {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
       "failed to register daily digest schedule — digests disabled until next boot"
+    );
+  }
+  try {
+    await ensureStorageReconcileSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register storage reconcile schedule — drift correction disabled until next boot"
     );
   }
 

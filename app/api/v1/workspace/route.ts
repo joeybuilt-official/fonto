@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { eq, sum } from "drizzle-orm";
+import { eq, and, ne, count } from "drizzle-orm";
 
 export async function GET() {
   const user = await getAuthUser();
@@ -14,25 +14,24 @@ export async function GET() {
   if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
   const workspace = workspaces[0];
 
-  const [stats] = await db
-    .select({ totalBytes: sum(schema.assets.sizeBytes) })
-    .from(schema.assets)
-    .where(eq(schema.assets.workspaceId, workspace.id));
+  // Phase 9.1 — read usage_bytes + quota_bytes from the maintained column.
+  const [ws] = await db
+    .select({ usageBytes: schema.workspaces.usageBytes, quotaBytes: schema.workspaces.quotaBytes })
+    .from(schema.workspaces)
+    .where(eq(schema.workspaces.id, workspace.id))
+    .limit(1);
 
-  const assetCounts = await db
-    .select()
+  const [countRow] = await db
+    .select({ n: count() })
     .from(schema.assets)
-    .where(eq(schema.assets.workspaceId, workspace.id));
+    .where(and(eq(schema.assets.workspaceId, workspace.id), ne(schema.assets.lifecycleState, "purged")));
 
   return NextResponse.json({
-    workspace: {
-      id: workspace.id,
-      name: workspace.name,
-      slug: workspace.slug,
-    },
+    workspace: { id: workspace.id, name: workspace.name, slug: workspace.slug },
     storage: {
-      totalBytes: Number(stats?.totalBytes ?? 0),
-      assetCount: assetCounts.length,
+      usageBytes: ws?.usageBytes ?? 0,
+      quotaBytes: ws?.quotaBytes ?? null,   // null = unlimited
+      assetCount: countRow?.n ?? 0,
     },
   });
 }

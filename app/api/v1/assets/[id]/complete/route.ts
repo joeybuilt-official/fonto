@@ -33,7 +33,7 @@ import { Readable } from "stream";
 import { getAuthUser } from "@/lib/auth/server";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getS3Client } from "@/lib/r2";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
@@ -278,6 +278,14 @@ export async function POST(
     .update(schema.assetUploads)
     .set({ state: "completed", assetId: result.asset.id, updatedAt: new Date() })
     .where(eq(schema.assetUploads.id, uploadId));
+
+  // Phase 9.1 — increment workspace usage atomically. Skip for dedup (already counted).
+  if (!result.deduplicated) {
+    await db
+      .update(schema.workspaces)
+      .set({ usageBytes: sql`${schema.workspaces.usageBytes} + ${upload.sizeBytes}` })
+      .where(eq(schema.workspaces.id, upload.workspaceId));
+  }
 
   void recordAuditEvent({
     workspaceId: upload.workspaceId,

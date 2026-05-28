@@ -8,7 +8,8 @@ import Link from "next/link";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 
 interface StorageInfo {
-  totalBytes: number;
+  usageBytes: number;
+  quotaBytes: number | null;
   assetCount: number;
 }
 
@@ -63,11 +64,36 @@ export default function SettingsPage() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Storage used</span>
-              <span className="text-sm font-medium text-foreground">{formatBytes(storage.totalBytes)}</span>
+              <span className="text-sm font-medium text-foreground">
+                {formatBytes(storage.usageBytes)}
+                {storage.quotaBytes != null && (
+                  <span className="text-muted-foreground font-normal"> / {formatBytes(storage.quotaBytes)}</span>
+                )}
+              </span>
             </div>
+            {storage.quotaBytes != null && (
+              <div className="space-y-1">
+                <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      storage.usageBytes / storage.quotaBytes >= 0.9
+                        ? "bg-destructive"
+                        : storage.usageBytes / storage.quotaBytes >= 0.75
+                        ? "bg-yellow-500"
+                        : "bg-primary"
+                    }`}
+                    style={{ width: `${Math.min(100, (storage.usageBytes / storage.quotaBytes) * 100).toFixed(1)}%` }}
+                  />
+                </div>
+                {storage.usageBytes / storage.quotaBytes >= 0.9 && (
+                  <p className="text-xs text-destructive">Storage almost full — delete or archive assets to free space.</p>
+                )}
+              </div>
+            )}
             <div className="pt-2 border-t border-border">
               <p className="text-xs text-muted-foreground">
-                Assets are stored securely in Cloudflare R2. No storage limits on the current plan.
+                Assets are stored securely in Cloudflare R2.
+                {storage.quotaBytes == null && " No storage quota on the current plan."}
               </p>
             </div>
           </div>

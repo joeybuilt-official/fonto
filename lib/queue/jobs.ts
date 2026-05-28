@@ -120,6 +120,11 @@ export type VideoHlsTranscodeJob = z.infer<typeof VideoHlsTranscodeJobSchema>;
 export const DailyDigestJobSchema = z.object({}).strict();
 export type DailyDigestJob = z.infer<typeof DailyDigestJobSchema>;
 
+// Phase 9.1 — storage usage reconcile. Empty payload; the worker reads all
+// workspaces and recomputes usage_bytes from the live asset table.
+export const ReconcileStorageUsageJobSchema = z.object({}).strict();
+export type ReconcileStorageUsageJob = z.infer<typeof ReconcileStorageUsageJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -150,6 +155,10 @@ export const JobNames = {
   DailyDigest: "daily-digest",
   // Phase 8b — HLS ladder transcode + sprite generation for one video.
   VideoHlsTranscode: "video-hls-transcode",
+  // Phase 9.1 — nightly reconcile of workspace usage_bytes from asset rows.
+  // Corrects any drift from incremental updates (dedup edge cases, bugs,
+  // direct R2 deletes that bypassed the API).
+  ReconcileStorageUsage: "reconcile-storage-usage",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

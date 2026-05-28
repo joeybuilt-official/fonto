@@ -29,6 +29,11 @@ export const workspaces = fontoSchema.table(
     kind: text("kind").notNull().default("personal"),
     color: text("color").notNull().default("#6366f1"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    // Phase 9.1 — storage quotas. quota_bytes = NULL means unlimited.
+    // usage_bytes is maintained incrementally (incremented on upload complete,
+    // decremented on hard delete) and reconciled nightly.
+    quotaBytes: bigint("quota_bytes", { mode: "number" }),
+    usageBytes: bigint("usage_bytes", { mode: "number" }).notNull().default(0),
   },
   (table) => [index("workspaces_user_id_idx").on(table.userId)]
 );
