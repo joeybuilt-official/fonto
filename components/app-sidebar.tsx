@@ -3,56 +3,49 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Users, Map, Layers, Home, Inbox, Activity, Share2, Library, Bell, Compass } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  Bell,
+  Compass,
+  FolderOpen,
+  Home,
+  Library,
+  LogOut,
+  Search,
+  Settings,
+  X,
+} from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
-import { useRouter } from "next/navigation";
 import type { User } from "@/lib/auth/types";
 
+// UX consolidation Phase 7a — the sidebar is the canonical desktop
+// surface; mobile relies on `app-mobile-bottom-bar.tsx` for the same
+// five primary destinations.
+//
+// Order matches the bottom bar so muscle memory is consistent across
+// viewports: Library → Explore → Collections → Updates → Search.
+// Home stays as its own entry (UX-C1 default = keep); Settings stays
+// as the tail entry on desktop (UX-C6 demotes it to the avatar menu
+// on mobile, handled in `app-mobile-avatar-menu.tsx`).
+//
+// The 13 legacy entries removed in this phase (Photos, Timeline,
+// Memories, Folders, Documents, Trash, Inbox, Activity, Shared with
+// me, Projects, Smart Collections, Stacks, People, Map) still resolve
+// as URLs — the Phase 5 middleware redirect map sends each to its
+// consolidated destination with the right pre-applied query string,
+// and the deprecation-banner pages under `/app/<old>/page.tsx`
+// continue to render for any directly-loaded deep link that bypasses
+// the middleware. Phase 7.1 follow-up removes the deprecation pages
+// themselves once the redirect layer has been live ≥1 release cycle.
 const navItems = [
-  // UX-1 Inbox/Home split: /home is the landing (stats + memory of day +
-  // quick-jump), /dashboard is the Inbox (upload + recent + queue).
-  { href: "/app/home", label: "Home", icon: Home },
-  // UX consolidation Phase 1 — unified asset-browsing surface. Will
-  // replace Photos/Timeline/Folders/Documents/Trash once the redirect
-  // layer (Phase 5) + sidebar cleanup (Phase 7) land.
-  { href: "/app/library", label: "Library", icon: Library },
-  // UX consolidation Phase 3 — Updates merges Inbox/Activity/Shared.
-  // The old standalone routes (Inbox/Activity/Shared with me below)
-  // still render with deprecation banners until Phase 5/7 strip them.
-  { href: "/app/updates", label: "Updates", icon: Bell },
-  // UX consolidation Phase 4 — Explore hub fans out to People + Map +
-  // future Things. People + Map keep their standalone entries below
-  // until Phase 7 sidebar cleanup so existing bookmarks still resolve.
-  { href: "/app/explore", label: "Explore", icon: Compass },
-  { href: "/app/dashboard", label: "Inbox", icon: Inbox },
-  { href: "/app/timeline", label: "Timeline", icon: Clock },
-  // Phase 5.3 — Memories ("On this day"). Logically a sibling of Timeline
-  // (both are time-axis browsing); the plan calls for it under Map, but Map
-  // isn't in the nav yet so Timeline is the right adjacent home for now.
-  { href: "/app/memories", label: "Memories", icon: Sparkles },
-  // Phase 5.2 — Map view (geo-tagged photos clustered by viewport).
-  { href: "/app/map", label: "Map", icon: Map },
-  { href: "/app/folders", label: "Folders", icon: FolderTree },
-  { href: "/app/photos", label: "Photos", icon: Image },
-  // Phase 5.1 — People (face clusters). Sits between Photos and Documents
-  // since it's a primary browsing axis over the image library.
-  { href: "/app/people", label: "People", icon: Users },
-  { href: "/app/documents", label: "Documents", icon: FileText },
-  { href: "/app/collections", label: "Albums", icon: FolderOpen },
-  { href: "/app/projects", label: "Projects", icon: Folder },
-  { href: "/app/smart-collections", label: "Smart Collections", icon: Zap },
-  // Phase 5.5 — Stacks (RAW+JPEG pairs, bursts, edits). Sits next to
-  // Smart Collections since both are derived/grouping surfaces.
-  { href: "/app/stacks", label: "Stacks", icon: Layers },
-  { href: "/app/search", label: "Search", icon: Search },
-  // Phase 7a — workspace activity feed (comments + uploads + future events).
-  { href: "/app/activity", label: "Activity", icon: Activity },
-  // Phase 7b — assets shared INTO this workspace from other workspaces.
-  { href: "/app/shared", label: "Shared with me", icon: Share2 },
-  { href: "/app/trash", label: "Trash", icon: Trash2 },
-  { href: "/app/settings", label: "Settings", icon: Settings },
+  { href: "/app/home",        label: "Home",        icon: Home },
+  { href: "/app/library",     label: "Library",     icon: Library },
+  { href: "/app/explore",     label: "Explore",     icon: Compass },
+  { href: "/app/collections", label: "Collections", icon: FolderOpen },
+  { href: "/app/updates",     label: "Updates",     icon: Bell },
+  { href: "/app/search",      label: "Search",      icon: Search },
+  { href: "/app/settings",    label: "Settings",    icon: Settings },
 ];
 
 export function AppSidebar({ user, onClose }: { user: User; onClose?: () => void }) {
@@ -87,12 +80,20 @@ export function AppSidebar({ user, onClose }: { user: User; onClose?: () => void
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
         {navItems.map((item) => {
-          const active = pathname === item.href;
+          // Active when the pathname matches exactly OR is a deeper
+          // sub-route (e.g. /app/collections/<id> keeps Collections
+          // highlighted). Home is an exact-only match since it sits at
+          // the same level prefix as the rest of /app/*.
+          const active =
+            item.href === "/app/home"
+              ? pathname === item.href
+              : pathname === item.href || pathname.startsWith(item.href + "/");
           return (
             <Link
               key={item.href}
               href={item.href}
               onClick={onClose}
+              aria-current={active ? "page" : undefined}
               className={`flex items-center gap-2 rounded px-3 py-2.5 text-sm font-medium transition-colors ${
                 active
                   ? "bg-sidebar-accent text-foreground"
