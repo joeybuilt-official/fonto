@@ -68,7 +68,7 @@ export function AppSidebar({ user, onClose }: { user: User; onClose?: () => void
     <aside className="flex w-56 flex-col border-r border-border bg-sidebar h-full">
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
         <Link
-          href="/app/dashboard"
+          href="/app/home"
           className="font-heading text-sm font-semibold tracking-tight"
           onClick={onClose}
         >

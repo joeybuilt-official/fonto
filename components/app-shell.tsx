@@ -7,6 +7,7 @@ import { Menu } from "lucide-react";
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
+import { UiV2ChangelogDialog } from "@/app/(app)/app/_components/ui-v2-changelog-dialog";
 import type { User } from "@/lib/auth/types";
 
 export function AppShell({ user, children }: { user: User; children: React.ReactNode }) {
@@ -42,7 +43,7 @@ export function AppShell({ user, children }: { user: User; children: React.React
           >
             <Menu className="h-5 w-5" />
           </button>
-          <Link href="/app/dashboard" className="font-heading text-sm font-semibold">
+          <Link href="/app/home" className="font-heading text-sm font-semibold">
             <span className="text-primary">_</span>fonto
           </Link>
         </header>
@@ -51,6 +52,10 @@ export function AppShell({ user, children }: { user: User; children: React.React
         </div>
         <main className="flex-1 overflow-y-auto p-4 md:p-6">{children}</main>
       </div>
+      {/* Phase 5 (UX consolidation) — first-login "what moved where"
+          dialog. Self-gated on a localStorage flag; renders nothing
+          after dismissal. */}
+      <UiV2ChangelogDialog />
     </div>
   );
 }
