@@ -36,7 +36,7 @@ TaskCreate while in phased-plan flow.
 - [x] Android project shell — mobile/android/ scaffold (build.gradle, manifest, MainActivity.kt, signingConfigs via CM_* env vars)
 - [x] Codemagic repo connected — operator connected GitHub + fonto repo to Codemagic 2026-05-28
 - [x] Codemagic signing env vars set — CM_KEYSTORE/CM_KEY_ALIAS/CM_STORE_PASSWORD/CM_KEY_PASSWORD in android-signing group (via API 2026-05-28)
-- [ ] First build succeeds + signed AAB artifact produced — pending first CI run result
+- [x] First build (#10) succeeded — signed APK + AAB produced (2026-05-28). Required webhook install + 9 latent build fixes: convert import, login test, declarative Gradle plugins, Gradle 8.11.1/AGP 8.9.1/Kotlin 2.1, compileSdk 36, res/ (icon+theme)+NDK 28.2, workmanager 0.9.0, isInDebugMode drop, JVM target 17
 - [x] mobile/CI.md runbook — keystore rotation (2053 expiry), build failure triage, deferred iOS steps
 - [x] Commit + push
 
@@ -121,7 +121,7 @@ TaskCreate while in phased-plan flow.
 - [ ] OPERATOR GATE — Add service account to Codemagic (Team settings → Google Play)
 - [ ] OPERATOR GATE — Note Play-managed signing cert SHA-256 after first publish (needed for 6.5 assetlinks.json)
 - [x] DECISION C8 = **Option A** (path filter on mobile/** — operator confirmed 2026-05-28)
-- [ ] codemagic.yaml — add changeset path filter (trigger only on mobile/**)
+- [x] codemagic.yaml — changeset path filter (trigger only on mobile/**)
 - [ ] codemagic.yaml — add publishing.google_play stanza (internal track, draft → review)
 - [ ] Commit + push + first internal track release
 
@@ -150,7 +150,7 @@ TaskCreate while in phased-plan flow.
 - [x] Mobile: add app_links + url_launcher packages to pubspec.yaml
 - [x] Mobile: handle incoming URI in main.dart — /app/library?lb=<id> → open detail, /share/<token> → resolve + open detail; password-protected + collection shares fall back to url_launcher
 - [x] Backend deployed + verified: /.well-known/assetlinks.json → 200/application/json, Google Digital Asset Links verifier parses statement cleanly (2026-05-28)
-- [ ] codemagic.yaml — add APK artifact + fix keystore-decode/build single-shell signing (committed locally, push pending operator OK)
+- [x] codemagic.yaml — APK artifact + single-shell keystore signing fix (pushed; APK at flutter-apk/app-release.apk, upload-key-signed)
 - [ ] Smoke test: tap https://myfonto.com/share/<token> on Android 6+ device → app opens to asset (needs sideloaded APK)
 - [ ] Commit + push + deploy assetlinks.json route — DONE for backend (9b48bcd); mobile artifact ships via Codemagic
 

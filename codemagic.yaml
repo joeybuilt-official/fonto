@@ -12,6 +12,10 @@ workflows:
       branch_patterns:
         - pattern: main
           include: true
+      when:
+        changeset:
+          includes:
+            - 'mobile/**'
     scripts:
       - name: Get packages
         script: flutter pub get
