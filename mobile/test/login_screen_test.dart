@@ -23,7 +23,12 @@ void main() {
   testWidgets("renders url field and pat field", (tester) async {
     await pumpLogin(tester);
     expect(find.byType(TextField), findsNWidgets(2));
-    expect(find.text("https://myfonto.com"), findsOneWidget);
+    // The URL field is pre-filled with the default base URL, and its
+    // hintText is the same string — find.text would match both the
+    // EditableText value and the (hidden) hint. Assert the controller
+    // value directly to stay unambiguous.
+    final urlField = tester.widget<TextField>(find.byType(TextField).first);
+    expect(urlField.controller?.text, "https://myfonto.com");
   });
 
   testWidgets("shows error on empty submit", (tester) async {
