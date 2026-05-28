@@ -31,14 +31,18 @@ Derived from `plan-ux.md`. Tick boxes as items complete.
 - [x] DEPLOYED to NAS 2026-05-27 — `/app/collections` + `/app/collections?tab=smart|projects|stacks` live; deprecated `/app/smart-collections`, `/app/projects`, `/app/stacks` all 307 (unauth → login) and render banners when authed
 
 ## Phase 3 — Updates merge
-- [ ] OPERATOR GATE — confirm UX-C1 (Home stays) + UX-C5 (Activity merges)
-- [ ] `app/(app)/app/updates/page.tsx` w/ three vertical sections
-- [ ] Uploads section — relocate Inbox's upload queue + recent grid
-- [ ] Activity section — relocate Activity feed
-- [ ] Shared with me section — relocate Shared list
-- [ ] Mobile collapse — top tab bar switches between the three sections
-- [ ] Deep-link anchors (`?section=uploads|activity|shared`)
-- [ ] Commit + push
+- [x] OPERATOR GATE — UX-C1 + UX-C5 = **plan defaults applied** (operator-silent; Home stays + Activity merges into Updates per plan-ux.md). Revisit once usage data exists.
+- [x] `app/(app)/app/updates/page.tsx` w/ three vertical sections
+- [x] Uploads section — relocated Inbox's upload queue + recent grid (`_components/uploads-section.tsx`); MemoryCard moved to shared `app/(app)/app/_components/memory-card.tsx`
+- [x] Activity section — relocated Activity feed (`_components/activity-section.tsx`); deep-link target switched from `/app/photos?asset=` to `/app/library?asset=` to align with Phase 1
+- [x] Shared with me section — relocated Shared list (`_components/shared-section.tsx`)
+- [x] Mobile collapse — top tab bar switches between the three sections (`md:hidden` on the strip; sections stack on `md+`)
+- [x] Deep-link anchors (`?section=uploads|activity|shared`) — wrapper scrolls the matching `#updates-section-*` anchor into view
+- [x] Sidebar — Updates entry added between Library and Inbox
+- [x] Deprecation banners on `/app/dashboard`, `/app/activity`, `/app/shared` — each re-renders the section body with banner; Phase 5 will replace with middleware redirects
+- [x] Shared primitives — tab-bar + deprecation-banner promoted to `app/(app)/app/_components/` so Phase 2 + 3 compose from one source (tab-bar gains `paramName` + `className` props)
+- [x] Commit + push (2548ad0)
+- [x] DEPLOYED to NAS 2026-05-27 — `/app/updates` + `?section=uploads|activity|shared` live; deprecated `/dashboard`, `/activity`, `/shared` all 307 (unauth) and render banners when authed
 
 ## Phase 4 — Explore hub
 - [ ] `app/(app)/app/explore/page.tsx` w/ three tiles

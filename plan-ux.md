@@ -216,7 +216,17 @@ URL state for sub-tab selection: `?tab=albums|smart|projects|stacks`
 - Exit: `/app/updates` ships. Old `/app/dashboard`, `/app/activity`,
   `/app/shared` redirect (Phase 5) here w/ the right section
   anchor.
-- Status: pending
+- Status: **done 2026-05-27** — commit 2548ad0, deployed to NAS.
+  `/app/updates` renders the three sections (Uploads / Activity /
+  Shared); `?section=` URL state scrolls the matching anchor into
+  view on desktop and selects the tab on mobile. Deprecated routes
+  (`/app/dashboard`, `/app/activity`, `/app/shared`) render their
+  section body with a deprecation banner. Operator was silent on
+  UX-C1 + UX-C5 → applied plan defaults: Home stays, Activity merges.
+  Refactor side-effect: tab-bar + deprecation-banner + memory-card
+  promoted from per-phase folders to shared
+  `app/(app)/app/_components/` so Phase 2 + 3 + future phases compose
+  from one source.
 
 ## Phase 4 — Explore hub (People + Map + future Things)
 
