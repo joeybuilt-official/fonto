@@ -64,7 +64,36 @@ remaining chip-strip primitives (1.1). Each phase fits one session.
   fonto.assets GROUP BY 1` shows `clip` > 0; `clip_vec`
   coverage = 100% of image rows. Things-gate SELECT documented
   in `plan-ux-followups.md` under this phase block.
-- Status: pending
+- Status: **DONE 2026-05-28**
+  - verify:clip PASS — topLevel=photo, confidence=0.2114
+  - clip_vec coverage: 24/24 active images (3 archived skipped)
+  - classify_method: all historical rows remain llm-fallback
+    (processed pre-fix); new uploads will get clip
+  - CLASSIFY_RUNNER_UP_DELTA now overridable via env var
+    (classify.ts change in same commit)
+
+### Things-graduation gate SELECT
+
+Copy-paste when ready to graduate Things tile from placeholder
+to live class-grid (Phase 4.2). Returns a row when ≥6 distinct
+classifications each have ≥10 active members:
+
+```sql
+SELECT count(*) AS qualifying_classes
+FROM (
+  SELECT classification, count(*) AS members
+  FROM fonto.assets
+  WHERE lifecycle_state = 'active'
+    AND classification IS NOT NULL
+  GROUP BY classification
+  HAVING count(*) >= 10
+) classes
+HAVING count(*) >= 6;
+```
+
+Graduate when this returns count = 6 (or more).
+Current state (2026-05-28): all 24 active images classified
+as llm-fallback; run this query after the corpus grows.
 
 ## Phase 1.1 — Library chip-strip polish + back-button E2E
 

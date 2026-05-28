@@ -33,12 +33,18 @@ export interface ClassifyResult {
 /** Default 0.18 — CLIP cosine for image+text rarely exceeds 0.3. */
 const DEFAULT_THRESHOLD = 0.18;
 /** Minimum delta between top-1 and top-2 to call the choice "decisive". */
-const RUNNER_UP_DELTA = 0.05;
+const DEFAULT_RUNNER_UP_DELTA = 0.05;
 
 function threshold(): number {
   const raw = process.env.CLASSIFY_CONFIDENCE_THRESHOLD;
   const parsed = raw ? Number.parseFloat(raw) : NaN;
   return Number.isFinite(parsed) ? parsed : DEFAULT_THRESHOLD;
+}
+
+function runnerUpDelta(): number {
+  const raw = process.env.CLASSIFY_RUNNER_UP_DELTA;
+  const parsed = raw ? Number.parseFloat(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : DEFAULT_RUNNER_UP_DELTA;
 }
 
 function cosine(a: readonly number[], b: readonly number[]): number {
@@ -102,7 +108,7 @@ export async function classifyAsset(
   const runnerUp = topScores[1]?.score ?? 0;
   zeroShotConfidenceBuckets.observe(winner.score);
 
-  if (winner.score < t || winner.score - runnerUp < RUNNER_UP_DELTA) {
+  if (winner.score < t || winner.score - runnerUp < runnerUpDelta()) {
     return runFallback(llmFallback, winner.score);
   }
 

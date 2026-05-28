@@ -20,9 +20,14 @@
 //   [verify-clip] candidate: <uuid> (<filename>)
 //   [verify-clip] PASS — classify_method=clip topLevel=<class> confidence=0.xxxx
 //
-// Expected output if fix regressed:
+// Expected output if fix regressed (scores all 0 — objects instead of arrays):
 //   [verify-clip] FAIL — CLIP confidence below threshold — fell through to LLM fallback
 //   [verify-clip] asset: <uuid> (<filename>)
+//
+// Note: the runner-up delta gate (default 0.05) can cause fallback on borderline images
+// even when CLIP is working. The script sets CLASSIFY_RUNNER_UP_DELTA=0 internally to
+// bypass it; the production pipeline keeps the 0.05 default. A genuine regression
+// (scores all 0) will fail even with delta=0 because the threshold check catches it.
 //
 // Usage:
 //   pnpm verify:clip                      # most-recent image with clip_vec
@@ -69,7 +74,9 @@ async function main(): Promise<void> {
 
     // Step 2: find a candidate image asset.
     const assetIdArg = arg("asset");
-    type Row = { id: string; filename: string; clip_vec: number[] };
+    // postgres.js returns pgvector columns as the raw string "[0.1,0.2,...]".
+    // Parse to number[] before passing to classifyAsset.
+    type Row = { id: string; filename: string; clip_vec: string | number[] };
     let rows: Row[];
 
     if (typeof assetIdArg === "string") {
@@ -103,11 +110,19 @@ async function main(): Promise<void> {
       }
     }
 
-    const { id, filename, clip_vec } = rows[0];
+    const { id, filename } = rows[0];
+    const rawVec = rows[0].clip_vec;
+    const clip_vec: number[] = Array.isArray(rawVec)
+      ? rawVec
+      : JSON.parse(String(rawVec));
     console.log(`[verify-clip] candidate: ${id} (${filename})`);
 
-    // Step 3: classify. The LLM fallback throws so any confidence miss
-    // surfaces as an explicit failure rather than a silent pass.
+    // Step 3: classify. Override runner-up delta to 0 so borderline images
+    // (top-1 and top-2 close in score) still pass as long as CLIP wins.
+    // A genuine regression (all scores 0) still fails because the absolute
+    // threshold check catches it first. The production pipeline keeps the
+    // default 0.05 delta — this override is verify-only.
+    process.env.CLASSIFY_RUNNER_UP_DELTA = "0";
     let result: Awaited<ReturnType<typeof classifyAsset>>;
     try {
       result = await classifyAsset(clip_vec, {

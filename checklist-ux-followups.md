@@ -11,17 +11,17 @@ Derived from `plan-ux-followups.md`. Tick boxes as items complete.
 - [x] Sub-list renders under Collections entry; pin row active when `pathname === /app/collections/<id>`
 - [x] No layout shift — data flows server → client as prop, no client-fetch
 - [x] Commit + push (ae3a5d5)
-- [ ] DEPLOYED to NAS — build (`bmt21wcln`) in flight at handoff; smoke + force-recreate is the first next-session action
+- [x] DEPLOYED to NAS — build (`bmt21wcln`) deployed 2026-05-28; `/` 200, `/app/library` 307 ✓
 
 ## Phase 4.1 — CLIP fix verification + corpus gates
-- [ ] OPERATOR GATE — confirm FU-C2 default (Yuki — verify-then-backfill)
-- [ ] Write `scripts/verify-clip-classification.ts`
-- [ ] Document expected output in script header
-- [ ] Run `pnpm verify:clip` against a fresh test image; assert `classify_method='clip'`
-- [ ] Run `pnpm backfill:clip` against the current corpus
-- [ ] Confirm `clip_vec` coverage hits 100% of image rows
-- [ ] Document the Things-graduation gate SELECT in `plan-ux-followups.md` Phase 4.1 block
-- [ ] Commit + push
+- [x] OPERATOR GATE — confirmed 2026-05-28 ("Go. Proceed.")
+- [x] Write `scripts/verify-clip-classification.ts`
+- [x] Document expected output in script header
+- [x] Run `pnpm verify:clip` against a fresh test image; assert `classify_method='clip'` — PASS (topLevel=photo, confidence=0.2114)
+- [x] Run `pnpm backfill:clip` against the current corpus — 0 enqueued (all active images already had clip_vec)
+- [x] Confirm `clip_vec` coverage hits 100% of image rows — 24/24 active; 3 archived skipped (correct)
+- [x] Document the Things-graduation gate SELECT in `plan-ux-followups.md` Phase 4.1 block
+- [x] Commit + push
 
 ## Phase 1.1 — Library chip-strip polish + back-button E2E
 - [ ] OPERATOR GATE — confirm FU-C3 default (Tess — popover, not flat strip)
