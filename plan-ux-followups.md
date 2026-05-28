@@ -35,7 +35,12 @@ remaining chip-strip primitives (1.1). Each phase fits one session.
   on desktop. Mobile bottom-bar unaffected (the avatar menu + the
   hamburger sidebar drawer also display the pins, but they're
   desktop-primary). No layout shift on first paint.
-- Status: pending
+- Status: **code shipped 2026-05-27** (commit ae3a5d5); deploy
+  (`bmt21wcln`) in flight at session-end handoff. First action in
+  the next session: `ssh <server> ...docker compose up -d --force-recreate fonto`
+  + smoke `/app/library` 307 + sidebar source for pin sub-list
+  markup. Then mark the DEPLOY box in checklist-ux-followups.md
+  and continue to Phase 4.1.
 
 ## Phase 4.1 — CLIP fix verification + corpus gates
 

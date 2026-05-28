@@ -3,15 +3,15 @@
 Derived from `plan-ux-followups.md`. Tick boxes as items complete.
 
 ## Phase 7b — Pinned albums under Collections sidebar
-- [ ] OPERATOR GATE — confirm FU-C1 default (Aisha — sub-list, Immich pattern)
-- [ ] Audit subagent — confirm no existing sidebar SSR-prop plumbing
-- [ ] Add `recentAlbums` server fetch in `(app)/layout.tsx`
-- [ ] Thread `recentAlbums` prop through `AppShell` → `AppSidebar`
-- [ ] Render pinned sub-list under the Collections entry in `app-sidebar.tsx`
-- [ ] Sub-list active-state: clicking a pin highlights both Collections + the specific pin
-- [ ] No layout shift on first paint (SSR-fed, not client-fetched)
-- [ ] Commit + push
-- [ ] DEPLOYED to NAS — rsync + build fonto + force-recreate + smoke
+- [x] OPERATOR GATE — operator approved 2026-05-27 ("Approved — execute Phase 7b")
+- [x] Audit subagent — confirmed `(app)/layout.tsx` only passes `user`; need to thread new prop through `AppShell` → `AppSidebar`. Server-fetch pattern = direct Drizzle query (no helper)
+- [x] `lib/sidebar/recent-albums.ts` — server-only helper, top-3 by createdAt desc, scoped to workspace
+- [x] `recentAlbums` SSR-fetched in `(app)/layout.tsx`
+- [x] Threaded through `AppShell` → `AppSidebar`
+- [x] Sub-list renders under Collections entry; pin row active when `pathname === /app/collections/<id>`
+- [x] No layout shift — data flows server → client as prop, no client-fetch
+- [x] Commit + push (ae3a5d5)
+- [ ] DEPLOYED to NAS — build (`bmt21wcln`) in flight at handoff; smoke + force-recreate is the first next-session action
 
 ## Phase 4.1 — CLIP fix verification + corpus gates
 - [ ] OPERATOR GATE — confirm FU-C2 default (Yuki — verify-then-backfill)
