@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Users, Map, Layers, Home, Inbox, Activity, Share2, Library } from "lucide-react";
+import { LayoutDashboard, Image, FileText, FolderOpen, Settings, LogOut, Clock, Search, Trash2, X, Folder, FolderTree, Zap, Sparkles, Users, Map, Layers, Home, Inbox, Activity, Share2, Library, Bell } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import { useRouter } from "next/navigation";
@@ -18,6 +18,10 @@ const navItems = [
   // replace Photos/Timeline/Folders/Documents/Trash once the redirect
   // layer (Phase 5) + sidebar cleanup (Phase 7) land.
   { href: "/app/library", label: "Library", icon: Library },
+  // UX consolidation Phase 3 — Updates merges Inbox/Activity/Shared.
+  // The old standalone routes (Inbox/Activity/Shared with me below)
+  // still render with deprecation banners until Phase 5/7 strip them.
+  { href: "/app/updates", label: "Updates", icon: Bell },
   { href: "/app/dashboard", label: "Inbox", icon: Inbox },
   { href: "/app/timeline", label: "Timeline", icon: Clock },
   // Phase 5.3 — Memories ("On this day"). Logically a sibling of Timeline

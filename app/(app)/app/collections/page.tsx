@@ -15,7 +15,7 @@
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { FolderOpen, Zap, Folder, Layers } from "lucide-react";
-import { TabBar, type TabDef } from "./_components/tab-bar";
+import { TabBar, type TabDef } from "../_components/tab-bar";
 import { AlbumsTab } from "./_components/albums-tab";
 import { SmartTab } from "./_components/smart-tab";
 import { ProjectsTab } from "./_components/projects-tab";

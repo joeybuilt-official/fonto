@@ -2,16 +2,14 @@
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Phase 2 (UX consolidation) — deprecated route. The real surface is
-// now `/app/collections?tab=smart`. This page re-renders the same
-// SmartTab body with a deprecation banner pointing users at the new
-// location. Phase 5 will replace this stub with a hard redirect in
-// middleware.ts.
+// now `/app/collections?tab=smart`. Phase 5 will replace this stub
+// with a hard redirect in middleware.ts.
 
 "use client";
 
 import { Suspense } from "react";
 import { SmartTab } from "../collections/_components/smart-tab";
-import { DeprecationBanner } from "../collections/_components/deprecation-banner";
+import { DeprecationBanner } from "../_components/deprecation-banner";
 
 export default function SmartCollectionsPage() {
   return (
@@ -20,6 +18,7 @@ export default function SmartCollectionsPage() {
         label="Smart Collections"
         newHref="/app/collections?tab=smart"
         newLabel="Collections · Smart"
+        movedInto="the consolidated Collections page"
       />
       <SmartTab />
     </Suspense>

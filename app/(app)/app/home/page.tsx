@@ -29,7 +29,7 @@ import {
   Users,
   Video,
 } from "lucide-react";
-import { MemoryCard } from "../dashboard/memory-card";
+import { MemoryCard } from "../_components/memory-card";
 
 interface Stats {
   total: number;

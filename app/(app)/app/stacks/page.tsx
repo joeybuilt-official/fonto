@@ -2,16 +2,14 @@
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Phase 2 (UX consolidation) — deprecated route. The real surface is
-// now `/app/collections?tab=stacks`. This page re-renders the same
-// StacksTab body with a deprecation banner pointing users at the new
-// location. Phase 5 will replace this stub with a hard redirect in
-// middleware.ts.
+// now `/app/collections?tab=stacks`. Phase 5 will replace this stub
+// with a hard redirect in middleware.ts.
 
 "use client";
 
 import { Suspense } from "react";
 import { StacksTab } from "../collections/_components/stacks-tab";
-import { DeprecationBanner } from "../collections/_components/deprecation-banner";
+import { DeprecationBanner } from "../_components/deprecation-banner";
 
 export default function StacksPage() {
   return (
@@ -20,6 +18,7 @@ export default function StacksPage() {
         label="Stacks"
         newHref="/app/collections?tab=stacks"
         newLabel="Collections · Stacks"
+        movedInto="the consolidated Collections page"
       />
       <StacksTab />
     </Suspense>
