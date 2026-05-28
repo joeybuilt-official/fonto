@@ -145,12 +145,14 @@ TaskCreate while in phased-plan flow.
 - [x] DECISION C9 = **Option A** (App Links only, no custom scheme; Android 5 → browser — operator confirmed 2026-05-28)
 - [x] Backend: GET /.well-known/assetlinks.json route in Next.js (env-var fingerprint, not hardcoded)
 - [x] Backend: GET /api/v1/shares/resolve?slug=<slug> — public endpoint for mobile share resolution
-- [ ] OPERATOR GATE — add ASSETLINKS_SHA256 env var to joeybuilt ops env (upload key fingerprint from ADR 0006; updated to Play key post-6.3)
+- [x] ASSETLINKS_SHA256 env var set on fonto (NAS compose, upload key fingerprint from ADR 0006; SWAP to Play key post-6.3) — compose backup at /data/_secrets/docker-compose-pre-assetlinks-20260528T195026Z.yml
 - [x] Android: add intent-filter in AndroidManifest.xml for https://myfonto.com (autoVerify=true)
 - [x] Mobile: add app_links + url_launcher packages to pubspec.yaml
 - [x] Mobile: handle incoming URI in main.dart — /app/library?lb=<id> → open detail, /share/<token> → resolve + open detail; password-protected + collection shares fall back to url_launcher
-- [ ] Smoke test: tap https://myfonto.com/share/<token> on Android 6+ device → app opens to asset
-- [ ] Commit + push + deploy assetlinks.json route
+- [x] Backend deployed + verified: /.well-known/assetlinks.json → 200/application/json, Google Digital Asset Links verifier parses statement cleanly (2026-05-28)
+- [ ] codemagic.yaml — add APK artifact + fix keystore-decode/build single-shell signing (committed locally, push pending operator OK)
+- [ ] Smoke test: tap https://myfonto.com/share/<token> on Android 6+ device → app opens to asset (needs sideloaded APK)
+- [ ] Commit + push + deploy assetlinks.json route — DONE for backend (9b48bcd); mobile artifact ships via Codemagic
 
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy

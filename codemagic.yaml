@@ -22,17 +22,22 @@ workflows:
       - name: Widget tests
         script: flutter test --reporter=expanded
         working_directory: mobile
-      - name: Decode keystore
+      - name: Build release APK + AAB
         script: |
+          # Decode + build must share one shell — Codemagic does not persist
+          # exported vars across script steps, and the gradle release config
+          # falls back to debug signing when CM_KEYSTORE_PATH is unset.
           echo "$CM_KEYSTORE" | base64 --decode > /tmp/fonto-upload.jks
           export CM_KEYSTORE_PATH=/tmp/fonto-upload.jks
-      - name: Build release AAB
-        script: |
+          flutter build apk --release \
+            --build-name=1.0.$PROJECT_BUILD_NUMBER \
+            --build-number=$PROJECT_BUILD_NUMBER
           flutter build appbundle --release \
             --build-name=1.0.$PROJECT_BUILD_NUMBER \
             --build-number=$PROJECT_BUILD_NUMBER
         working_directory: mobile
     artifacts:
+      - mobile/build/app/outputs/flutter-apk/app-release.apk
       - mobile/build/app/outputs/bundle/release/app-release.aab
     publishing:
       email:
