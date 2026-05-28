@@ -34,7 +34,7 @@ class AssetDetailScreen extends StatefulWidget {
 class _AssetDetailScreenState extends State<AssetDetailScreen> {
   late final PageController _page =
       PageController(initialPage: widget.initialIndex);
-  late List<Asset> _assets = List.of(widget.assets);
+  late final List<Asset> _assets = List.of(widget.assets);
   late int _index = widget.initialIndex;
   final Map<String, String> _previews = {};
   bool _acting = false;
