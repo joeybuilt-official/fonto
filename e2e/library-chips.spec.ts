@@ -17,6 +17,15 @@
 
 import { test, expect, type Page } from "@playwright/test";
 
+// Prevent the "What's new" UiV2ChangelogDialog from appearing. It is gated on
+// a localStorage key; setting it before every page load suppresses the dialog
+// so its full-screen backdrop never intercepts pointer events during tests.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("fonto:ui_v2_seen_at", new Date().toISOString());
+  });
+});
+
 async function goToLibrary(page: Page) {
   await page.goto("/app/library");
   // Wait for chip strip to render
@@ -35,11 +44,13 @@ test("date chip opens popover and sets URL params", async ({ page }) => {
   await expect(page.getByLabel("From")).toBeVisible();
   await expect(page.getByLabel("To")).toBeVisible();
 
-  // Fill in a date range
+  // Fill each date and wait for the URL to update before filling the next —
+  // prevents a router.replace race where the second write reads stale URL params.
   await page.getByLabel("From").fill("2024-01-01");
+  await expect(page).toHaveURL(/from=2024-01-01/, { timeout: 5_000 });
   await page.getByLabel("To").fill("2024-12-31");
 
-  // URL should update with from/to params
+  // Both params should now be present
   await expect(page).toHaveURL(/from=2024-01-01/, { timeout: 5_000 });
   await expect(page).toHaveURL(/to=2024-12-31/);
 
