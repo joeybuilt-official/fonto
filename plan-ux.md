@@ -285,7 +285,14 @@ sidebar / route changes.
 - Exit: every old route either renders w/ a "moved →" banner or
   redirects cleanly. Dialog shows on first load post-deploy and
   never again per-user after dismiss.
-- Status: pending
+- Status: **done 2026-05-27** — commit 012bb2a, deployed to NAS.
+  All 10 mapped routes return 307 to their consolidated destination
+  with the right pre-applied query string; incoming params win on
+  collision. Detail routes (`/app/projects/[id]` etc) deliberately
+  not mapped — they keep their original page handlers per the
+  Phase 2/3 recons. 307 (not 308) used intentionally so revert
+  is a no-op. The "what moved where" dialog mounts in AppShell
+  and self-gates on a localStorage flag (`fonto:ui_v2_seen_at`).
 
 ## Phase 6 — Mobile bottom-bar nav
 

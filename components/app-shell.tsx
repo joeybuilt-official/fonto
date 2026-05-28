@@ -6,6 +6,8 @@ import { useState } from "react";
 import { Menu } from "lucide-react";
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
+import { AppMobileBottomBar } from "@/components/app-mobile-bottom-bar";
+import { AppMobileAvatarMenu } from "@/components/app-mobile-avatar-menu";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 import { UiV2ChangelogDialog } from "@/app/(app)/app/_components/ui-v2-changelog-dialog";
 import type { User } from "@/lib/auth/types";
@@ -34,7 +36,9 @@ export function AppShell({ user, children }: { user: User; children: React.React
 
       {/* Content area */}
       <div className="flex flex-1 flex-col min-w-0">
-        {/* Mobile header */}
+        {/* Mobile header — hamburger (sidebar drawer for Home + the
+            still-extant legacy entries), brand, plexo status, avatar
+            menu (UX-C6 Settings demotion target). */}
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 md:hidden">
           <button
             onClick={() => setOpen(true)}
@@ -46,11 +50,17 @@ export function AppShell({ user, children }: { user: User; children: React.React
           <Link href="/app/home" className="font-heading text-sm font-semibold">
             <span className="text-primary">_</span>fonto
           </Link>
+          <div className="ml-auto flex items-center gap-2">
+            <PlexoConnectionStatus />
+            <AppMobileAvatarMenu user={user} />
+          </div>
         </header>
-        <div className="flex items-center justify-end px-4 py-1.5 border-b border-border/50 md:hidden">
-          <PlexoConnectionStatus />
-        </div>
         <main className="flex-1 overflow-y-auto p-4 md:p-6">{children}</main>
+        {/* Phase 6 (UX consolidation) — primary mobile nav: 5 tabs at
+            the bottom of the viewport, hidden on md+ where the sidebar
+            is always visible. Diego's UX-C3 a11y contract enforced
+            inside the component. */}
+        <AppMobileBottomBar />
       </div>
       {/* Phase 5 (UX consolidation) — first-login "what moved where"
           dialog. Self-gated on a localStorage flag; renders nothing

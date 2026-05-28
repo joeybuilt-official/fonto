@@ -61,13 +61,17 @@ Derived from `plan-ux.md`. Tick boxes as items complete.
 - [ ] Once corpus has ≥6 classes with ≥10 members each (today: 1), graduate Things from placeholder → live class-tile grid.
 
 ## Phase 5 — Redirect layer + changelog dialog ⚠
-- [ ] Extend `middleware.ts` with old→new route map (every old route)
-- [ ] Pre-applied query strings on each redirect (so `/app/photos?favorite=1` → `/app/library?favorite=1&mime=image`)
-- [ ] `ui_v2_seen_at` preference column on the user-settings table (or local-storage equivalent)
-- [ ] "What moved where" dialog component
-- [ ] Dialog gated on `ui_v2_seen_at IS NULL`, dismissible per-user
-- [ ] Manual E2E — every old route renders correct destination
-- [ ] Commit + push
+- [x] OPERATOR GATE — operator confirmed "Ship now via middleware.ts" (2026-05-27)
+- [x] Extend `middleware.ts` with old→new route map — exact-pathname match for every consolidated landing route (Library 6, Collections 3, Updates 3). Detail routes (`/projects/<id>` etc) NOT mapped.
+- [x] Pre-applied query strings on each redirect (incoming params win on collision)
+- [x] `ui_v2_seen_at` — localStorage flag (`fonto:ui_v2_seen_at`) chosen over DB column so Phase 5 ships without a migration. DB graduation tracked as follow-up if cross-browser persistence becomes valuable.
+- [x] "What moved where" dialog component (`_components/ui-v2-changelog-dialog.tsx`)
+- [x] Dialog gated on localStorage flag null/missing, dismissible per-browser
+- [x] Sidebar + app-shell brand links repointed `/app/dashboard` → `/app/home` so they don't bounce through the new redirect
+- [x] Commit + push (012bb2a)
+- [x] Manual E2E — every old route returns 307 w/ correct destination + qs (10/10 routes verified, including param preservation `/photos?favorite=1` → `/library?favorite=1&mime=image%2F`)
+- [x] Detail-route passthrough verified — `/app/projects/abc` skips the Phase 5 map, falls through to /login auth-redirect (exact-match only)
+- [x] DEPLOYED to NAS 2026-05-27 — `/app/photos`, `/app/timeline`, `/app/documents`, `/app/trash`, `/app/projects`, `/app/smart-collections`, `/app/stacks`, `/app/dashboard`, `/app/activity`, `/app/shared` all 307→consolidated routes; changelog dialog mounted in app-shell
 
 ## Phase 6 — Mobile bottom-bar nav
 - [ ] `components/app-mobile-bottom-bar.tsx` w/ 5 tabs
