@@ -37,7 +37,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - dustin@joeybuilt.com
+          - user@example.com
         notify:
           success: true
           failure: true
