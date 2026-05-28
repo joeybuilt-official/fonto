@@ -188,34 +188,96 @@ S3 import (#13) is explicitly excluded pending AWS account confirmation.
 
 ---
 
-## Sequencing summary
+---
+
+## Phase 6.3 — Google Play distribution + Codemagic publishing ⚠ (operator: Play listing + service account)
+
+- Scope: Add `changeset:` path filter on Codemagic `android-release`
+  workflow (trigger only on `mobile/**` changes — C8). Add Codemagic
+  `publishing.google_play` stanza targeting `internal` track. Operator
+  creates Play app listing + Google Play service account and wires it
+  to Codemagic.
+- Deps: 6.2c (Codemagic building clean AAB). ⚠ Operator must create
+  Google Play app listing (package `com.joeybuilt.fonto`) + service
+  account JSON per ADR 0006 checklist before the publishing stanza
+  is usable.
+- Subagents: none.
+- Exit: push to `mobile/**` on main → AAB lands in Play Store internal
+  track automatically; install on device from Play Console internal
+  testing link.
+- Status: pending
+
+## Phase 6.4 — FCM push notifications ⚠ (operator: Firebase project + google-services.json)
+
+- Scope: `push_tokens` table + migration. POST/DELETE
+  `/api/v1/notifications/push-token` (register/deregister per-device
+  FCM token). Backend notification dispatch: real-time FCM on new
+  comment + workspace share received (C10 Option A). Mobile:
+  `firebase_messaging` package, request permission, register token,
+  handle notification tap → route to asset detail.
+- Deps: 7a (comments + shares are the event sources). ⚠ Operator must
+  create Firebase project + download `google-services.json` per ADR
+  0006 checklist before mobile can build with Firebase.
+- Subagents: Explore for "find every place a comment or share is
+  created" (notification dispatch hooks go there).
+- Exit: post a comment on an asset → device receives FCM notification
+  within 5s; tap opens that asset's detail screen.
+- Status: pending — BLOCKED on operator gate (Firebase project)
+
+## Phase 6.5 — Android App Links + in-app deep link routing
+
+- Scope: Serve `/.well-known/assetlinks.json` from Next.js (route, not
+  static file, so cert fingerprint is env-configurable). Add
+  `intent-filter` in `AndroidManifest.xml` for
+  `https://myfonto.com`. Add `app_links` Flutter package; handle
+  incoming URIs: `/app/library?lb=<id>` → open asset detail,
+  `/share/<token>` → resolve + open asset detail (C9 Option A:
+  App Links only — no custom scheme fallback).
+- Deps: none (self-contained).
+- Subagents: none.
+- Exit: tap `https://myfonto.com/share/<token>` link on Android 6+
+  → app opens directly to that asset's detail without touching browser.
+- Status: pending
+
+---
+
+## Sequencing summary (updated 2026-05-28)
 
 ```
-6.2a ✓ → 6.2b ✓ → 6.2c⚠ (blocked — signing certs)
-                  (mobile track 2/3 done)
+6.2a ✓ → 6.2b ✓ → 6.2c ✓ (Codemagic live, first build running)
+         → 6.3⚠ (Play listing + service account) → 6.4⚠ (Firebase)
+         → 6.5 (App Links — no gate, executable immediately)
+                  (mobile track: 6.2 done; 6.3-6.5 pending)
 
-7a⚠ (blocked — C4) → 7b⚠
-                        (collab track 0/2 done)
+7a ✓ → 7b ✓
+           (collab track done)
 
-8a ✓ → 8b⚠ (blocked — C7)
-              (video track 1/2 done)
+8a ✓ → 8b ✓
+           (video track done)
 
-9a ✓ → 9b⚠ (blocked — C2) + 9c ✓
-                                (ops track 2/3 done)
+9a ✓ → 9b ✓ → 9c ✓
+                   (ops track done — operator-deferred items noted in checklist)
 ```
 
-5 of 9 phases shipped + deployed this session. Remaining 4 phases all
-gated on operator decisions enumerated above.
+All original 9 phases shipped + deployed. New mobile phases 6.3–6.5 added.
+Phase 6.5 has no operator gate. Phases 6.3 and 6.4 gate on Play Console
+and Firebase provisioning respectively — see ADR 0006.
 
-Mobile, collab, video, ops tracks are independent — sessions can pick
-whichever is unblocked. ⚠ phases need operator sign-off before they
-start.
+Conflicts C8, C9, C10 RESOLVED 2026-05-28 (all Option A — see ADR 0006):
+- C8 — Codemagic path filter on `mobile/**`. Marcus wins.
+- C9 — App Links only (https), no custom scheme. Android 5 → browser. Priya wins.
+- C10 — FCM real-time for comments + shares; daily digest for summaries. Tess wins.
+
+Execution order for next session (start with the gate-free phase):
+1. **Phase 6.5** (App Links + deep links) — NO gate, execute first.
+2. **Phase 6.3** (Play publishing) — needs operator Play Console + service account.
+3. **Phase 6.4** (FCM) — needs operator Firebase project + google-services.json.
 
 ## What's NOT in this plan
 
 - S3 import (#13) — blocked on AWS account confirmation, explicitly
   excluded.
-- Phase 8 multi-bitrate HLS ladder — deferred per C7 default.
+- iOS distribution — deferred (operator is Android-only).
 - iOS / Android E2E encryption — out of parity scope per OSS deviation.
 - ActivityPub federation — out of parity scope per OSS deviation.
 - Second GPU purchase — out of plan scope.

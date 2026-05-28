@@ -32,10 +32,11 @@ TaskCreate while in phased-plan flow.
 - [x] Widget tests — login screen (2 tests), home grid (loading state), search screen (input field), asset detail (filename render)
 - [x] Integration test — upload_queue_test.dart stub (skipped; note: add sqflite_ffi to dev_deps for on-host run)
 - [ ] codemagic.yaml — iOS workflow (DEFERRED — operator is Android-only)
-- [x] codemagic.yaml — Android workflow (build + test + bundle, triggers push+PR to main, emails dustin@joeybuilt.com)
+- [x] codemagic.yaml — Android workflow (build + test + bundle, triggers push+PR to main, emails user@example.com)
 - [x] Android project shell — mobile/android/ scaffold (build.gradle, manifest, MainActivity.kt, signingConfigs via CM_* env vars)
-- [ ] PR pipeline runs on push to main — **OPERATOR: connect Codemagic to fonto repo, enable android-release workflow**
-- [ ] Signed AAB artifact uploaded per push — pending Codemagic keystore upload + repo connection
+- [x] Codemagic repo connected — operator connected GitHub + fonto repo to Codemagic 2026-05-28
+- [x] Codemagic signing env vars set — CM_KEYSTORE/CM_KEY_ALIAS/CM_STORE_PASSWORD/CM_KEY_PASSWORD in android-signing group (via API 2026-05-28)
+- [ ] First build succeeds + signed AAB artifact produced — pending first CI run result
 - [x] mobile/CI.md runbook — keystore rotation (2053 expiry), build failure triage, deferred iOS steps
 - [x] Commit + push
 
@@ -113,6 +114,42 @@ TaskCreate while in phased-plan flow.
 - [x] Dry-run flag — AUTOSCALER_DRY_RUN=1 logs `would_scale` decisions without invoking compose
 - [x] Enqueue-100-jobs test — `pnpm autoscaler:enqueue [N|drain]` script + verification recipe documented in ops/autoscaler/README.md (live compose-wired test DEFERRED to operator — needs the autoscaler container actually running)
 - [x] Commit + push (c988536)
+
+## Phase 6.3 — Google Play distribution + Codemagic publishing ⚠
+- [ ] OPERATOR GATE — Create Google Play app listing (package: com.joeybuilt.fonto) in Play Console
+- [ ] OPERATOR GATE — Create Google Cloud service account with releases.manager permission; download JSON
+- [ ] OPERATOR GATE — Add service account to Codemagic (Team settings → Google Play)
+- [ ] OPERATOR GATE — Note Play-managed signing cert SHA-256 after first publish (needed for 6.5 assetlinks.json)
+- [x] DECISION C8 = **Option A** (path filter on mobile/** — operator confirmed 2026-05-28)
+- [ ] codemagic.yaml — add changeset path filter (trigger only on mobile/**)
+- [ ] codemagic.yaml — add publishing.google_play stanza (internal track, draft → review)
+- [ ] Commit + push + first internal track release
+
+## Phase 6.4 — FCM push notifications ⚠
+- [x] DECISION C10 = **Option A** (FCM real-time for comments+shares, daily digest for summaries — operator confirmed 2026-05-28)
+- [ ] OPERATOR GATE — Create Firebase project; add Android app (com.joeybuilt.fonto); download google-services.json
+- [ ] OPERATOR GATE — Base64-encode google-services.json; add as GOOGLE_SERVICES_JSON secure env var in Codemagic
+- [ ] OPERATOR GATE — Add FCM_SERVER_KEY to joeybuilt VPS env (service/.env or equivalent)
+- [ ] Schema + migration: fonto.push_tokens (userId, deviceId, token, platform, updatedAt; UNIQUE userId+deviceId)
+- [ ] POST /api/v1/notifications/push-token — upsert token for authenticated user+device
+- [ ] DELETE /api/v1/notifications/push-token — deregister token
+- [ ] Backend notification dispatch — send FCM on: new comment on user's asset, workspace share received
+- [ ] Mobile: add firebase_messaging to pubspec.yaml
+- [ ] Mobile: decode + write google-services.json from GOOGLE_SERVICES_JSON env var in Codemagic build script
+- [ ] Mobile: request notification permission on first launch
+- [ ] Mobile: register token via POST /api/v1/notifications/push-token on auth
+- [ ] Mobile: notification tap handler — route to home?lb=<assetId> or /share/<token>
+- [ ] Commit + push
+
+## Phase 6.5 — Android App Links + in-app deep link routing
+- [x] DECISION C9 = **Option A** (App Links only, no custom scheme; Android 5 → browser — operator confirmed 2026-05-28)
+- [ ] Backend: GET /.well-known/assetlinks.json route in Next.js (env-var fingerprint, not hardcoded)
+- [ ] Backend: add ASSETLINKS_SHA256 env var to joeybuilt ops env (upload key fingerprint; updated to Play key post-6.3)
+- [ ] Android: add intent-filter in AndroidManifest.xml for https://myfonto.com (autoVerify=true)
+- [ ] Mobile: add app_links package to pubspec.yaml
+- [ ] Mobile: handle incoming URI in main.dart — /app/library?lb=<id> → HomeScreen + open detail, /share/<token> → resolve + open detail
+- [ ] Smoke test: tap https://myfonto.com/share/<token> on Android 6+ device → app opens to asset
+- [ ] Commit + push + deploy assetlinks.json route
 
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
