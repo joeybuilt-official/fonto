@@ -1,26 +1,28 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.withReader("UTF-8") { reader -> localProperties.load(reader) }
 }
 
-def flutterSdkPath = localProperties.getProperty("flutter.sdk")
-assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
-apply from: "$flutterSdkPath/packages/flutter_tools/gradle/flutter.gradle"
-
 def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
 def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
 
 android {
-    namespace "com.joeybuilt.fonto"
-    compileSdkVersion 35
+    namespace = "com.joeybuilt.fonto"
+    compileSdk = 35
 
     defaultConfig {
-        applicationId "com.joeybuilt.fonto"
-        minSdkVersion 21
-        targetSdkVersion 35
-        versionCode flutterVersionCode.toInteger()
-        versionName flutterVersionName
+        applicationId = "com.joeybuilt.fonto"
+        minSdk = 21
+        targetSdk = 35
+        versionCode = flutterVersionCode.toInteger()
+        versionName = flutterVersionName
     }
 
     signingConfigs {
@@ -49,9 +51,5 @@ android {
 }
 
 flutter {
-    source "../.."
-}
-
-dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    source = "../.."
 }
