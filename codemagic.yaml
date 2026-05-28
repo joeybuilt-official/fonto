@@ -3,8 +3,8 @@ workflows:
     name: Android — build + test + bundle
     environment:
       flutter: stable
-      android_signing:
-        - fonto_upload_keystore
+      groups:
+        - android-signing
     triggering:
       events:
         - push
@@ -22,6 +22,10 @@ workflows:
       - name: Widget tests
         script: flutter test --reporter=expanded
         working_directory: mobile
+      - name: Decode keystore
+        script: |
+          echo "$CM_KEYSTORE" | base64 --decode > /tmp/fonto-upload.jks
+          export CM_KEYSTORE_PATH=/tmp/fonto-upload.jks
       - name: Build release AAB
         script: |
           flutter build appbundle --release \
