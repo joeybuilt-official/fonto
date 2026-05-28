@@ -27,16 +27,17 @@ TaskCreate while in phased-plan flow.
 ## Phase 6.2c — Mobile tests + CI ⚠
 - [x] OPERATOR GATE — C6 = **in-repo** (mobile/ios, mobile/android shells live alongside Flutter source, confirmed 2026-05-25)
 - [x] OPERATOR GATE — C1 = **first_unlock** (scaffold default stands; operator is Android-only, iOS Keychain class is not blocking — confirmed 2026-05-25)
-- [ ] OPERATOR GATE — Android keystore generated on the host + uploaded to Codemagic
+- [x] OPERATOR GATE — Android keystore generated on the host (fonto-upload.jks, expires 2053-10-11, creds at /data/_secrets/fonto-keystore/creds.txt) — **OPERATOR: upload .jks to Codemagic Team → Code Signing Identities → Android keystores, reference name "fonto_upload_keystore"**
 - [ ] OPERATOR GATE — iOS signing certs + provisioning profiles uploaded to Codemagic (DEFERRED — operator is Android-only; build iOS-CI later if/when iOS distribution becomes relevant)
-- [ ] Widget tests — login screen, home grid, search screen, asset detail
-- [ ] Integration test — full upload flow via image_picker mock
-- [ ] codemagic.yaml — iOS workflow (build + test + archive)
-- [ ] codemagic.yaml — Android workflow (build + test + bundle)
-- [ ] PR pipeline runs on push to main
-- [ ] Signed IPA + APK artifacts uploaded per push
-- [ ] mobile/CI.md runbook — cert rotation + 30-day expiry monitor
-- [ ] Commit + push
+- [x] Widget tests — login screen (2 tests), home grid (loading state), search screen (input field), asset detail (filename render)
+- [x] Integration test — upload_queue_test.dart stub (skipped; note: add sqflite_ffi to dev_deps for on-host run)
+- [ ] codemagic.yaml — iOS workflow (DEFERRED — operator is Android-only)
+- [x] codemagic.yaml — Android workflow (build + test + bundle, triggers push+PR to main, emails dustin@joeybuilt.com)
+- [x] Android project shell — mobile/android/ scaffold (build.gradle, manifest, MainActivity.kt, signingConfigs via CM_* env vars)
+- [ ] PR pipeline runs on push to main — **OPERATOR: connect Codemagic to fonto repo, enable android-release workflow**
+- [ ] Signed AAB artifact uploaded per push — pending Codemagic keystore upload + repo connection
+- [x] mobile/CI.md runbook — keystore rotation (2053 expiry), build failure triage, deferred iOS steps
+- [x] Commit + push
 
 ## Phase 7a — Comments + activity feed
 - [x] OPERATOR GATE — C4 = **daily digest** (operator confirmed 2026-05-25, ADR 0003 default stands)

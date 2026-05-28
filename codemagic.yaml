@@ -1,0 +1,39 @@
+workflows:
+  android-release:
+    name: Android — build + test + bundle
+    environment:
+      flutter: stable
+      android_signing:
+        - fonto_upload_keystore
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: main
+          include: true
+    scripts:
+      - name: Get packages
+        script: flutter pub get
+        working_directory: mobile
+      - name: Analyse
+        script: flutter analyze
+        working_directory: mobile
+      - name: Widget tests
+        script: flutter test --reporter=expanded
+        working_directory: mobile
+      - name: Build release AAB
+        script: |
+          flutter build appbundle --release \
+            --build-name=1.0.$PROJECT_BUILD_NUMBER \
+            --build-number=$PROJECT_BUILD_NUMBER
+        working_directory: mobile
+    artifacts:
+      - mobile/build/app/outputs/bundle/release/app-release.aab
+    publishing:
+      email:
+        recipients:
+          - dustin@joeybuilt.com
+        notify:
+          success: true
+          failure: true
