@@ -19,12 +19,16 @@ import path from "node:path";
 import os from "node:os";
 import { allPrompts, TAXONOMY_PROMPT_COUNT } from "./taxonomy";
 
-// TODO(4.2): Phase 4.2 lands `embedText(text: string)` and an exported
-// `EMBEDDING_MODEL_ID` constant in `lib/plexo-vision.ts`. Until then we
-// stub them at module scope so this file type-checks; the stub throws,
-// which causes `loadTaxonomyVectors` to fall back to "CLIP unavailable"
-// mode without breaking the rest of the worker.
-type EmbedText = (text: string) => Promise<number[]>;
+// Phase 4.6 dynamic import shape. `embedText` returns the full
+// `EmbedResult` object — NOT a bare `number[]`. An earlier revision
+// stubbed it as `Promise<number[]>` which type-erased through the
+// dynamic import and silently caused every taxonomy "vector" cached
+// here to be the wrapping `{vector, modelId}` object instead of the
+// numeric array. That made `cosine()` over `entry.vec.length` (=
+// undefined → 0) return 0 for every score and the classifier fell
+// through to LLM on 100% of rows. Keep this shape tight so future
+// drift breaks the type-check rather than rotting silently.
+type EmbedText = (text: string) => Promise<{ vector: number[]; modelId: string }>;
 type PlexoVisionModule = {
   embedText: EmbedText;
   EMBEDDING_MODEL_ID: string;
@@ -138,13 +142,14 @@ export async function loadTaxonomyVectors(): Promise<TaxonomyCache | null> {
       return disk;
     }
 
-    // Cold start: embed every prompt.
+    // Cold start: embed every prompt. Destructure the numeric `vector`
+    // out of the `EmbedResult` — see the EmbedText type comment for why.
     const prompts = allPrompts();
     const vectors: TaxonomyVector[] = [];
     for (const p of prompts) {
       try {
-        const vec = await vision.embedText(p.prompt);
-        vectors.push({ id: p.id, vec });
+        const { vector } = await vision.embedText(p.prompt);
+        vectors.push({ id: p.id, vec: vector });
       } catch (err) {
         console.warn("[fonto-classify] embedText failed for", p.id, err);
         return null;
