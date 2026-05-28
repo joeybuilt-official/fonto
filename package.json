@@ -26,7 +26,9 @@
     "backfill:classify-method": "tsx scripts/backfill-classify-method.ts",
     "import:s3": "tsx scripts/import-from-s3.ts",
     "autoscaler:start": "tsx ops/autoscaler/index.ts",
-    "autoscaler:enqueue": "tsx ops/autoscaler/test-enqueue.ts"
+    "autoscaler:enqueue": "tsx ops/autoscaler/test-enqueue.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",
@@ -76,6 +78,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4",
     "@types/express": "^5.0.0",
     "@types/node": "^20",

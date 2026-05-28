@@ -1,5 +1,9 @@
 packages:
   - packages/*
 ignoredBuiltDependencies:
+  - esbuild
+  - msgpackr-extract
+  - msw
+  - protobufjs
   - sharp
   - unrs-resolver

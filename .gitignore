@@ -48,3 +48,8 @@ next-env.d.ts
 # leaves these behind when a file is replaced while another process
 # has it open). Not real artifacts — never commit.
 .fuse_hidden*
+
+# Playwright
+/e2e/.auth/
+/playwright-report/
+/test-results/
