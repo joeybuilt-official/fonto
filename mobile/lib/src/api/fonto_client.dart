@@ -195,5 +195,29 @@ class FontoClient {
     return j["url"] as String;
   }
 
+  /// Resolves a public share slug/token to { targetType, targetId }.
+  /// Throws ApiException(403) for password-protected shares, 404 for
+  /// invalid/expired links. Used by the App Links handler in main.dart.
+  Future<({String targetType, String targetId})> resolveShare(String slug) async {
+    final res = await _http.get(
+      _uri("/api/v1/shares/resolve", {"slug": slug}),
+      headers: _headers,
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+    final j = json.decode(res.body) as Map<String, dynamic>;
+    return (
+      targetType: j["targetType"] as String,
+      targetId: j["targetId"] as String,
+    );
+  }
+
+  /// Fetches a single asset by id. Used after share resolution.
+  Future<Asset> getAsset(String id) async {
+    final j = await _getJson("/api/v1/assets/$id");
+    return Asset.fromJson(j["asset"] as Map<String, dynamic>);
+  }
+
   void close() => _http.close();
 }
