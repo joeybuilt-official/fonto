@@ -218,3 +218,25 @@ export async function plexoDescribeImage(
   )
   return text.trim()
 }
+
+// Summarises a document into a one-line description. When `content` is
+// non-empty (extracted text layer or OCR), the summary is grounded in the
+// actual content; otherwise it falls back to a filename-only guess so the
+// description field is never left blank for a document.
+export async function plexoDescribeDocument(
+  workspaceId: string,
+  filename: string,
+  mimeType: string,
+  content: string,
+): Promise<string> {
+  const preview = content.trim().slice(0, 2000)
+  const prompt = preview
+    ? `Write a concise 1-sentence description (under 25 words) of this document named "${filename}". Base it strictly on the content below; do not invent details.\n\n${preview}`
+    : `Write a brief 1-sentence description for a document named "${filename}" (type: ${mimeType}). Keep it under 20 words.`
+  const text = await plexoAiComplete(
+    workspaceId,
+    [{ role: "user", content: prompt }],
+    80,
+  )
+  return text.trim()
+}

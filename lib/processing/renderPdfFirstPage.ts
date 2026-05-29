@@ -63,6 +63,40 @@ export async function renderPdfFirstPage(
   }
 }
 
+// Extracts the embedded text layer of a PDF via poppler's `pdftotext`.
+// Digital PDFs (exported from apps) return their full text; image-only
+// scans return empty/whitespace, which the caller treats as the signal to
+// fall back to OCR. Writes to a temp file and reads it back for the same
+// cwd-safety reason as renderPdfFirstPage. Returns "" on any failure.
+export async function pdfExtractText(file: string): Promise<string> {
+  const outPath = path.join(
+    os.tmpdir(),
+    `fonto-pdf-text-${crypto.randomBytes(8).toString("hex")}.txt`
+  );
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const p = spawn("pdftotext", ["-enc", "UTF-8", "-layout", file, outPath]);
+      let err = "";
+      p.stderr.on("data", (c: Buffer) => {
+        err += c.toString();
+      });
+      p.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(`pdftotext exit ${code}: ${err.trim().slice(-300)}`));
+          return;
+        }
+        resolve();
+      });
+      p.on("error", reject);
+    });
+    return await fs.promises.readFile(outPath, "utf8");
+  } catch {
+    return "";
+  } finally {
+    await fs.promises.unlink(outPath).catch(() => {});
+  }
+}
+
 // Returns the page total, or null if pdfinfo fails / can't parse — callers
 // treat a null count as "unknown" and leave the column NULL.
 export async function pdfPageCount(file: string): Promise<number | null> {

@@ -19,6 +19,7 @@ import {
   plexoEnsureWorkspace,
   plexoClassifyAsset,
   plexoDescribeImage,
+  plexoDescribeDocument,
   plexoPublishEvent,
   plexoStoreMemory,
   plexoSuggestTags,
@@ -27,6 +28,7 @@ import {
 import { assetProcessingDurationSeconds } from "@/lib/metrics";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { classifyAsset } from "@/lib/classify/classify";
+import { extractDocumentText } from "@/lib/processing/extractDocumentText";
 
 const DOCUMENT_CLASSIFICATIONS = new Set([
   "document",
@@ -88,6 +90,10 @@ async function processAssetInner(
   let clipSuggestedTags: string[] = [];
   let description: string | null = null;
   let plexoWorkspaceId: string | null = null;
+  // Phase 6.x — document text (PDF text layer / OCR / plain text), extracted
+  // in the non-image branch below and persisted as ocr_text further down.
+  let docText: string | null = null;
+  let docOcrState: "ready" | "empty" | null = null;
 
   if (plexoAvailable()) {
     plexoWorkspaceId = await plexoEnsureWorkspace(userId, email);
@@ -126,15 +132,49 @@ async function processAssetInner(
       classifyMethodLabel = "llm-fallback";
       ctx.classifyMethod = "llm-fallback";
     } else {
-      // Non-image, non-video: keep the legacy LLM-based document classifier.
+      // Non-image, non-video (documents). Extract the text layer first so
+      // both classification and description are grounded in real content.
+      const [docRow] = await db
+        .select({
+          workspaceId: schema.assets.workspaceId,
+          previewKey: schema.assets.previewKey,
+        })
+        .from(schema.assets)
+        .where(eq(schema.assets.id, assetId))
+        .limit(1);
+      if (docRow) {
+        const extracted = await extractDocumentText({
+          workspaceId: docRow.workspaceId,
+          assetId,
+          filename,
+          mimeType,
+          previewKey: docRow.previewKey,
+        }).catch((err) => {
+          console.warn("[fonto] doc text extraction failed for", assetId, err);
+          return { text: "", method: "none" as const };
+        });
+        docText = extracted.text || null;
+        docOcrState = docText ? "ready" : "empty";
+      }
+
       classification = await plexoClassifyAsset(
         plexoWorkspaceId,
         filename,
         mimeType,
-        extractedText ?? undefined,
+        docText ?? extractedText ?? undefined,
       );
       classifyMethodLabel = "llm-fallback";
       ctx.classifyMethod = "llm-fallback";
+
+      description = await plexoDescribeDocument(
+        plexoWorkspaceId,
+        filename,
+        mimeType,
+        docText ?? "",
+      ).catch((err) => {
+        console.warn("[fonto] doc description failed for", assetId, err);
+        return null;
+      });
     }
   } else {
     classification = mimeType.startsWith("image/")
@@ -161,11 +201,18 @@ async function processAssetInner(
     .set({ processingState: "ready" })
     .where(eq(schema.assets.id, assetId));
 
-  // ── OCR: image-only. Failures are non-fatal — recorded via ocrState.
+  // ── Text layer / OCR. Images hit the vision OCR path; documents persist
+  // the text extracted above; anything else is marked skipped. All failures
+  // are non-fatal — recorded via ocrState.
   if (plexoWorkspaceId && mimeType.startsWith("image/")) {
     await runOcrForAsset(assetId, plexoWorkspaceId).catch((err) => {
       console.warn("[fonto] OCR failed for asset", assetId, err);
     });
+  } else if (docOcrState !== null) {
+    await db
+      .update(schema.assets)
+      .set({ ocrText: docText, ocrState: docOcrState })
+      .where(eq(schema.assets.id, assetId));
   } else if (!mimeType.startsWith("image/")) {
     await db
       .update(schema.assets)
@@ -213,10 +260,12 @@ async function processAssetInner(
     void plexoPublishEvent("ext.fonto.document.processed", assetPayload);
   }
 
+  const effectiveText = extractedText ?? docText;
+
   if (classification === "receipt") {
     void plexoPublishEvent("ext.fonto.receipt.detected", {
       ...assetPayload,
-      extractedText: extractedText?.slice(0, 500) ?? null,
+      extractedText: effectiveText?.slice(0, 500) ?? null,
     });
   }
 
@@ -225,7 +274,7 @@ async function processAssetInner(
       `[Fonto asset] ${filename}`,
       `Type: ${mimeType} | Classification: ${classification}`,
       description ? `Description: ${description}` : null,
-      extractedText ? `Content: ${extractedText.slice(0, 800)}` : null,
+      effectiveText ? `Content: ${effectiveText.slice(0, 800)}` : null,
     ]
       .filter(Boolean)
       .join("\n");
