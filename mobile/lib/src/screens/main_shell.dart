@@ -17,6 +17,7 @@ import "../state/auth_store.dart";
 import "collections_screen.dart";
 import "home_screen.dart";
 import "search_screen.dart";
+import "updates_screen.dart";
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key, required this.auth, required this.onSignOut});
@@ -48,11 +49,7 @@ class _MainShellState extends State<MainShell> {
         sections: ["People", "Places", "Things"],
       ),
       CollectionsScreen(client: _client),
-      const _ComingSoon(
-        icon: Icons.notifications_outlined,
-        title: "Updates",
-        sections: ["Uploads", "Activity", "Shared with me"],
-      ),
+      UpdatesScreen(client: _client),
       SearchScreen(client: _client),
     ];
 

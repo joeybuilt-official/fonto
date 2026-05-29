@@ -251,5 +251,26 @@ class FontoClient {
     return Asset.fromJson(j["asset"] as Map<String, dynamic>);
   }
 
+  /// One page of the workspace activity feed, newest-first. Pass back
+  /// `nextCursor` (an ISO timestamp) as `createdBefore` for the next page.
+  Future<ActivityPage> listActivity({String? createdBefore, int limit = 50}) async {
+    final query = <String, String>{"limit": "$limit"};
+    if (createdBefore != null) query["createdBefore"] = createdBefore;
+    final j = await _getJson("/api/v1/workspace/activity", query);
+    final raw = (j["events"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return ActivityPage(
+      events: raw.map(ActivityEvent.fromJson).toList(),
+      nextCursor: j["nextCursor"] as String?,
+    );
+  }
+
+  /// Assets shared into the active workspace from other workspaces.
+  /// Full list; the endpoint doesn't paginate.
+  Future<List<SharedAsset>> sharedWithMe() async {
+    final j = await _getJson("/api/v1/workspace/shared-with-me");
+    final raw = (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(SharedAsset.fromJson).toList();
+  }
+
   void close() => _http.close();
 }

@@ -258,7 +258,7 @@ param if approved).
 - Deps: none (6.6a done)
 - Subagents: general-purpose for the screen if large
 - Exit: Collections tab shows 4 live sub-tabs; analyze+build green; republished
-- Status: code done + pushed (aa16158); build #14 pending verify + republish
+- Status: DONE — build #14 (1.0.14) green, republished to myfonto.com/fonto.apk 2026-05-29
 
 ### Phase 6.6b-2 — Updates tab
 - Scope: client.listActivity(cursor) + sharedWithMe(); reuse listAssets
@@ -267,7 +267,7 @@ param if approved).
   grid with source-workspace badge).
 - Deps: none
 - Exit: Updates tab 3 sections live; green; republished
-- Status: pending
+- Status: code done + committed; build + republish pending verify
 
 ### Phase 6.6b-3 — Explore tab ⚠ (gated on C1)
 - Scope: client.listPersons() → People grid (cover thumb per C2); Places =

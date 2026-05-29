@@ -209,6 +209,64 @@ class AssetStack {
       );
 }
 
+/// One workspace activity-feed row (Phase 7a). `payload` is free-form
+/// JSON whose keys vary by `kind`; the Updates screen reads `assetId` /
+/// `excerpt` out of it defensively. `actorUserId` is null for
+/// system-generated events.
+class ActivityEvent {
+  ActivityEvent({
+    required this.id,
+    required this.kind,
+    required this.payload,
+    required this.createdAt,
+    this.actorUserId,
+    this.targetType,
+    this.targetId,
+  });
+
+  final String id;
+  final String? actorUserId;
+  final String kind;
+  final String? targetType;
+  final String? targetId;
+  final Map<String, dynamic> payload;
+  final DateTime createdAt;
+
+  static ActivityEvent fromJson(Map<String, dynamic> j) => ActivityEvent(
+        id: j["id"] as String,
+        actorUserId: j["actorUserId"] as String?,
+        kind: j["kind"] as String? ?? "",
+        targetType: j["targetType"] as String?,
+        targetId: j["targetId"] as String?,
+        payload: (j["payload"] as Map?)?.cast<String, dynamic>() ?? const {},
+        createdAt: DateTime.parse(j["createdAt"] as String),
+      );
+}
+
+class ActivityPage {
+  ActivityPage({required this.events, required this.nextCursor});
+  final List<ActivityEvent> events;
+  final String? nextCursor;
+  bool get hasMore => nextCursor != null;
+}
+
+/// An asset shared INTO the active workspace from another (Phase 7b,
+/// reference model). Wraps a plain [Asset] plus the source-workspace name
+/// for the "from <workspace>" badge.
+class SharedAsset {
+  SharedAsset({required this.asset, this.sourceWorkspaceName});
+  final Asset asset;
+  final String? sourceWorkspaceName;
+
+  static SharedAsset fromJson(Map<String, dynamic> j) {
+    final from = (j["sharedFrom"] as Map?)?.cast<String, dynamic>();
+    return SharedAsset(
+      asset: Asset.fromJson(j),
+      sourceWorkspaceName: from?["workspaceName"] as String?,
+    );
+  }
+}
+
 class WorkspaceStats {
   WorkspaceStats({
     required this.total,
