@@ -42,8 +42,13 @@ interface ServiceAccount {
 function serviceAccount(): ServiceAccount | null {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (!raw) return null;
+  // Accept either raw JSON or base64-encoded JSON. base64 sidesteps .env
+  // quoting hazards (the private-key PEM has literal \n and = padding).
+  const text = raw.trimStart().startsWith("{")
+    ? raw
+    : Buffer.from(raw, "base64").toString("utf8");
   try {
-    const sa = JSON.parse(raw) as Partial<ServiceAccount>;
+    const sa = JSON.parse(text) as Partial<ServiceAccount>;
     if (!sa.client_email || !sa.private_key || !sa.project_id) return null;
     return sa as ServiceAccount;
   } catch (err) {
