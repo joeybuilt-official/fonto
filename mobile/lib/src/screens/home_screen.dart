@@ -68,7 +68,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // count reflects what actually uploaded without waiting for an event.
     UploadQueue.progress.addListener(_onUploadProgress);
     _refresh();
-    _refreshQueueBadge();
+    // Cold launch: push any existing backlog. The background WorkManager task
+    // is heavily throttled by Android, and opening the app previously only
+    // drained when a camera-roll scan found NEW files — so a backlog could sit
+    // untouched. A foreground drain is the most reliable path and shows live
+    // progress.
+    _kickDrain();
     _maybeScanCameraRoll();
   }
 
@@ -86,17 +91,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (UploadQueue.progress.value == null) _refreshQueueBadge();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
-    // Coming back to the foreground: recover any rows a killed background
-    // drain stranded `in_flight`, then drain again so the badge moves.
+  /// Refresh the badge and kick a foreground drain. drain() requeues rows a
+  /// killed background drain stranded `in_flight`, so this also recovers a
+  /// wedged queue. Cheap no-op when nothing is pending. Fire-and-forget.
+  void _kickDrain() {
     _refreshQueueBadge();
     UploadQueue.drain().then((n) {
       if (!mounted) return;
       _refreshQueueBadge();
       if (n > 0) _refresh();
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _kickDrain();
   }
 
   /// While the server is still processing freshly-uploaded assets, poll the
