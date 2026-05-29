@@ -5,17 +5,17 @@ workflows:
       flutter: stable
       groups:
         - android-signing
+    # Tag-gated: a build fires ONLY when a `v*` tag is pushed (e.g.
+    # `git tag v1.0.17 && git push origin v1.0.17`). Plain commits to main
+    # — including mobile/** changes — no longer trigger builds, so
+    # intermediate sub-phase pushes don't burn CI minutes. Cut a build
+    # deliberately by tagging. See mobile/CI.md.
     triggering:
       events:
-        - push
-        - pull_request
-      branch_patterns:
-        - pattern: main
+        - tag
+      tag_patterns:
+        - pattern: 'v*'
           include: true
-    when:
-      changeset:
-        includes:
-          - 'mobile/**'
     scripts:
       - name: Get packages
         script: flutter pub get

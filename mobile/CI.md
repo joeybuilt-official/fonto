@@ -4,7 +4,25 @@
 
 CI runs on Codemagic (`codemagic.yaml` at repo root). Single workflow: `android-release`.
 Steps: `flutter pub get` → `flutter analyze` → `flutter test` → `flutter build appbundle --release`.
-Artifact: `app-release.aab`. Triggers on push + PR to `main`.
+Artifact: `app-release.aab` + `app-release.apk`.
+
+### Build trigger — tag-gated (since 2026-05-29)
+
+Builds fire **only** when a `v*` git tag is pushed — not on plain commits.
+This stops intermediate sub-phase pushes from burning CI minutes. Workflow:
+
+```bash
+# land code on main as usual (no build fires)
+git push origin main
+# cut a build deliberately:
+git tag v1.0.17        # pick the next version
+git push origin v1.0.17
+```
+
+After the green build, republish the APK to `myfonto.com/fonto.apk` per
+the recipe in `next-session-deploy.md`. To go back to push-triggered,
+restore the `events: [push, pull_request]` + `changeset: mobile/**` block
+in `codemagic.yaml`.
 
 ## Keystore rotation
 
