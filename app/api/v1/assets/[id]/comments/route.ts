@@ -21,6 +21,7 @@ import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { emitActivity } from "@/lib/activity/emit";
+import { notifyWorkspaceMembers } from "@/lib/notifications/push";
 
 const MAX_BODY_LENGTH = 10_240;
 
@@ -173,6 +174,20 @@ export async function POST(
       parentId,
     },
   });
+
+  // Phase 6.4 — real-time push to the workspace (minus the commenter). C10:
+  // comments fire immediately; the daily digest covers summaries. No
+  // per-asset owner exists in the model, so workspace members are the
+  // audience. Fire-and-forget; no-op until FCM_SERVER_KEY is set.
+  void notifyWorkspaceMembers(
+    asset.workspaceId,
+    {
+      title: "New comment",
+      body: text.slice(0, 240),
+      data: { type: "comment", assetId, commentId: inserted.id },
+    },
+    { exceptUserId: user.id }
+  );
 
   return NextResponse.json({ comment: serializeComment(inserted) }, { status: 201 });
 }

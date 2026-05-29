@@ -1075,6 +1075,26 @@ export const notificationMutes = fontoSchema.table(
   ]
 );
 
+// Phase 6.4 — per-device FCM push tokens. One row per (user, device).
+// `deviceId` is a stable client-generated id so re-registering the same
+// device replaces (not duplicates) its token. `platform` ∈ android|ios|web.
+export const pushTokens = fontoSchema.table(
+  "push_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    deviceId: text("device_id").notNull(),
+    token: text("token").notNull(),
+    platform: text("platform").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("push_tokens_user_device_idx").on(table.userId, table.deviceId),
+    index("push_tokens_user_idx").on(table.userId),
+  ]
+);
+
 // Phase 7b — cross-workspace asset sharing (reference model, C5).
 //
 // One row per (sourceWorkspace, asset, targetWorkspace) grant. The

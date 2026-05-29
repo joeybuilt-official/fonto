@@ -130,10 +130,10 @@ TaskCreate while in phased-plan flow.
 - [ ] OPERATOR GATE — Create Firebase project; add Android app (com.joeybuilt.fonto); download google-services.json
 - [ ] OPERATOR GATE — Base64-encode google-services.json; add as GOOGLE_SERVICES_JSON secure env var in Codemagic
 - [ ] OPERATOR GATE — Add FCM_SERVER_KEY to joeybuilt VPS env (service/.env or equivalent)
-- [ ] Schema + migration: fonto.push_tokens (userId, deviceId, token, platform, updatedAt; UNIQUE userId+deviceId)
-- [ ] POST /api/v1/notifications/push-token — upsert token for authenticated user+device
-- [ ] DELETE /api/v1/notifications/push-token — deregister token
-- [ ] Backend notification dispatch — send FCM on: new comment on user's asset, workspace share received
+- [x] Schema + migration 0032: fonto.push_tokens (userId, deviceId, token, platform, created/updatedAt; UNIQUE userId+deviceId)
+- [x] POST /api/v1/notifications/push-token — upsert by (userId, deviceId) via onConflictDoUpdate; platform ∈ android|ios|web
+- [x] DELETE /api/v1/notifications/push-token — deregister by deviceId (idempotent)
+- [x] Backend notification dispatch — lib/notifications/push.ts (guarded FCM legacy sender, no-op w/o FCM_SERVER_KEY; prunes dead tokens) + notifyWorkspaceMembers; wired fire-and-forget into comments POST (workspace minus actor — no per-asset owner in model) + share/workspaces POST (target workspace minus sharer). NOTE: legacy FCM HTTP — may need HTTP v1 swap at integration. Not deployed yet (staged for Firebase gate).
 - [ ] Mobile: add firebase_messaging to pubspec.yaml
 - [ ] Mobile: decode + write google-services.json from GOOGLE_SERVICES_JSON env var in Codemagic build script
 - [ ] Mobile: request notification permission on first launch

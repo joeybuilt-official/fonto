@@ -31,6 +31,7 @@ import {
 } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { notifyWorkspaceMembers } from "@/lib/notifications/push";
 
 const VALID_ACCESS_LEVELS = ["viewer", "commenter", "contributor", "editor"] as const;
 type SharedAccessLevel = (typeof VALID_ACCESS_LEVELS)[number];
@@ -181,6 +182,19 @@ export async function POST(
       createdBy: user.id,
     })
     .returning();
+
+  // Phase 6.4 — notify the TARGET workspace's members that an asset was
+  // shared in (minus the sharer, who is a target member by the check above).
+  // C10 real-time; fire-and-forget; no-op until FCM_SERVER_KEY is set.
+  void notifyWorkspaceMembers(
+    body.targetWorkspaceId,
+    {
+      title: "Asset shared with your workspace",
+      body: "A new asset is now available in your workspace.",
+      data: { type: "share", assetId, sharedAssetId: inserted.id },
+    },
+    { exceptUserId: user.id }
+  );
 
   return NextResponse.json(
     {
