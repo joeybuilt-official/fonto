@@ -183,7 +183,8 @@ TaskCreate while in phased-plan flow.
 - [x] Mobile: PDF → file path resolve (_pdfPathFromUri) → hash → enqueue via UploadQueue (reuses camera path; uploadFile is mime-agnostic) → drain. Page preview/reorder/name is handled by ML Kit's native scanner UI; no custom screen needed.
 - [x] Backend: worker PDF first-page thumbnail (poppler pdftoppm → sharp) + page-count (pdfinfo) — lib/processing/renderPdfFirstPage.ts + generateThumbnails.ts PDF branch; Dockerfile.worker adds poppler-utils; migration 0031 + schema pageCount
 - [x] Backend: extend thumbnail-enqueue eligibility (createAssetRow tryEnqueueThumbnail + reapStuckAssets) to image+video+pdf — multipart POST /api/v1/assets gated image-only before, so scanner PDFs would never have enqueued
-- [ ] Commit + push + deploy (Dockerfile.worker rebuild + 0031 migration on the host) + cut tag for mobile build
+- [x] Commit + push (6260363) + deploy: migration 0031 applied on the host; fonto + fonto-worker rebuilt + recreated (createAssetRow enqueue-gate fix runs in WEB, poppler in WORKER — both rebuilt); smoke /→200 /app/library→307, worker has pdftoppm+pdfinfo; tag v1.0.19 → Codemagic build #19 (1.0.19) green; APK republished to myfonto.com/fonto.apk
+- [ ] Smoke test (operator, real device): scan a doc → PDF uploads → grid shows first-page thumb + page count
 
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
