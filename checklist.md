@@ -228,6 +228,42 @@ TaskCreate while in phased-plan flow.
 - [x] Nextcloud stub — disabled ListTile "Coming soon" in import sheet
 - [x] iCloud stub — disabled ListTile "iOS only · coming soon"
 - [x] Commit + push + tag
+- [x] Phase 6.11b — Google Drive + Nextcloud imports made functional (v1.0.29)
+
+## Phase 6.12 — Camera-roll sync fixes + file-type detection + text/code viewer
+Source: operator device feedback 2026-05-29. "Pull, don't sync" = one-way copy
+(deleting from phone must NOT delete from Fonto) — already true (import enqueues
+an upload copy; no delete-propagation exists anywhere). Reframe UI wording only.
+
+- [x] FIX: camera-roll import returned nothing under Android 14 "Selected photos"
+      — CameraRollScanner gated on PermissionState.isAuth; switched to hasAccess
+      (full OR limited). Watermark now advances only after a full pass. (v1.0.31)
+- [ ] DEPLOY: republish build #32 (v1.0.31) APK to myfonto.com/fonto.apk
+- [ ] Folder selection — SettingsScreen lets the operator pick which device
+      albums to import (PhotoManager.getAssetPathList → list albums → persist
+      selected album IDs in SettingsStore). CameraRollScanner scans only the
+      selected albums instead of the "all" album. Default = all when none chosen.
+- [ ] Wording — confirm Settings copy says "import"/"copy to Fonto" (one-way);
+      it does NOT mirror or delete. Add a one-line subtitle reassuring this.
+- [ ] CLASSIFY: screenshots mislabeled as "document". In processAsset image
+      branch, add a screenshot heuristic (filename /screenshot|screen.?shot/i
+      OR PNG with screen-like aspect ratio) → force classification "screenshot",
+      never "document"/"scan". (lib/processing/processAsset.ts + lib/plexo.ts
+      IMAGE_SUBTYPES already has "screenshot".)
+- [ ] MIME: verify lib/mime.ts detectMime maps .txt→text/plain,
+      .md→text/markdown, .py→text/x-python (add to the extension table if
+      missing). New uploads must carry the right mime.
+- [ ] CLASSIFY (docs): add "text" + "code" to the document subtype taxonomy
+      (lib/plexo.ts DOCUMENT_SUBTYPES) and classify by mime — text/plain→text;
+      text/markdown, text/x-*, application/*-script, common code mimes→code.
+- [ ] VIEWER: render text/code assets instead of a generic doc card.
+      ocr_text already holds the file content (Phase 6.x extractDocumentText).
+      • Mobile AssetDetailScreen: for text/* assets show a scrollable monospace
+        text view (read ocr_text via a new GET /assets/:id field or client call).
+      • Web photo-lightbox: text/code panel (monospace; .md/.py rendered as code).
+- [ ] Backfill: re-run reprocess for existing text files so mime/classification
+      correct; re-run for screenshots so they reclassify.
+- [ ] Commit + push + tag; republish APK; rebuild+recreate fonto + worker.
 
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
