@@ -72,6 +72,25 @@ export async function GET(request: NextRequest) {
   if (onlyFavorites) where.push(eq(schema.assets.isFavorite, true));
   if (ratingMin !== null) where.push(gte(schema.assets.rating, ratingMin));
 
+  // Timeline filter chips — coarse media type. Applied SERVER-side (unlike
+  // the post-fetch `mime`/`subtype` filters below) so keyset pagination and
+  // the /buckets scrubber counts stay exact. Mirrors the /stats buckets.
+  const typeFilter = searchParams.get("type");
+  if (typeFilter === "image") {
+    where.push(like(schema.assets.mimeType, "image/%"));
+  } else if (typeFilter === "video") {
+    where.push(like(schema.assets.mimeType, "video/%"));
+  } else if (typeFilter === "doc") {
+    where.push(
+      or(
+        like(schema.assets.mimeType, "text/%"),
+        eq(schema.assets.mimeType, "application/pdf"),
+        like(schema.assets.mimeType, "application/vnd.openxmlformats-officedocument.%"),
+        eq(schema.assets.mimeType, "application/msword")
+      )!
+    );
+  }
+
   // Explore → Places: geo-tagged assets only. `?hasGeo=1` keeps rows where
   // both EXIF coordinates resolved. Served index-driven by
   // `assets_lat_lon_idx`. Mirrors the web Explore "Places" tile probe.
@@ -124,25 +143,36 @@ export async function GET(request: NextRequest) {
   // Returns rows strictly older than the cursor. Same DESC ordering as
   // the unpaged path so the first page + a paged second page concatenate
   // cleanly. Omitting both keeps the original head-of-list behaviour.
-  const createdBeforeRaw = searchParams.get("createdBefore");
+  // Sort axis. Default "created" (ingestion order — preserves legacy
+  // behaviour and the mobile grid). "captured" orders by when the photo was
+  // actually taken (EXIF capture time, falling back to ingestion when absent)
+  // — the Photos-style timeline. Backed by assets_workspace_captured_at_idx.
+  const sortAxis = searchParams.get("sort") === "captured" ? "captured" : "created";
+  const sortExpr =
+    sortAxis === "captured"
+      ? sql`COALESCE(${schema.assets.capturedAt}, ${schema.assets.createdAt})`
+      : sql`${schema.assets.createdAt}`;
+
+  // Phase 6.2 — keyset pagination. The cursor param name tracks the sort axis:
+  //   created  → ?createdBefore=<iso>   captured → ?capturedBefore=<iso>
+  // plus ?idBefore=<uuid> as the tie-break. Returns rows strictly older than
+  // the cursor under the same ordering, so pages concatenate cleanly.
   const idBeforeRaw = searchParams.get("idBefore");
-  const createdBefore =
-    createdBeforeRaw && !Number.isNaN(Date.parse(createdBeforeRaw))
-      ? new Date(createdBeforeRaw)
-      : null;
-  if (createdBefore) {
+  const beforeRaw = searchParams.get(
+    sortAxis === "captured" ? "capturedBefore" : "createdBefore"
+  );
+  const before =
+    beforeRaw && !Number.isNaN(Date.parse(beforeRaw)) ? new Date(beforeRaw) : null;
+  if (before) {
     if (idBeforeRaw) {
       where.push(
         or(
-          lt(schema.assets.createdAt, createdBefore),
-          and(
-            eq(schema.assets.createdAt, createdBefore),
-            lt(schema.assets.id, idBeforeRaw)
-          )
+          sql`${sortExpr} < ${before}`,
+          and(sql`${sortExpr} = ${before}`, lt(schema.assets.id, idBeforeRaw))
         )!
       );
     } else {
-      where.push(lt(schema.assets.createdAt, createdBefore));
+      where.push(sql`${sortExpr} < ${before}`);
     }
   }
 
@@ -165,7 +195,7 @@ export async function GET(request: NextRequest) {
     })
     .from(schema.assets)
     .where(and(...where))
-    .orderBy(desc(schema.assets.createdAt), desc(schema.assets.id));
+    .orderBy(sql`${sortExpr} DESC`, desc(schema.assets.id));
   const rows = limit != null ? await query.limit(limit) : await query;
 
   const filtered = rows
@@ -177,13 +207,18 @@ export async function GET(request: NextRequest) {
   // using `filtered` here would skip server-side rows the next page
   // still needs to walk past). Null when the page is empty or unbounded.
   const lastRow = rows[rows.length - 1];
-  const nextCursor =
-    limit != null && lastRow && rows.length === limit
-      ? {
-          createdBefore: lastRow.asset.createdAt.toISOString(),
-          idBefore: lastRow.asset.id,
-        }
-      : null;
+  let nextCursor: Record<string, string> | null = null;
+  if (limit != null && lastRow && rows.length === limit) {
+    if (sortAxis === "captured") {
+      const c = lastRow.asset.capturedAt ?? lastRow.asset.createdAt;
+      nextCursor = { capturedBefore: c.toISOString(), idBefore: lastRow.asset.id };
+    } else {
+      nextCursor = {
+        createdBefore: lastRow.asset.createdAt.toISOString(),
+        idBefore: lastRow.asset.id,
+      };
+    }
+  }
 
   return NextResponse.json({
     assets: filtered.map((r) => ({

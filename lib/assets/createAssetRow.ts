@@ -436,7 +436,7 @@ export async function enqueueAssetProcessing(args: {
   userEmail?: string | null;
   filename: string;
   mimeType: string;
-  extractedText?: string;
+  extractedText?: string | null;
 }): Promise<void> {
   const { assetId, workspaceId, userId, userEmail, filename, mimeType, extractedText } = args;
   try {
@@ -447,7 +447,7 @@ export async function enqueueAssetProcessing(args: {
       email: userEmail ?? undefined,
       filename,
       mimeType,
-      extractedText,
+      extractedText: extractedText ?? undefined,
     });
   } catch (err) {
     console.error("[fonto] failed to enqueue process-asset job:", err);
