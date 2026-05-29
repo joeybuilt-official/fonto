@@ -39,7 +39,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final FontoClient _client = FontoClient(widget.auth);
   final _picker = ImagePicker();
   final _scroll = ScrollController();
@@ -62,7 +62,11 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _scroll.addListener(_maybeLoadMore);
+    // Refresh the queue badge whenever a drain ends (progress → null) so the
+    // count reflects what actually uploaded without waiting for an event.
+    UploadQueue.progress.addListener(_onUploadProgress);
     _refresh();
     _refreshQueueBadge();
     _maybeScanCameraRoll();
@@ -70,10 +74,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    UploadQueue.progress.removeListener(_onUploadProgress);
     _processingPoll?.cancel();
     _scroll.dispose();
     _client.close();
     super.dispose();
+  }
+
+  void _onUploadProgress() {
+    if (UploadQueue.progress.value == null) _refreshQueueBadge();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    // Coming back to the foreground: recover any rows a killed background
+    // drain stranded `in_flight`, then drain again so the badge moves.
+    _refreshQueueBadge();
+    UploadQueue.drain().then((n) {
+      if (!mounted) return;
+      _refreshQueueBadge();
+      if (n > 0) _refresh();
+    });
   }
 
   /// While the server is still processing freshly-uploaded assets, poll the
@@ -347,12 +370,114 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   int _queuedCount = 0;
+  int _failedCount = 0;
 
   Future<void> _refreshQueueBadge() async {
     final q = await UploadQueue.open();
-    final c = await q.pendingCount();
+    final pending = await q.pendingCount();
+    final failed = await q.failedCount();
     if (!mounted) return;
-    setState(() => _queuedCount = c);
+    setState(() {
+      _queuedCount = pending;
+      _failedCount = failed;
+    });
+  }
+
+  Future<void> _showFailuresSheet() async {
+    final q = await UploadQueue.open();
+    final failures = await q.recentFailures();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Text(
+                  "${failures.length} upload${failures.length == 1 ? "" : "s"} failed",
+                  style: Theme.of(sheetCtx).textTheme.titleMedium,
+                ),
+              ),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: failures.length,
+                  itemBuilder: (_, i) {
+                    final f = failures[i];
+                    return ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.error_outline, size: 20),
+                      title: Text(
+                        f.filePath.split("/").last,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        f.lastError ?? "Unknown error",
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          final n = await q.clearFailed();
+                          if (sheetCtx.mounted) Navigator.of(sheetCtx).pop();
+                          await _refreshQueueBadge();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text("Cleared $n failed upload${n == 1 ? "" : "s"}.")),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text("Clear"),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () async {
+                          final n = await q.retryFailed();
+                          if (sheetCtx.mounted) Navigator.of(sheetCtx).pop();
+                          await _refreshQueueBadge();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text("Retrying $n upload${n == 1 ? "" : "s"}…")),
+                            );
+                          }
+                          UploadQueue.drain().then((ok) {
+                            if (!mounted) return;
+                            _refreshQueueBadge();
+                            if (ok > 0) _refresh();
+                          });
+                        },
+                        icon: const Icon(Icons.refresh),
+                        label: const Text("Retry all"),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _maybeScanCameraRoll() async {
@@ -411,17 +536,56 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Text(title, overflow: TextOverflow.ellipsis),
         actions: [
-          if (_queuedCount > 0)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Center(
-                child: Chip(
-                  label: Text("$_queuedCount ↑"),
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
+          // Live upload-queue badge. During a foreground drain we show the
+          // running remaining count straight off UploadQueue.progress so the
+          // number visibly ticks down; otherwise the last-known pending count.
+          ValueListenableBuilder<UploadProgress?>(
+            valueListenable: UploadQueue.progress,
+            builder: (context, prog, _) {
+              final pending = prog != null ? prog.remaining : _queuedCount;
+              if (pending == 0 && _failedCount == 0) {
+                return const SizedBox.shrink();
+              }
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (pending > 0)
+                        Chip(
+                          avatar: prog != null
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : null,
+                          label: Text("$pending ↑"),
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                        ),
+                      if (_failedCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 4),
+                          child: ActionChip(
+                            onPressed: _showFailuresSheet,
+                            avatar: Icon(
+                              Icons.error_outline,
+                              size: 16,
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                            label: Text("$_failedCount"),
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
+          ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.account_circle_outlined),
             tooltip: "Account",

@@ -166,6 +166,51 @@ class UploadQueue {
     return (r.first["c"] as int?) ?? 0;
   }
 
+  Future<int> failedCount() async {
+    final r = await _db.rawQuery(
+      "SELECT COUNT(*) AS c FROM uploads WHERE state = 'failed'",
+    );
+    return (r.first["c"] as int?) ?? 0;
+  }
+
+  /// Crash recovery: a drain marks a row `in_flight` before the network
+  /// call, but a killed background isolate (Android caps each run at a few
+  /// minutes — a big camera-roll import never finishes in one) leaves the
+  /// row stranded `in_flight` forever, since [nextBatch] only picks
+  /// `pending`. Reset them so the next drain retries instead of the count
+  /// flooring out. Returns how many were requeued.
+  Future<int> requeueStranded() async {
+    return _db.update(
+      "uploads",
+      {"state": "pending"},
+      where: "state = 'in_flight'",
+    );
+  }
+
+  /// Failed rows (retries exhausted or terminal error), newest first — for
+  /// the "what's stuck and why" sheet.
+  Future<List<UploadQueueEntry>> recentFailures({int limit = 50}) async {
+    final rows = await _db.query(
+      "uploads",
+      where: "state = 'failed'",
+      orderBy: "created_at DESC",
+      limit: limit,
+    );
+    return rows.map(UploadQueueEntry.fromRow).toList();
+  }
+
+  /// Reset every failed row back to a fresh pending attempt. Returns count.
+  Future<int> retryFailed() async {
+    return _db.rawUpdate(
+      "UPDATE uploads SET state = 'pending', attempts = 0, last_error = NULL WHERE state = 'failed'",
+    );
+  }
+
+  /// Drop failed rows from the queue entirely. Returns count.
+  Future<int> clearFailed() async {
+    return _db.delete("uploads", where: "state = 'failed'");
+  }
+
   Future<List<UploadQueueEntry>> nextBatch({int limit = 10}) async {
     final rows = await _db.query(
       "uploads",
@@ -193,15 +238,19 @@ class UploadQueue {
   }
 
   Future<void> _markFailure(int id, String err, {required bool terminal}) async {
+    // Terminal errors fail immediately. Retryable ones go back to pending —
+    // unless this attempt exhausts the retry budget, in which case they also
+    // become 'failed' so they leave the pending count (and surface in the
+    // failures sheet) instead of masquerading as pending forever.
     await _db.rawUpdate(
       """
       UPDATE uploads
       SET attempts = attempts + 1,
           last_error = ?,
-          state = ?
+          state = CASE WHEN ? OR attempts + 1 >= ? THEN 'failed' ELSE 'pending' END
       WHERE id = ?
       """,
-      [err, terminal ? "failed" : "pending", id],
+      [err, terminal ? 1 : 0, _maxAttempts, id],
     );
   }
 
@@ -219,6 +268,9 @@ class UploadQueue {
     final queue = await UploadQueue.open();
     final client = FontoClient(auth);
     _draining = true;
+    // Recover rows stranded `in_flight` by a previously-killed drain before
+    // counting, so they're retried this run instead of being skipped forever.
+    await queue.requeueStranded();
     final total = await queue.pendingCount();
     var processed = 0;
     var ok = 0;
