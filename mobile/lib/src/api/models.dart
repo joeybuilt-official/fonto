@@ -18,6 +18,7 @@ class Asset {
     this.isFavorite,
     this.rating,
     this.ocrText,
+    this.processingState,
   });
 
   final String id;
@@ -33,6 +34,15 @@ class Asset {
   // Phase 6.12 — extracted text layer (plain text / markdown / source file
   // contents). Only populated by the per-asset detail endpoint.
   final String? ocrText;
+  // Pipeline state: captured → processing → classified → extracted → ready
+  // (or failed). Anything other than ready/failed means work is still in
+  // flight on the server.
+  final String? processingState;
+
+  bool get isProcessing =>
+      processingState != null &&
+      processingState != "ready" &&
+      processingState != "failed";
 
   static Asset fromJson(Map<String, dynamic> j) => Asset(
         id: j["id"] as String,
@@ -48,6 +58,7 @@ class Asset {
         isFavorite: j["isFavorite"] as bool?,
         rating: (j["rating"] as num?)?.toInt(),
         ocrText: j["ocrText"] as String?,
+        processingState: j["processingState"] as String?,
       );
 }
 
@@ -303,6 +314,7 @@ class WorkspaceStats {
     required this.documents,
     required this.videos,
     required this.favorites,
+    this.processing = 0,
   });
 
   final int total;
@@ -310,6 +322,8 @@ class WorkspaceStats {
   final int documents;
   final int videos;
   final int favorites;
+  // Count of active assets still being processed server-side (not ready/failed).
+  final int processing;
 
   static WorkspaceStats fromJson(Map<String, dynamic> j) => WorkspaceStats(
         total: (j["total"] as num).toInt(),
@@ -317,5 +331,6 @@ class WorkspaceStats {
         documents: (j["documents"] as num).toInt(),
         videos: (j["videos"] as num).toInt(),
         favorites: (j["favorites"] as num).toInt(),
+        processing: (j["processing"] as num?)?.toInt() ?? 0,
       );
 }

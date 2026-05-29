@@ -5,6 +5,7 @@
 // pull-to-refresh + infinite scroll. Drawer = folder rail.
 // AppBar search icon → SearchScreen. FAB → camera capture → upload.
 
+import "dart:async";
 import "dart:io";
 
 import "package:cached_network_image/cached_network_image.dart";
@@ -51,6 +52,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final Map<String, String> _thumbs = {};
   AssetCursor? _cursor;
   bool _uploading = false;
+  Timer? _processingPoll;
 
   /// `null` → workspace root view (all assets, no filter).
   /// Otherwise filters via directoryPathPrefix.
@@ -67,9 +69,37 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _processingPoll?.cancel();
     _scroll.dispose();
     _client.close();
     super.dispose();
+  }
+
+  /// While the server is still processing freshly-uploaded assets, poll the
+  /// (cheap) stats endpoint so the "Processing N" banner ticks down. Self-
+  /// cancels once nothing is processing and no upload is in flight, doing one
+  /// final grid refresh to pull the now-ready thumbnails/classifications.
+  void _ensureProcessingPoll() {
+    if (_processingPoll != null) return;
+    _processingPoll = Timer.periodic(const Duration(seconds: 6), (t) async {
+      if (!mounted) {
+        t.cancel();
+        _processingPoll = null;
+        return;
+      }
+      try {
+        final s = await _client.stats();
+        if (!mounted) return;
+        setState(() => _stats = s);
+        if (s.processing == 0 && UploadQueue.progress.value == null) {
+          t.cancel();
+          _processingPoll = null;
+          _refresh();
+        }
+      } catch (_) {
+        // Transient; keep polling.
+      }
+    });
   }
 
   void _maybeLoadMore() {
@@ -113,6 +143,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _cursor = page.nextCursor;
         _loadingFirst = false;
       });
+      if (stats.processing > 0) _ensureProcessingPoll();
     } on ApiException catch (e) {
       _fail("${e.status}: ${e.message}");
     } catch (e) {
@@ -330,8 +361,10 @@ class _HomeScreenState extends State<HomeScreen> {
     if (n > 0) {
       await _refreshQueueBadge();
       // Best-effort foreground drain; don't await so we don't block the grid.
-      UploadQueue.drain().then((_) {
-        if (mounted) _refreshQueueBadge();
+      UploadQueue.drain().then((n) {
+        if (!mounted) return;
+        _refreshQueueBadge();
+        if (n > 0) _refresh();
       });
     }
   }
@@ -435,7 +468,15 @@ class _HomeScreenState extends State<HomeScreen> {
               )
             : const Icon(Icons.add),
       ),
-      body: _buildBody(),
+      body: Column(
+        children: [
+          _ProgressBanners(
+            progress: UploadQueue.progress,
+            processing: _stats?.processing ?? 0,
+          ),
+          Expanded(child: _buildBody()),
+        ],
+      ),
     );
   }
 
@@ -504,6 +545,93 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// Thin status strip above the grid: a live upload bar while the queue
+/// drains, and a "Processing N" line while the server finishes ingest.
+class _ProgressBanners extends StatelessWidget {
+  const _ProgressBanners({required this.progress, required this.processing});
+
+  final ValueListenable<UploadProgress?> progress;
+  final int processing;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<UploadProgress?>(
+      valueListenable: progress,
+      builder: (context, up, _) {
+        final rows = <Widget>[];
+        if (up != null && up.total > 0) {
+          rows.add(
+            Container(
+              width: double.infinity,
+              color: scheme.primaryContainer,
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.cloud_upload_outlined,
+                          size: 16, color: scheme.onPrimaryContainer),
+                      const SizedBox(width: 8),
+                      Text(
+                        "Uploading ${up.done.clamp(0, up.total)} of ${up.total}",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onPrimaryContainer,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: up.total == 0 ? null : up.done / up.total,
+                      minHeight: 4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        if (processing > 0) {
+          rows.add(
+            Container(
+              width: double.infinity,
+              color: scheme.secondaryContainer,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: scheme.onSecondaryContainer,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    "Processing $processing ${processing == 1 ? "item" : "items"}…",
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSecondaryContainer,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        if (rows.isEmpty) return const SizedBox.shrink();
+        return Column(mainAxisSize: MainAxisSize.min, children: rows);
+      },
     );
   }
 }
@@ -611,7 +739,38 @@ class _AssetTile extends StatelessWidget {
                     : Icons.description,
               ),
             ),
+          if (asset.isProcessing)
+            const Positioned(
+              right: 4,
+              bottom: 4,
+              child: _ProcessingBadge(),
+            ),
         ],
+      ),
+    );
+  }
+}
+
+/// Corner spinner marking an asset the server is still ingesting
+/// (classify / thumbnail / OCR). Mirrors the web grid's yellow pulse.
+class _ProcessingBadge extends StatelessWidget {
+  const _ProcessingBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: const SizedBox(
+        width: 12,
+        height: 12,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+        ),
       ),
     );
   }

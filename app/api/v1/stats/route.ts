@@ -40,6 +40,7 @@ export async function GET() {
       other: 0,
       favorites: 0,
       thisMonth: 0,
+      processing: 0,
     });
   }
   const workspaceId = workspaces[0].id;
@@ -70,6 +71,9 @@ export async function GET() {
       thisMonth: sql<number>`COUNT(*) FILTER (
         WHERE ${schema.assets.createdAt} >= date_trunc('month', now())
       )::int`,
+      processing: sql<number>`COUNT(*) FILTER (
+        WHERE ${schema.assets.processingState} NOT IN ('ready', 'failed')
+      )::int`,
     })
     .from(schema.assets)
     .where(
@@ -87,5 +91,6 @@ export async function GET() {
     other: row?.other ?? 0,
     favorites: row?.favorites ?? 0,
     thisMonth: row?.thisMonth ?? 0,
+    processing: row?.processing ?? 0,
   });
 }

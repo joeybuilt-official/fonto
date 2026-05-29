@@ -26,6 +26,7 @@
 import "dart:io";
 import "dart:typed_data";
 
+import "package:flutter/foundation.dart";
 import "package:convert/convert.dart";
 import "package:crypto/crypto.dart";
 import "package:path/path.dart" as p;
@@ -71,12 +72,26 @@ class UploadQueueEntry {
       );
 }
 
+/// Live snapshot of an in-progress drain, broadcast via
+/// [UploadQueue.progress] so the UI can show "Uploading X of Y".
+class UploadProgress {
+  const UploadProgress({required this.done, required this.total});
+  final int done;
+  final int total;
+  int get remaining => (total - done).clamp(0, total);
+}
+
 class UploadQueue {
   UploadQueue._(this._db);
 
   static const _maxAttempts = 5;
   final Database _db;
   static UploadQueue? _instance;
+
+  /// Null when no drain is running; otherwise the latest progress snapshot.
+  /// HomeScreen listens to render a live upload bar.
+  static final ValueNotifier<UploadProgress?> progress =
+      ValueNotifier<UploadProgress?>(null);
 
   static Future<UploadQueue> open() async {
     if (_instance != null) return _instance!;
@@ -194,12 +209,23 @@ class UploadQueue {
   /// Drain the queue using a freshly-loaded auth store + client. Safe
   /// to call from a Workmanager callback isolate. Returns the count of
   /// uploads that succeeded this run.
+  static bool _draining = false;
+
   static Future<int> drain() async {
+    // Re-entrancy guard: a foreground drain + a Workmanager-triggered drain
+    // shouldn't both run and double-count progress in the same isolate.
+    if (_draining) return 0;
     final auth = await AuthStore.load();
     if (!auth.isConfigured) return 0;
     final queue = await UploadQueue.open();
     final client = FontoClient(auth);
+    _draining = true;
+    final total = await queue.pendingCount();
+    var processed = 0;
     var ok = 0;
+    if (total > 0) {
+      progress.value = UploadProgress(done: 0, total: total);
+    }
     try {
       for (;;) {
         final batch = await queue.nextBatch(limit: 10);
@@ -224,10 +250,17 @@ class UploadQueue {
           } catch (e) {
             await queue._markFailure(entry.id, e.toString(), terminal: false);
           }
+          processed++;
+          progress.value = UploadProgress(
+            done: processed,
+            total: processed > total ? processed : total,
+          );
         }
       }
     } finally {
       client.close();
+      _draining = false;
+      progress.value = null;
     }
     return ok;
   }
