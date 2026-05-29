@@ -18,8 +18,8 @@ import "package:workmanager/workmanager.dart";
 import "src/api/fonto_client.dart";
 import "src/api/models.dart";
 import "src/screens/asset_detail_screen.dart";
-import "src/screens/home_screen.dart";
 import "src/screens/login_screen.dart";
+import "src/screens/main_shell.dart";
 import "src/state/auth_store.dart";
 import "src/state/upload_queue.dart";
 import "src/state/workmanager_dispatcher.dart";
@@ -136,7 +136,7 @@ class _FontoAppState extends State<FontoApp> {
       theme: theme,
       navigatorKey: _navigatorKey,
       home: _auth.isConfigured
-          ? HomeScreen(auth: _auth, onSignOut: _handleSignOut)
+          ? MainShell(auth: _auth, onSignOut: _handleSignOut)
           : LoginScreen(auth: _auth, onLoggedIn: _handleLoggedIn),
     );
   }

@@ -154,6 +154,28 @@ TaskCreate while in phased-plan flow.
 - [ ] Smoke test: tap https://myfonto.com/share/<token> on Android 6+ device → app opens to asset (needs sideloaded APK)
 - [ ] Commit + push + deploy assetlinks.json route — DONE for backend (9b48bcd); mobile artifact ships via Codemagic
 
+## Bug fixes (found in use)
+- [x] Asset trash returned 500 — [id] GET/PATCH serialized raw rows with bigint seq/phash; now use serializeAsset() (deployed to live 2026-05-28)
+- [x] Mobile: confirmation dialog before trash (was unguarded one-tap)
+
+## Phase 6.6 — Mobile nav parity (mirror web bottom-nav) ⚠
+- [x] DECISION — nav parity before document scanner (operator confirmed 2026-05-28)
+- [x] 6.6a: MainShell with Material 3 NavigationBar — 5 tabs: Library · Explore · Collections · Updates · Search; folder-tree drawer demoted from primary nav to a secondary drawer inside Library
+- [x] 6.6a: Library + Search tabs wired to live data (existing screens); Explore/Collections/Updates are placeholder scaffolds
+- [ ] 6.6b: wire Updates → /api/v1/workspace/activity (mobile client method + screen)
+- [ ] 6.6b: wire Collections → /api/v1/collections (+ smart-collections/projects/stacks tabs)
+- [ ] 6.6b: wire Explore → persons/faces/tags (People · Places · Things)
+- [ ] 6.6b: move sign-out into an avatar/account menu (web parity); drop redundant search-push from Library appbar
+- [ ] Commit + push (6.6a) → APK
+
+## Phase 6.7 — Document scanner ⚠
+- [x] DECISION C-scan = ML Kit Document Scanner (cunning_document_scanner / flutter_doc_scanner); output = PDF only (operator confirmed 2026-05-28)
+- [ ] Mobile: add scanner package; camera FAB → "Scan document" entry
+- [ ] Mobile: native scan flow (auto edge detect, manual corner adjust, multi-page, enhance) → PDF export
+- [ ] Mobile: page preview/reorder → name → upload PDF as asset
+- [ ] Backend: worker PDF first-page thumbnail (poppler/pdfium) + page-count metadata
+- [ ] Commit + push
+
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
 - [x] ops/backup/r2-sync.sh — rclone sync R2 → offsite
