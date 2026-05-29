@@ -21,9 +21,11 @@ class CameraRollScanner {
   /// Returns the count of newly enqueued items (0 if not permitted or nothing
   /// new). Updates [SettingsStore.lastImportTs] on completion.
   static Future<int> scanAndEnqueue({String virtualPath = "/"}) async {
-    // Only proceed if permission is already granted — never prompt here.
+    // Proceed on full OR limited access. Android 14's "Selected photos"
+    // grants PermissionState.limited (isAuth == false) — gating on isAuth
+    // silently imported nothing for those users.
     final perm = await PhotoManager.requestPermissionExtend();
-    if (!perm.isAuth) return 0;
+    if (!perm.hasAccess) return 0;
 
     final lastTs = await SettingsStore.getLastImportTs();
     final lastImport =
@@ -40,9 +42,10 @@ class CameraRollScanner {
       ),
     );
 
-    await SettingsStore.setLastImportTs(now.millisecondsSinceEpoch);
-
-    if (albums.isEmpty) return 0;
+    if (albums.isEmpty) {
+      await SettingsStore.setLastImportTs(now.millisecondsSinceEpoch);
+      return 0;
+    }
 
     // Prefer the "all" album so we don't double-count assets in sub-albums.
     final album = albums.firstWhere(
@@ -51,24 +54,27 @@ class CameraRollScanner {
     );
 
     final count = await album.assetCountAsync;
-    if (count == 0) return 0;
-
-    final entities = await album.getAssetListRange(start: 0, end: count);
     final queue = await UploadQueue.open();
     var enqueued = 0;
 
-    for (final entity in entities) {
-      final file = await entity.originFile;
-      if (file == null) continue;
-      final hash = await UploadQueue.hashFile(file);
-      final id = await queue.enqueue(
-        filePath: file.path,
-        virtualPath: virtualPath,
-        sha256Hex: hash,
-      );
-      if (id != null) enqueued++;
+    if (count > 0) {
+      final entities = await album.getAssetListRange(start: 0, end: count);
+      for (final entity in entities) {
+        final file = await entity.originFile;
+        if (file == null) continue;
+        final hash = await UploadQueue.hashFile(file);
+        final id = await queue.enqueue(
+          filePath: file.path,
+          virtualPath: virtualPath,
+          sha256Hex: hash,
+        );
+        if (id != null) enqueued++;
+      }
     }
 
+    // Advance the watermark only after a full pass, so an interrupted scan
+    // re-tries next time (dedupe by sha256 makes re-enqueue a no-op).
+    await SettingsStore.setLastImportTs(now.millisecondsSinceEpoch);
     return enqueued;
   }
 }
