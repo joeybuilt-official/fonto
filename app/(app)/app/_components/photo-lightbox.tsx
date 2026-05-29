@@ -5,7 +5,8 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
-  Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star, Layers, MessageCircle
+  Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star, Layers, MessageCircle,
+  ScanSearch
 } from "lucide-react";
 import type { Asset } from "./photo-card";
 import { ConfirmButton } from "@/components/confirm-button";
@@ -85,6 +86,7 @@ function MetadataPanel({
   const [addingTag, setAddingTag] = useState(false);
   const [tagInput, setTagInput] = useState("");
   const [showCollections, setShowCollections] = useState(false);
+  const [rescanState, setRescanState] = useState<"idle" | "loading" | "done">("idle");
   const tagInputRef = useRef<HTMLInputElement>(null);
   const colRef = useRef<HTMLDivElement>(null);
 
@@ -103,6 +105,19 @@ function MetadataPanel({
 
   const tagIds = new Set(tags.map((t) => t.id));
   const unassignedTags = allTags.filter((t) => !tagIds.has(t.id));
+
+  async function handleRescan() {
+    if (rescanState === "loading") return;
+    setRescanState("loading");
+    try {
+      const res = await fetch(`/api/v1/assets/${asset.id}/reprocess`, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setRescanState("done");
+      setTimeout(() => setRescanState("idle"), 4000);
+    } catch {
+      setRescanState("idle");
+    }
+  }
 
   async function handleTagSubmit(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key !== "Enter") return;
@@ -274,6 +289,22 @@ function MetadataPanel({
             >
               <Download className="h-3.5 w-3.5 text-muted-foreground" />
               Download
+            </button>
+            {/* Re-scan — re-run the full recognition pipeline (OCR, labels,
+                description, faces) on the local vision/Ollama box. */}
+            <button
+              onClick={handleRescan}
+              disabled={rescanState === "loading"}
+              className="flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              {rescanState === "loading" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+              ) : rescanState === "done" ? (
+                <Check className="h-3.5 w-3.5 text-green-500" />
+              ) : (
+                <ScanSearch className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+              {rescanState === "done" ? "Re-scan queued" : "Re-scan (AI)"}
             </button>
             {/* Share */}
             <button

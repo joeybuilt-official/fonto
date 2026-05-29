@@ -115,6 +115,20 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     }
   }
 
+  Future<void> _reprocess() async {
+    if (_acting) return;
+    setState(() => _acting = true);
+    try {
+      await widget.client.reprocessAsset(_cur.id);
+      if (!mounted) return;
+      _snack("Re-scan queued — recognition will refresh shortly.");
+    } on ApiException catch (e) {
+      _snack("Re-scan failed: ${e.status} ${e.message}");
+    } finally {
+      if (mounted) setState(() => _acting = false);
+    }
+  }
+
   Future<void> _confirmTrash() async {
     if (_acting) return;
     final ok = await showDialog<bool>(
@@ -272,6 +286,11 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
               (_cur.isFavorite ?? false) ? Icons.star : Icons.star_border,
             ),
             onPressed: _acting ? null : _toggleFavorite,
+          ),
+          IconButton(
+            tooltip: "Re-scan (AI)",
+            icon: const Icon(Icons.auto_awesome_outlined),
+            onPressed: _acting ? null : _reprocess,
           ),
           IconButton(
             tooltip: "Share",

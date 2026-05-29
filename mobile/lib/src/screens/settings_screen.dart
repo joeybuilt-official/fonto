@@ -10,6 +10,8 @@ import "package:flutter/material.dart";
 import "package:photo_manager/photo_manager.dart";
 import "package:workmanager/workmanager.dart";
 
+import "../api/fonto_client.dart";
+import "../state/auth_store.dart";
 import "../state/camera_roll_scanner.dart";
 import "../state/settings_store.dart";
 import "../state/upload_queue.dart";
@@ -27,6 +29,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoImport = false;
   int _lastImportTs = 0;
   bool _scanning = false;
+  bool _reprocessing = false;
   List<String> _selectedAlbumIds = const [];
 
   @override
@@ -194,6 +197,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   String _z(int n) => n.toString().padLeft(2, "0");
 
+  Future<void> _reprocessAll() async {
+    final scope = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  "Re-scan which assets?",
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.all_inclusive),
+              title: const Text("All assets"),
+              onTap: () => Navigator.of(ctx).pop("all"),
+            ),
+            ListTile(
+              leading: const Icon(Icons.image_outlined),
+              title: const Text("Images only"),
+              onTap: () => Navigator.of(ctx).pop("images"),
+            ),
+            ListTile(
+              leading: const Icon(Icons.error_outline),
+              title: const Text("Failed / unprocessed"),
+              onTap: () => Navigator.of(ctx).pop("failed"),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (scope == null || !mounted) return;
+    setState(() => _reprocessing = true);
+    try {
+      final auth = await AuthStore.load();
+      if (!auth.isConfigured) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Sign in first to re-scan.")),
+          );
+        }
+        return;
+      }
+      final client = FontoClient(auth);
+      try {
+        final n = await client.reprocessWorkspace(scope: scope);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Queued $n asset${n == 1 ? "" : "s"} for re-scan.")),
+        );
+      } finally {
+        client.close();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Re-scan failed: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _reprocessing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -242,6 +315,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             onPressed: _scanNow,
                           ),
                   ),
+                const Divider(),
+                ListTile(
+                  title: const Text("Re-scan recognition (AI)"),
+                  subtitle: const Text(
+                    "Re-run OCR, object/scene labels, descriptions, and face "
+                    "detection across your library.",
+                  ),
+                  trailing: _reprocessing
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.auto_awesome_outlined),
+                  onTap: _reprocessing ? null : _reprocessAll,
+                ),
               ],
             ),
     );

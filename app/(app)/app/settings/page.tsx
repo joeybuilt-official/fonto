@@ -25,6 +25,9 @@ export default function SettingsPage() {
   const { data: session } = useSession();
   const user = session?.user;
   const [storage, setStorage] = useState<StorageInfo | null>(null);
+  const [rescanScope, setRescanScope] = useState<"all" | "images" | "failed">("all");
+  const [rescanBusy, setRescanBusy] = useState(false);
+  const [rescanMsg, setRescanMsg] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/v1/workspace")
@@ -32,6 +35,26 @@ export default function SettingsPage() {
       .then((d) => setStorage(d.storage ?? null))
       .catch(() => null);
   }, []);
+
+  async function handleRescanAll() {
+    if (rescanBusy) return;
+    setRescanBusy(true);
+    setRescanMsg(null);
+    try {
+      const res = await fetch("/api/v1/workspace/reprocess", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: rescanScope }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { queued: number };
+      setRescanMsg(`Queued ${data.queued} asset${data.queued === 1 ? "" : "s"} for re-scan.`);
+    } catch (err) {
+      setRescanMsg(err instanceof Error ? `Failed: ${err.message}` : "Failed to queue re-scan.");
+    } finally {
+      setRescanBusy(false);
+    }
+  }
 
   return (
     <div className="space-y-6 max-w-xl">
@@ -127,6 +150,41 @@ export default function SettingsPage() {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+        <h2 className="text-sm font-semibold text-foreground">Recognition</h2>
+        <p className="text-xs text-muted-foreground">
+          Re-run AI recognition (OCR, object/scene labels, descriptions, and
+          face detection) across your library. Runs on the local vision engine
+          and processes assets in the background.
+        </p>
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <div>
+            <p className="text-sm text-foreground">Re-scan assets</p>
+            <p className="text-xs text-muted-foreground">Choose which assets to re-scan.</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <select
+              value={rescanScope}
+              onChange={(e) => setRescanScope(e.target.value as "all" | "images" | "failed")}
+              disabled={rescanBusy}
+              className="rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground disabled:opacity-50"
+            >
+              <option value="all">All assets</option>
+              <option value="images">Images only</option>
+              <option value="failed">Failed / unprocessed</option>
+            </select>
+            <button
+              onClick={handleRescanAll}
+              disabled={rescanBusy}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              {rescanBusy ? "Queuing…" : "Re-scan"}
+            </button>
+          </div>
+        </div>
+        {rescanMsg && <p className="text-xs text-muted-foreground">{rescanMsg}</p>}
       </div>
 
       <div className="rounded-lg border border-border bg-card p-6 space-y-4">

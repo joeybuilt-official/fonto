@@ -424,6 +424,40 @@ async function tryEnqueueFaceDetect(
 }
 
 /**
+ * Enqueue the full recognition pipeline for an asset: classify/describe/OCR
+ * (ProcessAsset), thumbnail, CLIP embedding, and face detection. Shared by
+ * the upload path (createAssetRow) and the user-triggered re-scan endpoints
+ * so they stay in lockstep. Each leg is individually fault-tolerant.
+ */
+export async function enqueueAssetProcessing(args: {
+  assetId: string;
+  workspaceId: string;
+  userId: string;
+  userEmail?: string | null;
+  filename: string;
+  mimeType: string;
+  extractedText?: string;
+}): Promise<void> {
+  const { assetId, workspaceId, userId, userEmail, filename, mimeType, extractedText } = args;
+  try {
+    await assetProcessingQueue().add(JobNames.ProcessAsset, {
+      assetId,
+      workspaceId,
+      userId,
+      email: userEmail ?? undefined,
+      filename,
+      mimeType,
+      extractedText,
+    });
+  } catch (err) {
+    console.error("[fonto] failed to enqueue process-asset job:", err);
+  }
+  await tryEnqueueThumbnail(assetId, workspaceId, mimeType);
+  void tryEnqueueClipEmbed(assetId, workspaceId, mimeType);
+  void tryEnqueueFaceDetect(assetId, workspaceId, mimeType);
+}
+
+/**
  * Insert (or short-circuit-return existing) an asset row from an in-memory
  * buffer. Both `/api/v1/assets` (legacy multipart) and
  * `/api/v1/assets/:id/complete` (presigned PUT) funnel through here.
@@ -573,34 +607,17 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
     uploadedAt: asset.createdAt.toISOString(),
   });
 
-  // Enqueue main asset-processing pipeline.
-  try {
-    await assetProcessingQueue().add(JobNames.ProcessAsset, {
-      assetId: asset.id,
-      workspaceId,
-      userId,
-      email: userEmail ?? undefined,
-      filename,
-      mimeType,
-      extractedText,
-    });
-  } catch (err) {
-    console.error("[fonto] failed to enqueue process-asset job:", err);
-  }
-
-  // Phase 1.1 thumbnail enqueue — optional; resolved dynamically.
-  await tryEnqueueThumbnail(asset.id, workspaceId, mimeType);
-
-  // Phase 4.2 — CLIP image embedding enqueue (fire-and-forget). Skips for
-  // non-image MIME types; degrades to a warning if the queue export drifts.
-  // The dedicated embedding worker writes assets.clip_vec asynchronously.
-  void tryEnqueueClipEmbed(asset.id, workspaceId, mimeType);
-
-  // Phase 5.1 — face detection + ArcFace embedding (fire-and-forget). Same
-  // skip rules as CLIP. The worker prefers the 1080px preview so this
-  // typically runs after thumbnails complete; the queue's BullMQ backoff
-  // covers the brief race window if the preview hasn't landed yet.
-  void tryEnqueueFaceDetect(asset.id, workspaceId, mimeType);
+  // Enqueue the full recognition pipeline (ProcessAsset + thumbnail + CLIP
+  // embed + face detect). Shared with the re-scan endpoints.
+  await enqueueAssetProcessing({
+    assetId: asset.id,
+    workspaceId,
+    userId,
+    userEmail,
+    filename,
+    mimeType,
+    extractedText,
+  });
 
   // Phase 4.5 — second-pass CLIP-similarity dedup check. Only runs for
   // image assets and only when pHash didn't already produce a hit. If the

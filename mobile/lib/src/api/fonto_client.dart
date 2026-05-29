@@ -261,6 +261,19 @@ class FontoClient {
 
   Future<Asset> restoreAsset(String id) => patchAsset(id, {"restore": true});
 
+  /// Re-run the full recognition pipeline (OCR, labels, description, faces)
+  /// on a single asset. The server resets it to processing and re-enqueues.
+  Future<void> reprocessAsset(String id) async {
+    await _postJson("/api/v1/assets/$id/reprocess", const {});
+  }
+
+  /// Bulk re-scan the workspace. `scope` ∈ all|images|failed. Returns the
+  /// number of assets queued.
+  Future<int> reprocessWorkspace({String scope = "all"}) async {
+    final j = await _postJson("/api/v1/workspace/reprocess", {"scope": scope});
+    return (j["queued"] as num?)?.toInt() ?? 0;
+  }
+
   /// POST /shares — mints a public share link for one asset. Returns
   /// the full URL ready for OS share-intent.
   Future<String> createAssetShare(String id) async {

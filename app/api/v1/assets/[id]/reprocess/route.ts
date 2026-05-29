@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
+//
+// User-triggered re-scan of a single asset: re-runs the FULL recognition
+// pipeline (classify + describe + OCR via the local plexo-vision/Ollama
+// path, plus CLIP embedding, vision "things" labels, and face detection) —
+// the same work the upload path enqueues. Reachable from the web lightbox
+// and the mobile asset detail screen.
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
-import {
-  plexoAvailable,
-  plexoEnsureWorkspace,
-  plexoClassifyAsset,
-  plexoDescribeImage,
-} from "@/lib/plexo";
+import { enqueueAssetProcessing } from "@/lib/assets/createAssetRow";
 
 export async function POST(
   _request: NextRequest,
@@ -37,50 +38,21 @@ export async function POST(
 
   if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Reset to captured
+  // Reset to the pre-processing state so the asset reappears in the
+  // "processing" count and the pipeline re-derives everything from scratch.
   await db
     .update(schema.assets)
-    .set({ processingState: "captured", classification: null, description: null })
+    .set({ processingState: "captured" })
     .where(eq(schema.assets.id, id));
 
-  // Fire-and-forget reprocess
-  (async () => {
-    try {
-      await db
-        .update(schema.assets)
-        .set({ processingState: "classified" })
-        .where(eq(schema.assets.id, id));
-
-      let classification: string;
-      let description: string | null = null;
-
-      if (plexoAvailable()) {
-        const wid = await plexoEnsureWorkspace(user.id, user.email);
-        classification = await plexoClassifyAsset(
-          wid,
-          asset.filename,
-          asset.mimeType,
-          asset.extractedText ?? undefined
-        );
-        if (asset.mimeType.startsWith("image/")) {
-          description = await plexoDescribeImage(wid, asset.filename, asset.mimeType);
-        }
-      } else {
-        classification = asset.mimeType.startsWith("image/") ? "photo" : "document";
-      }
-
-      await db
-        .update(schema.assets)
-        .set({ processingState: "ready", classification, description })
-        .where(eq(schema.assets.id, id));
-    } catch (err) {
-      console.error("reprocess error:", err);
-      await db
-        .update(schema.assets)
-        .set({ processingState: "captured" })
-        .where(eq(schema.assets.id, id));
-    }
-  })().catch(console.error);
+  await enqueueAssetProcessing({
+    assetId: asset.id,
+    workspaceId: asset.workspaceId,
+    userId: user.id,
+    userEmail: user.email,
+    filename: asset.filename,
+    mimeType: asset.mimeType,
+  });
 
   return NextResponse.json({ queued: true });
 }
