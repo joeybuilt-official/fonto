@@ -133,7 +133,7 @@ TaskCreate while in phased-plan flow.
 - [x] Schema + migration 0032: fonto.push_tokens (userId, deviceId, token, platform, created/updatedAt; UNIQUE userId+deviceId)
 - [x] POST /api/v1/notifications/push-token — upsert by (userId, deviceId) via onConflictDoUpdate; platform ∈ android|ios|web
 - [x] DELETE /api/v1/notifications/push-token — deregister by deviceId (idempotent)
-- [x] Backend notification dispatch — lib/notifications/push.ts (guarded FCM legacy sender, no-op w/o FCM_SERVER_KEY; prunes dead tokens) + notifyWorkspaceMembers; wired fire-and-forget into comments POST (workspace minus actor — no per-asset owner in model) + share/workspaces POST (target workspace minus sharer). NOTE: legacy FCM HTTP — may need HTTP v1 swap at integration. Not deployed yet (staged for Firebase gate).
+- [x] Backend notification dispatch — lib/notifications/push.ts (guarded FCM legacy sender, no-op w/o FCM_SERVER_KEY; prunes dead tokens) + notifyWorkspaceMembers; wired fire-and-forget into comments POST (workspace minus actor — no per-asset owner in model) + share/workspaces POST (target workspace minus sharer). NOTE: legacy FCM HTTP — may need HTTP v1 swap at integration. DEPLOYED to NAS 2026-05-29 (commit ddd5f7a): migration 0032 applied (backup fonto-pushd-pre-0032-*), fonto rebuilt+recreated, push-token endpoint live (401 unauth); dispatch stays no-op until FCM_SERVER_KEY set.
 - [ ] Mobile: add firebase_messaging to pubspec.yaml
 - [ ] Mobile: decode + write google-services.json from GOOGLE_SERVICES_JSON env var in Codemagic build script
 - [ ] Mobile: request notification permission on first launch
