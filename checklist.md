@@ -122,8 +122,8 @@ TaskCreate while in phased-plan flow.
 - [ ] OPERATOR GATE — Note Play-managed signing cert SHA-256 after first publish (needed for 6.5 assetlinks.json)
 - [x] DECISION C8 = **Option A** (path filter on mobile/** — operator confirmed 2026-05-28)
 - [x] codemagic.yaml — changeset path filter (trigger only on mobile/**)
-- [ ] codemagic.yaml — add publishing.google_play stanza (internal track, draft → review)
-- [ ] Commit + push + first internal track release
+- [x] codemagic.yaml — add publishing.google_play stanza (internal track, draft → review)
+- [ ] Commit + push + first internal track release — BLOCKED on operator gates above (manual first AAB + service account)
 
 ## Phase 6.4 — FCM push notifications ⚠
 - [x] DECISION C10 = **Option A** (FCM real-time for comments+shares, daily digest for summaries — operator confirmed 2026-05-28)
@@ -187,9 +187,9 @@ TaskCreate while in phased-plan flow.
 - [ ] Smoke test (operator, real device): scan a doc → PDF uploads → grid shows first-page thumb + page count
 
 ## Phase 6.8 — Google Photos import ⚠
-- [ ] OPERATOR GATE — Create Google Cloud project; enable Photos Library API
-- [ ] OPERATOR GATE — Create OAuth 2.0 Web application client; copy client ID into mobile/android/app/src/main/res/values/strings.xml as `default_web_client_id`
-- [ ] OPERATOR GATE — Create OAuth 2.0 Android client (package com.joeybuilt.fonto + SHA-1 from keystore) in same Google Cloud project
+- [x] OPERATOR GATE — Created Google Cloud project fonto-yourproject; Photos Library API enabled (2026-05-29, via browser)
+- [x] OPERATOR GATE — Web OAuth client created; client ID 000000000000-so850renc08vgqruuo4lan1jcb5b1qj8 wired into strings.xml (v1.0.21)
+- [x] OPERATOR GATE — Android OAuth client created (com.joeybuilt.fonto + SHA-1 F6:B3:86:...:17:1C); test user user@example.com added
 - [x] pubspec.yaml — add google_sign_in: ^6.2.1
 - [x] strings.xml — add default_web_client_id placeholder (REPLACE_WITH_YOUR_WEB_OAUTH_CLIENT_ID)
 - [x] GooglePhotosImportScreen — OAuth sign-in CTA (signInSilently restore + signIn button)
