@@ -267,7 +267,7 @@ param if approved).
   grid with source-workspace badge).
 - Deps: none
 - Exit: Updates tab 3 sections live; green; republished
-- Status: code done + committed; build + republish pending verify
+- Status: DONE — build #16 (1.0.16) green, republished to myfonto.com/fonto.apk 2026-05-29
 
 ### Phase 6.6b-3 — Explore tab ⚠ (gated on C1)
 - Scope: client.listPersons() → People grid (cover thumb per C2); Places =

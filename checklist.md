@@ -165,7 +165,7 @@ TaskCreate while in phased-plan flow.
 - [x] Commit + push (6.6a) → build #13 green, republished to myfonto.com/fonto.apk
 - [x] OPERATOR GATE RESOLVED 2026-05-29 — C1 = match web (Places = geo grid via assets hasGeo param; Things = placeholder); C2 = uncropped cover thumb
 - [x] 6.6b-1 Collections tab — client (listCollections/SmartCollections/Projects/Stacks) + models (Collection/SmartCollection/Project/AssetStack — renamed to dodge Flutter Stack widget) + CollectionsScreen w/ 4 TabBar sub-tabs (lazy initState load); build #14 green (1.0.14), republished to myfonto.com/fonto.apk
-- [x] 6.6b-2 Updates tab — client listActivity(createdBefore,limit)→ActivityPage + sharedWithMe()→SharedAsset; models ActivityEvent/ActivityPage/SharedAsset; UpdatesScreen 3 TabBar sub-tabs (Uploads=newest listAssets grid; Activity=feed w/ human lines mirroring web summarize() + cursor load-more; Shared=grid w/ source-workspace badge); wired into main_shell; committed — build + republish
+- [x] 6.6b-2 Updates tab — client listActivity(createdBefore,limit)→ActivityPage + sharedWithMe()→SharedAsset; models ActivityEvent/ActivityPage/SharedAsset; UpdatesScreen 3 TabBar sub-tabs (Uploads=newest listAssets grid; Activity=feed w/ human lines mirroring web summarize() + cursor load-more; Shared=grid w/ source-workspace badge); wired into main_shell; build #16 (1.0.16) green, republished to myfonto.com/fonto.apk (note: build numbering jumped 14→16, #15 produced no email)
 - [ ] 6.6b-3 Explore tab — People (persons) + Places (geo grid; add assets hasGeo param) + Things (placeholder = web parity); build + republish
 - [ ] 6.6b-4 Nav cleanups — sign-out → avatar/account menu; drop redundant Library search-push; build + republish
 
