@@ -221,11 +221,11 @@ TaskCreate while in phased-plan flow.
 - [x] Commit + push + tag
 
 ## Phase 6.11 — Additional import sources (stub)
-- [ ] FAB import sheet — show all sources (Google Photos ✓ + Google Drive + Nextcloud + iCloud stubs)
-- [ ] Google Drive stub — "Coming soon" entry in import sheet (reuses google_sign_in)
-- [ ] Nextcloud stub — "Coming soon" entry in import sheet
-- [ ] iCloud stub — "iOS only / coming soon" entry
-- [ ] Commit + push + tag
+- [x] FAB import sheet — show all sources (Google Photos ✓ + Google Drive + Nextcloud + iCloud stubs)
+- [x] Google Drive stub — disabled ListTile "Coming soon" in import sheet
+- [x] Nextcloud stub — disabled ListTile "Coming soon" in import sheet
+- [x] iCloud stub — disabled ListTile "iOS only · coming soon"
+- [x] Commit + push + tag
 
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
