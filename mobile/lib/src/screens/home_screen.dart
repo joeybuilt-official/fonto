@@ -16,7 +16,6 @@ import "../api/models.dart";
 import "../state/auth_store.dart";
 import "../state/upload_queue.dart";
 import "asset_detail_screen.dart";
-import "search_screen.dart";
 
 const _kPageSize = 60;
 
@@ -210,14 +209,6 @@ class _HomeScreenState extends State<HomeScreen> {
     widget.onSignOut();
   }
 
-  void _openSearch() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => SearchScreen(client: _client),
-      ),
-    );
-  }
-
   Future<void> _openDetail(int i) async {
     final result = await Navigator.of(context).push<Map<String, dynamic>?>(
       MaterialPageRoute(
@@ -262,15 +253,22 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
-          IconButton(
-            icon: const Icon(Icons.search),
-            tooltip: "Search",
-            onPressed: _openSearch,
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: "Sign out",
-            onPressed: _signOut,
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.account_circle_outlined),
+            tooltip: "Account",
+            onSelected: (v) {
+              if (v == "signout") _signOut();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: "signout",
+                child: ListTile(
+                  leading: Icon(Icons.logout),
+                  title: Text("Sign out"),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
         ],
       ),
