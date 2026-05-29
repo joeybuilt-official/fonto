@@ -28,6 +28,7 @@ import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
+import { VirtualizedTimeline, type TimelineMonth } from "../_components/virtualized-timeline";
 import { useToolbarState, type Lifecycle } from "@/lib/hooks/use-toolbar-state";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -88,9 +89,94 @@ function LibraryContent() {
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [buckets, setBuckets] = useState<TimelineMonth[]>([]);
+  const [bucketsLoading, setBucketsLoading] = useState(true);
   const [directAsset, setDirectAsset] = useState<Asset | null>(null);
   const savedScrollRef = useRef(0);
   const prevLbIndexRef = useRef<number | null>(null);
+
+  // The dated timeline is the default browse surface. Free-text search and
+  // explicit date-range bounds can't be expressed by the month-bucket
+  // scrubber / per-month windowed fetch, so those two fall back to the flat
+  // chronological grid (which loads the whole filtered set + filters
+  // client-side). Every other chip (lifecycle / mime / type / favorite /
+  // rating / folder) maps to server-side params the timeline + buckets
+  // endpoints both honour, so the scrubber stays exact under them.
+  const timelineMode =
+    !toolbar.filters.q && !toolbar.filters.from && !toolbar.filters.to;
+
+  // Server-side filter params shared by the buckets fetch and per-month
+  // windowed fetch. Its identity changes whenever a filter changes, which is
+  // exactly the signal VirtualizedTimeline uses to drop its per-month cache.
+  const baseParams = useCallback(() => {
+    const sp = new URLSearchParams();
+    sp.set("lifecycle", toolbar.filters.lifecycle);
+    if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
+    if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
+    if (toolbar.filters.favorite) sp.set("favorite", "1");
+    if (toolbar.filters.ratingMin != null) {
+      sp.set("ratingMin", String(toolbar.filters.ratingMin));
+    }
+    if (toolbar.filters.directoryPath != null) {
+      sp.set("directoryPath", toolbar.filters.directoryPath);
+    }
+    if (toolbar.filters.directoryPathPrefix != null) {
+      sp.set("directoryPathPrefix", toolbar.filters.directoryPathPrefix);
+    }
+    return sp;
+  }, [
+    toolbar.filters.lifecycle,
+    toolbar.filters.mime,
+    toolbar.filters.type,
+    toolbar.filters.favorite,
+    toolbar.filters.ratingMin,
+    toolbar.filters.directoryPath,
+    toolbar.filters.directoryPathPrefix,
+  ]);
+
+  // Load exactly one month's assets (captured-date order). Pages within the
+  // [firstOfThisMonth, firstOfNextMonth) window until the boundary is crossed
+  // so post-fetch mime/subtype filtering in the list route can't truncate the
+  // month. Stable per filter set (depends on baseParams).
+  const fetchMonth = useCallback(
+    async (month: string): Promise<Asset[]> => {
+      const [y, m] = month.split("-").map(Number);
+      const firstOfThis = Date.UTC(y, m - 1, 1);
+      const firstOfNext = Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1);
+      const base = baseParams();
+      base.set("sort", "captured");
+      base.set("limit", "200");
+      let cursorBefore = new Date(firstOfNext).toISOString();
+      let cursorId: string | null = null;
+      const acc: Asset[] = [];
+      for (let page = 0; page < 12; page++) {
+        const sp = new URLSearchParams(base);
+        sp.set("capturedBefore", cursorBefore);
+        if (cursorId) sp.set("idBefore", cursorId);
+        const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        if (!r.ok) break;
+        const d = (await r.json()) as {
+          assets?: Asset[];
+          nextCursor?: { capturedBefore: string; idBefore: string } | null;
+        };
+        const rows = d.assets ?? [];
+        for (const a of rows) {
+          const t = new Date(a.capturedAt ?? a.createdAt).getTime();
+          if (t >= firstOfThis && t < firstOfNext) acc.push(a);
+        }
+        const last = rows[rows.length - 1];
+        if (!d.nextCursor || !last) break;
+        const lastT = new Date(last.capturedAt ?? last.createdAt).getTime();
+        if (lastT < firstOfThis) break;
+        cursorBefore = d.nextCursor.capturedBefore;
+        cursorId = d.nextCursor.idBefore;
+      }
+      return acc;
+    },
+    [baseParams]
+  );
+
+  const handleLoadedAssets = useCallback((a: Asset[]) => setAssets(a), []);
 
   // Lightbox is URL-based so back button restores chip state.
   // Opening pushes ?lb=<id>; closing calls router.back().
@@ -98,10 +184,32 @@ function LibraryContent() {
   const lbIndex = lbId != null ? assets.findIndex((a) => a.id === lbId) : null;
   const lightboxIndex = lbIndex !== null && lbIndex >= 0 ? lbIndex : null;
 
-  // Server-side fetch on every relevant chip change. The asset endpoint
-  // already understands lifecycle, mime, subtype, directoryPath,
-  // directoryPathPrefix, favorite, ratingMin — no shim layer needed.
+  // Timeline scrubber domain — full-library month counts under the active
+  // filters. Only needed when the timeline is the active surface.
   useEffect(() => {
+    if (!timelineMode) return;
+    let cancelled = false;
+    setBucketsLoading(true);
+    fetch(`/api/v1/assets/buckets?${baseParams().toString()}`)
+      .then((r) => r.json() as Promise<{ buckets?: TimelineMonth[] }>)
+      .then((d) => {
+        if (!cancelled) setBuckets(d.buckets ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setBuckets([]);
+      })
+      .finally(() => {
+        if (!cancelled) setBucketsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [timelineMode, baseParams]);
+
+  // Flat-grid fallback fetch — only runs when search / date-range force the
+  // non-timeline surface. Loads the whole filtered set + filters client-side.
+  useEffect(() => {
+    if (timelineMode) return;
     void (async () => {
       setLoading(true);
       const sp = new URLSearchParams();
@@ -166,6 +274,7 @@ function LibraryContent() {
       }
     })();
   }, [
+    timelineMode,
     toolbar.filters.lifecycle,
     toolbar.filters.mime,
     toolbar.filters.type,
@@ -214,7 +323,7 @@ function LibraryContent() {
   // Fetch a specific asset by ID when it isn't in the current filtered list
   // (e.g. archived asset opened via external deep-link URL).
   useEffect(() => {
-    if (!lbId || loading) {
+    if (!lbId || (!timelineMode && loading)) {
       if (!lbId) setDirectAsset(null);
       return;
     }
@@ -230,15 +339,18 @@ function LibraryContent() {
         setDirectAsset(d.asset ?? null);
       } catch { /* best-effort */ }
     })();
-  }, [lbId, lbIndex, loading]);
+  }, [lbId, lbIndex, loading, timelineMode]);
 
   const isTrash = toolbar.filters.lifecycle === "trashed";
+  const timelineTotal = timelineMode
+    ? buckets.reduce((s, b) => s + b.count, 0)
+    : assets.length;
 
   return (
     <div className="space-y-3">
       <AssetPageToolbar
         title="Library"
-        count={assets.length}
+        count={timelineTotal}
         toolbar={toolbar}
         searchPlaceholder="Search library…"
         sortOptions={["newest", "oldest", "name", "rating", "largest"]}
@@ -258,7 +370,30 @@ function LibraryContent() {
         )}
       </div>
 
-      {loading ? (
+      {timelineMode ? (
+        bucketsLoading && buckets.length === 0 ? (
+          <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading…
+          </div>
+        ) : buckets.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <ImageIcon className="h-10 w-10 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              No assets match the current filters.
+            </p>
+          </div>
+        ) : (
+          <div className="px-4">
+            <VirtualizedTimeline
+              buckets={buckets}
+              fetchMonth={fetchMonth}
+              onAssetClick={(a) => openLightbox(a.id, 0)}
+              onLoadedAssetsChange={handleLoadedAssets}
+            />
+          </div>
+        )
+      ) : loading ? (
         <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading…

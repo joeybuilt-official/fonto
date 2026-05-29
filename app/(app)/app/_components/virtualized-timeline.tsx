@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
+//
+// Phase 2 — seekable, lazy-loading month timeline (Google/Apple-Photos style).
+//
+// The full-library month buckets (GET /api/v1/assets/buckets) drive BOTH the
+// virtualized row set (one row per month, height reserved from the month's
+// count) AND the right-rail fast-scrubber. Because every month has a
+// height-reserved slot, the native scrollbar + the scrubber both span the
+// entire library, not just what's loaded. Each month's actual assets are
+// fetched on demand (via the parent-supplied `fetchMonth`) the first time the
+// row is rendered/seeked; thumb URLs are batch-resolved per loaded month.
 "use client";
 
 import {
@@ -11,142 +21,117 @@ import {
   useState,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { Loader2 } from "lucide-react";
 import { PhotoCard, type Asset } from "./photo-card";
+import { TimelineScrubber, type ScrubBucket } from "./timeline-scrubber";
 
-// Tile sizing — must agree with the grid below.
-// Estimated tile edge in px (square aspect). Used to pre-compute virtual row
-// heights before the real DOM measures itself.
-const TILE_ESTIMATE_PX = 140;
-const TILE_GAP_PX = 4; // matches `gap-1` (0.25rem)
 const HEADER_HEIGHT_PX = 44;
-const SECTION_PADDING_PX = 24; // gap below the grid before next month
+const TILE_GAP_PX = 4; // matches `gap-1`
+const SECTION_PADDING_PX = 24;
+const BATCH_URL_CHUNK = 250;
 
-// Column counts at each Tailwind breakpoint. Mirrors the timeline grid below
-// (`grid-cols-3 sm:4 md:5 lg:6 xl:8`). Detected client-side.
+// Column counts at each Tailwind breakpoint. Mirrors the grid below
+// (`grid-cols-3 sm:4 md:5 lg:6 xl:8`).
 const BREAKPOINTS = [
-  { min: 1280, cols: 8 }, // xl
-  { min: 1024, cols: 6 }, // lg
-  { min: 768, cols: 5 }, // md
-  { min: 640, cols: 4 }, // sm
+  { min: 1280, cols: 8 },
+  { min: 1024, cols: 6 },
+  { min: 768, cols: 5 },
+  { min: 640, cols: 4 },
   { min: 0, cols: 3 },
 ] as const;
 
 function detectCols(width: number): number {
-  for (const bp of BREAKPOINTS) {
-    if (width >= bp.min) return bp.cols;
-  }
+  for (const bp of BREAKPOINTS) if (width >= bp.min) return bp.cols;
   return 3;
 }
 
-export interface MonthBucket {
-  key: string; // YYYY-MM
-  label: string; // e.g. "January 2026"
-  shortLabel: string; // e.g. "Jan 2026"
-  assets: Asset[];
+function monthLabel(month: string): string {
+  const [y, m] = month.split("-");
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
 }
 
-export function groupAssetsByMonth(assets: Asset[]): MonthBucket[] {
-  const map = new Map<string, Asset[]>();
-  for (const a of assets) {
-    const ts = a.capturedAt ?? a.createdAt;
-    const d = new Date(ts);
-    if (Number.isNaN(d.getTime())) continue;
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    let bucket = map.get(key);
-    if (!bucket) {
-      bucket = [];
-      map.set(key, bucket);
-    }
-    bucket.push(a);
-  }
-  return Array.from(map.entries())
-    .sort((a, b) => b[0].localeCompare(a[0]))
-    .map(([key, monthAssets]) => {
-      const [yStr, mStr] = key.split("-");
-      const d = new Date(parseInt(yStr, 10), parseInt(mStr, 10) - 1, 1);
-      return {
-        key,
-        label: d.toLocaleDateString(undefined, {
-          month: "long",
-          year: "numeric",
-        }),
-        shortLabel: d.toLocaleDateString(undefined, {
-          month: "short",
-          year: "numeric",
-        }),
-        assets: monthAssets,
-      };
-    });
+export interface TimelineMonth {
+  month: string; // YYYY-MM
+  count: number;
 }
 
 export interface VirtualizedTimelineProps {
-  assets: Asset[];
+  /** Full-library month buckets, newest first. */
+  buckets: TimelineMonth[];
+  /** Loads one month's assets (captured-date order). Identity changes when the
+   *  active filters change — that resets the per-month cache. */
+  fetchMonth: (month: string) => Promise<Asset[]>;
   onAssetClick: (asset: Asset) => void;
-  /** Called when the viewport approaches the end of the current dataset.
-   * Implementers can fetch more pages. Idempotent — the timeline only signals
-   * once per buckets identity, so guard against duplicate fetches in the
-   * caller. */
-  onNearEnd?: () => void;
-  /** Pixels from the bottom of the last virtualized row that should trigger
-   * `onNearEnd`. Defaults to one viewport height. */
-  nearEndThresholdPx?: number;
+  /** Flattened loaded assets in timeline order — lets the parent drive a
+   *  lightbox with prev/next over what's currently loaded. */
+  onLoadedAssetsChange?: (assets: Asset[]) => void;
 }
 
-/**
- * Virtualized, month-bucketed asset timeline.
- *
- * Each virtual item is a month. The month's height is computed from the
- * number of asset rows at the current grid column count plus the sticky
- * header. The scroll container is the parent `<main>` element from
- * `AppShell` — looked up via `closest("main")` so we don't need to thread a
- * ref down through the layout.
- */
 export function VirtualizedTimeline({
-  assets,
+  buckets,
+  fetchMonth,
   onAssetClick,
-  onNearEnd,
-  nearEndThresholdPx,
+  onLoadedAssetsChange,
 }: VirtualizedTimelineProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const scrollElRef = useRef<HTMLElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(1024);
   const [cols, setCols] = useState<number>(() =>
     typeof window === "undefined" ? 6 : detectCols(window.innerWidth)
   );
 
-  const buckets = useMemo(() => groupAssetsByMonth(assets), [assets]);
+  // Per-month asset cache + in-flight guard. Reset when fetchMonth identity
+  // changes (i.e. filters changed).
+  const [loaded, setLoaded] = useState<Map<string, Asset[]>>(new Map());
+  const inFlightRef = useRef<Set<string>>(new Set());
+  const scrubbingRef = useRef(false);
 
-  // Resolve the page-level scroll container once mounted. AppShell wraps
-  // page content in `<main class="overflow-y-auto …">` — that's our scroll
-  // element. Falls back to document.scrollingElement if not found.
+  useEffect(() => {
+    setLoaded(new Map());
+    inFlightRef.current = new Set();
+  }, [fetchMonth]);
+
+  // Resolve the page scroll container (AppShell's <main>).
   useLayoutEffect(() => {
     if (!parentRef.current) return;
     const main = parentRef.current.closest("main");
     scrollElRef.current = (main ?? document.scrollingElement) as HTMLElement | null;
   }, []);
 
-  // Track column count from window width.
+  // Track container width (for square-tile height estimate) + column count.
+  useLayoutEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setContainerWidth(el.clientWidth));
+    ro.observe(el);
+    setContainerWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
   useEffect(() => {
-    function update() {
-      setCols(detectCols(window.innerWidth));
-    }
+    const update = () => setCols(detectCols(window.innerWidth));
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, []);
 
+  const tilePx = useMemo(() => {
+    const usable = containerWidth - (cols - 1) * TILE_GAP_PX;
+    return Math.max(64, Math.floor(usable / cols));
+  }, [containerWidth, cols]);
+
   const estimateMonthSize = useCallback(
     (index: number) => {
-      const bucket = buckets[index];
-      if (!bucket) return HEADER_HEIGHT_PX;
-      const rows = Math.max(1, Math.ceil(bucket.assets.length / cols));
+      const b = buckets[index];
+      if (!b) return HEADER_HEIGHT_PX;
+      const rows = Math.max(1, Math.ceil(b.count / cols));
       return (
-        HEADER_HEIGHT_PX +
-        rows * TILE_ESTIMATE_PX +
-        (rows - 1) * TILE_GAP_PX +
-        SECTION_PADDING_PX
+        HEADER_HEIGHT_PX + rows * tilePx + (rows - 1) * TILE_GAP_PX + SECTION_PADDING_PX
       );
     },
-    [buckets, cols]
+    [buckets, cols, tilePx]
   );
 
   const virtualizer = useVirtualizer({
@@ -157,125 +142,104 @@ export function VirtualizedTimeline({
     measureElement: (el) => el.getBoundingClientRect().height,
   });
 
-  // Re-measure when column count changes — tile heights shift on resize.
+  // Re-measure when layout-affecting inputs change.
   useEffect(() => {
     virtualizer.measure();
-  }, [cols, virtualizer]);
+  }, [cols, tilePx, virtualizer]);
 
-  // Track current month for sticky indicator.
   const virtualItems = virtualizer.getVirtualItems();
-  const currentBucketKey = virtualItems[0]?.index != null
-    ? buckets[virtualItems[0].index]?.key ?? null
-    : null;
 
-  // Near-end pagination signal.
-  const lastSignaledLengthRef = useRef(0);
+  // Lazy-load the months currently in view (skip while actively scrubbing so a
+  // fling doesn't fetch every passed month; the scrub-end handler backfills).
   useEffect(() => {
-    if (!onNearEnd || buckets.length === 0) return;
-    const last = virtualItems[virtualItems.length - 1];
-    if (!last) return;
-    const scrollEl = scrollElRef.current;
-    if (!scrollEl) return;
-
-    const threshold = nearEndThresholdPx ?? scrollEl.clientHeight;
-    const totalSize = virtualizer.getTotalSize();
-    const scrolledFromBottom =
-      totalSize - (scrollEl.scrollTop + scrollEl.clientHeight);
-
-    if (
-      last.index >= buckets.length - 1 &&
-      scrolledFromBottom < threshold &&
-      lastSignaledLengthRef.current !== assets.length
-    ) {
-      lastSignaledLengthRef.current = assets.length;
-      onNearEnd();
+    if (scrubbingRef.current) return;
+    for (const vi of virtualItems) {
+      const b = buckets[vi.index];
+      if (!b) continue;
+      if (loaded.has(b.month) || inFlightRef.current.has(b.month)) continue;
+      inFlightRef.current.add(b.month);
+      void fetchMonth(b.month)
+        .then((assets) => {
+          setLoaded((prev) => {
+            const next = new Map(prev);
+            next.set(b.month, assets);
+            return next;
+          });
+        })
+        .catch(() => {
+          setLoaded((prev) => {
+            const next = new Map(prev);
+            next.set(b.month, []);
+            return next;
+          });
+        })
+        .finally(() => inFlightRef.current.delete(b.month));
     }
-  }, [virtualItems, assets.length, buckets.length, onNearEnd, nearEndThresholdPx, virtualizer]);
+  }, [virtualItems, buckets, loaded, fetchMonth]);
 
-  // Keyboard navigation on the timeline container.
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      const scrollEl = scrollElRef.current;
-      if (!scrollEl) return;
-      switch (e.key) {
-        case "PageDown": {
-          e.preventDefault();
-          scrollEl.scrollBy({ top: scrollEl.clientHeight * 0.9, behavior: "smooth" });
-          break;
-        }
-        case "PageUp": {
-          e.preventDefault();
-          scrollEl.scrollBy({ top: -scrollEl.clientHeight * 0.9, behavior: "smooth" });
-          break;
-        }
-        case "Home": {
-          e.preventDefault();
-          if (buckets.length > 0) {
-            virtualizer.scrollToIndex(0, { align: "start" });
-          }
-          break;
-        }
-        case "End": {
-          e.preventDefault();
-          if (buckets.length > 0) {
-            virtualizer.scrollToIndex(buckets.length - 1, { align: "start" });
-          }
-          break;
-        }
-        default:
-          break;
-      }
+  // Surface flattened loaded assets (timeline order) for the parent lightbox.
+  useEffect(() => {
+    if (!onLoadedAssetsChange) return;
+    const flat: Asset[] = [];
+    for (const b of buckets) {
+      const monthAssets = loaded.get(b.month);
+      if (monthAssets) flat.push(...monthAssets);
+    }
+    onLoadedAssetsChange(flat);
+  }, [loaded, buckets, onLoadedAssetsChange]);
+
+  // Batch thumb URLs across every loaded asset.
+  const loadedIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const arr of loaded.values()) for (const a of arr) ids.push(a.id);
+    return ids;
+  }, [loaded]);
+  const thumbUrls = useBatchThumbUrls(loadedIds);
+
+  // Active (top-of-viewport) month for the scrubber + sticky chip.
+  const activeMonth = virtualItems[0] != null ? buckets[virtualItems[0].index]?.month ?? null : null;
+
+  const seekToMonth = useCallback(
+    (month: string) => {
+      const idx = buckets.findIndex((b) => b.month === month);
+      if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "start" });
     },
-    [buckets.length, virtualizer]
+    [buckets, virtualizer]
   );
+
+  const handleScrubStateChange = useCallback((scrubbing: boolean) => {
+    scrubbingRef.current = scrubbing;
+    // When the fling ends, nudge a re-render so the view-in lazy-load effect
+    // runs against the months that settled into view.
+    if (!scrubbing) virtualizer.measure();
+  }, [virtualizer]);
 
   const totalSize = virtualizer.getTotalSize();
 
-  const jumpToMonth = useCallback(
-    (index: number) => {
-      virtualizer.scrollToIndex(index, { align: "start" });
-    },
-    [virtualizer]
-  );
+  const scrubBuckets: ScrubBucket[] = buckets;
 
   return (
     <div className="relative" role="grid" aria-label="Asset timeline" aria-rowcount={buckets.length}>
-      {/* Sticky current-month chip — appears on the left of the scroll viewport */}
-      {currentBucketKey && (
+      {activeMonth && (
         <div className="pointer-events-none sticky top-2 z-20 mb-1 flex">
           <div className="pointer-events-auto rounded-full border border-border bg-background/95 px-3 py-1 text-xs font-semibold text-foreground shadow-sm backdrop-blur-sm">
-            {buckets.find((b) => b.key === currentBucketKey)?.label ?? ""}
+            {monthLabel(activeMonth)}
           </div>
         </div>
       )}
 
-      <div className="flex gap-3">
-        {/* Virtualized list */}
-        <div
-          ref={parentRef}
-          tabIndex={0}
-          onKeyDown={handleKeyDown}
-          className="flex-1 outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm"
-        >
-          <div
-            style={{
-              height: `${totalSize}px`,
-              width: "100%",
-              position: "relative",
-            }}
-          >
+      <div className="flex gap-2">
+        <div ref={parentRef} className="min-w-0 flex-1">
+          <div style={{ height: `${totalSize}px`, width: "100%", position: "relative" }}>
             {virtualItems.map((virtualRow) => {
-              const bucket = buckets[virtualRow.index];
-              if (!bucket) return null;
-              const imageAssets = bucket.assets.filter((a) =>
-                a.mimeType.startsWith("image/")
-              );
-              const otherAssets = bucket.assets.filter(
-                (a) => !a.mimeType.startsWith("image/")
-              );
+              const b = buckets[virtualRow.index];
+              if (!b) return null;
+              const monthAssets = loaded.get(b.month);
+              const rows = Math.max(1, Math.ceil(b.count / cols));
+              const reservedGridHeight = rows * tilePx + (rows - 1) * TILE_GAP_PX;
               return (
                 <div
-                  key={bucket.key}
+                  key={b.month}
                   data-index={virtualRow.index}
                   ref={virtualizer.measureElement}
                   role="row"
@@ -292,52 +256,33 @@ export function VirtualizedTimeline({
                     style={{ minHeight: HEADER_HEIGHT_PX }}
                   >
                     <h2 className="text-sm font-semibold uppercase tracking-widest text-foreground">
-                      {bucket.label}
+                      {monthLabel(b.month)}
                     </h2>
                     <span className="text-xs text-muted-foreground">
-                      · {bucket.assets.length}{" "}
-                      {bucket.assets.length === 1 ? "asset" : "assets"}
+                      · {b.count} {b.count === 1 ? "item" : "items"}
                     </span>
                   </div>
 
-                  {imageAssets.length > 0 && (
+                  {monthAssets ? (
                     <div className="grid grid-cols-3 gap-1 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
-                      {imageAssets.map((asset) => (
+                      {monthAssets.map((asset) => (
                         <PhotoCard
                           key={asset.id}
                           asset={asset}
+                          thumbUrl={thumbUrls[asset.id]}
                           showQuickActions
                           onClick={() => onAssetClick(asset)}
                         />
                       ))}
                     </div>
-                  )}
-
-                  {otherAssets.length > 0 && (
-                    <div className="mt-2 space-y-1.5">
-                      {otherAssets.map((asset) => (
-                        <div
-                          key={asset.id}
-                          className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5 transition-colors hover:bg-muted/40"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium text-foreground">
-                              {asset.filename}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {asset.classification ?? asset.mimeType}
-                            </p>
-                          </div>
-                          <span className="whitespace-nowrap text-xs text-muted-foreground">
-                            {new Date(
-                              asset.capturedAt ?? asset.createdAt
-                            ).toLocaleDateString(undefined, {
-                              month: "short",
-                              day: "numeric",
-                            })}
-                          </span>
-                        </div>
-                      ))}
+                  ) : (
+                    // Height-reserved skeleton so the scrollbar is accurate
+                    // before the month's assets arrive.
+                    <div
+                      className="flex items-center justify-center rounded-md bg-muted/20"
+                      style={{ height: reservedGridHeight }}
+                    >
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/60" />
                     </div>
                   )}
 
@@ -348,51 +293,67 @@ export function VirtualizedTimeline({
           </div>
         </div>
 
-        {/* Right-rail date scrubber */}
-        <DateScrubber
-          buckets={buckets}
-          currentKey={currentBucketKey}
-          onJump={jumpToMonth}
+        <TimelineScrubber
+          buckets={scrubBuckets}
+          activeMonth={activeMonth}
+          onSeek={seekToMonth}
+          onScrubStateChange={handleScrubStateChange}
         />
       </div>
     </div>
   );
 }
 
-interface DateScrubberProps {
-  buckets: MonthBucket[];
-  currentKey: string | null;
-  onJump: (index: number) => void;
-}
+// Batched thumb-URL fetch — mirrors AssetGrid's helper but local to the
+// timeline. Returns a stable {id: url|null} dict kept current with the loaded
+// asset ids; already-known ids are never refetched.
+function useBatchThumbUrls(ids: string[]): Record<string, string | null> {
+  const [urls, setUrls] = useState<Record<string, string | null>>({});
+  const knownRef = useRef<Set<string>>(new Set());
 
-function DateScrubber({ buckets, currentKey, onJump }: DateScrubberProps) {
-  if (buckets.length <= 1) return null;
-  return (
-    <nav
-      aria-label="Jump to month"
-      className="sticky top-0 hidden h-[calc(100dvh-8rem)] w-20 shrink-0 self-start overflow-y-auto py-2 md:flex md:flex-col"
-    >
-      <ul className="flex flex-col gap-0.5">
-        {buckets.map((bucket, index) => {
-          const isCurrent = bucket.key === currentKey;
-          return (
-            <li key={bucket.key}>
-              <button
-                type="button"
-                onClick={() => onJump(index)}
-                className={`w-full rounded px-2 py-1 text-left text-[11px] font-medium tabular-nums transition-colors ${
-                  isCurrent
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                }`}
-                aria-current={isCurrent ? "true" : undefined}
-              >
-                {bucket.shortLabel}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
-  );
+  useEffect(() => {
+    if (ids.length === 0) return;
+    const missing = ids.filter((id) => !knownRef.current.has(id));
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    const chunks: string[][] = [];
+    for (let i = 0; i < missing.length; i += BATCH_URL_CHUNK) {
+      chunks.push(missing.slice(i, i + BATCH_URL_CHUNK));
+    }
+
+    (async () => {
+      for (const chunk of chunks) {
+        try {
+          const r = await fetch("/api/v1/assets/urls", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: chunk, variant: "thumb" }),
+          });
+          if (!r.ok) {
+            for (const id of chunk) knownRef.current.add(id);
+            continue;
+          }
+          const d = (await r.json()) as { urls?: Record<string, string> };
+          if (cancelled) return;
+          setUrls((prev) => {
+            const next = { ...prev };
+            for (const id of chunk) {
+              knownRef.current.add(id);
+              next[id] = d.urls?.[id] ?? null;
+            }
+            return next;
+          });
+        } catch {
+          for (const id of chunk) knownRef.current.add(id);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ids]);
+
+  return urls;
 }

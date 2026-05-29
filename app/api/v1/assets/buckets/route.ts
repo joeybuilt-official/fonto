@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { and, eq, like, or, sql, SQL } from "drizzle-orm";
+import { and, eq, gte, isNull, like, or, sql, SQL } from "drizzle-orm";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -41,6 +41,12 @@ export async function GET(request: NextRequest) {
     where.push(eq(schema.assets.isFavorite, true));
   }
 
+  const ratingMinRaw = searchParams.get("ratingMin");
+  const ratingMinParsed = ratingMinRaw == null ? NaN : Number.parseInt(ratingMinRaw, 10);
+  if (Number.isInteger(ratingMinParsed) && ratingMinParsed >= 1 && ratingMinParsed <= 5) {
+    where.push(gte(schema.assets.rating, ratingMinParsed));
+  }
+
   const typeFilter = searchParams.get("type");
   if (typeFilter === "image") {
     where.push(like(schema.assets.mimeType, "image/%"));
@@ -55,6 +61,32 @@ export async function GET(request: NextRequest) {
         eq(schema.assets.mimeType, "application/msword")
       )!
     );
+  }
+
+  // Phase 2 — mirror the list route's chip filters so the scrubber domain
+  // tracks whatever the Library chip strip narrows to (mime prefix,
+  // classification, folder). Applied in SQL here (pure aggregate, no keyset
+  // concern) so the per-month counts stay exact under every chip combination.
+  const mimeFilter = searchParams.get("mime");
+  if (mimeFilter) where.push(like(schema.assets.mimeType, `${mimeFilter}%`));
+
+  const subtypeFilter = searchParams.get("subtype");
+  if (subtypeFilter) where.push(eq(schema.assets.classification, subtypeFilter));
+
+  const directoryPathRaw = searchParams.get("directoryPath");
+  const directoryPathPrefixRaw = searchParams.get("directoryPathPrefix");
+  const directoryPath = directoryPathRaw == null ? null : directoryPathRaw.trim();
+  const directoryPathPrefix =
+    directoryPathPrefixRaw == null ? null : directoryPathPrefixRaw.trim();
+  if (directoryPath != null) {
+    if (directoryPath === "" || directoryPath === "/") {
+      where.push(isNull(schema.assets.directoryPath));
+    } else {
+      where.push(eq(schema.assets.directoryPath, directoryPath));
+    }
+  } else if (directoryPathPrefix != null && directoryPathPrefix !== "") {
+    const normalised = directoryPathPrefix.replace(/\/+$/, "");
+    where.push(like(schema.assets.directoryPath, `${normalised}/%`));
   }
 
   const monthExpr = sql<string>`to_char(COALESCE(${schema.assets.capturedAt}, ${schema.assets.createdAt}), 'YYYY-MM')`;
