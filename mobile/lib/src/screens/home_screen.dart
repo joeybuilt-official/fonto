@@ -541,20 +541,128 @@ class _AssetTile extends StatelessWidget {
   final String? url;
   final VoidCallback onTap;
 
+  bool get _isImage => asset.mimeType.startsWith("image/");
+  bool get _isVideo => asset.mimeType.startsWith("video/");
+
   @override
   Widget build(BuildContext context) {
-    final inner = url == null
-        ? Container(color: Colors.black12)
-        : Hero(
-            tag: asset.id,
-            child: CachedNetworkImage(
-              imageUrl: url!,
-              fit: BoxFit.cover,
-              placeholder: (_, __) => Container(color: Colors.black12),
-              errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
+    final Widget media;
+    if (url == null) {
+      // No URL yet: images/videos get a neutral box; docs get the doc card.
+      media = (_isImage || _isVideo)
+          ? Container(color: Colors.black12)
+          : _DocPlaceholder(asset: asset);
+    } else if (_isImage || _isVideo) {
+      media = Hero(
+        tag: asset.id,
+        child: CachedNetworkImage(
+          imageUrl: url!,
+          fit: BoxFit.cover,
+          placeholder: (_, __) => Container(color: Colors.black12),
+          errorWidget: (_, __, ___) => const ColoredBox(
+            color: Colors.black12,
+            child: Icon(Icons.broken_image),
+          ),
+        ),
+      );
+    } else {
+      // Documents: show the server-rendered first-page thumb when present,
+      // otherwise a clean doc card — never a broken-image icon. (The urls
+      // endpoint falls back to the original PDF when no thumb exists, which
+      // can't decode as an image, so the errorWidget is the common path
+      // until the thumbnail worker catches up.)
+      media = Hero(
+        tag: asset.id,
+        child: CachedNetworkImage(
+          imageUrl: url!,
+          fit: BoxFit.cover,
+          placeholder: (_, __) => _DocPlaceholder(asset: asset),
+          errorWidget: (_, __, ___) => _DocPlaceholder(asset: asset),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          media,
+          if (!_isImage)
+            Positioned(
+              left: 4,
+              top: 4,
+              child: _TypeBadge(
+                icon: _isVideo
+                    ? Icons.play_circle_fill
+                    : Icons.description,
+              ),
             ),
-          );
-    return GestureDetector(onTap: onTap, child: inner);
+        ],
+      ),
+    );
+  }
+}
+
+/// Fallback card for document assets (or any non-image without a thumbnail).
+/// Shows a doc icon, the file extension, and the filename so the user can
+/// tell documents apart at a glance.
+class _DocPlaceholder extends StatelessWidget {
+  const _DocPlaceholder({required this.asset});
+  final Asset asset;
+
+  @override
+  Widget build(BuildContext context) {
+    final dot = asset.filename.lastIndexOf(".");
+    final ext = dot > 0 && dot < asset.filename.length - 1
+        ? asset.filename.substring(dot + 1).toUpperCase()
+        : "DOC";
+    return Container(
+      color: const Color(0xFFECEAF4),
+      padding: const EdgeInsets.all(6),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.description_outlined,
+              size: 34, color: Colors.black54),
+          const SizedBox(height: 4),
+          Text(
+            ext,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 11,
+              color: Colors.black54,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            asset.filename,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 10, color: Colors.black54),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small corner chip marking videos (play) and documents (page).
+class _TypeBadge extends StatelessWidget {
+  const _TypeBadge({required this.icon});
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Icon(icon, size: 16, color: Colors.white),
+    );
   }
 }
 
