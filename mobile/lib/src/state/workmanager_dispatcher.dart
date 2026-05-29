@@ -13,23 +13,33 @@
 import "package:flutter/widgets.dart";
 import "package:workmanager/workmanager.dart";
 
+import "camera_roll_scanner.dart";
+import "settings_store.dart";
 import "upload_queue.dart";
 
 const kUploadDrainTask = "fonto.uploadDrain";
+const kCameraRollScanTask = "fonto.cameraRollScan";
 
 @pragma("vm:entry-point")
 void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     WidgetsFlutterBinding.ensureInitialized();
-    if (task == kUploadDrainTask || task == Workmanager.iOSBackgroundTask) {
-      try {
+    try {
+      if (task == kUploadDrainTask || task == Workmanager.iOSBackgroundTask) {
         await UploadQueue.drain();
-        return Future.value(true);
-      } catch (_) {
-        // Returning false signals retry per the platform's backoff policy.
-        return Future.value(false);
+        return true;
       }
+      if (task == kCameraRollScanTask) {
+        final enabled = await SettingsStore.getAutoImport();
+        if (enabled) {
+          await CameraRollScanner.scanAndEnqueue();
+          await UploadQueue.drain();
+        }
+        return true;
+      }
+    } catch (_) {
+      return false;
     }
-    return Future.value(true);
+    return true;
   });
 }

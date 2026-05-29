@@ -27,6 +27,8 @@ dependencies:
   url_launcher: ^6.3.0
   flutter_doc_scanner: ^0.0.20
   google_sign_in: ^6.2.1
+  photo_manager: ^3.3.0
+  shared_preferences: ^2.3.0
 
 dev_dependencies:
   flutter_test:

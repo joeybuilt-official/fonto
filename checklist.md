@@ -211,13 +211,14 @@ TaskCreate while in phased-plan flow.
 - [x] Commit + push + tag
 
 ## Phase 6.10 — Camera roll auto-import
-- [ ] pubspec.yaml — add photo_manager: ^3.3.0
-- [ ] SettingsScreen — new screen pushed from avatar menu; "Auto-import camera roll" toggle
-- [ ] sqflite settings table — key/value store for settings (last_import_ts, auto_import_enabled)
-- [ ] WorkManager task — query MediaStore DATE_ADDED > last_import_ts; enqueue new assets
-- [ ] Foreground scan on app open when auto-import enabled
-- [ ] Permission request — READ_MEDIA_IMAGES + READ_MEDIA_VIDEO on toggle-on
-- [ ] Commit + push + tag
+- [x] pubspec.yaml — add photo_manager: ^3.3.0 + shared_preferences: ^2.3.0
+- [x] SettingsScreen — new screen pushed from avatar menu; "Auto-import camera roll" toggle
+- [x] settings_store.dart — SharedPreferences wrapper (last_import_ts, auto_import_enabled)
+- [x] camera_roll_scanner.dart — photo_manager query; createTimeCond filter; enqueue new assets
+- [x] WorkManager task kCameraRollScanTask — periodic scan + drain in callbackDispatcher
+- [x] Foreground scan on app open when auto-import enabled (HomeScreen._maybeScanCameraRoll)
+- [x] Permission request — READ_MEDIA_IMAGES + READ_MEDIA_VIDEO on toggle-on; graceful deny path
+- [x] Commit + push + tag
 
 ## Phase 6.11 — Additional import sources (stub)
 - [ ] FAB import sheet — show all sources (Google Photos ✓ + Google Drive + Nextcloud + iCloud stubs)

@@ -18,6 +18,9 @@ import "../state/auth_store.dart";
 import "../state/upload_queue.dart";
 import "asset_detail_screen.dart";
 import "google_photos_import_screen.dart";
+import "settings_screen.dart";
+import "../state/camera_roll_scanner.dart";
+import "../state/settings_store.dart";
 
 const _kPageSize = 60;
 
@@ -56,6 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _scroll.addListener(_maybeLoadMore);
     _refresh();
     _refreshQueueBadge();
+    _maybeScanCameraRoll();
   }
 
   @override
@@ -287,6 +291,19 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _queuedCount = c);
   }
 
+  Future<void> _maybeScanCameraRoll() async {
+    final enabled = await SettingsStore.getAutoImport();
+    if (!enabled) return;
+    final n = await CameraRollScanner.scanAndEnqueue();
+    if (n > 0) {
+      await _refreshQueueBadge();
+      // Best-effort foreground drain; don't await so we don't block the grid.
+      UploadQueue.drain().then((_) {
+        if (mounted) _refreshQueueBadge();
+      });
+    }
+  }
+
   Future<void> _signOut() async {
     await widget.auth.clear();
     if (!mounted) return;
@@ -342,8 +359,21 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: "Account",
             onSelected: (v) {
               if (v == "signout") _signOut();
+              if (v == "settings") {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                );
+              }
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: "settings",
+                child: ListTile(
+                  leading: Icon(Icons.settings_outlined),
+                  title: Text("Settings"),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
               PopupMenuItem(
                 value: "signout",
                 child: ListTile(
