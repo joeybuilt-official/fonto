@@ -10,7 +10,11 @@
 //   /share/<token>        → resolve share → fetch asset → open AssetDetailScreen
 // Ignored when user is not authenticated or asset is inaccessible.
 
+import "dart:async";
+
 import "package:app_links/app_links.dart";
+import "package:firebase_core/firebase_core.dart";
+import "package:firebase_messaging/firebase_messaging.dart";
 import "package:flutter/material.dart";
 import "package:url_launcher/url_launcher.dart";
 import "package:workmanager/workmanager.dart";
@@ -21,8 +25,15 @@ import "src/screens/asset_detail_screen.dart";
 import "src/screens/login_screen.dart";
 import "src/screens/main_shell.dart";
 import "src/state/auth_store.dart";
+import "src/state/push_notifications.dart";
 import "src/state/upload_queue.dart";
 import "src/state/workmanager_dispatcher.dart";
+
+// Must be top-level (FCM looks it up across the background isolate). The OS
+// renders the notification itself; tap-routing happens via onMessageOpenedApp
+// / getInitialMessage when the app comes to the foreground, so this is a no-op.
+@pragma("vm:entry-point")
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {}
 
 final _navigatorKey = GlobalKey<NavigatorState>();
 
@@ -30,9 +41,17 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await UploadQueue.open();
   await Workmanager().initialize(callbackDispatcher);
+  // Firebase init is best-effort: a platform without a config file (e.g. an
+  // iOS build before GoogleService-Info.plist lands) must not brick startup.
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  } catch (_) {}
   final auth = await AuthStore.load();
   if (auth.isConfigured) {
     await registerUploadDrain();
+    // Don't block first paint on permission dialogs / network.
+    unawaited(PushNotifications.register(auth));
   }
   runApp(FontoApp(auth: auth));
 }
@@ -67,6 +86,7 @@ class _FontoAppState extends State<FontoApp> {
   void initState() {
     super.initState();
     _initDeepLinks();
+    _initPushTaps();
   }
 
   void _initDeepLinks() {
@@ -77,6 +97,37 @@ class _FontoAppState extends State<FontoApp> {
     });
     // Warm start — app already running.
     appLinks.uriLinkStream.listen(_handleDeepLink);
+  }
+
+  void _initPushTaps() {
+    // Cold start — app launched by tapping a notification.
+    FirebaseMessaging.instance.getInitialMessage().then((m) {
+      if (m != null) _handlePushTap(m);
+    });
+    // Warm start — notification tapped while app was backgrounded.
+    FirebaseMessaging.onMessageOpenedApp.listen(_handlePushTap);
+  }
+
+  // Comment/share pushes carry { type, assetId, ... } — route to that asset's
+  // detail view, reusing the same fetch path as deep links.
+  Future<void> _handlePushTap(RemoteMessage message) async {
+    final assetId = message.data["assetId"];
+    if (assetId == null || assetId.isEmpty || !_auth.isConfigured) return;
+    final client = FontoClient(_auth);
+    try {
+      final asset = await client.getAsset(assetId);
+      _navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => AssetDetailScreen(
+            client: client,
+            assets: [asset],
+            initialIndex: 0,
+          ),
+        ),
+      );
+    } catch (_) {
+      client.close();
+    }
   }
 
   Future<void> _handleDeepLink(Uri uri) async {
@@ -141,9 +192,10 @@ class _FontoAppState extends State<FontoApp> {
     );
   }
 
-  void _handleLoggedIn() => setState(() {
-        _auth = widget.auth;
-      });
+  void _handleLoggedIn() {
+    setState(() => _auth = widget.auth);
+    unawaited(PushNotifications.register(_auth));
+  }
 
   void _handleSignOut() => setState(() {
         _auth = widget.auth;

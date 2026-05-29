@@ -127,19 +127,21 @@ TaskCreate while in phased-plan flow.
 
 ## Phase 6.4 — FCM push notifications ⚠
 - [x] DECISION C10 = **Option A** (FCM real-time for comments+shares, daily digest for summaries — operator confirmed 2026-05-28)
-- [ ] OPERATOR GATE — Create Firebase project; add Android app (com.joeybuilt.fonto); download google-services.json
-- [ ] OPERATOR GATE — Base64-encode google-services.json; add as GOOGLE_SERVICES_JSON secure env var in Codemagic
-- [ ] OPERATOR GATE — Add FCM_SERVER_KEY to joeybuilt VPS env (service/.env or equivalent)
+- [x] OPERATOR GATE — Firebase added to existing GCP project fonto-yourproject; Android app com.joeybuilt.fonto registered (2026-05-29, via browser). App ID 1:000000000000:android:0000000000000000000000
+- [x] google-services.json committed to mobile/android/app/ (not secret — ships in APK; reconstructed from console values). Supersedes the GOOGLE_SERVICES_JSON env-var approach
+- [ ] OPERATOR GATE — Generate firebase-adminsdk service-account key (GCP → Service Accounts → firebase-adminsdk-fbsvc@fonto-yourproject → Keys → Add key) and set as FIREBASE_SERVICE_ACCOUNT_JSON (single-line JSON) on the fonto app env (+ worker). Required for outbound sends; can't be auto-extracted (Google only shows the private key once, at download).
 - [x] Schema + migration 0032: fonto.push_tokens (userId, deviceId, token, platform, created/updatedAt; UNIQUE userId+deviceId)
 - [x] POST /api/v1/notifications/push-token — upsert by (userId, deviceId) via onConflictDoUpdate; platform ∈ android|ios|web
 - [x] DELETE /api/v1/notifications/push-token — deregister by deviceId (idempotent)
 - [x] Backend notification dispatch — lib/notifications/push.ts (guarded FCM legacy sender, no-op w/o FCM_SERVER_KEY; prunes dead tokens) + notifyWorkspaceMembers; wired fire-and-forget into comments POST (workspace minus actor — no per-asset owner in model) + share/workspaces POST (target workspace minus sharer). NOTE: legacy FCM HTTP — may need HTTP v1 swap at integration. DEPLOYED to NAS 2026-05-29 (commit ddd5f7a): migration 0032 applied (backup fonto-pushd-pre-0032-*), fonto rebuilt+recreated, push-token endpoint live (401 unauth); dispatch stays no-op until FCM_SERVER_KEY set.
-- [ ] Mobile: add firebase_messaging to pubspec.yaml
-- [ ] Mobile: decode + write google-services.json from GOOGLE_SERVICES_JSON env var in Codemagic build script
-- [ ] Mobile: request notification permission on first launch
-- [~] Mobile: register token via POST /api/v1/notifications/push-token on auth — FontoClient.registerPushToken/deregisterPushToken added (HTTP-only, no firebase dep, build-safe). Call site (on auth) + deviceId/token source pending firebase_messaging (Firebase gate). NOT YET BUILT (no tag cut — pairs with the firebase wiring).
-- [ ] Mobile: notification tap handler — route to home?lb=<assetId> or /share/<token>
-- [ ] Commit + push
+- [x] Mobile: add firebase_core + firebase_messaging to pubspec.yaml; google-services gradle plugin (settings + app build.gradle)
+- [x] Mobile: google-services.json committed to app/ (replaces the CI env-var decode step)
+- [x] Mobile: request notification permission on launch/login (PushNotifications.register); POST_NOTIFICATIONS in manifest
+- [x] Mobile: register token via POST /api/v1/notifications/push-token on auth + onTokenRefresh; deregister on sign-out (before auth.clear)
+- [x] Mobile: notification tap handler — onMessageOpenedApp + getInitialMessage → open AssetDetailScreen by data.assetId
+- [x] Backend: migrated lib/notifications/push.ts to FCM HTTP v1 (service-account JWT → OAuth token, no new deps); gated on FIREBASE_SERVICE_ACCOUNT_JSON
+- [ ] Commit + push + tag (mobile build to validate Firebase compile)
+- [ ] Deploy: set FIREBASE_SERVICE_ACCOUNT_JSON on fonto app env + redeploy (operator-gated on the SA key)
 
 ## Phase 6.5 — Android App Links + in-app deep link routing
 - [x] DECISION C9 = **Option A** (App Links only, no custom scheme; Android 5 → browser — operator confirmed 2026-05-28)

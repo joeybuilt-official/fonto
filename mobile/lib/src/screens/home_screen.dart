@@ -20,6 +20,7 @@ import "asset_detail_screen.dart";
 import "google_photos_import_screen.dart";
 import "settings_screen.dart";
 import "../state/camera_roll_scanner.dart";
+import "../state/push_notifications.dart";
 import "../state/settings_store.dart";
 
 const _kPageSize = 60;
@@ -326,6 +327,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _signOut() async {
+    // Deregister the push token first — the DELETE needs the PAT still set.
+    await PushNotifications.deregister(widget.auth);
     await widget.auth.clear();
     if (!mounted) return;
     widget.onSignOut();
