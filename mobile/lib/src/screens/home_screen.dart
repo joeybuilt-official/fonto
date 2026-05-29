@@ -9,6 +9,7 @@ import "dart:io";
 
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
+import "package:flutter_doc_scanner/flutter_doc_scanner.dart";
 import "package:image_picker/image_picker.dart";
 
 import "../api/fonto_client.dart";
@@ -156,12 +157,73 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _showAddSheet() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text("Take photo"),
+              onTap: () => Navigator.pop(context, "photo"),
+            ),
+            ListTile(
+              leading: const Icon(Icons.document_scanner),
+              title: const Text("Scan document"),
+              onTap: () => Navigator.pop(context, "scan"),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == "photo") await _captureAndUpload();
+    if (choice == "scan") await _scanDocument();
+  }
+
   Future<void> _captureAndUpload() async {
     final picked = await _picker.pickImage(source: ImageSource.camera);
     if (picked == null) return;
+    await _enqueueAndDrain(File(picked.path));
+  }
+
+  Future<void> _scanDocument() async {
+    PdfScanResult? scan;
+    try {
+      scan = await FlutterDocScanner().getScannedDocumentAsPdf(page: 24);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Scan failed: $e")),
+      );
+      return;
+    }
+    if (scan == null) return; // user cancelled
+    final path = _pdfPathFromUri(scan.pdfUri);
+    if (path == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Scan produced an unreadable file.")),
+      );
+      return;
+    }
+    await _enqueueAndDrain(File(path));
+  }
+
+  // ML Kit returns a file:// URI into the app cache. Resolve to a real path
+  // the queue can hash + read. content:// would need a platform-side copy we
+  // don't have, so it's reported as unreadable rather than silently failing.
+  String? _pdfPathFromUri(String pdfUri) {
+    final uri = Uri.tryParse(pdfUri);
+    if (uri == null || uri.scheme.isEmpty) return pdfUri;
+    if (uri.scheme == "file") return uri.toFilePath();
+    return null;
+  }
+
+  Future<void> _enqueueAndDrain(File file) async {
     setState(() => _uploading = true);
     try {
-      final file = File(picked.path);
       final hash = await UploadQueue.hashFile(file);
       final queue = await UploadQueue.open();
       final inserted = await queue.enqueue(
@@ -278,14 +340,14 @@ class _HomeScreenState extends State<HomeScreen> {
         onSelect: _selectFolder,
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _uploading ? null : _captureAndUpload,
+        onPressed: _uploading ? null : _showAddSheet,
         child: _uploading
             ? const SizedBox(
                 width: 20,
                 height: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : const Icon(Icons.camera_alt),
+            : const Icon(Icons.add),
       ),
       body: _buildBody(),
     );
@@ -324,7 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const SliverFillRemaining(
               hasScrollBody: false,
               child: Center(
-                child: Text("No assets yet. Tap the camera FAB."),
+                child: Text("No assets yet. Tap + to add."),
               ),
             )
           else

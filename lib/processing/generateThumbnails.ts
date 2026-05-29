@@ -28,6 +28,10 @@ import { assetDerivativeKey, assetStorageKey, getS3Client } from "@/lib/r2";
 import { decodeToBuffer } from "@/lib/processing/decode";
 import { probeVideo } from "@/lib/processing/probeVideo";
 import { extractVideoThumbnail } from "@/lib/processing/extractVideoThumbnail";
+import {
+  renderPdfFirstPage,
+  pdfPageCount,
+} from "@/lib/processing/renderPdfFirstPage";
 
 const THUMB_LONG_EDGE_PX = 256;
 const PREVIEW_LONG_EDGE_PX = 1080;
@@ -137,7 +141,8 @@ export async function generateThumbnails(
   // extracted JPEG is then handed to the same sharp encode pipeline as
   // images so thumb/preview keys + cache headers stay uniform.
   const isVideo = asset.mimeType.startsWith("video/");
-  if (!asset.mimeType.startsWith("image/") && !isVideo) {
+  const isPdf = asset.mimeType === "application/pdf";
+  if (!asset.mimeType.startsWith("image/") && !isVideo && !isPdf) {
     log.info({ mimeType: asset.mimeType }, "non-image / non-video — skipping");
     return { skipped: true, reason: "non-image" };
   }
@@ -174,6 +179,25 @@ export async function generateThumbnails(
           videoHeight: probe.height,
         })
         .where(eq(schema.assets.id, assetId));
+    } finally {
+      await fs.promises.unlink(tmp).catch(() => {});
+    }
+  } else if (isPdf) {
+    // Phase 6.7 — documents render their first page via poppler's pdftoppm
+    // (PNG), then ride the same sharp encode pipeline as images. pdfinfo
+    // supplies the page count. pdftoppm wants a file path, not stdin.
+    const tmp = path.join(os.tmpdir(), `fonto-pdf-${assetId}.pdf`);
+    await fs.promises.writeFile(tmp, original);
+    try {
+      const pages = await pdfPageCount(tmp);
+      log.info({ pages }, "read pdf page count");
+      decodedBuffer = await renderPdfFirstPage(tmp, { dpi: 150 });
+      if (pages != null) {
+        await db
+          .update(schema.assets)
+          .set({ pageCount: pages })
+          .where(eq(schema.assets.id, assetId));
+      }
     } finally {
       await fs.promises.unlink(tmp).catch(() => {});
     }

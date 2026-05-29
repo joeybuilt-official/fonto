@@ -178,11 +178,12 @@ TaskCreate while in phased-plan flow.
   - pubspec: mobile/pubspec.yaml — NO scanner pkg yet; image_picker/sqflite/crypto/path_provider already present.
   - Backend: lib/processing/processAsset.ts ~L48 DOCUMENT_TRIGGER_MIME already includes application/pdf but does NO binary extraction (no poppler/pdfium/mutool). Dockerfile.worker installs ffmpeg/libheif/libraw/exiftool — NO pdf tooling (add poppler-utils).
   - Schema: lib/db/schema.ts assets table has NO pageCount/page_count col — needs migration (next free number after 0028; verify with `ls drizzle/migrations/`).
-- [ ] Mobile: add scanner package; camera FAB → "Scan document" entry
-- [ ] Mobile: native scan flow (auto edge detect, manual corner adjust, multi-page, enhance) → PDF export
-- [ ] Mobile: page preview/reorder → name → upload PDF as asset
-- [ ] Backend: worker PDF first-page thumbnail (poppler/pdfium) + page-count metadata
-- [ ] Commit + push
+- [x] Mobile: add scanner package (flutter_doc_scanner ^0.0.20, bundles ML Kit doc scanner 16.0.0; minSdk 21 already met); FAB now opens bottom sheet (Take photo / Scan document)
+- [x] Mobile: native scan flow via ML Kit (auto edge detect, manual corner adjust, multi-page≤24, enhance) → PDF export — getScannedDocumentAsPdf(page:24) returns PdfScanResult{pdfUri (file://), pageCount}
+- [x] Mobile: PDF → file path resolve (_pdfPathFromUri) → hash → enqueue via UploadQueue (reuses camera path; uploadFile is mime-agnostic) → drain. Page preview/reorder/name is handled by ML Kit's native scanner UI; no custom screen needed.
+- [x] Backend: worker PDF first-page thumbnail (poppler pdftoppm → sharp) + page-count (pdfinfo) — lib/processing/renderPdfFirstPage.ts + generateThumbnails.ts PDF branch; Dockerfile.worker adds poppler-utils; migration 0031 + schema pageCount
+- [x] Backend: extend thumbnail-enqueue eligibility (createAssetRow tryEnqueueThumbnail + reapStuckAssets) to image+video+pdf — multipart POST /api/v1/assets gated image-only before, so scanner PDFs would never have enqueued
+- [ ] Commit + push + deploy (Dockerfile.worker rebuild + 0031 migration on the host) + cut tag for mobile build
 
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy

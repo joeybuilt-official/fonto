@@ -248,6 +248,10 @@ export const assets = fontoSchema.table(
     // The hover-scrub UI multiplies hover % * totalFrames to pick a
     // tile, then derives row/col from columns to set background-position.
     spriteMeta: jsonb("sprite_meta"),
+    // Phase 6.7 — page count for multi-page documents (PDFs from the mobile
+    // scanner). NULL for non-document assets; populated by the worker via
+    // pdfinfo during processAsset.
+    pageCount: integer("page_count"),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),

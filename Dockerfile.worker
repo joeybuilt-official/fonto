@@ -33,7 +33,8 @@ RUN apk add --no-cache \
       libraw \
       libraw-tools \
       exiftool \
-      ffmpeg
+      ffmpeg \
+      poppler-utils
 WORKDIR /app
 RUN npm install -g pnpm@10
 COPY package.json pnpm-lock.yaml ./
@@ -65,7 +66,8 @@ RUN apk add --no-cache \
       libraw \
       libraw-tools \
       exiftool \
-      ffmpeg
+      ffmpeg \
+      poppler-utils
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 worker
 # Copy the full app: the worker imports from lib/, drizzle schema, etc.
 COPY --from=builder --chown=worker:nodejs /app/node_modules ./node_modules

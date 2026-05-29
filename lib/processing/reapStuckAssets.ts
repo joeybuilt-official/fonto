@@ -168,7 +168,12 @@ export async function reapStuckAssets(): Promise<ReapResult> {
       // was empty when the row was first enqueued), re-fan that job out now.
       // Cheap to re-run; non-image rows are guarded the same way the
       // producer does it.
-      if (row.thumbnailKey == null && row.mimeType.startsWith("image/")) {
+      if (
+        row.thumbnailKey == null &&
+        (row.mimeType.startsWith("image/") ||
+          row.mimeType.startsWith("video/") ||
+          row.mimeType === "application/pdf")
+      ) {
         try {
           await thumbnailQueue().add(JobNames.GenerateThumbnails, {
             assetId: row.id,

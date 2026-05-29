@@ -349,7 +349,16 @@ async function findClipNearDuplicate(
  * missing symbol stays a runtime warning rather than a TS error.
  */
 async function tryEnqueueThumbnail(assetId: string, workspaceId: string, mimeType: string): Promise<void> {
-  if (!mimeType.startsWith("image/")) return;
+  // Mirror generateThumbnails' dispatcher eligibility: images, videos
+  // (keyframe extract), and PDFs (poppler first-page render). Everything
+  // else the dispatcher skips, so don't bother enqueuing.
+  if (
+    !mimeType.startsWith("image/") &&
+    !mimeType.startsWith("video/") &&
+    mimeType !== "application/pdf"
+  ) {
+    return;
+  }
   try {
     const mod = (await import("@/lib/queue")) as unknown as {
       thumbnailQueue?: () => { add: (n: string, p: unknown) => Promise<unknown> };
