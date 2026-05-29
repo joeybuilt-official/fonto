@@ -5,18 +5,31 @@
 // and read its page count via `pdfinfo`. Used for document assets (the
 // mobile ML Kit scanner uploads multi-page PDFs).
 //
-// `pdftoppm ... -` streams the PNG to stdout; `-singlefile` drops the
-// page-number suffix. Output: PNG bytes (Buffer), handed straight to the
-// same sharp/R2 encode pipeline image thumbnails use.
+// Renders to an explicit temp PNG and reads it back. pdftoppm's "-" stdout
+// sink is unreliable across poppler builds: poppler 25.x treats "-" as a file
+// root and writes a literal "-.png" into the process cwd (which is read-only
+// in the worker image), failing with exit 1 / "Could not write image to
+// -.png". Writing to an absolute temp prefix sidesteps both the stdout
+// ambiguity and the cwd-writability problem. `-singlefile` drops the
+// page-number suffix so the output is exactly `<prefix>.png`.
 
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
 
 export async function renderPdfFirstPage(
   file: string,
   options: { dpi?: number } = {}
 ): Promise<Buffer> {
   const dpi = options.dpi ?? 150;
+  const outPrefix = path.join(
+    os.tmpdir(),
+    `fonto-pdf-render-${crypto.randomBytes(8).toString("hex")}`
+  );
+  const outPath = `${outPrefix}.png`;
   const args = [
     "-png",
     "-f", "1",
@@ -24,25 +37,30 @@ export async function renderPdfFirstPage(
     "-r", String(dpi),
     "-singlefile",
     file,
-    "-",
+    outPrefix,
   ];
-  return new Promise((resolve, reject) => {
-    const p = spawn("pdftoppm", args);
-    const chunks: Buffer[] = [];
-    let err = "";
-    p.stdout.on("data", (c: Buffer) => chunks.push(c));
-    p.stderr.on("data", (c: Buffer) => {
-      err += c.toString();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const p = spawn("pdftoppm", args);
+      let err = "";
+      // poppler emits non-fatal "Syntax Warning" lines on stderr even on
+      // success, so key the outcome off the exit code, not stderr presence.
+      p.stderr.on("data", (c: Buffer) => {
+        err += c.toString();
+      });
+      p.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(`pdftoppm exit ${code}: ${err.trim().slice(-400)}`));
+          return;
+        }
+        resolve();
+      });
+      p.on("error", reject);
     });
-    p.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`pdftoppm exit ${code}: ${err.trim().slice(-400)}`));
-        return;
-      }
-      resolve(Buffer.concat(chunks));
-    });
-    p.on("error", reject);
-  });
+    return await fs.promises.readFile(outPath);
+  } finally {
+    await fs.promises.unlink(outPath).catch(() => {});
+  }
 }
 
 // Returns the page total, or null if pdfinfo fails / can't parse — callers

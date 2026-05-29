@@ -54,7 +54,9 @@ async function main(): Promise<void> {
   const sql = postgres(dbUrl, { prepare: false });
   const redis = new IORedis(redisUrl, { maxRetriesPerRequest: null });
   const processQueue = new Queue("asset-processing", { connection: redis });
-  const thumbQueue = new Queue("thumbnail", { connection: redis });
+  // Queue name is plural ("thumbnails") — must match QueueNames.Thumbnail and
+  // the worker. A singular "thumbnail" lands jobs in a queue nothing consumes.
+  const thumbQueue = new Queue("thumbnails", { connection: redis });
 
   // "Stuck" = either still at 'captured', or 'ready' without a thumbnail.
   // The latter is the half-processed case where the row went 'ready' before
