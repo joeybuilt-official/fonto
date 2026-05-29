@@ -61,6 +61,9 @@ const PASSTHROUGH_MIMES = new Set<string>([
   "image/gif",
   "image/tiff",
   "image/avif",
+  // sharp's bundled libvips rasterises SVG natively (verified), so the raw
+  // bytes pass straight through to the encoder like any other web image.
+  "image/svg+xml",
 ]);
 
 const HEIC_MIMES = new Set<string>([
