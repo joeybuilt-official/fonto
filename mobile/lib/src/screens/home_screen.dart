@@ -1007,8 +1007,6 @@ class _AppDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = tree;
-    final hasFolders =
-        t != null && (t.paths.isNotEmpty || t.rootAssetCount > 0);
     return Drawer(
       child: SafeArea(
         child: ListView(
@@ -1038,7 +1036,11 @@ class _AppDrawer extends StatelessWidget {
                 onSignOut();
               },
             ),
-            if (hasFolders) ...[
+            // Inline `t != null && …` so Dart's flow analysis promotes `t`
+            // inside the spread body. Routing the check through an
+            // intermediate bool local would lose the promotion and force `t!`
+            // at every access.
+            if (t != null && (t.paths.isNotEmpty || t.rootAssetCount > 0)) ...[
               const Divider(),
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -1051,7 +1053,7 @@ class _AppDrawer extends StatelessWidget {
                   ),
                 ),
               ),
-              if (t!.rootAssetCount > 0)
+              if (t.rootAssetCount > 0)
                 ListTile(
                   leading: const Icon(Icons.folder_outlined),
                   title: const Text("(root)"),
