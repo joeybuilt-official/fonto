@@ -134,6 +134,31 @@ function MetadataPanel({
                 <span className="text-xs text-foreground capitalize">{asset.classification}</span>
               </div>
             )}
+            {(() => {
+              const w = asset.widthPx ?? asset.videoWidth;
+              const h = asset.heightPx ?? asset.videoHeight;
+              return w && h ? (
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground text-xs shrink-0">Dimensions</span>
+                  <span className="text-xs text-foreground">{w} × {h}</span>
+                </div>
+              ) : null;
+            })()}
+            {asset.pageCount != null && asset.pageCount > 0 && (
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground text-xs shrink-0">Pages</span>
+                <span className="text-xs text-foreground">{asset.pageCount}</span>
+              </div>
+            )}
+            {asset.durationSeconds != null && asset.durationSeconds > 0 && (
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground text-xs shrink-0">Duration</span>
+                <span className="text-xs text-foreground">
+                  {Math.floor(asset.durationSeconds / 60)}:
+                  {String(Math.round(asset.durationSeconds % 60)).padStart(2, "0")}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

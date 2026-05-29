@@ -149,6 +149,83 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  String _fmtSize(int bytes) {
+    if (bytes <= 0) return "—";
+    if (bytes < 1024) return "$bytes B";
+    if (bytes < 1024 * 1024) return "${(bytes / 1024).toStringAsFixed(0)} KB";
+    if (bytes < 1024 * 1024 * 1024) {
+      return "${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB";
+    }
+    return "${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB";
+  }
+
+  String _fmtDate(DateTime? d) {
+    if (d == null) return "—";
+    final l = d.toLocal();
+    String two(int n) => n.toString().padLeft(2, "0");
+    return "${l.year}-${two(l.month)}-${two(l.day)} ${two(l.hour)}:${two(l.minute)}";
+  }
+
+  void _showInfo() {
+    final a = _cur;
+    final rows = <(String, String)>[
+      ("Filename", a.filename),
+      ("Type", a.mimeType),
+      ("Size", _fmtSize(a.sizeBytes)),
+      if (a.classification != null && a.classification!.isNotEmpty)
+        ("Category", a.classification!),
+      if (a.directoryPath != null && a.directoryPath!.isNotEmpty)
+        ("Folder", a.directoryPath!),
+      if (a.capturedAt != null) ("Captured", _fmtDate(a.capturedAt)),
+      if (a.rating != null && a.rating! > 0) ("Rating", "${a.rating} ★"),
+      if (a.description != null && a.description!.isNotEmpty)
+        ("Description", a.description!),
+    ];
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Details",
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 12),
+              ...rows.map(
+                (r) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 96,
+                        child: Text(
+                          r.$1,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.outline,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(r.$2, style: const TextStyle(fontSize: 13)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -162,6 +239,11 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
           style: const TextStyle(fontSize: 14),
         ),
         actions: [
+          IconButton(
+            tooltip: "Info",
+            icon: const Icon(Icons.info_outline),
+            onPressed: _showInfo,
+          ),
           IconButton(
             tooltip: (_cur.isFavorite ?? false) ? "Unfavorite" : "Favorite",
             icon: Icon(

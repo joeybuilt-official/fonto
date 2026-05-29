@@ -35,6 +35,11 @@ export interface Asset {
   videoCodec?: string | null;
   videoWidth?: number | null;
   videoHeight?: number | null;
+  // Image pixel dimensions (EXIF at ingest) + document page count (PDF
+  // worker). Serialized straight from the row; null when unknown.
+  widthPx?: number | null;
+  heightPx?: number | null;
+  pageCount?: number | null;
   // Phase 7b — populated when the asset is being rendered through a
   // cross-workspace share (i.e. in the recipient's grid). Absent for
   // assets the caller owns directly. Used to render the "shared from
