@@ -18,6 +18,8 @@ import "../state/auth_store.dart";
 import "../state/upload_queue.dart";
 import "asset_detail_screen.dart";
 import "google_photos_import_screen.dart";
+import "google_drive_import_screen.dart";
+import "nextcloud_import_screen.dart";
 import "settings_screen.dart";
 import "../state/camera_roll_scanner.dart";
 import "../state/push_notifications.dart";
@@ -188,15 +190,11 @@ class _HomeScreenState extends State<HomeScreen> {
             ListTile(
               leading: const Icon(Icons.folder_outlined),
               title: const Text("Import from Google Drive"),
-              subtitle: const Text("Coming soon"),
-              enabled: false,
               onTap: () => Navigator.pop(context, "google_drive"),
             ),
             ListTile(
               leading: const Icon(Icons.cloud_outlined),
               title: const Text("Import from Nextcloud"),
-              subtitle: const Text("Coming soon"),
-              enabled: false,
               onTap: () => Navigator.pop(context, "nextcloud"),
             ),
             ListTile(
@@ -213,15 +211,27 @@ class _HomeScreenState extends State<HomeScreen> {
     if (choice == "photo") await _captureAndUpload();
     if (choice == "scan") await _scanDocument();
     if (choice == "google_photos") await _importFromGooglePhotos();
+    if (choice == "google_drive") {
+      await _importFromSource(
+        (_) => GoogleDriveImportScreen(virtualPath: _folder ?? "/"),
+      );
+    }
+    if (choice == "nextcloud") {
+      await _importFromSource(
+        (_) => NextcloudImportScreen(virtualPath: _folder ?? "/"),
+      );
+    }
   }
 
-  Future<void> _importFromGooglePhotos() async {
+  Future<void> _importFromGooglePhotos() => _importFromSource(
+        (_) => GooglePhotosImportScreen(virtualPath: _folder ?? "/"),
+      );
+
+  /// Pushes an import screen that pops `true` when something was queued, then
+  /// refreshes the badge + grid. Shared by all cloud import sources.
+  Future<void> _importFromSource(WidgetBuilder builder) async {
     final imported = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => GooglePhotosImportScreen(
-          virtualPath: _folder ?? "/",
-        ),
-      ),
+      MaterialPageRoute(builder: builder),
     );
     if (!mounted) return;
     if (imported == true) {
