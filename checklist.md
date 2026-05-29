@@ -321,8 +321,9 @@ event + webhook), and sharing emitted no activity at all. Operator chose
       asset.shared summary. UploadsSection (upload zone/memory/dup-prompts) +
       SharedSection left intact — they hold real UI, not just repeated thumbs.
 - [x] Shipped: commit 868317e, tag v1.0.36; web+worker rebuilt/recreated on
-      NAS (myfonto.com 200). Mobile build (v1.0.36) triggered via tag;
-      APK republish to myfonto.com/fonto.apk pending Codemagic green. 2026-05-29.
+      NAS (myfonto.com 200). Mobile Codemagic build #37 / v1.0.37 green
+      (flutter analyze + widget tests passed); app-release.apk republished to
+      myfonto.com/fonto.apk (200, 61135013 bytes). 2026-05-29.
 
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
