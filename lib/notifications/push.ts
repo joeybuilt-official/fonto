@@ -9,22 +9,21 @@
 // bubble — a comment that posted is not worth failing because a push didn't
 // send.
 //
-// GATING: sending requires FCM_SERVER_KEY (set on the joeybuilt env per ADR
-// 0006). When unset, every send is a logged no-op so this whole module is
-// safe to ship + deploy ahead of the Firebase operator gate. Token
-// registration (lib + route + schema) works regardless.
+// GATING: sending requires FIREBASE_SERVICE_ACCOUNT_JSON (the firebase-adminsdk
+// service-account key, as a single-line JSON string, set on the worker env).
+// When unset, every send is a logged no-op so this whole module stays safe to
+// ship + deploy ahead of the operator providing the key. Token registration
+// (lib + route + schema) works regardless.
 //
-// NOTE: this targets the FCM **legacy** HTTP endpoint (`Authorization: key=`)
-// per the plan's FCM_SERVER_KEY contract. Google has been retiring legacy
-// FCM; if sends start 401'ing post-Firebase-setup, swap `sendFcm` to the
-// HTTP v1 API (service-account OAuth) — the token storage + dispatch fan-out
-// here stay unchanged.
+// Uses the FCM **HTTP v1** API (the legacy `Authorization: key=` endpoint was
+// retired by Google in 2024). Auth is a short-lived OAuth2 access token minted
+// from the service account via a self-signed JWT — no extra npm deps, just
+// node:crypto + fetch. The token storage + dispatch fan-out are unchanged.
 
+import { createSign } from "node:crypto";
 import { inArray, ne, and, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
-
-const FCM_ENDPOINT = "https://fcm.googleapis.com/fcm/send";
 
 export interface PushPayload {
   title: string;
@@ -34,42 +33,132 @@ export interface PushPayload {
   data?: Record<string, string>;
 }
 
-function serverKey(): string | null {
-  return process.env.FCM_SERVER_KEY || null;
+interface ServiceAccount {
+  client_email: string;
+  private_key: string;
+  project_id: string;
+}
+
+function serviceAccount(): ServiceAccount | null {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!raw) return null;
+  try {
+    const sa = JSON.parse(raw) as Partial<ServiceAccount>;
+    if (!sa.client_email || !sa.private_key || !sa.project_id) return null;
+    return sa as ServiceAccount;
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "fcm.bad_service_account_json"
+    );
+    return null;
+  }
+}
+
+const FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
+const TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+function b64url(input: Buffer | string): string {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+// Cache the access token across sends; Google issues them with a 3600s TTL.
+let cachedToken: { value: string; expEpochMs: number } | null = null;
+
+async function getAccessToken(sa: ServiceAccount): Promise<string | null> {
+  if (cachedToken && cachedToken.expEpochMs - 60_000 > Date.now()) {
+    return cachedToken.value;
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const claims = b64url(
+    JSON.stringify({
+      iss: sa.client_email,
+      scope: FCM_SCOPE,
+      aud: TOKEN_URL,
+      iat: nowSec,
+      exp: nowSec + 3600,
+    })
+  );
+  const signingInput = `${header}.${claims}`;
+  const signature = b64url(
+    createSign("RSA-SHA256").update(signingInput).sign(sa.private_key)
+  );
+  const assertion = `${signingInput}.${signature}`;
+
+  try {
+    const res = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion,
+      }),
+    });
+    if (!res.ok) {
+      logger.warn({ status: res.status }, "fcm.token_exchange_failed");
+      return null;
+    }
+    const json = (await res.json()) as { access_token?: string; expires_in?: number };
+    if (!json.access_token) return null;
+    cachedToken = {
+      value: json.access_token,
+      expEpochMs: Date.now() + (json.expires_in ?? 3600) * 1000,
+    };
+    return cachedToken.value;
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "fcm.token_exchange_error"
+    );
+    return null;
+  }
 }
 
 type SendResult = "sent" | "unregistered" | "error" | "skipped";
 
-// Send to a single token. Returns "unregistered" when FCM says the token is
-// dead so the caller can prune it.
-async function sendFcm(token: string, payload: PushPayload): Promise<SendResult> {
-  const key = serverKey();
-  if (!key) return "skipped";
+// Send to a single token via FCM v1. Returns "unregistered" when FCM reports
+// the token is dead so the caller can prune it.
+async function sendFcm(
+  sa: ServiceAccount,
+  accessToken: string,
+  token: string,
+  payload: PushPayload
+): Promise<SendResult> {
   try {
-    const res = await fetch(FCM_ENDPOINT, {
-      method: "POST",
-      headers: {
-        Authorization: `key=${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        to: token,
-        notification: { title: payload.title, body: payload.body },
-        data: payload.data ?? {},
-      }),
-    });
-    if (!res.ok) {
-      logger.warn({ status: res.status }, "fcm.send_http_error");
-      return "error";
-    }
+    const res = await fetch(
+      `https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: {
+            token,
+            notification: { title: payload.title, body: payload.body },
+            data: payload.data ?? {},
+          },
+        }),
+      }
+    );
+    if (res.ok) return "sent";
+    // 404 / UNREGISTERED → token is dead; prune it. Other codes are transient.
     const json = (await res.json().catch(() => null)) as {
-      results?: Array<{ error?: string }>;
+      error?: { status?: string; details?: Array<{ errorCode?: string }> };
     } | null;
-    const err = json?.results?.[0]?.error;
-    if (err === "NotRegistered" || err === "InvalidRegistration") {
+    const status = json?.error?.status;
+    const errorCode = json?.error?.details?.find((d) => d.errorCode)?.errorCode;
+    if (res.status === 404 || status === "NOT_FOUND" || errorCode === "UNREGISTERED") {
       return "unregistered";
     }
-    return err ? "error" : "sent";
+    logger.warn({ status: res.status, fcmStatus: status }, "fcm.send_http_error");
+    return "error";
   } catch (err) {
     logger.warn(
       { err: err instanceof Error ? err.message : String(err) },
@@ -96,18 +185,24 @@ export async function dispatchPushToUsers(
       .where(inArray(schema.pushTokens.userId, ids));
     if (rows.length === 0) return;
 
-    if (!serverKey()) {
+    const sa = serviceAccount();
+    if (!sa) {
       logger.info(
         { recipients: ids.length, tokens: rows.length, kind: payload.data?.type },
-        "fcm.skipped_no_server_key"
+        "fcm.skipped_no_service_account"
       );
+      return;
+    }
+    const accessToken = await getAccessToken(sa);
+    if (!accessToken) {
+      logger.warn({ recipients: ids.length }, "fcm.skipped_no_access_token");
       return;
     }
 
     const dead: string[] = [];
     await Promise.all(
       rows.map(async (r) => {
-        const result = await sendFcm(r.token, payload);
+        const result = await sendFcm(sa, accessToken, r.token, payload);
         if (result === "unregistered") dead.push(r.token);
       })
     );
