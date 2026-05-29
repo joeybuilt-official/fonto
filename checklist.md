@@ -137,7 +137,7 @@ TaskCreate while in phased-plan flow.
 - [ ] Mobile: add firebase_messaging to pubspec.yaml
 - [ ] Mobile: decode + write google-services.json from GOOGLE_SERVICES_JSON env var in Codemagic build script
 - [ ] Mobile: request notification permission on first launch
-- [ ] Mobile: register token via POST /api/v1/notifications/push-token on auth
+- [~] Mobile: register token via POST /api/v1/notifications/push-token on auth — FontoClient.registerPushToken/deregisterPushToken added (HTTP-only, no firebase dep, build-safe). Call site (on auth) + deviceId/token source pending firebase_messaging (Firebase gate). NOT YET BUILT (no tag cut — pairs with the firebase wiring).
 - [ ] Mobile: notification tap handler — route to home?lb=<assetId> or /share/<token>
 - [ ] Commit + push
 

@@ -196,6 +196,42 @@ class FontoClient {
     return Asset.fromJson(j["asset"] as Map<String, dynamic>);
   }
 
+  /// Phase 6.4 — register this device's FCM token (204 on success; the
+  /// server upserts by (user, deviceId)). `platform` ∈ android|ios|web.
+  /// Caller (the firebase_messaging wiring, pending the Firebase gate)
+  /// supplies the FCM token + a stable per-install deviceId.
+  Future<void> registerPushToken({
+    required String deviceId,
+    required String token,
+    String platform = "android",
+  }) async {
+    final res = await _http.post(
+      _uri("/api/v1/notifications/push-token"),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode({
+        "deviceId": deviceId,
+        "token": token,
+        "platform": platform,
+      }),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+  }
+
+  /// Phase 6.4 — deregister this device (called on sign-out). Idempotent;
+  /// returns 204 even if the token was already gone.
+  Future<void> deregisterPushToken({required String deviceId}) async {
+    final res = await _http.delete(
+      _uri("/api/v1/notifications/push-token"),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode({"deviceId": deviceId}),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+  }
+
   /// Generic PATCH /assets/:id. Server accepts subset of
   /// { trash, restore, isFavorite, rating, directoryPath }. Returns
   /// the refreshed asset row.
