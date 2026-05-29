@@ -95,6 +95,10 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // Excluding `.apk` so a docker-cp'd APK gets served by Next's raw static
+    // handler before the App Router can render (and ISR-cache) the not-found
+    // page for /fonto.apk. Otherwise the mobile-republish-without-restart
+    // flow loses to the cached 404 after any fresh container build.
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|apk)$).*)",
   ],
 };
