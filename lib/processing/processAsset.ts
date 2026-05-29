@@ -30,6 +30,7 @@ import { assetProcessingDurationSeconds } from "@/lib/metrics";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { classifyAsset } from "@/lib/classify/classify";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
+import { labelImageUrl, visionConfigured } from "@/lib/plexo-vision";
 
 const DOCUMENT_CLASSIFICATIONS = new Set([
   "document",
@@ -333,23 +334,43 @@ async function processAssetInner(
       classification,
       description
     );
+    const [asset] = await db
+      .select({ workspaceId: schema.assets.workspaceId })
+      .from(schema.assets)
+      .where(eq(schema.assets.id, assetId))
+      .limit(1);
+
+    // Phase 4.x — object/scene "things" labels for images, from the vision
+    // sidecar's VLM. Folded into the same AI-tag path as CLIP/LLM tags.
+    let visionLabels: string[] = [];
+    if (asset && mimeType.startsWith("image/") && visionConfigured()) {
+      try {
+        const signedUrl = await getSignedUrl(
+          getS3Client(),
+          new GetObjectCommand({
+            Bucket: process.env.R2_BUCKET!,
+            Key: assetStorageKey(asset.workspaceId, assetId, filename),
+          }),
+          { expiresIn: 300 }
+        );
+        visionLabels = (await labelImageUrl(signedUrl)).labels;
+      } catch (err) {
+        console.warn("[fonto] vision labels failed for", assetId, err);
+      }
+    }
+
     // Phase 4.6 — fold in zero-shot CLIP tag suggestions when CLIP was the
     // chosen classifier. Dedupe case-insensitively but preserve the CLIP
     // names' original casing (taxonomy curates these to be display-ready,
     // e.g. "Portraits" not "portraits").
     const seen = new Set<string>();
     const suggestedNames: string[] = [];
-    for (const name of [...clipSuggestedTags, ...llmTags]) {
+    for (const name of [...clipSuggestedTags, ...llmTags, ...visionLabels]) {
       const key = name.toLowerCase().trim();
       if (!key || seen.has(key)) continue;
       seen.add(key);
       suggestedNames.push(name);
     }
-    const [asset] = await db
-      .select({ workspaceId: schema.assets.workspaceId })
-      .from(schema.assets)
-      .where(eq(schema.assets.id, assetId))
-      .limit(1);
 
     if (asset && suggestedNames.length > 0) {
       for (const name of suggestedNames) {

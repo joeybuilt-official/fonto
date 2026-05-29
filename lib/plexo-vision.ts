@@ -246,4 +246,70 @@ export async function ocrImage(
  * Alias for `visionConfigured`. Phase 4.5's dedup code prefers this longer
  * name; both point at the same env probe.
  */
+// --- Object/scene labels (Phase 4.x "things") ----------------------------
+
+export interface LabelResult {
+  labels: string[];
+  modelId: string;
+}
+
+interface LabelResponseBody {
+  labels?: unknown;
+  modelId?: unknown;
+  model_id?: unknown;
+}
+
+function parseLabelBody(raw: LabelResponseBody): LabelResult {
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  if (Array.isArray(raw.labels)) {
+    for (const v of raw.labels) {
+      if (typeof v !== "string") continue;
+      const label = v.toLowerCase().trim();
+      if (!label || seen.has(label)) continue;
+      seen.add(label);
+      labels.push(label);
+    }
+  }
+  const modelId =
+    typeof raw.modelId === "string"
+      ? raw.modelId
+      : typeof raw.model_id === "string"
+        ? raw.model_id
+        : "unknown";
+  cachedModelId = modelId;
+  return { labels, modelId };
+}
+
+/**
+ * Ask the vision sidecar's VLM to name the salient objects/scenes in an
+ * image. Returns a deduped list of short lowercase labels (empty on a
+ * model that can't identify anything). Same VLM that backs OCR, so the
+ * long OCR timeout applies.
+ */
+export async function labelImage(buffer: Buffer | string): Promise<LabelResult> {
+  const image = typeof buffer === "string" ? buffer : buffer.toString("base64");
+  return parseLabelBody(
+    await visionRequest<LabelResponseBody>(
+      "/vision/label",
+      { imageBase64: image },
+      OCR_TIMEOUT_MS
+    )
+  );
+}
+
+/**
+ * Label an image the sidecar fetches itself from a (presigned) URL — avoids
+ * round-tripping the bytes through this process. Mirrors the OCR path.
+ */
+export async function labelImageUrl(imageUrl: string): Promise<LabelResult> {
+  return parseLabelBody(
+    await visionRequest<LabelResponseBody>(
+      "/vision/label",
+      { imageUrl },
+      OCR_TIMEOUT_MS
+    )
+  );
+}
+
 export const visionServiceConfigured = visionConfigured;

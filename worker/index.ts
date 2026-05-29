@@ -53,6 +53,7 @@ import { reapStuckAssets } from "@/lib/processing/reapStuckAssets";
 import { generateThumbnails } from "@/lib/processing/generateThumbnails";
 import { embedAsset } from "@/lib/processing/embedAsset";
 import { detectFacesForAsset } from "@/lib/processing/detectFaces";
+import { clusterWorkspaceFaces } from "@/lib/faces/cluster";
 import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { runDailyDigest } from "@/lib/notifications/runDailyDigest";
 import { transcodeVideoHls } from "@/lib/processing/transcodeVideoHls";
@@ -756,6 +757,34 @@ function startClipDedupCheckWorker(): Worker<ClipDedupCheckJob> {
  * them and the job succeeds. Hard failures (DB write error) bubble up and
  * BullMQ retries per the queue policy.
  */
+// Phase 5.x — auto-cluster faces after detection so the People view
+// populates without a manual POST /faces/cluster. Clustering re-scans the
+// whole workspace, so we debounce per workspace: a burst of uploads
+// coalesces into a single clustering pass ~45s after the last face-detect.
+// In-memory + best-effort — idempotent re-clustering means a missed run
+// (process restart) just waits for the next upload.
+const FACE_CLUSTER_DEBOUNCE_MS = 45_000;
+const pendingClusterTimers = new Map<string, NodeJS.Timeout>();
+function scheduleFaceCluster(workspaceId: string): void {
+  const existing = pendingClusterTimers.get(workspaceId);
+  if (existing) clearTimeout(existing);
+  const t = setTimeout(() => {
+    pendingClusterTimers.delete(workspaceId);
+    clusterWorkspaceFaces(workspaceId)
+      .then((stats) =>
+        logger.info({ queue: QueueNames.FaceDetect, workspaceId, ...stats }, "auto-cluster complete")
+      )
+      .catch((err) =>
+        logger.warn(
+          { workspaceId, err: err instanceof Error ? err.message : String(err) },
+          "auto-cluster failed"
+        )
+      );
+  }, FACE_CLUSTER_DEBOUNCE_MS);
+  if (typeof t.unref === "function") t.unref();
+  pendingClusterTimers.set(workspaceId, t);
+}
+
 function startFaceDetectWorker(): Worker<FaceDetectJob> {
   const w = new Worker<FaceDetectJob>(
     QueueNames.FaceDetect,
@@ -776,6 +805,13 @@ function startFaceDetectWorker(): Worker<FaceDetectJob> {
 
       log.info("detecting faces");
       await detectFacesForAsset(assetId);
+      // Trigger a debounced re-cluster for this asset's workspace.
+      const [row] = await db
+        .select({ workspaceId: schema.assets.workspaceId })
+        .from(schema.assets)
+        .where(eq(schema.assets.id, assetId))
+        .limit(1);
+      if (row) scheduleFaceCluster(row.workspaceId);
       log.info("face-detect job complete");
     },
     {
