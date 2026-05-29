@@ -23,5 +23,17 @@
             </intent-filter>
         </activity>
         <meta-data android:name="flutterEmbedding" android:value="2"/>
+
+        <!-- Phase 6.9 — Fonto assets in Android system file picker -->
+        <provider
+            android:name=".FontoDocumentsProvider"
+            android:authorities="com.joeybuilt.fonto.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER"/>
+            </intent-filter>
+        </provider>
     </application>
 </manifest>

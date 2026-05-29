@@ -8,6 +8,8 @@
 // keep it. Load is async because every read decrypts; values are
 // cached on the instance after load so screen builds stay sync.
 
+import "package:flutter/foundation.dart";
+import "package:flutter/services.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
 
 class AuthStore {
@@ -16,6 +18,11 @@ class AuthStore {
   static const _kPat = "fonto.pat";
   static const _kBaseUrl = "fonto.baseUrl";
   static const defaultBaseUrl = "https://myfonto.com";
+
+  // Android Documents Provider auth bridge. Best-effort; ignores errors
+  // on non-Android platforms and if the channel is not yet registered.
+  static const _kBridge =
+      MethodChannel("com.joeybuilt.fonto/auth_bridge");
 
   static const _androidOpts = AndroidOptions(encryptedSharedPreferences: true);
   static const _iosOpts = IOSOptions(
@@ -45,6 +52,14 @@ class AuthStore {
     await _storage.write(key: _kBaseUrl, value: baseUrl);
     _pat = pat;
     _baseUrl = baseUrl;
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await _kBridge.invokeMethod<void>(
+          "saveAuth",
+          {"pat": pat, "baseUrl": baseUrl},
+        );
+      } catch (_) {}
+    }
   }
 
   Future<void> clear() async {
@@ -52,5 +67,10 @@ class AuthStore {
     await _storage.delete(key: _kBaseUrl);
     _pat = null;
     _baseUrl = defaultBaseUrl;
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await _kBridge.invokeMethod<void>("clearAuth");
+      } catch (_) {}
+    }
   }
 }

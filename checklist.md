@@ -201,14 +201,14 @@ TaskCreate while in phased-plan flow.
 - [x] Commit + push + tag v1.0.20
 
 ## Phase 6.9 — Android Documents Provider
-- [ ] Kotlin FontoDocumentsProvider.kt — queryRoots (one root: "Fonto Library")
-- [ ] Kotlin FontoDocumentsProvider.kt — queryChildDocuments (fetch asset list via Fonto REST, map to cursor rows)
-- [ ] Kotlin FontoDocumentsProvider.kt — queryDocument (single asset metadata)
-- [ ] Kotlin FontoDocumentsProvider.kt — openDocument (stream bytes from presigned URL via HTTP)
-- [ ] Auth bridge — Flutter writes PAT + baseUrl to SharedPreferences on login (MethodChannel or shared_preferences plugin)
-- [ ] AndroidManifest.xml — register <provider> with android:permission="android.permission.MANAGE_DOCUMENTS"
-- [ ] Smoke test — attach file in Gmail → see "Fonto Library" → pick asset → attaches
-- [ ] Commit + push + tag
+- [x] Kotlin FontoDocumentsProvider.kt — queryRoots (one root: "Fonto Library")
+- [x] Kotlin FontoDocumentsProvider.kt — queryChildDocuments (fetch asset list via Fonto REST, map to cursor rows)
+- [x] Kotlin FontoDocumentsProvider.kt — queryDocument (single asset metadata)
+- [x] Kotlin FontoDocumentsProvider.kt — openDocument (stream bytes from presigned URL via HTTP)
+- [x] Auth bridge — Flutter writes PAT + baseUrl to SharedPreferences on login (MethodChannel com.joeybuilt.fonto/auth_bridge)
+- [x] AndroidManifest.xml — register <provider> with android:permission="android.permission.MANAGE_DOCUMENTS"
+- [ ] Smoke test — attach file in Gmail → see "Fonto Library" → pick asset → attaches — DEFERRED to operator (needs real device)
+- [x] Commit + push + tag
 
 ## Phase 6.10 — Camera roll auto-import
 - [ ] pubspec.yaml — add photo_manager: ^3.3.0
