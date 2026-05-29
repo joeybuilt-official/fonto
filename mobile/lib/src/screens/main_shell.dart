@@ -14,6 +14,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../state/auth_store.dart";
+import "collections_screen.dart";
 import "home_screen.dart";
 import "search_screen.dart";
 
@@ -46,11 +47,7 @@ class _MainShellState extends State<MainShell> {
         title: "Explore",
         sections: ["People", "Places", "Things"],
       ),
-      const _ComingSoon(
-        icon: Icons.collections_bookmark_outlined,
-        title: "Collections",
-        sections: ["Albums", "Smart Collections", "Projects", "Stacks"],
-      ),
+      CollectionsScreen(client: _client),
       const _ComingSoon(
         icon: Icons.notifications_outlined,
         title: "Updates",

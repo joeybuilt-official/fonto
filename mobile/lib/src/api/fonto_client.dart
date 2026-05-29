@@ -126,6 +126,38 @@ class FontoClient {
     );
   }
 
+  /// Manual albums. Full list; the endpoint doesn't paginate.
+  Future<List<Collection>> listCollections() async {
+    final j = await _getJson("/api/v1/collections");
+    final raw = (j["collections"] as List? ?? const [])
+        .cast<Map<String, dynamic>>();
+    return raw.map(Collection.fromJson).toList();
+  }
+
+  /// Saved-search collections. Full list; no pagination.
+  Future<List<SmartCollection>> listSmartCollections() async {
+    final j = await _getJson("/api/v1/smart-collections");
+    final raw = (j["smartCollections"] as List? ?? const [])
+        .cast<Map<String, dynamic>>();
+    return raw.map(SmartCollection.fromJson).toList();
+  }
+
+  /// Projects. Full list; no pagination.
+  Future<List<Project>> listProjects() async {
+    final j = await _getJson("/api/v1/projects");
+    final raw =
+        (j["projects"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(Project.fromJson).toList();
+  }
+
+  /// Stacks (near-duplicate groups). Full list; no pagination.
+  Future<List<AssetStack>> listStacks() async {
+    final j = await _getJson("/api/v1/stacks");
+    final raw =
+        (j["stacks"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(AssetStack.fromJson).toList();
+  }
+
   /// Batched presigned-URL fetch. Mirrors the web grid and CLI download
   /// flow: ids → { id: presignedUrl }. Variant is one of thumb /
   /// preview / original.

@@ -241,6 +241,52 @@ S3 import (#13) is explicitly excluded pending AWS account confirmation.
 
 ---
 
+## Phase 6.6 — Mobile nav + tab content
+
+6.6a (NavigationBar shell) shipped in build #13. 6.6b wires the three
+placeholder tabs to live data — see ADR 0007 for scope decisions +
+escalated conflicts C1 (Explore Places/Things scope) and C2 (People
+crops). Each sub-phase ends with a Codemagic build + APK republish to
+myfonto.com/fonto.apk (mobile-only; no backend except the C1 `hasGeo`
+param if approved).
+
+### Phase 6.6b-1 — Collections tab
+- Scope: FontoClient.listCollections / listSmartCollections / listProjects
+  / listStacks + models; CollectionsScreen with 4 Material TabBar sub-tabs
+  (Albums/Smart/Projects/Stacks). Stacks render primary-asset thumb; others
+  name + count rows. Lazy-load per sub-tab.
+- Deps: none (6.6a done)
+- Subagents: general-purpose for the screen if large
+- Exit: Collections tab shows 4 live sub-tabs; analyze+build green; republished
+- Status: pending
+
+### Phase 6.6b-2 — Updates tab
+- Scope: client.listActivity(cursor) + sharedWithMe(); reuse listAssets
+  (newest) for Uploads; ActivityEvent model. UpdatesScreen with 3 sections
+  (Uploads grid / Activity feed list with human-readable lines / Shared-with-me
+  grid with source-workspace badge).
+- Deps: none
+- Exit: Updates tab 3 sections live; green; republished
+- Status: pending
+
+### Phase 6.6b-3 — Explore tab ⚠ (gated on C1)
+- Scope: client.listPersons() → People grid (cover thumb per C2); Places =
+  geo-filtered asset grid; Things = placeholder matching web. Per ADR 0007 C1.
+- Deps: operator sign-off on C1 (Places/Things scope) + possible `hasGeo`
+  param on /api/v1/assets
+- ⚠ One small backend change (assets `hasGeo` query param) IF C1 = match-web
+- Exit: Explore tab matches agreed scope; green; republished
+- Status: pending
+
+### Phase 6.6b-4 — Nav parity cleanups
+- Scope: avatar/account menu (move sign-out there; Settings entry); drop the
+  redundant search-push icon from the Library appbar.
+- Deps: none
+- Exit: sign-out in avatar menu; Library appbar de-cluttered; green; republished
+- Status: pending
+
+---
+
 ## Sequencing summary (updated 2026-05-28)
 
 ```

@@ -162,11 +162,12 @@ TaskCreate while in phased-plan flow.
 - [x] DECISION — nav parity before document scanner (operator confirmed 2026-05-28)
 - [x] 6.6a: MainShell with Material 3 NavigationBar — 5 tabs: Library · Explore · Collections · Updates · Search; folder-tree drawer demoted from primary nav to a secondary drawer inside Library
 - [x] 6.6a: Library + Search tabs wired to live data (existing screens); Explore/Collections/Updates are placeholder scaffolds
-- [ ] 6.6b: wire Updates → /api/v1/workspace/activity (mobile client method + screen)
-- [ ] 6.6b: wire Collections → /api/v1/collections (+ smart-collections/projects/stacks tabs)
-- [ ] 6.6b: wire Explore → persons/faces/tags (People · Places · Things)
-- [ ] 6.6b: move sign-out into an avatar/account menu (web parity); drop redundant search-push from Library appbar
-- [ ] Commit + push (6.6a) → APK
+- [x] Commit + push (6.6a) → build #13 green, republished to myfonto.com/fonto.apk
+- [x] OPERATOR GATE RESOLVED 2026-05-29 — C1 = match web (Places = geo grid via assets hasGeo param; Things = placeholder); C2 = uncropped cover thumb
+- [x] 6.6b-1 Collections tab — client (listCollections/SmartCollections/Projects/Stacks) + models (Collection/SmartCollection/Project/AssetStack — renamed to dodge Flutter Stack widget) + CollectionsScreen w/ 4 TabBar sub-tabs (lazy initState load); committed — build pending
+- [ ] 6.6b-2 Updates tab — listActivity(cursor) + sharedWithMe() + Uploads(reuse listAssets); UpdatesScreen 3 sections; build + republish
+- [ ] 6.6b-3 Explore tab — People (persons) + Places (geo grid; add assets hasGeo param) + Things (placeholder = web parity); build + republish
+- [ ] 6.6b-4 Nav cleanups — sign-out → avatar/account menu; drop redundant Library search-push; build + republish
 
 ## Phase 6.7 — Document scanner ⚠
 - [x] DECISION C-scan = ML Kit Document Scanner (cunning_document_scanner / flutter_doc_scanner); output = PDF only (operator confirmed 2026-05-28)
