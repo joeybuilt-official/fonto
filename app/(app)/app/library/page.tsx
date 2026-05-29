@@ -242,7 +242,7 @@ function LibraryContent() {
         toolbar={toolbar}
         searchPlaceholder="Search library…"
         sortOptions={["newest", "oldest", "name", "rating", "largest"]}
-        filterKeys={["type", "favorite", "ratingMin"]}
+        filterKeys={["type", "mime", "from", "to", "directoryPathPrefix", "favorite", "ratingMin"]}
         showDensity
         showSelect
       />

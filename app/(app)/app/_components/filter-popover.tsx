@@ -74,6 +74,11 @@ interface Person {
   instanceCount: number;
 }
 
+interface FolderLeaf {
+  path: string;
+  assetCount: number;
+}
+
 export type FilterKey = keyof FilterState;
 
 interface FilterPopoverProps {
@@ -120,9 +125,11 @@ export function FilterPopover({
   const showRating = available.includes("ratingMin");
   const showTag = available.includes("tagIds");
   const showPerson = available.includes("personIds");
+  const showFolder = available.includes("directoryPathPrefix");
 
   const [tags, setTags] = useState<Tag[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
+  const [folders, setFolders] = useState<FolderLeaf[]>([]);
 
   useEffect(() => {
     if (!showTag) return;
@@ -151,6 +158,20 @@ export function FilterPopover({
       cancelled = true;
     };
   }, [showPerson]);
+
+  useEffect(() => {
+    if (!showFolder) return;
+    let cancelled = false;
+    fetch("/api/v1/folders/tree")
+      .then((r) => r.json())
+      .then((d: { paths?: FolderLeaf[] }) => {
+        if (!cancelled) setFolders(d.paths ?? []);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [showFolder]);
 
   const n = activeCount(state, available);
 
@@ -368,6 +389,38 @@ export function FilterPopover({
                     {p.name ?? "Unnamed"}{" "}
                     <span className="text-[10px] opacity-60">
                       ({p.instanceCount})
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
+        )}
+
+        {showFolder && folders.length > 0 && (
+          <Section label="Folder">
+            <div className="flex max-h-44 flex-col gap-0.5 overflow-y-auto">
+              {folders.map((f) => {
+                const active = state.directoryPathPrefix === f.path;
+                return (
+                  <button
+                    key={f.path}
+                    onClick={() =>
+                      onChange({
+                        directoryPathPrefix: active ? null : f.path,
+                      })
+                    }
+                    className={cn(
+                      "flex items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition-colors",
+                      active
+                        ? "bg-primary text-primary-foreground"
+                        : "hover:bg-muted"
+                    )}
+                    title={f.path}
+                  >
+                    <span className="truncate">{f.path}</span>
+                    <span className="shrink-0 text-[10px] opacity-60">
+                      {f.assetCount}
                     </span>
                   </button>
                 );
