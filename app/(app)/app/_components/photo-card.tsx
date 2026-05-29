@@ -40,6 +40,9 @@ export interface Asset {
   widthPx?: number | null;
   heightPx?: number | null;
   pageCount?: number | null;
+  // Phase 6.12 — extracted text layer (plain text / markdown / source file
+  // contents). Populated on the per-asset detail endpoint, not the grid list.
+  ocrText?: string | null;
   // Phase 7b — populated when the asset is being rendered through a
   // cross-workspace share (i.e. in the recipient's grid). Absent for
   // assets the caller owns directly. Used to render the "shared from

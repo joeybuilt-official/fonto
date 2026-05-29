@@ -68,6 +68,21 @@ const HEIC_EXT_MIME: Record<string, string> = {
   avif: "image/avif",
 };
 
+/**
+ * Extension → text/code mime mapping. `file-type` only sniffs binary magic
+ * numbers, so plain-text files (notes, markdown, source) come back
+ * unidentified and otherwise fall through to octet-stream. Camera-roll
+ * imports often arrive with a generic mime, so we recover these by extension.
+ */
+const TEXT_EXT_MIME: Record<string, string> = {
+  txt: "text/plain",
+  text: "text/plain",
+  log: "text/plain",
+  md: "text/markdown",
+  markdown: "text/markdown",
+  py: "text/x-python",
+};
+
 export function isRawMime(mimeType: string): boolean {
   return RAW_MIME_TYPES.has(mimeType.toLowerCase());
 }
@@ -127,6 +142,9 @@ export async function detectMime(
   }
   if (ext && HEIC_EXT_MIME[ext]) {
     return { mimeType: HEIC_EXT_MIME[ext], ext };
+  }
+  if (ext && TEXT_EXT_MIME[ext]) {
+    return { mimeType: TEXT_EXT_MIME[ext], ext };
   }
 
   return { mimeType: trimmedClient || "application/octet-stream", ext };

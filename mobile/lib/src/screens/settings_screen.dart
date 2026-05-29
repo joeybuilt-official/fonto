@@ -27,6 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoImport = false;
   int _lastImportTs = 0;
   bool _scanning = false;
+  List<String> _selectedAlbumIds = const [];
 
   @override
   void initState() {
@@ -37,12 +38,88 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     final enabled = await SettingsStore.getAutoImport();
     final ts = await SettingsStore.getLastImportTs();
+    final albums = await SettingsStore.getSelectedAlbumIds();
     if (!mounted) return;
     setState(() {
       _autoImport = enabled;
       _lastImportTs = ts;
+      _selectedAlbumIds = albums;
       _loading = false;
     });
+  }
+
+  Future<void> _pickFolders() async {
+    final perm = await PhotoManager.requestPermissionExtend();
+    if (!mounted) return;
+    if (!perm.hasAccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Photo access is required to choose folders. "
+            "Enable it in device Settings → Permissions.",
+          ),
+        ),
+      );
+      return;
+    }
+    final albums =
+        await PhotoManager.getAssetPathList(type: RequestType.common);
+    if (!mounted) return;
+    final working = {..._selectedAlbumIds};
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text("Folders to import"),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                CheckboxListTile(
+                  title: const Text("All folders"),
+                  value: working.isEmpty,
+                  onChanged: (_) => setLocal(working.clear),
+                ),
+                const Divider(height: 1),
+                ...albums.map(
+                  (a) => CheckboxListTile(
+                    title: Text(a.isAll ? "All photos" : a.name),
+                    value: working.contains(a.id),
+                    onChanged: (v) => setLocal(() {
+                      if (v == true) {
+                        working.add(a.id);
+                      } else {
+                        working.remove(a.id);
+                      }
+                    }),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text("Cancel"),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(working.toList()),
+              child: const Text("Save"),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    await SettingsStore.setSelectedAlbumIds(result);
+    if (mounted) setState(() => _selectedAlbumIds = result);
+  }
+
+  String _folderSummary() {
+    if (_selectedAlbumIds.isEmpty) return "All folders on this device";
+    final n = _selectedAlbumIds.length;
+    return "$n folder${n == 1 ? "" : "s"} selected";
   }
 
   Future<void> _onToggle(bool value) async {
@@ -134,9 +211,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: _autoImport,
                   onChanged: _onToggle,
                 ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Text(
+                    "Import is one-way: Fonto copies your photos and never "
+                    "moves, changes, or deletes the originals on your device.",
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
                 if (_autoImport)
                   ListTile(
-                    title: const Text("Last sync"),
+                    title: const Text("Folders to import"),
+                    subtitle: Text(_folderSummary()),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _pickFolders,
+                  ),
+                if (_autoImport)
+                  ListTile(
+                    title: const Text("Last import"),
                     subtitle: Text(_formatTs(_lastImportTs)),
                     trailing: _scanning
                         ? const SizedBox(

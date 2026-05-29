@@ -37,7 +37,12 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   late final List<Asset> _assets = List.of(widget.assets);
   late int _index = widget.initialIndex;
   final Map<String, String> _previews = {};
+  // Phase 6.12 — extracted text layer for text/code assets, fetched lazily
+  // from the per-asset detail endpoint as the user scrolls onto one.
+  final Map<String, String> _texts = {};
   bool _acting = false;
+
+  static bool _isText(Asset a) => a.mimeType.startsWith("text/");
 
   Asset get _cur => _assets[_index];
 
@@ -45,6 +50,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   void initState() {
     super.initState();
     _ensurePreviews(_index);
+    _ensureText(_index);
   }
 
   @override
@@ -76,6 +82,22 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   void _onPageChanged(int i) {
     setState(() => _index = i);
     _ensurePreviews(i);
+    _ensureText(i);
+  }
+
+  /// Fetch the text layer for a text/code asset on demand. No-op for media
+  /// assets or ids already cached.
+  Future<void> _ensureText(int i) async {
+    final a = _assets[i];
+    if (!_isText(a) || _texts.containsKey(a.id)) return;
+    try {
+      final full = await widget.client.getAsset(a.id);
+      if (!mounted) return;
+      setState(() => _texts[a.id] = full.ocrText ?? "");
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _texts[a.id] = "");
+    }
   }
 
   Future<void> _toggleFavorite() async {
@@ -272,6 +294,15 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
             const Center(child: CircularProgressIndicator()),
         builder: (context, i) {
           final a = _assets[i];
+          if (_isText(a)) {
+            return PhotoViewGalleryPageOptions.customChild(
+              disableGestures: true,
+              child: _TextPage(
+                text: _texts[a.id],
+                code: a.mimeType != "text/plain",
+              ),
+            );
+          }
           final url = _previews[a.id];
           return PhotoViewGalleryPageOptions.customChild(
             child: url == null
@@ -293,6 +324,44 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
             heroAttributes: PhotoViewHeroAttributes(tag: a.id),
           );
         },
+      ),
+    );
+  }
+}
+
+// Phase 6.12 — scrollable monospace renderer for text/code assets. `text` is
+// null while the detail fetch is in flight, "" when there's no content.
+class _TextPage extends StatelessWidget {
+  const _TextPage({required this.text, required this.code});
+
+  final String? text;
+  final bool code;
+
+  @override
+  Widget build(BuildContext context) {
+    if (text == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (text!.isEmpty) {
+      return const Center(
+        child: Text(
+          "No text content extracted",
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
+    }
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: SelectableText(
+          text!,
+          style: TextStyle(
+            color: Colors.white,
+            fontFamily: "monospace",
+            fontSize: code ? 13 : 14,
+            height: code ? 1.35 : 1.5,
+          ),
+        ),
       ),
     );
   }

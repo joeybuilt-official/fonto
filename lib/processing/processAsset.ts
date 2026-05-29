@@ -18,6 +18,7 @@ import {
   plexoAvailable,
   plexoEnsureWorkspace,
   plexoClassifyAsset,
+  classifyTextCodeByMime,
   plexoDescribeImage,
   plexoDescribeDocument,
   plexoPublishEvent,
@@ -40,6 +41,27 @@ const DOCUMENT_CLASSIFICATIONS = new Set([
   "letter",
 ]);
 const DOCUMENT_TRIGGER_MIME = ["application/pdf", "text/", "image/tiff"];
+
+// Screenshots were being mislabeled as documents/scans by the classifier.
+// Detect them deterministically: a filename that mentions "screenshot", or a
+// PNG whose aspect ratio matches a phone-portrait (~9:16–9:21) or desktop 16:9
+// display. When matched we force classification to "screenshot".
+const SCREENSHOT_NAME_RE = /screenshot|screen.?shot/i;
+function isScreenshot(
+  filename: string,
+  mimeType: string,
+  widthPx: number | null,
+  heightPx: number | null,
+): boolean {
+  if (SCREENSHOT_NAME_RE.test(filename)) return true;
+  if (mimeType === "image/png" && widthPx && heightPx) {
+    const ar = widthPx / heightPx;
+    const portraitScreen = ar >= 0.42 && ar <= 0.66; // tall phone
+    const landscapeScreen = ar >= 1.7 && ar <= 1.85; // 16:9 desktop
+    return portraitScreen || landscapeScreen;
+  }
+  return false;
+}
 
 export interface ProcessAssetParams {
   assetId: string;
@@ -123,6 +145,18 @@ async function processAssetInner(
       clipSuggestedTags = result.suggestedTags;
       ctx.classifyMethod = result.method;
 
+      // Force screenshots — the classifier otherwise tends to file text-heavy
+      // screenshots as documents/scans.
+      const [dims] = await db
+        .select({ widthPx: schema.assets.widthPx, heightPx: schema.assets.heightPx })
+        .from(schema.assets)
+        .where(eq(schema.assets.id, assetId))
+        .limit(1);
+      if (isScreenshot(filename, mimeType, dims?.widthPx ?? null, dims?.heightPx ?? null)) {
+        classification = "screenshot";
+        subClassification = null;
+      }
+
       description = await plexoDescribeImage(plexoWorkspaceId, filename, mimeType);
     } else if (mimeType.startsWith("video/")) {
       // Phase 8a — video classification is deterministic by mime, no
@@ -157,14 +191,21 @@ async function processAssetInner(
         docOcrState = docText ? "ready" : "empty";
       }
 
-      classification = await plexoClassifyAsset(
-        plexoWorkspaceId,
-        filename,
-        mimeType,
-        docText ?? extractedText ?? undefined,
-      );
-      classifyMethodLabel = "llm-fallback";
-      ctx.classifyMethod = "llm-fallback";
+      const textCode = classifyTextCodeByMime(mimeType);
+      if (textCode) {
+        classification = textCode;
+        classifyMethodLabel = null;
+        ctx.classifyMethod = "skip";
+      } else {
+        classification = await plexoClassifyAsset(
+          plexoWorkspaceId,
+          filename,
+          mimeType,
+          docText ?? extractedText ?? undefined,
+        );
+        classifyMethodLabel = "llm-fallback";
+        ctx.classifyMethod = "llm-fallback";
+      }
 
       description = await plexoDescribeDocument(
         plexoWorkspaceId,

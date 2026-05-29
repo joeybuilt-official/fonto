@@ -47,17 +47,27 @@ class CameraRollScanner {
       return 0;
     }
 
-    // Prefer the "all" album so we don't double-count assets in sub-albums.
-    final album = albums.firstWhere(
-      (a) => a.isAll,
-      orElse: () => albums.first,
-    );
+    // Folder selection: when the user has picked specific albums, scan exactly
+    // those; otherwise default to the "all" album so we don't double-count
+    // assets that live in multiple sub-albums. (Cross-album duplicates from a
+    // multi-select are deduped downstream by sha256, so enqueue is idempotent.)
+    final selectedIds = await SettingsStore.getSelectedAlbumIds();
+    final List<AssetPathEntity> targetAlbums;
+    if (selectedIds.isEmpty) {
+      targetAlbums = [
+        albums.firstWhere((a) => a.isAll, orElse: () => albums.first),
+      ];
+    } else {
+      targetAlbums =
+          albums.where((a) => selectedIds.contains(a.id)).toList();
+    }
 
-    final count = await album.assetCountAsync;
     final queue = await UploadQueue.open();
     var enqueued = 0;
 
-    if (count > 0) {
+    for (final album in targetAlbums) {
+      final count = await album.assetCountAsync;
+      if (count <= 0) continue;
       final entities = await album.getAssetListRange(start: 0, end: count);
       for (final entity in entities) {
         final file = await entity.originFile;

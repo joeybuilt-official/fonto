@@ -17,6 +17,7 @@ class Asset {
     this.directoryPath,
     this.isFavorite,
     this.rating,
+    this.ocrText,
   });
 
   final String id;
@@ -29,6 +30,9 @@ class Asset {
   final String? directoryPath;
   final bool? isFavorite;
   final int? rating;
+  // Phase 6.12 — extracted text layer (plain text / markdown / source file
+  // contents). Only populated by the per-asset detail endpoint.
+  final String? ocrText;
 
   static Asset fromJson(Map<String, dynamic> j) => Asset(
         id: j["id"] as String,
@@ -43,6 +47,7 @@ class Asset {
         directoryPath: j["directoryPath"] as String?,
         isFavorite: j["isFavorite"] as bool?,
         rating: (j["rating"] as num?)?.toInt(),
+        ocrText: j["ocrText"] as String?,
       );
 }
 

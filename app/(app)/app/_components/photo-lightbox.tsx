@@ -21,6 +21,16 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// Phase 6.12 — text/code assets (text/plain, text/markdown, text/x-*) have no
+// rasterized preview; we render their extracted text layer in a monospace
+// panel instead. `.md`/source files lean toward a "code" presentation.
+function isTextLike(mimeType: string): boolean {
+  return mimeType.startsWith("text/");
+}
+function isCodeLike(mimeType: string): boolean {
+  return mimeType !== "text/plain" && mimeType.startsWith("text/");
+}
+
 function formatDate(d: string | null): string {
   if (!d) return "—";
   return new Date(d).toLocaleDateString(undefined, {
@@ -364,6 +374,10 @@ export function PhotoLightbox({
     (session.data as { user?: { id?: string } } | null | undefined)?.user?.id ?? null;
   const [url, setUrl] = useState<string | null>(null);
   const [urlLoading, setUrlLoading] = useState(true);
+  // Phase 6.12 — extracted text layer for text/code assets, lazy-loaded from
+  // the per-asset detail endpoint (the grid list omits ocrText).
+  const [textContent, setTextContent] = useState<string | null>(null);
+  const [textLoading, setTextLoading] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
   // Phase 7a — comments side-drawer toggle. Coexists with the info panel
   // so both can be open simultaneously on wide viewports; keyboard 'c'
@@ -447,6 +461,23 @@ export function PhotoLightbox({
       .catch(() => setUrl(null))
       .finally(() => setUrlLoading(false));
   }, [displayedAssetId]);
+
+  // Phase 6.12 — fetch the text layer for text/code assets.
+  useEffect(() => {
+    if (!isTextLike(asset.mimeType)) {
+      setTextContent(null);
+      return;
+    }
+    setTextContent(null);
+    setTextLoading(true);
+    fetch(`/api/v1/assets/${displayedAssetId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { asset?: { ocrText?: string | null } } | null) =>
+        setTextContent(d?.asset?.ocrText ?? "")
+      )
+      .catch(() => setTextContent(""))
+      .finally(() => setTextLoading(false));
+  }, [displayedAssetId, asset.mimeType]);
 
   useEffect(() => {
     fetch(`/api/v1/assets/${asset.id}/tags`)
@@ -777,7 +808,14 @@ export function PhotoLightbox({
               <ChevronRight className="h-5 w-5" />
             </button>
           )}
-          {asset.mimeType.startsWith("video/") ? (
+          {isTextLike(asset.mimeType) ? (
+            <TextViewer
+              content={textContent}
+              loading={textLoading}
+              code={isCodeLike(asset.mimeType)}
+              filename={asset.filename}
+            />
+          ) : asset.mimeType.startsWith("video/") ? (
             // Phase 8b — HLS playback. The preview URL doubles as a
             // poster so the user sees the 10%-mark thumbnail (from
             // 8a) while the transcode completes on first play.
@@ -874,6 +912,47 @@ export function PhotoLightbox({
         targetType="asset"
         targetId={asset.id}
       />
+    </div>
+  );
+}
+
+// Phase 6.12 — renders the extracted text layer for text/code assets in a
+// scrollable monospace panel. `code` files (markdown / source) get a tighter
+// line height and a faint editor-like background; plain text reads as prose.
+function TextViewer({
+  content,
+  loading,
+  code,
+  filename,
+}: {
+  content: string | null;
+  loading: boolean;
+  code: boolean;
+  filename: string;
+}) {
+  if (loading) {
+    return <Loader2 className="h-10 w-10 animate-spin text-white/40" />;
+  }
+  if (!content) {
+    return (
+      <div className="flex flex-col items-center gap-3 text-white/40">
+        <Tag className="h-12 w-12" />
+        <p className="text-sm">No text content extracted</p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-full w-full max-w-3xl flex-col p-6 sm:p-10">
+      <p className="mb-3 shrink-0 truncate font-mono text-xs text-white/50" title={filename}>
+        {filename}
+      </p>
+      <pre
+        className={`flex-1 overflow-auto rounded-lg border border-white/10 bg-white/5 p-4 font-mono text-white/90 ${
+          code ? "text-[13px] leading-snug" : "text-sm leading-relaxed whitespace-pre-wrap"
+        }`}
+      >
+        {content}
+      </pre>
     </div>
   );
 }
