@@ -173,17 +173,30 @@ class UploadQueue {
     return (r.first["c"] as int?) ?? 0;
   }
 
-  /// Crash recovery: a drain marks a row `in_flight` before the network
-  /// call, but a killed background isolate (Android caps each run at a few
-  /// minutes — a big camera-roll import never finishes in one) leaves the
-  /// row stranded `in_flight` forever, since [nextBatch] only picks
-  /// `pending`. Reset them so the next drain retries instead of the count
-  /// flooring out. Returns how many were requeued.
-  Future<int> requeueStranded() async {
-    return _db.update(
-      "uploads",
-      {"state": "pending"},
-      where: "state = 'in_flight'",
+  /// Recover rows the drain would otherwise never touch again, run at the
+  /// start of every drain:
+  ///   1. `in_flight` strays — a killed background isolate (Android caps each
+  ///      run at a few minutes) leaves a row `in_flight` forever, since
+  ///      [nextBatch] only picks `pending`.
+  ///   2. attempt-exhausted `pending` rows — [nextBatch] filters
+  ///      `attempts < _maxAttempts`, so once a row burned its retries it is
+  ///      skipped forever yet still counted by [pendingCount]. Older builds
+  ///      lacked the upload timeout, so a flaky run could exhaust hundreds of
+  ///      rows that are actually fine. Give them one clean shot now that
+  ///      stalls fail fast; genuinely-bad rows will re-exhaust and become
+  ///      'failed' (surfacing in the ⚠ list) rather than looping.
+  /// Returns how many rows were recovered.
+  Future<int> recoverStuck() async {
+    return _db.rawUpdate(
+      """
+      UPDATE uploads
+      SET state = 'pending',
+          attempts = CASE WHEN attempts >= ? THEN 0 ELSE attempts END,
+          last_error = CASE WHEN attempts >= ? THEN NULL ELSE last_error END
+      WHERE state = 'in_flight'
+         OR (state = 'pending' AND attempts >= ?)
+      """,
+      [_maxAttempts, _maxAttempts, _maxAttempts],
     );
   }
 
@@ -268,9 +281,10 @@ class UploadQueue {
     final queue = await UploadQueue.open();
     final client = FontoClient(auth);
     _draining = true;
-    // Recover rows stranded `in_flight` by a previously-killed drain before
-    // counting, so they're retried this run instead of being skipped forever.
-    await queue.requeueStranded();
+    // Recover rows the drain would otherwise skip forever (stranded in_flight
+    // + attempt-exhausted pending) before counting, so they're retried this
+    // run instead of the count flooring out.
+    await queue.recoverStuck();
     final total = await queue.pendingCount();
     var processed = 0;
     var ok = 0;
