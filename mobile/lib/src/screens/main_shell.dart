@@ -15,6 +15,7 @@ import "package:flutter/material.dart";
 import "../api/fonto_client.dart";
 import "../state/auth_store.dart";
 import "collections_screen.dart";
+import "explore_screen.dart";
 import "home_screen.dart";
 import "search_screen.dart";
 import "updates_screen.dart";
@@ -43,11 +44,7 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     final tabs = <Widget>[
       HomeScreen(auth: widget.auth, onSignOut: widget.onSignOut),
-      const _ComingSoon(
-        icon: Icons.explore_outlined,
-        title: "Explore",
-        sections: ["People", "Places", "Things"],
-      ),
+      ExploreScreen(client: _client),
       CollectionsScreen(client: _client),
       UpdatesScreen(client: _client),
       SearchScreen(client: _client),
@@ -84,49 +81,6 @@ class _MainShellState extends State<MainShell> {
             label: "Search",
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ComingSoon extends StatelessWidget {
-  const _ComingSoon({
-    required this.icon,
-    required this.title,
-    required this.sections,
-  });
-
-  final IconData icon;
-  final String title;
-  final List<String> sections;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 48, color: theme.colorScheme.primary),
-              const SizedBox(height: 16),
-              Text(
-                "$title — coming soon",
-                style: theme.textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                sections.join("  ·  "),
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(color: theme.colorScheme.outline),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

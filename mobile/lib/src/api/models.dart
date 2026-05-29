@@ -267,6 +267,30 @@ class SharedAsset {
   }
 }
 
+/// A face cluster (Phase 5.1). `coverAssetId` is the asset the cover face
+/// lives on — used to render an (uncropped, per C2) grid thumbnail.
+/// `name` is null until the user labels the cluster.
+class Person {
+  Person({
+    required this.id,
+    required this.instanceCount,
+    this.name,
+    this.coverAssetId,
+  });
+
+  final String id;
+  final int instanceCount;
+  final String? name;
+  final String? coverAssetId;
+
+  static Person fromJson(Map<String, dynamic> j) => Person(
+        id: j["id"] as String,
+        instanceCount: (j["instanceCount"] as num?)?.toInt() ?? 0,
+        name: j["name"] as String?,
+        coverAssetId: j["coverAssetId"] as String?,
+      );
+}
+
 class WorkspaceStats {
   WorkspaceStats({
     required this.total,

@@ -84,9 +84,11 @@ class FontoClient {
     int limit = 60,
     AssetCursor? after,
     String? directoryPathPrefix,
+    bool hasGeo = false,
   }) async {
     final query = <String, String>{"limit": "$limit"};
     if (mime != null) query["mime"] = mime;
+    if (hasGeo) query["hasGeo"] = "1";
     if (after != null) {
       query["createdBefore"] = after.createdBefore;
       query["idBefore"] = after.idBefore;
@@ -262,6 +264,14 @@ class FontoClient {
       events: raw.map(ActivityEvent.fromJson).toList(),
       nextCursor: j["nextCursor"] as String?,
     );
+  }
+
+  /// Face clusters (Explore → People). Full list, ordered by instance
+  /// count desc server-side; no pagination.
+  Future<List<Person>> listPersons() async {
+    final j = await _getJson("/api/v1/persons");
+    final raw = (j["persons"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(Person.fromJson).toList();
   }
 
   /// Assets shared into the active workspace from other workspaces.

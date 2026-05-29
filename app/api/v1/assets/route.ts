@@ -5,7 +5,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, and, desc, gte, isNull, lt, or, sql, SQL, like } from "drizzle-orm";
+import { eq, and, desc, gte, isNull, isNotNull, lt, or, sql, SQL, like } from "drizzle-orm";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
@@ -71,6 +71,15 @@ export async function GET(request: NextRequest) {
   ];
   if (onlyFavorites) where.push(eq(schema.assets.isFavorite, true));
   if (ratingMin !== null) where.push(gte(schema.assets.rating, ratingMin));
+
+  // Explore → Places: geo-tagged assets only. `?hasGeo=1` keeps rows where
+  // both EXIF coordinates resolved. Served index-driven by
+  // `assets_lat_lon_idx`. Mirrors the web Explore "Places" tile probe.
+  const hasGeoParam = searchParams.get("hasGeo");
+  if (hasGeoParam === "1" || hasGeoParam === "true") {
+    where.push(isNotNull(schema.assets.latitude));
+    where.push(isNotNull(schema.assets.longitude));
+  }
   if (directoryPath != null) {
     if (directoryPath === "" || directoryPath === "/") {
       where.push(isNull(schema.assets.directoryPath));
