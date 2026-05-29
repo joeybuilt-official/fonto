@@ -161,18 +161,27 @@ export async function GET(request: NextRequest) {
   const beforeRaw = searchParams.get(
     sortAxis === "captured" ? "capturedBefore" : "createdBefore"
   );
+  // Keep the cursor as the original ISO string and cast to timestamptz in
+  // SQL. postgres-js can't infer the bind type for a Date when the LHS is a
+  // COALESCE expression (the `captured` sort path), so binding a string + an
+  // explicit ::timestamptz cast keeps both sort axes happy.
   const before =
-    beforeRaw && !Number.isNaN(Date.parse(beforeRaw)) ? new Date(beforeRaw) : null;
+    beforeRaw && !Number.isNaN(Date.parse(beforeRaw))
+      ? new Date(beforeRaw).toISOString()
+      : null;
   if (before) {
     if (idBeforeRaw) {
       where.push(
         or(
-          sql`${sortExpr} < ${before}`,
-          and(sql`${sortExpr} = ${before}`, lt(schema.assets.id, idBeforeRaw))
+          sql`${sortExpr} < ${before}::timestamptz`,
+          and(
+            sql`${sortExpr} = ${before}::timestamptz`,
+            lt(schema.assets.id, idBeforeRaw)
+          )
         )!
       );
     } else {
-      where.push(sql`${sortExpr} < ${before}`);
+      where.push(sql`${sortExpr} < ${before}::timestamptz`);
     }
   }
 
