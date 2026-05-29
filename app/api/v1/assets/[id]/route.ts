@@ -9,6 +9,7 @@ import { getS3Client, assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { plexoPublishEvent } from "@/lib/plexo";
 import { nextSeq } from "@/lib/db/seq";
+import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
@@ -42,7 +43,7 @@ export async function GET(
     .limit(1);
 
   if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json({ asset });
+  return NextResponse.json({ asset: serializeAsset(asset) });
 }
 
 export async function PATCH(
@@ -217,7 +218,7 @@ export async function PATCH(
     request,
   });
 
-  return NextResponse.json({ asset: updated });
+  return NextResponse.json({ asset: serializeAsset(updated) });
 }
 
 export async function DELETE(

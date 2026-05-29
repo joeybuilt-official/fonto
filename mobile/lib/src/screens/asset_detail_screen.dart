@@ -93,6 +93,28 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     }
   }
 
+  Future<void> _confirmTrash() async {
+    if (_acting) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Move to trash?"),
+        content: Text('"${_cur.filename}" will be moved to trash.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text("Cancel"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text("Move to trash"),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await _trash();
+  }
+
   Future<void> _trash() async {
     if (_acting) return;
     setState(() => _acting = true);
@@ -155,7 +177,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
           IconButton(
             tooltip: "Trash",
             icon: const Icon(Icons.delete_outline),
-            onPressed: _acting ? null : _trash,
+            onPressed: _acting ? null : _confirmTrash,
           ),
         ],
       ),
