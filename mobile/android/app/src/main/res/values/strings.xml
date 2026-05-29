@@ -8,5 +8,5 @@
       Photos Library API enabled). Also register an Android OAuth 2.0 client
       for package com.joeybuilt.fonto + SHA-1 from the upload keystore.
     -->
-    <string name="default_web_client_id">REPLACE_WITH_YOUR_WEB_OAUTH_CLIENT_ID</string>
+    <string name="default_web_client_id">YOUR_CLIENT_ID.apps.googleusercontent.com</string>
 </resources>
