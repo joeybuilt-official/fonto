@@ -9,6 +9,7 @@ import "dart:async";
 import "dart:io";
 
 import "package:cached_network_image/cached_network_image.dart";
+import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter_doc_scanner/flutter_doc_scanner.dart";
 import "package:image_picker/image_picker.dart";

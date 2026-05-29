@@ -24,7 +24,6 @@
 // failures bump attempts + reset state to 'pending' for the next drain.
 
 import "dart:io";
-import "dart:typed_data";
 
 import "package:flutter/foundation.dart";
 import "package:convert/convert.dart";
