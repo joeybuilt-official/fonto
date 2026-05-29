@@ -187,8 +187,14 @@ class FontoClient {
         file.path,
         filename: p.basename(file.path),
       ));
-    final streamed = await _http.send(req);
-    final res = await http.Response.fromStream(streamed);
+    // Bound each upload. Without this, a stalled connection on one file
+    // hangs the serial drain forever (the file sits `in_flight`, the queue
+    // never advances). On timeout this throws TimeoutException, which the
+    // drain treats as a retryable failure and moves on to the next file.
+    const uploadTimeout = Duration(seconds: 120);
+    final streamed = await _http.send(req).timeout(uploadTimeout);
+    final res =
+        await http.Response.fromStream(streamed).timeout(uploadTimeout);
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw ApiException(res.statusCode, _extractError(res.body));
     }
