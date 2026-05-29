@@ -297,18 +297,32 @@ Decision: add a true VLM label endpoint (operator chose this over CLIP-tuning).
       rebuilt/recreated; mobile build #36 (v1.0.35) APK republished. 2026-05-29.
 - [ ] PLACES: not addressed — data-limited (most photos lack GPS EXIF), not a bug.
 
-## Phase 6.15 — Updates "feed" redesign (NOT STARTED)
+## Phase 6.15 — Updates "feed" redesign
 Source: operator 2026-05-29 ("updates could look more like a single feed …
 no full-size thumbs repeated … feed better, network effects, fun to scroll").
-Recon: mobile updates_screen.dart has 3 tabs (Uploads/Activity/Shared); the
-"big repeated thumbs" are the Uploads/Shared GRID tabs (3-col full tiles);
-Activity tab has NO thumbnails today. Data: ActivityEvent (models.dart:217) +
-GET /api/v1/workspace/activity (cursor-paginated). Web equiv:
+Recon: mobile updates_screen.dart had 3 tabs (Uploads/Activity/Shared); the
+"big repeated thumbs" were the Uploads/Shared GRID tabs (3-col full tiles);
+Activity tab had NO thumbnails. Data: ActivityEvent + GET
+/api/v1/workspace/activity (cursor-paginated). Web equiv:
 app/(app)/app/updates/page.tsx + _components/activity-section.tsx.
-- [ ] Collapse into one compact scrollable feed: actor avatar/initials + event
-      summary + inline micro-thumb (28–32px from payload.assetId) + timestamp.
-- [ ] Drop the repeated full-size grid tiles; reuse CachedNetworkImage micro-thumbs.
-- [ ] Web parity in activity-section.tsx.
+Key finding: the activity feed was COMMENT-ONLY — `asset.uploaded` was a
+declared ActivityKind but never emitted (createAssetRow only fired a Plexo
+event + webhook), and sharing emitted no activity at all. Operator chose
+"full unify + share event" so the single feed is the one true source.
+- [x] Backend: emit `asset.uploaded` in createAssetRow (wired the missing
+      Phase 7a hook); targetType=asset/targetId=asset.id + payload.assetId.
+- [x] Backend: new `asset.shared` ActivityKind — emitted into the TARGET
+      workspace on cross-workspace share (assets/:id/share/workspaces POST);
+      renderDigest case added; schema doc updated.
+- [x] Mobile: one compact scrollable feed — actor avatar/initials + summary +
+      inline 32px micro-thumb (payload.assetId/targetId via assetUrls thumb) +
+      relative time; row tap → getAsset → AssetDetailScreen. 3 grid tabs dropped.
+- [x] Web parity (activity-section.tsx): actor avatar + 32px MicroThumb +
+      asset.shared summary. UploadsSection (upload zone/memory/dup-prompts) +
+      SharedSection left intact — they hold real UI, not just repeated thumbs.
+- [x] Shipped: commit 868317e, tag v1.0.36; web+worker rebuilt/recreated on
+      NAS (myfonto.com 200). Mobile build (v1.0.36) triggered via tag;
+      APK republish to myfonto.com/fonto.apk pending Codemagic green. 2026-05-29.
 
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
