@@ -17,7 +17,8 @@ import { logger } from "@/lib/logger";
 export type ActivityKind =
   | "comment.posted"
   | "comment.deleted"
-  | "asset.uploaded";
+  | "asset.uploaded"
+  | "asset.shared";
 
 export interface EmitActivityInput {
   workspaceId: string;

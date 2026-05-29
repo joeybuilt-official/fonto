@@ -15,6 +15,63 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 
+/** Stable hue from the actor id so distinct actors read apart at a glance. */
+function actorHue(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0x7fffffff;
+  return h % 360;
+}
+
+function ActorAvatar({ actorUserId }: { actorUserId: string | null }) {
+  if (!actorUserId) {
+    return (
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground text-xs">
+        ?
+      </span>
+    );
+  }
+  const initials = actorUserId.slice(0, 2).toUpperCase();
+  const hue = actorHue(actorUserId);
+  return (
+    <span
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
+      style={{ backgroundColor: `hsl(${hue} 50% 45%)` }}
+    >
+      {initials}
+    </span>
+  );
+}
+
+/** 32px inline micro-thumb for an asset-referencing event. Best-effort: if
+ * the asset has no image variant the slot just stays empty. */
+function MicroThumb({ assetId }: { assetId: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/v1/assets/${assetId}/url?variant=thumb`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled) return;
+        if (d?.url) setUrl(d.url);
+        else setErrored(true);
+      })
+      .catch(() => !cancelled && setErrored(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [assetId]);
+
+  if (errored || !url) return null;
+  return (
+    <span className="h-8 w-8 shrink-0 overflow-hidden rounded bg-muted/30">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" />
+    </span>
+  );
+}
+
 interface ActivityEvent {
   id: string;
   workspaceId: string;
@@ -41,6 +98,8 @@ function summarize(ev: ActivityEvent): { text: string; assetId: string | null } 
       return { text: `${actor} deleted a comment`, assetId };
     case "asset.uploaded":
       return { text: `${actor} uploaded a new asset`, assetId };
+    case "asset.shared":
+      return { text: `${actor} shared an asset with the workspace`, assetId };
     default:
       return { text: `${actor} · ${ev.kind}`, assetId };
   }
@@ -136,8 +195,9 @@ export function ActivitySection() {
           {events.map((ev) => {
             const s = summarize(ev);
             return (
-              <li key={ev.id} className="rounded-md border border-border bg-card p-3">
-                <div className="flex items-baseline justify-between gap-3">
+              <li key={ev.id} className="flex items-center gap-3 rounded-md border border-border bg-card p-3">
+                <ActorAvatar actorUserId={ev.actorUserId} />
+                <div className="min-w-0 flex-1">
                   <p className="text-sm text-foreground">
                     {s.assetId ? (
                       <Link
@@ -151,12 +211,13 @@ export function ActivitySection() {
                     )}
                   </p>
                   <span
-                    className="text-xs text-muted-foreground shrink-0"
+                    className="text-xs text-muted-foreground"
                     title={new Date(ev.createdAt).toLocaleString()}
                   >
                     {formatRelative(ev.createdAt)}
                   </span>
                 </div>
+                {s.assetId ? <MicroThumb assetId={s.assetId} /> : null}
               </li>
             );
           })}

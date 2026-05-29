@@ -32,6 +32,7 @@ import {
 import { db, schema } from "@/lib/db";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { notifyWorkspaceMembers } from "@/lib/notifications/push";
+import { emitActivity } from "@/lib/activity/emit";
 
 const VALID_ACCESS_LEVELS = ["viewer", "commenter", "contributor", "editor"] as const;
 type SharedAccessLevel = (typeof VALID_ACCESS_LEVELS)[number];
@@ -182,6 +183,21 @@ export async function POST(
       createdBy: user.id,
     })
     .returning();
+
+  // Phase 7a — activity feed entry in the TARGET workspace so its members
+  // see the inbound share in their Updates feed (parallels the push below).
+  void emitActivity({
+    workspaceId: body.targetWorkspaceId,
+    actorUserId: user.id,
+    kind: "asset.shared",
+    targetType: "asset",
+    targetId: assetId,
+    payload: {
+      assetId,
+      sourceWorkspaceId: asset.workspaceId,
+      accessLevel: requestedAccess,
+    },
+  });
 
   // Phase 6.4 — notify the TARGET workspace's members that an asset was
   // shared in (minus the sharer, who is a target member by the check above).

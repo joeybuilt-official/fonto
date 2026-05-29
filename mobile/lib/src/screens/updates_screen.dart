@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Updates tab. Three lazy sub-tabs — Uploads / Activity / Shared —
-// mirroring the web Updates surface (app/(app)/app/updates). Uploads is
-// the newest-assets grid; Activity is the workspace feed with
-// human-readable lines + cursor "load more"; Shared lists assets shared
-// into this workspace with a source-workspace badge. Each sub-tab is its
-// own StatefulWidget loading on first build, same state machine as
-// collections_screen.dart / home_screen.dart.
+// Updates tab. Phase 6.15 — one compact, scrollable activity feed.
+// Replaces the old three-tab (Uploads / Activity / Shared) layout whose
+// Uploads/Shared tabs were full-size 3-column thumbnail grids. Now a
+// single cursor-paginated feed of activity_events: actor avatar/initials
+// + a human-readable summary + an inline micro-thumb (when the event
+// references an asset) + relative timestamp. Uploads and shares surface
+// here because the backend now emits 'asset.uploaded' and 'asset.shared'
+// activity events (see lib/activity/emit.ts). Tapping a row that carries
+// an assetId opens the asset detail screen.
 
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
@@ -23,182 +25,30 @@ class UpdatesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 3,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text("Updates"),
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: "Uploads"),
-              Tab(text: "Activity"),
-              Tab(text: "Shared"),
-            ],
-          ),
-        ),
-        body: TabBarView(
-          children: [
-            _UploadsTab(client: client),
-            _ActivityTab(client: client),
-            _SharedTab(client: client),
-          ],
-        ),
-      ),
+    return Scaffold(
+      appBar: AppBar(title: const Text("Updates")),
+      body: _ActivityFeed(client: client),
     );
   }
 }
 
-/// Shared loading / error+retry / empty / data scaffold so each sub-tab
-/// renders the same shape as home_screen.dart.
-Widget _stateScaffold({
-  required bool loading,
-  required String? error,
-  required bool isEmpty,
-  required String emptyText,
-  required VoidCallback onRetry,
-  required Widget Function() builder,
-}) {
-  if (loading) {
-    return const Center(child: CircularProgressIndicator());
-  }
-  if (error != null) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 40),
-            const SizedBox(height: 12),
-            Text(error, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text("Retry")),
-          ],
-        ),
-      ),
-    );
-  }
-  if (isEmpty) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(emptyText, textAlign: TextAlign.center),
-      ),
-    );
-  }
-  return builder();
-}
-
-// --------------------------------------------------------------------------
-// Uploads — newest assets (reuse listAssets), grid → detail.
-// --------------------------------------------------------------------------
-
-class _UploadsTab extends StatefulWidget {
-  const _UploadsTab({required this.client});
+/// The single Updates feed: loading / error+retry / empty / data, mirroring
+/// the state machine used elsewhere (home_screen.dart).
+class _ActivityFeed extends StatefulWidget {
+  const _ActivityFeed({required this.client});
   final FontoClient client;
 
   @override
-  State<_UploadsTab> createState() => _UploadsTabState();
+  State<_ActivityFeed> createState() => _ActivityFeedState();
 }
 
-class _UploadsTabState extends State<_UploadsTab> {
-  bool _loading = true;
-  String? _error;
-  List<Asset> _assets = const [];
-  final Map<String, String> _thumbs = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _thumbs.clear();
-    });
-    try {
-      final page = await widget.client.listAssets(limit: 60);
-      final thumbs = page.assets.isEmpty
-          ? <String, String>{}
-          : await widget.client.assetUrls(
-              page.assets.map((a) => a.id).toList(),
-              variant: "thumb",
-            );
-      if (!mounted) return;
-      setState(() {
-        _assets = page.assets;
-        _thumbs.addAll(thumbs);
-        _loading = false;
-      });
-    } on ApiException catch (e) {
-      _fail("${e.status}: ${e.message}");
-    } catch (e) {
-      _fail(e.toString());
-    }
-  }
-
-  void _fail(String msg) {
-    if (!mounted) return;
-    setState(() {
-      _error = msg;
-      _loading = false;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return _stateScaffold(
-      loading: _loading,
-      error: _error,
-      isEmpty: _assets.isEmpty,
-      emptyText: "No uploads yet.",
-      onRetry: _load,
-      builder: () => GridView.builder(
-        padding: const EdgeInsets.all(4),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          crossAxisSpacing: 4,
-          mainAxisSpacing: 4,
-        ),
-        itemCount: _assets.length,
-        itemBuilder: (context, i) => _GridThumb(
-          url: _thumbs[_assets[i].id],
-          heroTag: _assets[i].id,
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => AssetDetailScreen(
-                client: widget.client,
-                assets: _assets,
-                initialIndex: i,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// --------------------------------------------------------------------------
-// Activity — workspace feed, human-readable lines + cursor "load more".
-// --------------------------------------------------------------------------
-
-class _ActivityTab extends StatefulWidget {
-  const _ActivityTab({required this.client});
-  final FontoClient client;
-
-  @override
-  State<_ActivityTab> createState() => _ActivityTabState();
-}
-
-class _ActivityTabState extends State<_ActivityTab> {
+class _ActivityFeedState extends State<_ActivityFeed> {
   bool _loading = true;
   bool _loadingMore = false;
   String? _error;
   final List<ActivityEvent> _events = [];
+  // assetId -> thumb URL, accumulated as pages load.
+  final Map<String, String> _thumbs = {};
   String? _cursor;
 
   @override
@@ -212,10 +62,12 @@ class _ActivityTabState extends State<_ActivityTab> {
       _loading = true;
       _error = null;
       _events.clear();
+      _thumbs.clear();
       _cursor = null;
     });
     try {
       final page = await widget.client.listActivity(limit: 50);
+      await _hydrateThumbs(page.events);
       if (!mounted) return;
       setState(() {
         _events.addAll(page.events);
@@ -237,6 +89,7 @@ class _ActivityTabState extends State<_ActivityTab> {
         limit: 50,
         createdBefore: _cursor,
       );
+      await _hydrateThumbs(page.events);
       if (!mounted) return;
       setState(() {
         _events.addAll(page.events);
@@ -252,6 +105,24 @@ class _ActivityTabState extends State<_ActivityTab> {
     }
   }
 
+  /// Fetch thumb URLs for any asset-referencing events we haven't resolved
+  /// yet, in one batched call. Failures are non-fatal — a row just renders
+  /// without its micro-thumb.
+  Future<void> _hydrateThumbs(List<ActivityEvent> events) async {
+    final ids = <String>{};
+    for (final e in events) {
+      final id = _assetIdOf(e);
+      if (id != null && !_thumbs.containsKey(id)) ids.add(id);
+    }
+    if (ids.isEmpty) return;
+    try {
+      final urls = await widget.client.assetUrls(ids.toList(), variant: "thumb");
+      _thumbs.addAll(urls);
+    } catch (_) {
+      // ignore — micro-thumbs are best-effort.
+    }
+  }
+
   void _fail(String msg) {
     if (!mounted) return;
     setState(() {
@@ -260,17 +131,66 @@ class _ActivityTabState extends State<_ActivityTab> {
     });
   }
 
+  Future<void> _openAsset(String assetId) async {
+    try {
+      final asset = await widget.client.getAsset(assetId);
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => AssetDetailScreen(
+            client: widget.client,
+            assets: [asset],
+            initialIndex: 0,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't open asset: $e")),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return _stateScaffold(
-      loading: _loading,
-      error: _error,
-      isEmpty: _events.isEmpty,
-      emptyText: "No activity yet. Comments, uploads, and shares show up here.",
-      onRetry: _load,
-      builder: () => ListView.builder(
-        padding: const EdgeInsets.all(8),
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 40),
+              const SizedBox(height: 12),
+              Text(_error!, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              FilledButton(onPressed: _load, child: const Text("Retry")),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_events.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            "No activity yet. Uploads, shares, and comments show up here.",
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(vertical: 4),
         itemCount: _events.length + (_cursor != null ? 1 : 0),
+        separatorBuilder: (_, __) => const Divider(height: 1),
         itemBuilder: (context, i) {
           if (i >= _events.length) {
             return Padding(
@@ -285,33 +205,137 @@ class _ActivityTabState extends State<_ActivityTab> {
               ),
             );
           }
-          return _ActivityTile(event: _events[i]);
+          final event = _events[i];
+          final assetId = _assetIdOf(event);
+          return _FeedRow(
+            event: event,
+            thumbUrl: assetId == null ? null : _thumbs[assetId],
+            onTap: assetId == null ? null : () => _openAsset(assetId),
+          );
         },
       ),
     );
   }
 }
 
-class _ActivityTile extends StatelessWidget {
-  const _ActivityTile({required this.event});
+/// One compact feed row: actor avatar + summary + relative time, with an
+/// optional trailing micro-thumb when the event references an asset.
+class _FeedRow extends StatelessWidget {
+  const _FeedRow({required this.event, this.thumbUrl, this.onTap});
+
   final ActivityEvent event;
+  final String? thumbUrl;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      child: ListTile(
-        leading: Icon(_iconFor(event.kind)),
-        title: Text(_summarize(event)),
-        trailing: Text(
-          _relativeTime(event.createdAt),
-          style: theme.textTheme.labelSmall
-              ?.copyWith(color: theme.colorScheme.outline),
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _Avatar(actorUserId: event.actorUserId, kind: event.kind),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _summarize(event),
+                    style: theme.textTheme.bodyMedium,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _relativeTime(event.createdAt),
+                    style: theme.textTheme.labelSmall
+                        ?.copyWith(color: theme.colorScheme.outline),
+                  ),
+                ],
+              ),
+            ),
+            if (thumbUrl != null) ...[
+              const SizedBox(width: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: CachedNetworkImage(
+                  imageUrl: thumbUrl!,
+                  width: 32,
+                  height: 32,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Container(
+                    width: 32,
+                    height: 32,
+                    color: Colors.black12,
+                  ),
+                  errorWidget: (_, __, ___) => Container(
+                    width: 32,
+                    height: 32,
+                    color: Colors.black12,
+                    child: const Icon(Icons.broken_image, size: 16),
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
   }
+}
+
+/// Circular actor avatar — initials from the actor id, tinted by a stable
+/// hash so distinct actors read apart at a glance. Falls back to a
+/// kind-specific icon for system (actor-less) events.
+class _Avatar extends StatelessWidget {
+  const _Avatar({required this.actorUserId, required this.kind});
+
+  final String? actorUserId;
+  final String kind;
+
+  @override
+  Widget build(BuildContext context) {
+    const size = 36.0;
+    if (actorUserId == null || actorUserId!.isEmpty) {
+      return CircleAvatar(
+        radius: size / 2,
+        backgroundColor: Colors.black12,
+        child: Icon(_iconFor(kind), size: 18),
+      );
+    }
+    final initials = actorUserId!.length >= 2
+        ? actorUserId!.substring(0, 2).toUpperCase()
+        : actorUserId!.toUpperCase();
+    final hue = (actorUserId!.hashCode & 0x7fffffff) % 360;
+    final bg = HSLColor.fromAHSL(1, hue.toDouble(), 0.5, 0.45).toColor();
+    return CircleAvatar(
+      radius: size / 2,
+      backgroundColor: bg,
+      child: Text(
+        initials,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+/// assetId an event points at, or null. Prefers explicit payload.assetId,
+/// falls back to the soft-FK targetId when the target is an asset.
+String? _assetIdOf(ActivityEvent e) {
+  final p = e.payload["assetId"];
+  if (p is String && p.isNotEmpty) return p;
+  if (e.targetType == "asset" && e.targetId != null && e.targetId!.isNotEmpty) {
+    return e.targetId;
+  }
+  return null;
 }
 
 IconData _iconFor(String kind) {
@@ -321,6 +345,8 @@ IconData _iconFor(String kind) {
       return Icons.mode_comment_outlined;
     case "asset.uploaded":
       return Icons.upload_outlined;
+    case "asset.shared":
+      return Icons.share_outlined;
     default:
       return Icons.bolt_outlined;
   }
@@ -343,6 +369,8 @@ String _summarize(ActivityEvent e) {
       return "$actor deleted a comment";
     case "asset.uploaded":
       return "$actor uploaded a new asset";
+    case "asset.shared":
+      return "$actor shared an asset with the workspace";
     default:
       return "$actor · ${e.kind}";
   }
@@ -357,169 +385,4 @@ String _relativeTime(DateTime t) {
   final days = hrs ~/ 24;
   if (days < 7) return "${days}d";
   return "${t.year}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')}";
-}
-
-// --------------------------------------------------------------------------
-// Shared — assets shared into this workspace, grid + source badge.
-// --------------------------------------------------------------------------
-
-class _SharedTab extends StatefulWidget {
-  const _SharedTab({required this.client});
-  final FontoClient client;
-
-  @override
-  State<_SharedTab> createState() => _SharedTabState();
-}
-
-class _SharedTabState extends State<_SharedTab> {
-  bool _loading = true;
-  String? _error;
-  List<SharedAsset> _items = const [];
-  final Map<String, String> _thumbs = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _thumbs.clear();
-    });
-    try {
-      final items = await widget.client.sharedWithMe();
-      final thumbs = items.isEmpty
-          ? <String, String>{}
-          : await widget.client.assetUrls(
-              items.map((s) => s.asset.id).toList(),
-              variant: "thumb",
-            );
-      if (!mounted) return;
-      setState(() {
-        _items = items;
-        _thumbs.addAll(thumbs);
-        _loading = false;
-      });
-    } on ApiException catch (e) {
-      _fail("${e.status}: ${e.message}");
-    } catch (e) {
-      _fail(e.toString());
-    }
-  }
-
-  void _fail(String msg) {
-    if (!mounted) return;
-    setState(() {
-      _error = msg;
-      _loading = false;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final assets = _items.map((s) => s.asset).toList();
-    return _stateScaffold(
-      loading: _loading,
-      error: _error,
-      isEmpty: _items.isEmpty,
-      emptyText: "Nothing shared with you yet.",
-      onRetry: _load,
-      builder: () => GridView.builder(
-        padding: const EdgeInsets.all(4),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          crossAxisSpacing: 4,
-          mainAxisSpacing: 4,
-        ),
-        itemCount: _items.length,
-        itemBuilder: (context, i) => _GridThumb(
-          url: _thumbs[_items[i].asset.id],
-          heroTag: _items[i].asset.id,
-          badge: _items[i].sourceWorkspaceName,
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => AssetDetailScreen(
-                client: widget.client,
-                assets: assets,
-                initialIndex: i,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// --------------------------------------------------------------------------
-// Shared grid thumbnail tile (used by Uploads + Shared).
-// --------------------------------------------------------------------------
-
-class _GridThumb extends StatelessWidget {
-  const _GridThumb({
-    required this.url,
-    required this.heroTag,
-    required this.onTap,
-    this.badge,
-  });
-
-  final String? url;
-  final String heroTag;
-  final VoidCallback onTap;
-  final String? badge;
-
-  @override
-  Widget build(BuildContext context) {
-    final image = url == null
-        ? Container(color: Colors.black12)
-        : Hero(
-            tag: heroTag,
-            child: CachedNetworkImage(
-              imageUrl: url!,
-              fit: BoxFit.cover,
-              placeholder: (_, __) => Container(color: Colors.black12),
-              errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
-            ),
-          );
-    return GestureDetector(
-      onTap: onTap,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          image,
-          if (badge != null && badge!.isNotEmpty)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                color: Colors.black54,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.share, size: 11, color: Colors.white),
-                    const SizedBox(width: 3),
-                    Expanded(
-                      child: Text(
-                        badge!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
 }

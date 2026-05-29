@@ -1006,7 +1006,8 @@ export const comments = fontoSchema.table(
 //   - 'comment.posted'  — POST /api/v1/assets/:id/comments
 //   - 'comment.deleted' — DELETE .../comments/:commentId
 //   - 'asset.uploaded'  — createAssetRow (Phase 7a hook)
-// Future kinds (member.joined, share.granted) land the same way.
+//   - 'asset.shared'    — POST /api/v1/assets/:id/share/workspaces (target ws)
+// Future kinds (member.joined) land the same way.
 //
 // `payload` carries event-specific detail (comment body excerpt, asset
 // filename, etc.). Schema is per-kind by convention; the digest renderer

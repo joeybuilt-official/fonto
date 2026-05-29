@@ -64,6 +64,16 @@ export function renderDigestLines(input: RenderInput): DigestActivityLine[] {
         });
         break;
       }
+      case "asset.shared": {
+        const assetId = ev.targetId;
+        const filename = assetId ? input.assetFilename.get(assetId) ?? "an asset" : "an asset";
+        lines.push({
+          text: `${actor} shared "${filename}" with the workspace`,
+          link: assetId ? `${input.webBaseUrl}/app/photos?asset=${assetId}` : undefined,
+          occurredAt: ev.createdAt,
+        });
+        break;
+      }
       default: {
         // Unknown kind — surface the raw kind name so devs see new event
         // types arrive in the digest before the renderer learns them.

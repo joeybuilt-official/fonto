@@ -33,6 +33,7 @@ import { extractExif } from "@/lib/exif";
 import { nearestPlace, formatPlaceName } from "@/lib/geocoder";
 import { assetProcessingQueue, clipDedupCheckQueue, JobNames } from "@/lib/queue";
 import { emitWebhook } from "@/lib/webhooks/emit";
+import { emitActivity } from "@/lib/activity/emit";
 import { nextSeq } from "@/lib/db/seq";
 import { embedImage, visionServiceConfigured } from "@/lib/plexo-vision";
 import { nearestNeighbors } from "@/lib/vectors";
@@ -545,6 +546,18 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
     sizeBytes,
     sha256,
     source,
+  });
+
+  // Phase 7a — workspace activity feed (asset.uploaded). Fire-and-forget;
+  // emitActivity swallows its own failures. targetType/targetId let the
+  // feed + digest resolve the asset (and render a micro-thumb).
+  void emitActivity({
+    workspaceId,
+    actorUserId: userId,
+    kind: "asset.uploaded",
+    targetType: "asset",
+    targetId: asset.id,
+    payload: { assetId: asset.id, filename, mimeType, source },
   });
 
   // Phase 2.4 — outbound webhook (asset.uploaded). Best-effort: emitWebhook
