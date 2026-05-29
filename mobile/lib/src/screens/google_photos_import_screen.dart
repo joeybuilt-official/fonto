@@ -194,7 +194,11 @@ class _GooglePhotosImportScreenState extends State<GooglePhotosImportScreen>
             .map(_GpItem.fromJson)
             .toList();
         setState(() {
-          if (more) _allItems.addAll(items) else _allItems = items;
+          if (more) {
+            _allItems.addAll(items);
+          } else {
+            _allItems = items;
+          }
           _allNextPage = j["nextPageToken"] as String?;
           _loadingAll = false;
         });
@@ -522,7 +526,11 @@ class _AlbumDetailScreenState extends State<_AlbumDetailScreen> {
             .map(_GpItem.fromJson)
             .toList();
         setState(() {
-          if (more) _items.addAll(items) else _items = items;
+          if (more) {
+            _items.addAll(items);
+          } else {
+            _items = items;
+          }
           _nextPage = j["nextPageToken"] as String?;
           _loading = false;
         });

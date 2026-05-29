@@ -36,7 +36,6 @@ class CameraRollScanner {
         createTimeCond: DateTimeCond(
           min: lastImport,
           max: now,
-          toEnd: false,
         ),
       ),
     );
