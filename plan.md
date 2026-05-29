@@ -287,6 +287,71 @@ param if approved).
 
 ---
 
+## Phase 6.8 — Google Photos import ⚠ (operator: Google Cloud project + OAuth client)
+
+- Scope: OAuth2 via `google_sign_in` package (`photoslibrary.readonly` scope). New
+  `GooglePhotosImportScreen`: sign-in CTA, Albums tab (list w/ cover thumb + count),
+  All Photos tab (paginated grid), multi-select → download each item (`baseUrl=d` /
+  `=dv` for video) to tmp → sha256 → enqueue via UploadQueue → drain. FAB sheet gains
+  a third option "Import from Google Photos". No backend changes — photos arrive as
+  regular multipart uploads.
+- Deps: 6.2b (UploadQueue).
+- ⚠ Operator gate: create Google Cloud project → enable Photos Library API → create
+  OAuth 2.0 Web application client → copy client ID into
+  `mobile/android/app/src/main/res/values/strings.xml` as `default_web_client_id` →
+  create Android OAuth 2.0 client (package `com.joeybuilt.fonto` + SHA-1 from keystore)
+  in same project. No config file required in the app — the Web client ID in strings.xml
+  is enough for the Android runtime.
+- Exit: tap "Import from Google Photos" in FAB sheet → OAuth consent → album/photo
+  browser → select 3 photos → Import → photos queued and appear in grid.
+- Status: see checklist.md
+
+## Phase 6.9 — Android Documents Provider (Fonto in system file picker)
+
+- Scope: Kotlin `DocumentsProvider` subclass at
+  `mobile/android/app/src/main/kotlin/com/joeybuilt/fonto/FontoDocumentsProvider.kt`.
+  Implements `queryRoots` (one root "Fonto Library"), `queryChildDocuments` (asset list
+  via Fonto REST API — paged), `queryDocument` (single asset metadata),
+  `openDocument` (stream bytes from presigned URL). Auth bridge: Flutter writes PAT +
+  baseUrl to `SharedPreferences` on login; provider reads same prefs (same process,
+  no IPC needed). Register in AndroidManifest as `<provider>` with
+  `android:permission="android.permission.MANAGE_DOCUMENTS"`. No backend changes.
+- Deps: 6.2c (Android shell). Phase 6.8 (confirms Google Cloud console familiarity).
+- Exit: open Gmail attach-file picker → Files → see "Fonto Library" → browse → pick
+  a photo → attaches to draft.
+- Status: planned
+
+## Phase 6.10 — Camera roll auto-import
+
+- Scope: `photo_manager: ^3.3.0` package for MediaStore access. New
+  `SettingsScreen` (pushed from avatar menu "Settings" entry). Toggle "Auto-import
+  camera roll" (stored in `sqflite` `settings` table). WorkManager periodic task
+  queries MediaStore for `DATE_ADDED > last_import_ts` (images + videos). Each new
+  asset: read bytes → sha256 → dedup → enqueue. Update `last_import_ts` on success.
+  Also add immediate foreground scan on app open when toggle is on.
+  No backend changes.
+- Deps: 6.2b (UploadQueue). 6.6b-4 (Settings entry placeholder in avatar menu).
+- Exit: enable auto-import in Settings → take a photo with device camera → within
+  15 min (WorkManager window) or next app open, photo appears in Fonto grid.
+- Status: planned
+
+## Phase 6.11 — Additional cloud import sources (stub + future)
+
+- Scope: Design + stub only. Extend FAB import sheet to show all sources with
+  placeholder states for unimplemented ones. Road-map:
+  - **Google Drive** — Drive API v3, reuse `google_sign_in` from 6.8 with
+    `drive.readonly` scope. Browse folders, select files, download → enqueue.
+  - **Nextcloud** — WebDAV (`webdav_client` package), server URL + credentials
+    stored in `flutter_secure_storage`. Browse dirs, select, download → enqueue.
+  - **iCloud** — iOS-only (`PHPhotoLibrary`); defer until iOS distribution needed.
+  Each stub shows a "Coming soon" bottom-sheet until its phase ships.
+- Deps: 6.8 (import infrastructure pattern).
+- Exit: import sheet lists all four sources; Google Drive + Nextcloud + iCloud
+  entries show "Coming soon" snackbar; Google Photos works end-to-end (6.8).
+- Status: planned (stubs ship with 6.11; full impls in future phases)
+
+---
+
 ## Sequencing summary (updated 2026-05-28)
 
 ```
@@ -305,9 +370,10 @@ param if approved).
                    (ops track done — operator-deferred items noted in checklist)
 ```
 
-All original 9 phases shipped + deployed. New mobile phases 6.3–6.5 added.
-Phase 6.5 has no operator gate. Phases 6.3 and 6.4 gate on Play Console
-and Firebase provisioning respectively — see ADR 0006.
+All original 9 phases shipped + deployed. Mobile phases 6.3–6.11 added.
+Phase 6.8 (Google Photos) is gate-free on first run; operator sets up
+Google Cloud project + OAuth client. Phases 6.3 + 6.4 gate on Play Console
+and Firebase respectively — see ADR 0006.
 
 Conflicts C8, C9, C10 RESOLVED 2026-05-28 (all Option A — see ADR 0006):
 - C8 — Codemagic path filter on `mobile/**`. Marcus wins.

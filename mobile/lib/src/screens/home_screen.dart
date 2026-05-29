@@ -17,6 +17,7 @@ import "../api/models.dart";
 import "../state/auth_store.dart";
 import "../state/upload_queue.dart";
 import "asset_detail_screen.dart";
+import "google_photos_import_screen.dart";
 
 const _kPageSize = 60;
 
@@ -174,12 +175,33 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text("Scan document"),
               onTap: () => Navigator.pop(context, "scan"),
             ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text("Import from Google Photos"),
+              onTap: () => Navigator.pop(context, "google_photos"),
+            ),
           ],
         ),
       ),
     );
     if (choice == "photo") await _captureAndUpload();
     if (choice == "scan") await _scanDocument();
+    if (choice == "google_photos") await _importFromGooglePhotos();
+  }
+
+  Future<void> _importFromGooglePhotos() async {
+    final imported = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => GooglePhotosImportScreen(
+          virtualPath: _folder ?? "/",
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (imported == true) {
+      await _refreshQueueBadge();
+      await _refresh();
+    }
   }
 
   Future<void> _captureAndUpload() async {

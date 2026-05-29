@@ -186,6 +186,46 @@ TaskCreate while in phased-plan flow.
 - [x] Commit + push (6260363) + deploy: migration 0031 applied on the host; fonto + fonto-worker rebuilt + recreated (createAssetRow enqueue-gate fix runs in WEB, poppler in WORKER — both rebuilt); smoke /→200 /app/library→307, worker has pdftoppm+pdfinfo; tag v1.0.19 → Codemagic build #19 (1.0.19) green; APK republished to myfonto.com/fonto.apk
 - [ ] Smoke test (operator, real device): scan a doc → PDF uploads → grid shows first-page thumb + page count
 
+## Phase 6.8 — Google Photos import ⚠
+- [ ] OPERATOR GATE — Create Google Cloud project; enable Photos Library API
+- [ ] OPERATOR GATE — Create OAuth 2.0 Web application client; copy client ID into mobile/android/app/src/main/res/values/strings.xml as `default_web_client_id`
+- [ ] OPERATOR GATE — Create OAuth 2.0 Android client (package com.joeybuilt.fonto + SHA-1 from keystore) in same Google Cloud project
+- [x] pubspec.yaml — add google_sign_in: ^6.2.1
+- [x] strings.xml — add default_web_client_id placeholder (REPLACE_WITH_YOUR_WEB_OAUTH_CLIENT_ID)
+- [x] GooglePhotosImportScreen — OAuth sign-in CTA (signInSilently restore + signIn button)
+- [x] GooglePhotosImportScreen — Albums tab (list w/ cover thumb + media count)
+- [x] GooglePhotosImportScreen — All Photos tab (paginated grid via mediaItems:search)
+- [x] GooglePhotosImportScreen — Multi-select overlay + Import action bar button
+- [x] GooglePhotosImportScreen — Download + enqueue flow (baseUrl=d / =dv → tmp file → sha256 → UploadQueue → drain)
+- [x] home_screen FAB sheet — "Import from Google Photos" third option; push GooglePhotosImportScreen; refresh grid on return
+- [x] Commit + push + tag v1.0.20
+
+## Phase 6.9 — Android Documents Provider
+- [ ] Kotlin FontoDocumentsProvider.kt — queryRoots (one root: "Fonto Library")
+- [ ] Kotlin FontoDocumentsProvider.kt — queryChildDocuments (fetch asset list via Fonto REST, map to cursor rows)
+- [ ] Kotlin FontoDocumentsProvider.kt — queryDocument (single asset metadata)
+- [ ] Kotlin FontoDocumentsProvider.kt — openDocument (stream bytes from presigned URL via HTTP)
+- [ ] Auth bridge — Flutter writes PAT + baseUrl to SharedPreferences on login (MethodChannel or shared_preferences plugin)
+- [ ] AndroidManifest.xml — register <provider> with android:permission="android.permission.MANAGE_DOCUMENTS"
+- [ ] Smoke test — attach file in Gmail → see "Fonto Library" → pick asset → attaches
+- [ ] Commit + push + tag
+
+## Phase 6.10 — Camera roll auto-import
+- [ ] pubspec.yaml — add photo_manager: ^3.3.0
+- [ ] SettingsScreen — new screen pushed from avatar menu; "Auto-import camera roll" toggle
+- [ ] sqflite settings table — key/value store for settings (last_import_ts, auto_import_enabled)
+- [ ] WorkManager task — query MediaStore DATE_ADDED > last_import_ts; enqueue new assets
+- [ ] Foreground scan on app open when auto-import enabled
+- [ ] Permission request — READ_MEDIA_IMAGES + READ_MEDIA_VIDEO on toggle-on
+- [ ] Commit + push + tag
+
+## Phase 6.11 — Additional import sources (stub)
+- [ ] FAB import sheet — show all sources (Google Photos ✓ + Google Drive + Nextcloud + iCloud stubs)
+- [ ] Google Drive stub — "Coming soon" entry in import sheet (reuses google_sign_in)
+- [ ] Nextcloud stub — "Coming soon" entry in import sheet
+- [ ] iCloud stub — "iOS only / coming soon" entry
+- [ ] Commit + push + tag
+
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
 - [x] ops/backup/r2-sync.sh — rclone sync R2 → offsite

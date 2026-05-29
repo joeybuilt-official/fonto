@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Fonto</string>
+    <!--
+      Phase 6.8 — Google Photos import.
+      OPERATOR: replace with your OAuth 2.0 Web application client ID from
+      Google Cloud Console (the one registered for this project with the
+      Photos Library API enabled). Also register an Android OAuth 2.0 client
+      for package com.joeybuilt.fonto + SHA-1 from the upload keystore.
+    -->
+    <string name="default_web_client_id">REPLACE_WITH_YOUR_WEB_OAUTH_CLIENT_ID</string>
 </resources>
