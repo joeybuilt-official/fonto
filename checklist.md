@@ -238,32 +238,77 @@ an upload copy; no delete-propagation exists anywhere). Reframe UI wording only.
 - [x] FIX: camera-roll import returned nothing under Android 14 "Selected photos"
       — CameraRollScanner gated on PermissionState.isAuth; switched to hasAccess
       (full OR limited). Watermark now advances only after a full pass. (v1.0.31)
-- [ ] DEPLOY: republish build #32 (v1.0.31) APK to myfonto.com/fonto.apk
-- [ ] Folder selection — SettingsScreen lets the operator pick which device
-      albums to import (PhotoManager.getAssetPathList → list albums → persist
-      selected album IDs in SettingsStore). CameraRollScanner scans only the
-      selected albums instead of the "all" album. Default = all when none chosen.
-- [ ] Wording — confirm Settings copy says "import"/"copy to Fonto" (one-way);
-      it does NOT mirror or delete. Add a one-line subtitle reassuring this.
-- [ ] CLASSIFY: screenshots mislabeled as "document". In processAsset image
-      branch, add a screenshot heuristic (filename /screenshot|screen.?shot/i
-      OR PNG with screen-like aspect ratio) → force classification "screenshot",
-      never "document"/"scan". (lib/processing/processAsset.ts + lib/plexo.ts
-      IMAGE_SUBTYPES already has "screenshot".)
-- [ ] MIME: verify lib/mime.ts detectMime maps .txt→text/plain,
-      .md→text/markdown, .py→text/x-python (add to the extension table if
-      missing). New uploads must carry the right mime.
-- [ ] CLASSIFY (docs): add "text" + "code" to the document subtype taxonomy
-      (lib/plexo.ts DOCUMENT_SUBTYPES) and classify by mime — text/plain→text;
-      text/markdown, text/x-*, application/*-script, common code mimes→code.
-- [ ] VIEWER: render text/code assets instead of a generic doc card.
-      ocr_text already holds the file content (Phase 6.x extractDocumentText).
-      • Mobile AssetDetailScreen: for text/* assets show a scrollable monospace
-        text view (read ocr_text via a new GET /assets/:id field or client call).
-      • Web photo-lightbox: text/code panel (monospace; .md/.py rendered as code).
-- [ ] Backfill: re-run reprocess for existing text files so mime/classification
-      correct; re-run for screenshots so they reclassify.
-- [ ] Commit + push + tag; republish APK; rebuild+recreate fonto + worker.
+- [x] DEPLOY: republished build #32 (v1.0.31) APK to myfonto.com/fonto.apk
+- [x] Folder selection — SettingsScreen picks device albums (PhotoManager
+      getAssetPathList → SettingsStore.selectedAlbumIds); CameraRollScanner
+      scans only selected albums, default all. (settings_screen/settings_store/
+      camera_roll_scanner.dart)
+- [x] Wording — one-way "pull, not sync" subtitle added to Settings.
+- [x] CLASSIFY: screenshot heuristic (filename or PNG screen aspect ratio) forces
+      "screenshot" in processAsset image branch. (commit 4e2e05c)
+- [x] MIME: lib/mime.ts TEXT_EXT_MIME maps .txt/.text/.log→text/plain,
+      .md/.markdown→text/markdown, .py→text/x-python.
+- [x] CLASSIFY (docs): "text"+"code" added to DOCUMENT_SUBTYPES; deterministic
+      classifyTextCodeByMime (text/plain→text; markdown/text-x-*/json/yaml/xml→code).
+- [x] VIEWER: text/code render. Mobile AssetDetailScreen scrollable monospace
+      (SelectableText) via getAsset.ocrText; web photo-lightbox TextViewer panel.
+      ocrText exposed on Asset (web + mobile models).
+- [x] Backfill: reprocessed existing text files + screenshots (relabeled
+      APIs.txt→text, seedance2.py→code, ai-sdlc-prompt-library.html→code).
+- [x] Commit + push + tag (v1.0.31→v1.0.32); republished APK (build #33);
+      rebuilt+recreated fonto + worker. SHIPPED 2026-05-29.
+
+## Phase 6.13 — Import/upload/processing progress indicators
+Source: operator device feedback 2026-05-29 ("need to see transfer/migration/
+import progress"). Mobile had zero visibility after an import enqueued.
+- [x] /api/v1/stats returns `processing` (active assets not ready/failed).
+- [x] Mobile models: Asset.processingState + isProcessing; WorkspaceStats.processing.
+- [x] UploadQueue broadcasts a live ValueNotifier<UploadProgress> during drain.
+- [x] HomeScreen: "Uploading X of Y" bar, "Processing N items" banner backed by a
+      self-canceling stats poll, per-tile processing spinner (web pulse parity).
+- [x] Shipped: commits b06871d + 59d2d58 (flutter-analyze fix: ValueListenable
+      import). Web deployed; mobile build #35 (v1.0.34) APK republished.
+
+## Phase 6.14 — Smart detection (VLM "things" labels + face auto-cluster)
+Source: operator 2026-05-29 ("isn't detecting faces, things, places — be smart
+on its own"). Diagnosis: faces detect fine (data is all singletons, so 0 persons
+until repeats); places work but only 6/58 photos have GPS; "things" was the real
+gap (100% LLM-fallback classify, 0 sub-classifications, Things page a placeholder).
+Decision: add a true VLM label endpoint (operator chose this over CLIP-tuning).
+- [x] plexo-vision: POST /vision/label — VLM object/scene labels, reuses the
+      Ollama Qwen2.5-VL that backs OCR. (plexo commit b477a90; SHARED service —
+      additive route, redeployed plexo-vision.)
+- [x] fonto lib/plexo-vision: labelImage()/labelImageUrl().
+- [x] processAsset: images get vision labels folded into the AI-tag path
+      (aiSuggested) alongside CLIP/LLM tags.
+- [x] Things UI: GET /api/v1/tags/top (top tags by distinct active-asset count +
+      sample asset); web Explore Things grid (tiles → /app/search?tagId); mobile
+      Things tab = label grid with drill-in to a tag's assets.
+- [x] Faces: debounced per-workspace auto-cluster after face-detect (worker).
+      NOTE: current library is all distinct faces → People stays empty until a
+      face recurs; it will populate automatically then.
+- [x] Bug fix: asset_tags had no unique (asset_id,tag_id) index, so
+      onConflictDoNothing never deduped — re-processing double-linked tags.
+      Added an explicit existence guard; top-tags uses COUNT(DISTINCT); removed
+      98 dup links.
+- [x] Backfill: all 58 images labeled. Top things: lake(31) sunset(29) nature(29)
+      reflection(21) mountains(20) mobile-screenshot(18) golden-hour(14).
+- [x] Shipped: fonto commits ac3b0bc + 82ff2f9, tags v1.0.33→v1.0.35; web+worker
+      rebuilt/recreated; mobile build #36 (v1.0.35) APK republished. 2026-05-29.
+- [ ] PLACES: not addressed — data-limited (most photos lack GPS EXIF), not a bug.
+
+## Phase 6.15 — Updates "feed" redesign (NOT STARTED)
+Source: operator 2026-05-29 ("updates could look more like a single feed …
+no full-size thumbs repeated … feed better, network effects, fun to scroll").
+Recon: mobile updates_screen.dart has 3 tabs (Uploads/Activity/Shared); the
+"big repeated thumbs" are the Uploads/Shared GRID tabs (3-col full tiles);
+Activity tab has NO thumbnails today. Data: ActivityEvent (models.dart:217) +
+GET /api/v1/workspace/activity (cursor-paginated). Web equiv:
+app/(app)/app/updates/page.tsx + _components/activity-section.tsx.
+- [ ] Collapse into one compact scrollable feed: actor avatar/initials + event
+      summary + inline micro-thumb (28–32px from payload.assetId) + timestamp.
+- [ ] Drop the repeated full-size grid tiles; reuse CachedNetworkImage micro-thumbs.
+- [ ] Web parity in activity-section.tsx.
 
 ## Phase 9c — Backups + restore drill
 - [x] ops/backup/pg-dump.sh — pg_dump | gzip | rclone copy
