@@ -117,6 +117,30 @@ ssh <server> 'cp /data/_secrets/docker-compose-pre-autoscaler-*.yml \
   /data/appdata/appdata/docker-compose.yml'
 ```
 
+## Mobile APK republish (test distribution)
+
+The operator's phone can't reliably download the Codemagic artifact link
+(Gmail webview / Chrome .apk block). Workaround: serve the APK from the
+fonto app's public dir at `https://myfonto.com/fonto.apk` (clean direct
+download, correct apk MIME). After a green Codemagic build:
+
+1. Get the build's signed APK URL from the "[Build SUCCEEDED]" email to
+   user@example.com (Gmail MCP: get_thread → app-release.apk
+   "Install" href; links expire 24h).
+2. On NAS (full docker, NOT the read-only fonto proxy):
+   ```bash
+   ssh <server> 'curl -fsSL "<signed-apk-url>" -o /tmp/fonto.apk \
+     && docker cp /tmp/fonto.apk fonto:/app/public/fonto.apk \
+     && rm /tmp/fonto.apk && docker restart fonto'
+   ```
+   The restart is REQUIRED — Next.js standalone scans `public/` at boot, so
+   a file `docker cp`'d into a running container isn't served until restart.
+3. Verify: `curl -sI https://myfonto.com/fonto.apk` → 200,
+   `application/vnd.android.package-archive`.
+
+Ephemeral: wiped on the next `docker compose up` recreate (not baked into
+the image). Re-run after any backend redeploy.
+
 ## Known orphan
 
 `fonto-web` container (Image: fonto-web, Up 23h+ at session-start) lives

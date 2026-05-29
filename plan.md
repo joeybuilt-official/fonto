@@ -258,7 +258,7 @@ param if approved).
 - Deps: none (6.6a done)
 - Subagents: general-purpose for the screen if large
 - Exit: Collections tab shows 4 live sub-tabs; analyze+build green; republished
-- Status: pending
+- Status: code done + pushed (aa16158); build #14 pending verify + republish
 
 ### Phase 6.6b-2 — Updates tab
 - Scope: client.listActivity(cursor) + sharedWithMe(); reuse listAssets
