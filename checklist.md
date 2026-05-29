@@ -171,6 +171,13 @@ TaskCreate while in phased-plan flow.
 
 ## Phase 6.7 — Document scanner ⚠
 - [x] DECISION C-scan = ML Kit Document Scanner (cunning_document_scanner / flutter_doc_scanner); output = PDF only (operator confirmed 2026-05-28)
+- ENTRY POINTS (scoped 2026-05-29, no code yet):
+  - Mobile FAB: mobile/lib/src/screens/home_screen.dart FloatingActionButton ~L280-283; capture handler _captureAndUpload() ~L159-189. Add a second action (PopupMenu/speed-dial) "Scan document" → new _scanDocument().
+  - Upload queue: mobile/lib/src/state/upload_queue.dart enqueue({filePath, virtualPath, sha256Hex}) ~L128-142; static drain() ~L180. Scanner → write PDF to temp → hash → enqueue (same path as camera).
+  - Upload is file-agnostic: FontoClient.uploadFile(File, {virtualPath}) mobile/lib/src/api/fonto_client.dart ~L180-198 (multipart, no mime restriction) → PDF uploads unchanged.
+  - pubspec: mobile/pubspec.yaml — NO scanner pkg yet; image_picker/sqflite/crypto/path_provider already present.
+  - Backend: lib/processing/processAsset.ts ~L48 DOCUMENT_TRIGGER_MIME already includes application/pdf but does NO binary extraction (no poppler/pdfium/mutool). Dockerfile.worker installs ffmpeg/libheif/libraw/exiftool — NO pdf tooling (add poppler-utils).
+  - Schema: lib/db/schema.ts assets table has NO pageCount/page_count col — needs migration (next free number after 0028; verify with `ls drizzle/migrations/`).
 - [ ] Mobile: add scanner package; camera FAB → "Scan document" entry
 - [ ] Mobile: native scan flow (auto edge detect, manual corner adjust, multi-page, enhance) → PDF export
 - [ ] Mobile: page preview/reorder → name → upload PDF as asset

@@ -276,14 +276,14 @@ param if approved).
   param on /api/v1/assets
 - ⚠ One small backend change (assets `hasGeo` query param) IF C1 = match-web
 - Exit: Explore tab matches agreed scope; green; republished
-- Status: pending
+- Status: DONE — backend hasGeo deployed to NAS; build #18 (1.0.18) green, republished 2026-05-29
 
 ### Phase 6.6b-4 — Nav parity cleanups
 - Scope: avatar/account menu (move sign-out there; Settings entry); drop the
   redundant search-push icon from the Library appbar.
 - Deps: none
 - Exit: sign-out in avatar menu; Library appbar de-cluttered; green; republished
-- Status: pending
+- Status: DONE — folded into build #18 (1.0.18), republished 2026-05-29. Settings entry deferred (no mobile settings surface yet).
 
 ---
 
