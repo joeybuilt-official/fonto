@@ -129,7 +129,7 @@ TaskCreate while in phased-plan flow.
 - [x] DECISION C10 = **Option A** (FCM real-time for comments+shares, daily digest for summaries — operator confirmed 2026-05-28)
 - [x] OPERATOR GATE — Firebase added to existing GCP project fonto-yourproject; Android app com.joeybuilt.fonto registered (2026-05-29, via browser). App ID 1:000000000000:android:0000000000000000000000
 - [x] google-services.json committed to mobile/android/app/ (not secret — ships in APK; reconstructed from console values). Supersedes the GOOGLE_SERVICES_JSON env-var approach
-- [ ] OPERATOR GATE — Generate firebase-adminsdk service-account key (GCP → Service Accounts → firebase-adminsdk-fbsvc@fonto-yourproject → Keys → Add key) and set as FIREBASE_SERVICE_ACCOUNT_JSON (single-line JSON) on the fonto app env (+ worker). Required for outbound sends; can't be auto-extracted (Google only shows the private key once, at download).
+- [x] OPERATOR GATE — firebase-adminsdk SA key created (2026-05-29), base64'd into FIREBASE_SERVICE_ACCOUNT_JSON in NAS .env, fonto recreated. Verified in-container: SA mints an FCM v1 messaging token (TOKEN_OK). push.ts accepts raw-JSON or base64.
 - [x] Schema + migration 0032: fonto.push_tokens (userId, deviceId, token, platform, created/updatedAt; UNIQUE userId+deviceId)
 - [x] POST /api/v1/notifications/push-token — upsert by (userId, deviceId) via onConflictDoUpdate; platform ∈ android|ios|web
 - [x] DELETE /api/v1/notifications/push-token — deregister by deviceId (idempotent)
@@ -140,8 +140,8 @@ TaskCreate while in phased-plan flow.
 - [x] Mobile: register token via POST /api/v1/notifications/push-token on auth + onTokenRefresh; deregister on sign-out (before auth.clear)
 - [x] Mobile: notification tap handler — onMessageOpenedApp + getInitialMessage → open AssetDetailScreen by data.assetId
 - [x] Backend: migrated lib/notifications/push.ts to FCM HTTP v1 (service-account JWT → OAuth token, no new deps); gated on FIREBASE_SERVICE_ACCOUNT_JSON
-- [ ] Commit + push + tag (mobile build to validate Firebase compile)
-- [ ] Deploy: set FIREBASE_SERVICE_ACCOUNT_JSON on fonto app env + redeploy (operator-gated on the SA key)
+- [x] Commit + push + tag — build #29 (v1.0.28) GREEN; APK republished to myfonto.com/fonto.apk (60.5 MB). Fixed 3 analyze errors that had failed every build since v1.0.20.
+- [x] Deploy: FIREBASE_SERVICE_ACCOUNT_JSON set on fonto app env + fonto recreated; FCM v1 token mint verified (2026-05-29)
 
 ## Phase 6.5 — Android App Links + in-app deep link routing
 - [x] DECISION C9 = **Option A** (App Links only, no custom scheme; Android 5 → browser — operator confirmed 2026-05-28)
