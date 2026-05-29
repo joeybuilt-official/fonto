@@ -19,9 +19,6 @@ import "../api/models.dart";
 import "../state/auth_store.dart";
 import "../state/upload_queue.dart";
 import "asset_detail_screen.dart";
-import "google_photos_import_screen.dart";
-import "google_drive_import_screen.dart";
-import "nextcloud_import_screen.dart";
 import "settings_screen.dart";
 import "../state/camera_roll_scanner.dart";
 import "../state/push_notifications.dart";
@@ -230,6 +227,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _showAddSheet() async {
+    // Quick-add sheet — fast paths only. Cloud imports (Google Drive,
+    // Nextcloud, future Google Photos via the Picker API) live under
+    // Settings → Import sources so they don't crowd the hot path.
     final choice = await showModalBottomSheet<String>(
       context: context,
       builder: (_) => SafeArea(
@@ -248,25 +248,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: const Text("Import from Google Photos"),
-              onTap: () => Navigator.pop(context, "google_photos"),
-            ),
-            ListTile(
-              leading: const Icon(Icons.folder_outlined),
-              title: const Text("Import from Google Drive"),
-              onTap: () => Navigator.pop(context, "google_drive"),
-            ),
-            ListTile(
-              leading: const Icon(Icons.cloud_outlined),
-              title: const Text("Import from Nextcloud"),
-              onTap: () => Navigator.pop(context, "nextcloud"),
-            ),
-            ListTile(
-              leading: const Icon(Icons.cloud_done_outlined),
-              title: const Text("Import from iCloud"),
-              subtitle: const Text("iOS only · coming soon"),
-              enabled: false,
-              onTap: () => Navigator.pop(context, "icloud"),
+              title: const Text("Pick from gallery"),
+              onTap: () => Navigator.pop(context, "gallery"),
             ),
           ],
         ),
@@ -274,33 +257,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     if (choice == "photo") await _captureAndUpload();
     if (choice == "scan") await _scanDocument();
-    if (choice == "google_photos") await _importFromGooglePhotos();
-    if (choice == "google_drive") {
-      await _importFromSource(
-        (_) => GoogleDriveImportScreen(virtualPath: _folder ?? "/"),
-      );
-    }
-    if (choice == "nextcloud") {
-      await _importFromSource(
-        (_) => NextcloudImportScreen(virtualPath: _folder ?? "/"),
-      );
-    }
+    if (choice == "gallery") await _pickFromGallery();
   }
 
-  Future<void> _importFromGooglePhotos() => _importFromSource(
-        (_) => GooglePhotosImportScreen(virtualPath: _folder ?? "/"),
+  Future<void> _pickFromGallery() async {
+    final List<XFile> picked = await _picker.pickMultiImage();
+    if (picked.isEmpty) return;
+    setState(() => _uploading = true);
+    int queued = 0;
+    try {
+      final queue = await UploadQueue.open();
+      for (final x in picked) {
+        try {
+          final file = File(x.path);
+          final hash = await UploadQueue.hashFile(file);
+          final inserted = await queue.enqueue(
+            filePath: file.path,
+            virtualPath: _folder ?? "/",
+            sha256Hex: hash,
+          );
+          if (inserted != null) queued++;
+        } catch (_) {
+          // Skip this one and keep going — partial success beats abort.
+        }
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Queued $queued of ${picked.length} for upload."),
+        ),
       );
-
-  /// Pushes an import screen that pops `true` when something was queued, then
-  /// refreshes the badge + grid. Shared by all cloud import sources.
-  Future<void> _importFromSource(WidgetBuilder builder) async {
-    final imported = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: builder),
-    );
-    if (!mounted) return;
-    if (imported == true) {
       await _refreshQueueBadge();
-      await _refresh();
+      final ok = await UploadQueue.drain();
+      if (!mounted) return;
+      await _refreshQueueBadge();
+      if (ok > 0) await _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Enqueue failed: $e")),
+      );
+    } finally {
+      if (mounted) setState(() => _uploading = false);
     }
   }
 
@@ -595,42 +593,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               );
             },
           ),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.account_circle_outlined),
-            tooltip: "Account",
-            onSelected: (v) {
-              if (v == "signout") _signOut();
-              if (v == "settings") {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                );
-              }
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(
-                value: "settings",
-                child: ListTile(
-                  leading: Icon(Icons.settings_outlined),
-                  title: Text("Settings"),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem(
-                value: "signout",
-                child: ListTile(
-                  leading: Icon(Icons.logout),
-                  title: Text("Sign out"),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-            ],
-          ),
         ],
       ),
-      drawer: _FolderDrawer(
+      drawer: _AppDrawer(
         tree: _tree,
         selected: _folder,
         onSelect: _selectFolder,
+        onSettings: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const SettingsScreen()),
+        ),
+        onSignOut: _signOut,
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _uploading ? null : _showAddSheet,
@@ -1012,58 +984,99 @@ class _TypeBadge extends StatelessWidget {
   }
 }
 
-/// Drawer rail — folders rolled up from the flat /folders/tree response.
-/// Top entry "All" clears the filter; "(root)" shows assets with NULL
-/// directoryPath. Each path entry filters by that subtree prefix.
-class _FolderDrawer extends StatelessWidget {
-  const _FolderDrawer({
+/// Mobile nav drawer. Always carries Home / Settings / Sign out so the
+/// hamburger is useful even on a workspace with no folders; the folder list
+/// only renders as a collapsible section when the /folders/tree response
+/// has something to show. (Previously this was folder-only and went empty
+/// on a flat library.)
+class _AppDrawer extends StatelessWidget {
+  const _AppDrawer({
     required this.tree,
     required this.selected,
     required this.onSelect,
+    required this.onSettings,
+    required this.onSignOut,
   });
 
   final FolderTree? tree;
   final String? selected;
   final ValueChanged<String?> onSelect;
+  final VoidCallback onSettings;
+  final VoidCallback onSignOut;
 
   @override
   Widget build(BuildContext context) {
     final t = tree;
+    final hasFolders =
+        t != null && (t.paths.isNotEmpty || t.rootAssetCount > 0);
     return Drawer(
       child: SafeArea(
-        child: t == null
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.all_inbox),
-                    title: const Text("All"),
-                    selected: selected == null,
-                    onTap: () => onSelect(null),
+        child: ListView(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.home_outlined),
+              title: const Text("Home"),
+              selected: selected == null,
+              onTap: () {
+                Navigator.of(context).pop();
+                onSelect(null);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.settings_outlined),
+              title: const Text("Settings"),
+              onTap: () {
+                Navigator.of(context).pop();
+                onSettings();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text("Sign out"),
+              onTap: () {
+                Navigator.of(context).pop();
+                onSignOut();
+              },
+            ),
+            if (hasFolders) ...[
+              const Divider(),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Text(
+                  "FOLDERS",
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.8,
                   ),
-                  if (t.rootAssetCount > 0)
-                    ListTile(
-                      leading: const Icon(Icons.folder_outlined),
-                      title: const Text("(root)"),
-                      trailing: Text("${t.rootAssetCount}"),
-                      selected: selected == "/",
-                      onTap: () => onSelect("/"),
-                    ),
-                  const Divider(),
-                  ...t.paths.map(
-                    (p) => ListTile(
-                      leading: const Icon(Icons.folder),
-                      title: Text(
-                        p.path,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: Text("${p.assetCount}"),
-                      selected: selected == p.path,
-                      onTap: () => onSelect(p.path),
-                    ),
-                  ),
-                ],
+                ),
               ),
+              if (t!.rootAssetCount > 0)
+                ListTile(
+                  leading: const Icon(Icons.folder_outlined),
+                  title: const Text("(root)"),
+                  trailing: Text("${t.rootAssetCount}"),
+                  selected: selected == "/",
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    onSelect("/");
+                  },
+                ),
+              ...t.paths.map(
+                (p) => ListTile(
+                  leading: const Icon(Icons.folder),
+                  title: Text(p.path, overflow: TextOverflow.ellipsis),
+                  trailing: Text("${p.assetCount}"),
+                  selected: selected == p.path,
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    onSelect(p.path);
+                  },
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

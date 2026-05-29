@@ -16,6 +16,8 @@ import "../state/camera_roll_scanner.dart";
 import "../state/settings_store.dart";
 import "../state/upload_queue.dart";
 import "../state/workmanager_dispatcher.dart";
+import "google_drive_import_screen.dart";
+import "nextcloud_import_screen.dart";
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -330,6 +332,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         )
                       : const Icon(Icons.auto_awesome_outlined),
                   onTap: _reprocessing ? null : _reprocessAll,
+                ),
+                const Divider(),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    "IMPORT SOURCES",
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Text(
+                    "Bring assets in from cloud storage. Quick adds (camera, "
+                    "scan, gallery) live on the Home + button.",
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.folder_outlined),
+                  title: const Text("Google Drive"),
+                  subtitle:
+                      const Text("Browse Drive and import selected files."),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          const GoogleDriveImportScreen(virtualPath: "/"),
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.cloud_outlined),
+                  title: const Text("Nextcloud"),
+                  subtitle: const Text(
+                    "Connect a Nextcloud server and import files.",
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          const NextcloudImportScreen(virtualPath: "/"),
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: Icon(
+                    Icons.photo_library_outlined,
+                    color: Theme.of(context).disabledColor,
+                  ),
+                  title: Text(
+                    "Google Photos",
+                    style: TextStyle(color: Theme.of(context).disabledColor),
+                  ),
+                  subtitle: const Text(
+                    "Temporarily unavailable. Google retired the read scope "
+                    "third-party apps used (Mar 2025); coming back via the "
+                    "new Picker API.",
+                  ),
+                  enabled: false,
+                  onTap: null,
                 ),
               ],
             ),
