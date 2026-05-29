@@ -1,27 +1,21 @@
 workflows:
+  # Validation/build workflow. Fires on any `v*` tag (e.g. v1.0.27). Compiles,
+  # tests, signs, and emails the APK/AAB — but does NOT publish to Play, so
+  # day-to-day builds stay green regardless of Play Console setup. See
+  # mobile/CI.md.
   android-release:
     name: Android — build + test + bundle
     environment:
       flutter: stable
       groups:
         - android-signing
-        # Phase 6.3 — holds GCLOUD_SERVICE_ACCOUNT_CREDENTIALS (the Google
-        # Play service-account JSON, with "Release manager" permission).
-        # OPERATOR: create this group in Codemagic and add the var before the
-        # first tagged build that should publish.
-        - google-play
-    # Tag-gated: a build fires ONLY when a `v*` tag is pushed (e.g.
-    # `git tag v1.0.17 && git push origin v1.0.17`). Plain commits to main
-    # — including mobile/** changes — no longer trigger builds, so
-    # intermediate sub-phase pushes don't burn CI minutes. Cut a build
-    # deliberately by tagging. See mobile/CI.md.
     triggering:
       events:
         - tag
       tag_patterns:
         - pattern: 'v*'
           include: true
-    scripts:
+    scripts: &build_scripts
       - name: Get packages
         script: flutter pub get
         working_directory: mobile
@@ -45,7 +39,7 @@ workflows:
             --build-name=1.0.$PROJECT_BUILD_NUMBER \
             --build-number=$PROJECT_BUILD_NUMBER
         working_directory: mobile
-    artifacts:
+    artifacts: &build_artifacts
       - mobile/build/app/outputs/flutter-apk/app-release.apk
       - mobile/build/app/outputs/bundle/release/app-release.aab
     publishing:
@@ -55,17 +49,42 @@ workflows:
         notify:
           success: true
           failure: true
-      # Phase 6.3 — push the signed AAB to the Play "internal" track as a
-      # draft for manual review/rollout. Prerequisites (one-time, operator):
-      #   1. Create the app listing in Play Console (package
-      #      com.joeybuilt.fonto) and upload the FIRST AAB by hand — the
-      #      Play Developer API can't create an app or opt into Play App
-      #      Signing; it can only publish to an app that already exists.
-      #   2. Create a GCP service account with the "Release manager" role,
-      #      link it under Play Console → Users & permissions, download its
-      #      JSON key, and add it to the Codemagic `google-play` group as
-      #      GCLOUD_SERVICE_ACCOUNT_CREDENTIALS.
-      # After that, every `v*` tag auto-publishes a fresh draft.
+
+  # Phase 6.3 — release-to-Play workflow. Fires on a `release-v*` tag and, in
+  # addition to building, pushes the signed AAB to the Play "internal" track as
+  # a draft. Kept separate so plain `v*` validation builds never block on Play.
+  # Prerequisites (one-time, operator):
+  #   1. Create the app listing in Play Console (package com.joeybuilt.fonto)
+  #      and upload the FIRST AAB by hand — the Play Developer API can't create
+  #      an app or opt into Play App Signing; it only publishes to an existing
+  #      app.
+  #   2. Create a GCP service account with the "Release manager" role, link it
+  #      under Play Console → Users & permissions, download its JSON key, and
+  #      add it to the Codemagic `google-play` group as
+  #      GCLOUD_SERVICE_ACCOUNT_CREDENTIALS.
+  # After that, a `release-v*` tag auto-publishes a fresh draft.
+  android-publish:
+    name: Android — build + publish to Play (internal)
+    environment:
+      flutter: stable
+      groups:
+        - android-signing
+        - google-play
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'release-v*'
+          include: true
+    scripts: *build_scripts
+    artifacts: *build_artifacts
+    publishing:
+      email:
+        recipients:
+          - user@example.com
+        notify:
+          success: true
+          failure: true
       google_play:
         credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
         track: internal

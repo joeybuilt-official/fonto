@@ -122,8 +122,8 @@ TaskCreate while in phased-plan flow.
 - [ ] OPERATOR GATE — Note Play-managed signing cert SHA-256 after first publish (needed for 6.5 assetlinks.json)
 - [x] DECISION C8 = **Option A** (path filter on mobile/** — operator confirmed 2026-05-28)
 - [x] codemagic.yaml — changeset path filter (trigger only on mobile/**)
-- [x] codemagic.yaml — add publishing.google_play stanza (internal track, draft → review)
-- [ ] Commit + push + first internal track release — BLOCKED on operator gates above (manual first AAB + service account)
+- [x] codemagic.yaml — google_play publish in a SEPARATE `android-publish` workflow, triggered by `release-v*` tags (keeps plain `v*` validation builds green); internal track, draft
+- [ ] Commit + push + first internal track release — BLOCKED on operator gates above (manual first AAB + service account + `google-play` Codemagic group). Once ready: `git tag release-v1.0.x && git push --tags`
 
 ## Phase 6.4 — FCM push notifications ⚠
 - [x] DECISION C10 = **Option A** (FCM real-time for comments+shares, daily digest for summaries — operator confirmed 2026-05-28)
