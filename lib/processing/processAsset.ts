@@ -400,10 +400,22 @@ async function processAssetInner(
           tagId = newTag.id;
         }
 
-        await db
-          .insert(schema.assetTags)
-          .values({ assetId, tagId })
-          .onConflictDoNothing();
+        // asset_tags has no unique (asset_id, tag_id) index, so
+        // onConflictDoNothing can't dedupe — guard explicitly so a
+        // re-process (e.g. label backfill) doesn't double-link a tag.
+        const existingLink = await db
+          .select({ assetId: schema.assetTags.assetId })
+          .from(schema.assetTags)
+          .where(
+            and(
+              eq(schema.assetTags.assetId, assetId),
+              eq(schema.assetTags.tagId, tagId)
+            )
+          )
+          .limit(1);
+        if (!existingLink[0]) {
+          await db.insert(schema.assetTags).values({ assetId, tagId });
+        }
       }
       // Phase 4.6 — stamp `auto_tagged_at` whenever a tag pass actually ran.
       // A future re-tagging cron can find never-tagged rows with

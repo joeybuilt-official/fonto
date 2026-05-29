@@ -68,6 +68,17 @@ async function loadPlacesCount(): Promise<number | null> {
   }
 }
 
+async function loadThingsCount(): Promise<number | null> {
+  try {
+    const r = await fetch("/api/v1/tags/top?limit=100");
+    if (!r.ok) return null;
+    const d = (await r.json()) as { tags?: unknown[] };
+    return Array.isArray(d.tags) ? d.tags.length : null;
+  } catch {
+    return null;
+  }
+}
+
 const TILES: TileDef[] = [
   {
     href: "/app/people",
@@ -88,10 +99,10 @@ const TILES: TileDef[] = [
   {
     href: "/app/explore/things",
     label: "Things",
-    subtitle: "Browse by what's in your photos — auto-classified.",
+    subtitle: "Browse by what's in your photos — auto-detected objects & scenes.",
     icon: Sparkles,
     accent: "bg-amber-500/10 text-amber-500",
-    placeholder: true,
+    countLoader: loadThingsCount,
   },
 ];
 

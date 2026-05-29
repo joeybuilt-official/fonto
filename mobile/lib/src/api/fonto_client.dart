@@ -310,6 +310,22 @@ class FontoClient {
     return raw.map(Person.fromJson).toList();
   }
 
+  /// Most-used labels/tags (Explore → Things), each with a count + sample
+  /// asset for a thumbnail. Ordered by count desc server-side.
+  Future<List<TopTag>> topTags({int limit = 48}) async {
+    final j = await _getJson("/api/v1/tags/top", {"limit": "$limit"});
+    final raw = (j["tags"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(TopTag.fromJson).toList();
+  }
+
+  /// Assets carrying a given tag (Things drill-in). Uses the search endpoint's
+  /// tag filter; returns up to the server's cap, no pagination.
+  Future<List<Asset>> assetsByTag(String tagId) async {
+    final j = await _getJson("/api/v1/search", {"tagId": tagId});
+    final raw = (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(Asset.fromJson).toList();
+  }
+
   /// Assets shared into the active workspace from other workspaces.
   /// Full list; the endpoint doesn't paginate.
   Future<List<SharedAsset>> sharedWithMe() async {

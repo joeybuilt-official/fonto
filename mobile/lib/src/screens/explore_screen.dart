@@ -39,7 +39,7 @@ class ExploreScreen extends StatelessWidget {
           children: [
             _PeopleTab(client: client),
             _PlacesTab(client: client),
-            const _ThingsTab(),
+            _ThingsTab(client: client),
           ],
         ),
       ),
@@ -339,33 +339,254 @@ class _PlaceThumb extends StatelessWidget {
 }
 
 // --------------------------------------------------------------------------
-// Things — placeholder matching the web "coming soon" tile.
+// Things — auto-detected object/scene labels (+ user tags) as a tile grid.
+// Tap a tile to drill into that label's assets.
 // --------------------------------------------------------------------------
 
-class _ThingsTab extends StatelessWidget {
-  const _ThingsTab();
+class _ThingsTab extends StatefulWidget {
+  const _ThingsTab({required this.client});
+  final FontoClient client;
+
+  @override
+  State<_ThingsTab> createState() => _ThingsTabState();
+}
+
+class _ThingsTabState extends State<_ThingsTab> {
+  bool _loading = true;
+  String? _error;
+  List<TopTag> _items = const [];
+  final Map<String, String> _thumbs = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _thumbs.clear();
+    });
+    try {
+      final items = await widget.client.topTags();
+      final sampleIds =
+          items.map((t) => t.sampleAssetId).whereType<String>().toList();
+      final thumbs = sampleIds.isEmpty
+          ? <String, String>{}
+          : await widget.client.assetUrls(sampleIds, variant: "thumb");
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _thumbs.addAll(thumbs);
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      _fail("${e.status}: ${e.message}");
+    } catch (e) {
+      _fail(e.toString());
+    }
+  }
+
+  void _fail(String msg) {
+    if (!mounted) return;
+    setState(() {
+      _error = msg;
+      _loading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return _stateScaffold(
+      loading: _loading,
+      error: _error,
+      isEmpty: _items.isEmpty,
+      emptyText:
+          "No labels yet. Objects and scenes show up here as your photos are processed.",
+      onRetry: _load,
+      builder: () => GridView.builder(
+        padding: const EdgeInsets.all(8),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+        ),
+        itemCount: _items.length,
+        itemBuilder: (context, i) => _ThingTile(
+          tag: _items[i],
+          url: _thumbs[_items[i].sampleAssetId],
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) =>
+                  _TagAssetsScreen(client: widget.client, tag: _items[i]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ThingTile extends StatelessWidget {
+  const _ThingTile({required this.tag, required this.url, required this.onTap});
+  final TopTag tag;
+  final String? url;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Icon(Icons.auto_awesome_outlined,
-                size: 48, color: theme.colorScheme.primary),
-            const SizedBox(height: 16),
-            Text("Things — coming soon", style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text(
-              "Browse by what's in your photos, auto-classified.",
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(color: theme.colorScheme.outline),
+            if (url != null)
+              CachedNetworkImage(
+                imageUrl: url!,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => Container(color: Colors.black12),
+                errorWidget: (_, __, ___) => Container(color: Colors.black12),
+              )
+            else
+              Container(color: Colors.black12, child: const Icon(Icons.label_outline)),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(8, 12, 8, 6),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.transparent, Colors.black87],
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      tag.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                    Text(
+                      "${tag.count}",
+                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Drill-in: assets carrying a single label/tag, in a 3-col grid → detail.
+class _TagAssetsScreen extends StatefulWidget {
+  const _TagAssetsScreen({required this.client, required this.tag});
+  final FontoClient client;
+  final TopTag tag;
+
+  @override
+  State<_TagAssetsScreen> createState() => _TagAssetsScreenState();
+}
+
+class _TagAssetsScreenState extends State<_TagAssetsScreen> {
+  bool _loading = true;
+  String? _error;
+  List<Asset> _assets = const [];
+  final Map<String, String> _thumbs = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final assets = await widget.client.assetsByTag(widget.tag.id);
+      final thumbs = assets.isEmpty
+          ? <String, String>{}
+          : await widget.client
+              .assetUrls(assets.map((a) => a.id).toList(), variant: "thumb");
+      if (!mounted) return;
+      setState(() {
+        _assets = assets;
+        _thumbs.addAll(thumbs);
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      _fail("${e.status}: ${e.message}");
+    } catch (e) {
+      _fail(e.toString());
+    }
+  }
+
+  void _fail(String msg) {
+    if (!mounted) return;
+    setState(() {
+      _error = msg;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.tag.name)),
+      body: _stateScaffold(
+        loading: _loading,
+        error: _error,
+        isEmpty: _assets.isEmpty,
+        emptyText: "No assets for this label.",
+        onRetry: _load,
+        builder: () => GridView.builder(
+          padding: const EdgeInsets.all(4),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 4,
+            mainAxisSpacing: 4,
+          ),
+          itemCount: _assets.length,
+          itemBuilder: (context, i) => GestureDetector(
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => AssetDetailScreen(
+                  client: widget.client,
+                  assets: _assets,
+                  initialIndex: i,
+                ),
+              ),
+            ),
+            child: _thumbs[_assets[i].id] == null
+                ? Container(color: Colors.black12)
+                : CachedNetworkImage(
+                    imageUrl: _thumbs[_assets[i].id]!,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(color: Colors.black12),
+                    errorWidget: (_, __, ___) =>
+                        const ColoredBox(color: Colors.black12, child: Icon(Icons.broken_image)),
+                  ),
+          ),
         ),
       ),
     );

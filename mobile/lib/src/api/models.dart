@@ -62,6 +62,32 @@ class Asset {
       );
 }
 
+/// A label/tag with its active-asset count and a sample asset for a
+/// thumbnail — backs the Explore → Things grid.
+class TopTag {
+  TopTag({
+    required this.id,
+    required this.name,
+    required this.color,
+    required this.count,
+    this.sampleAssetId,
+  });
+
+  final String id;
+  final String name;
+  final String color;
+  final int count;
+  final String? sampleAssetId;
+
+  static TopTag fromJson(Map<String, dynamic> j) => TopTag(
+        id: j["id"] as String,
+        name: j["name"] as String,
+        color: (j["color"] as String?) ?? "#6366f1",
+        count: (j["count"] as num?)?.toInt() ?? 0,
+        sampleAssetId: j["sampleAssetId"] as String?,
+      );
+}
+
 class AssetCursor {
   AssetCursor({required this.createdBefore, required this.idBefore});
   final String createdBefore;
