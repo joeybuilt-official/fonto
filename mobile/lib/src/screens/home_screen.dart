@@ -68,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Refresh the queue badge whenever a drain ends (progress → null) so the
     // count reflects what actually uploaded without waiting for an event.
     UploadQueue.progress.addListener(_onUploadProgress);
+    DriveDownloadQueue.pending.addListener(_onDrivePendingChange);
     _refresh();
     // Cold launch: push any existing backlog. The background WorkManager task
     // is heavily throttled by Android, and opening the app previously only
@@ -82,6 +83,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     UploadQueue.progress.removeListener(_onUploadProgress);
+    DriveDownloadQueue.pending.removeListener(_onDrivePendingChange);
     _processingPoll?.cancel();
     _scroll.dispose();
     _client.close();
@@ -92,6 +94,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (UploadQueue.progress.value == null) _refreshQueueBadge();
   }
 
+  /// Drive queue emptied — kick a drain so any freshly-uploaded assets land,
+  /// then let _kickDrain call _softRefresh when the upload drain finishes.
+  void _onDrivePendingChange() {
+    if (!mounted) return;
+    if (DriveDownloadQueue.pending.value == 0) _kickDrain();
+  }
+
   /// Refresh the badge and kick a foreground drain. drain() requeues rows a
   /// killed background drain stranded `in_flight`, so this also recovers a
   /// wedged queue. Cheap no-op when nothing is pending. Fire-and-forget.
@@ -100,7 +109,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     UploadQueue.drain().then((n) {
       if (!mounted) return;
       _refreshQueueBadge();
-      if (n > 0) _refresh();
+      if (n > 0) _softRefresh();
     });
   }
 
@@ -128,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (s.processing == 0 && UploadQueue.progress.value == null) {
           t.cancel();
           _processingPoll = null;
-          _refresh();
+          _softRefresh();
         }
       } catch (_) {
         // Transient; keep polling.
@@ -144,6 +153,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     if (_loadingMore || _cursor == null) return;
     _loadMore();
+  }
+
+  /// Silently merge new assets into the grid without clearing it.
+  /// Fetches the first page and prepends any IDs not already in _assets.
+  /// Never shows the loading spinner — grid stays fully interactive.
+  Future<void> _softRefresh() async {
+    if (_loadingFirst) return;
+    try {
+      final stats = await _client.stats();
+      final page = await _client.listAssets(
+        limit: _kPageSize,
+        directoryPathPrefix: _folder,
+      );
+      if (!mounted) return;
+      final existingIds = {for (final a in _assets) a.id};
+      final toAdd = page.assets.where((a) => !existingIds.contains(a.id)).toList();
+      if (toAdd.isEmpty && stats.total == (_stats?.total ?? -1)) return;
+      final newThumbs = toAdd.isEmpty
+          ? <String, String>{}
+          : await _client.assetUrls(
+              toAdd.map((a) => a.id).toList(),
+              variant: "thumb",
+            );
+      if (!mounted) return;
+      setState(() {
+        _stats = stats;
+        if (toAdd.isNotEmpty) {
+          _assets.insertAll(0, toAdd);
+          _thumbs.addAll(newThumbs);
+        }
+      });
+      if (stats.processing > 0) _ensureProcessingPoll();
+    } catch (_) {
+      // Non-fatal — leave the visible grid as-is.
+    }
   }
 
   Future<void> _refresh() async {
@@ -299,7 +343,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final ok = await UploadQueue.drain();
       if (!mounted) return;
       await _refreshQueueBadge();
-      if (ok > 0) await _refresh();
+      if (ok > 0) await _softRefresh();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -373,7 +417,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final ok = await UploadQueue.drain();
       if (!mounted) return;
       await _refreshQueueBadge();
-      if (ok > 0) await _refresh();
+      if (ok > 0) await _softRefresh();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -478,7 +522,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           UploadQueue.drain().then((ok) {
                             if (!mounted) return;
                             _refreshQueueBadge();
-                            if (ok > 0) _refresh();
+                            if (ok > 0) _softRefresh();
                           });
                         },
                         icon: const Icon(Icons.refresh),
@@ -505,7 +549,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       UploadQueue.drain().then((n) {
         if (!mounted) return;
         _refreshQueueBadge();
-        if (n > 0) _refresh();
+        if (n > 0) _softRefresh();
       });
     }
   }
@@ -1038,32 +1082,39 @@ class _ProgressBanners extends StatelessWidget {
 
             if (dlPending > 0) {
               rows.add(
-                Container(
-                  width: double.infinity,
-                  color: scheme.tertiaryContainer,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 8),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: scheme.onTertiaryContainer,
-                        ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: DriveDownloadQueue.importingAll,
+                  builder: (context, importingAll, _) {
+                    return Container(
+                      width: double.infinity,
+                      color: scheme.tertiaryContainer,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: scheme.onTertiaryContainer,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            importingAll
+                                ? "Importing all Drive files…"
+                                : "Downloading $dlPending Drive "
+                                  "${dlPending == 1 ? 'file' : 'files'}…",
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onTertiaryContainer,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      Text(
-                        "Downloading $dlPending Drive "
-                        "${dlPending == 1 ? 'file' : 'files'}…",
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: scheme.onTertiaryContainer,
-                        ),
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               );
             }

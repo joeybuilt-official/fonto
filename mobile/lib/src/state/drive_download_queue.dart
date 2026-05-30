@@ -51,6 +51,15 @@ class DriveDownloadQueue {
   /// HomeScreen listens to show/hide the download progress banner.
   static final ValueNotifier<int> pending = ValueNotifier(0);
 
+  /// True while _downloadAllPagesFromDrive is paginating (import-all flow).
+  /// Lets the banner say "Importing all…" instead of showing a batch count.
+  static final ValueNotifier<bool> importingAll = ValueNotifier(false);
+
+  /// Running total of files enqueued in the current import session (never
+  /// decrements). Reset to 0 at the start of each new import so the banner
+  /// shows an accurate per-run count rather than a cumulative lifetime total.
+  static final ValueNotifier<int> totalEnqueued = ValueNotifier(0);
+
   static Future<DriveDownloadQueue> open() async {
     if (_instance != null) return _instance!;
     final docs = await getApplicationDocumentsDirectory();
@@ -104,6 +113,7 @@ class DriveDownloadQueue {
       );
     }
     await batch.commit(noResult: true);
+    totalEnqueued.value += items.length;
     await _refreshPending();
   }
 

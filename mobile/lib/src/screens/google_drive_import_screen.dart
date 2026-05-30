@@ -40,6 +40,7 @@ Future<void> _downloadAndEnqueueAll(
   String virtualPath,
   Map<String, String> headers,
 ) async {
+  DriveDownloadQueue.totalEnqueued.value = 0;
   // 1. Persist to the durable queue before downloading anything.
   final driveQ = await DriveDownloadQueue.open();
   await driveQ.enqueue(
@@ -71,6 +72,8 @@ Future<void> _downloadAllPagesFromDrive(
   Map<String, String> headers,
   String virtualPath,
 ) async {
+  DriveDownloadQueue.totalEnqueued.value = 0;
+  DriveDownloadQueue.importingAll.value = true;
   UploadQueue.beginFeeding();
   try {
     String? pageToken;
@@ -127,6 +130,7 @@ Future<void> _downloadAllPagesFromDrive(
     } while (downloaded > 0);
   } finally {
     UploadQueue.endFeeding();
+    DriveDownloadQueue.importingAll.value = false;
   }
   unawaited(UploadQueue.drain());
 }
