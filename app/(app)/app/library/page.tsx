@@ -23,7 +23,7 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
-import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon } from "lucide-react";
+import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download } from "lucide-react";
 import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
@@ -207,6 +207,73 @@ function LibraryContent() {
     [assets, toolbar]
   );
 
+  // Bulk-action bar (shown when ≥1 tile selected): add-to-collection,
+  // download, move-to-trash. `refreshKey` bumps remount the timeline after a
+  // mutation so trashed tiles disappear (the per-month cache can't self-evict).
+  const [collections, setCollections] = useState<{ id: string; name: string }[]>([]);
+  const [showCollectionModal, setShowCollectionModal] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  useEffect(() => {
+    fetch("/api/v1/collections")
+      .then((r) => r.json() as Promise<{ collections?: { id: string; name: string }[] }>)
+      .then((d) => setCollections(d.collections ?? []))
+      .catch(() => undefined);
+  }, []);
+
+  const handleBatchAddToCollection = useCallback(
+    async (collectionId: string) => {
+      await Promise.all(
+        Array.from(toolbar.selectedIds).map((assetId) =>
+          fetch(`/api/v1/collections/${collectionId}/assets`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ assetId }),
+          })
+        )
+      );
+      setShowCollectionModal(false);
+      toolbar.clearSelection();
+      toolbar.setSelectMode(false);
+    },
+    [toolbar]
+  );
+
+  const handleBatchDownload = useCallback(async () => {
+    const ids = Array.from(toolbar.selectedIds);
+    const r = await fetch("/api/v1/assets/urls", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, variant: "original" }),
+    });
+    const d = (await r.json()) as { urls?: Record<string, string> };
+    for (const id of ids) {
+      const url = d.urls?.[id];
+      if (!url) continue;
+      const asset = assets.find((a) => a.id === id);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = asset?.filename ?? id;
+      a.click();
+      await new Promise((res) => setTimeout(res, 200));
+    }
+  }, [assets, toolbar.selectedIds]);
+
+  const handleBatchTrash = useCallback(async () => {
+    const ids = Array.from(toolbar.selectedIds);
+    await Promise.all(
+      ids.map((assetId) =>
+        fetch(`/api/v1/assets/${assetId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ trash: true }),
+        })
+      )
+    );
+    toolbar.clearSelection();
+    toolbar.setSelectMode(false);
+    setRefreshKey((k) => k + 1);
+  }, [toolbar]);
+
   // Lightbox is URL-based so back button restores chip state.
   // Opening pushes ?lb=<id>; closing calls router.back().
   const lbId = searchParams.get("lb");
@@ -233,7 +300,7 @@ function LibraryContent() {
     return () => {
       cancelled = true;
     };
-  }, [timelineMode, baseParams]);
+  }, [timelineMode, baseParams, refreshKey]);
 
   // Flat-grid fallback fetch — only runs when search / date-range force the
   // non-timeline surface. Loads the whole filtered set + filters client-side.
@@ -315,6 +382,7 @@ function LibraryContent() {
     toolbar.filters.to,
     toolbar.filters.sort,
     toolbar.filters.q,
+    refreshKey,
   ]);
 
   const openLightbox = useCallback((id: string, _index: number) => {
@@ -415,7 +483,7 @@ function LibraryContent() {
         ) : (
           <div className="px-4">
             <VirtualizedTimeline
-              key={toolbar.filters.sort}
+              key={`${toolbar.filters.sort}-${refreshKey}`}
               buckets={orderedBuckets}
               fetchMonth={fetchMonth}
               onAssetClick={(a) => openLightbox(a.id, 0)}
@@ -461,6 +529,122 @@ function LibraryContent() {
           hasNext={false}
         />
       ) : null}
+
+      <BatchActionBar
+        count={toolbar.selectedIds.size}
+        onAddToCollection={() => setShowCollectionModal(true)}
+        onDownload={handleBatchDownload}
+        onTrash={handleBatchTrash}
+        onClear={() => {
+          toolbar.clearSelection();
+          toolbar.setSelectMode(false);
+        }}
+      />
+      {showCollectionModal && (
+        <AddToCollectionModal
+          collections={collections}
+          onSelect={handleBatchAddToCollection}
+          onClose={() => setShowCollectionModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function BatchActionBar({
+  count,
+  onAddToCollection,
+  onDownload,
+  onTrash,
+  onClear,
+}: {
+  count: number;
+  onAddToCollection: () => void;
+  onDownload: () => void;
+  onTrash: () => void;
+  onClear: () => void;
+}) {
+  if (count === 0) return null;
+  return (
+    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-xl border border-border bg-card/95 px-4 py-2.5 shadow-xl backdrop-blur">
+      <span className="mr-2 text-sm font-medium text-foreground">
+        {count} selected
+      </span>
+      <button
+        onClick={onAddToCollection}
+        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+      >
+        <FolderPlus className="h-3.5 w-3.5" />
+        Add to collection
+      </button>
+      <button
+        onClick={onDownload}
+        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/80"
+      >
+        <Download className="h-3.5 w-3.5" />
+        Download
+      </button>
+      <button
+        onClick={onTrash}
+        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        Move to trash
+      </button>
+      <button
+        onClick={onClear}
+        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        title="Clear selection"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function AddToCollectionModal({
+  collections,
+  onSelect,
+  onClose,
+}: {
+  collections: { id: string; name: string }[];
+  onSelect: (collectionId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-80 rounded-xl border border-border bg-card shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <p className="text-sm font-semibold text-foreground">Add to Collection</p>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {collections.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+            No collections yet.
+          </p>
+        ) : (
+          <div className="max-h-64 overflow-y-auto py-1">
+            {collections.map((col) => (
+              <button
+                key={col.id}
+                onClick={() => onSelect(col.id)}
+                className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-foreground transition-colors hover:bg-muted"
+              >
+                <FolderPlus className="h-4 w-4 text-muted-foreground" />
+                {col.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
