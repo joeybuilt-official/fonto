@@ -17,6 +17,7 @@ import "package:image_picker/image_picker.dart";
 import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "../state/auth_store.dart";
+import "../state/drive_download_queue.dart";
 import "../state/upload_queue.dart";
 import "asset_detail_screen.dart";
 import "settings_screen.dart";
@@ -626,6 +627,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _ProgressBanners(
             progress: UploadQueue.progress,
             processing: _stats?.processing ?? 0,
+            downloadPending: DriveDownloadQueue.pending,
           ),
           Expanded(child: _buildBody()),
         ],
@@ -1004,88 +1006,134 @@ class _TimelineScrubberState extends State<_TimelineScrubber> {
   }
 }
 
-/// Thin status strip above the grid: a live upload bar while the queue
-/// drains, and a "Processing N" line while the server finishes ingest.
+/// Thin status strip above the grid: download bar, upload bar, server-processing line.
 class _ProgressBanners extends StatelessWidget {
-  const _ProgressBanners({required this.progress, required this.processing});
+  const _ProgressBanners({
+    required this.progress,
+    required this.processing,
+    required this.downloadPending,
+  });
 
   final ValueListenable<UploadProgress?> progress;
   final int processing;
+  final ValueListenable<int> downloadPending;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return ValueListenableBuilder<UploadProgress?>(
-      valueListenable: progress,
-      builder: (context, up, _) {
-        final rows = <Widget>[];
-        if (up != null && up.total > 0) {
-          rows.add(
-            Container(
-              width: double.infinity,
-              color: scheme.primaryContainer,
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+    return ValueListenableBuilder<int>(
+      valueListenable: downloadPending,
+      builder: (context, dlPending, _) {
+        return ValueListenableBuilder<UploadProgress?>(
+          valueListenable: progress,
+          builder: (context, up, _) {
+            final rows = <Widget>[];
+
+            if (dlPending > 0) {
+              rows.add(
+                Container(
+                  width: double.infinity,
+                  color: scheme.tertiaryContainer,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
+                  child: Row(
                     children: [
-                      Icon(Icons.cloud_upload_outlined,
-                          size: 16, color: scheme.onPrimaryContainer),
-                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: scheme.onTertiaryContainer,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
                       Text(
-                        "Uploading ${up.done.clamp(0, up.total)} of ${up.total}",
+                        "Downloading $dlPending Drive "
+                        "${dlPending == 1 ? 'file' : 'files'}…",
                         style: TextStyle(
                           fontSize: 12,
-                          color: scheme.onPrimaryContainer,
+                          color: scheme.onTertiaryContainer,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(3),
-                    child: LinearProgressIndicator(
-                      value: up.total == 0 ? null : up.done / up.total,
-                      minHeight: 4,
-                    ),
+                ),
+              );
+            }
+
+            if (up != null && up.total > 0) {
+              rows.add(
+                Container(
+                  width: double.infinity,
+                  color: scheme.primaryContainer,
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.cloud_upload_outlined,
+                              size: 16, color: scheme.onPrimaryContainer),
+                          const SizedBox(width: 8),
+                          Text(
+                            "Uploading ${up.done.clamp(0, up.total)} of ${up.total}",
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onPrimaryContainer,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: LinearProgressIndicator(
+                          value: up.total == 0 ? null : up.done / up.total,
+                          minHeight: 4,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-          );
-        }
-        if (processing > 0) {
-          rows.add(
-            Container(
-              width: double.infinity,
-              color: scheme.secondaryContainer,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: scheme.onSecondaryContainer,
-                    ),
+                ),
+              );
+            }
+
+            if (processing > 0) {
+              rows.add(
+                Container(
+                  width: double.infinity,
+                  color: scheme.secondaryContainer,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: scheme.onSecondaryContainer,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        "Processing $processing "
+                        "${processing == 1 ? 'item' : 'items'}…",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSecondaryContainer,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 10),
-                  Text(
-                    "Processing $processing ${processing == 1 ? "item" : "items"}…",
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSecondaryContainer,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
-        if (rows.isEmpty) return const SizedBox.shrink();
-        return Column(mainAxisSize: MainAxisSize.min, children: rows);
+                ),
+              );
+            }
+
+            if (rows.isEmpty) return const SizedBox.shrink();
+            return Column(mainAxisSize: MainAxisSize.min, children: rows);
+          },
+        );
       },
     );
   }

@@ -15,13 +15,14 @@
 
 import "dart:async";
 import "dart:convert";
-import "dart:io";
 
 import "package:flutter/material.dart";
 import "package:google_sign_in/google_sign_in.dart";
 import "package:http/http.dart" as http;
 import "package:path_provider/path_provider.dart";
+import "package:workmanager/workmanager.dart";
 
+import "../state/drive_download_queue.dart";
 import "../state/upload_queue.dart";
 
 const _kDriveApiBase = "https://www.googleapis.com/drive/v3";
@@ -31,65 +32,45 @@ const _kDriveScope = "https://www.googleapis.com/auth/drive.readonly";
 final _driveSignIn = GoogleSignIn(scopes: [_kDriveScope]);
 
 // Top-level so it runs independently of any widget lifecycle — the user can
-// navigate away and downloads + uploads continue. After each enqueue, drain()
-// is kicked (no-op if already running) so uploads pipeline alongside downloads
-// rather than waiting for all files to land before any upload starts.
+// navigate away and downloads + uploads continue in the foreground.
+// Items are persisted to DriveDownloadQueue first, so a WorkManager task
+// can resume anything not completed if the process is killed.
 Future<void> _downloadAndEnqueueAll(
   List<_DriveItem> items,
   String virtualPath,
   Map<String, String> headers,
-  Directory tmpDir,
 ) async {
-  // Mark "still feeding" so the single live drain holds open (and the upload
-  // bar stays put) across the slow gaps between downloads instead of exiting
-  // and re-spawning per file — that cycle is what flickered "0 of 1".
+  // 1. Persist to the durable queue before downloading anything.
+  final driveQ = await DriveDownloadQueue.open();
+  await driveQ.enqueue(
+    items
+        .map((i) => (id: i.id, name: i.name, mimeType: i.mimeType))
+        .toList(),
+    virtualPath,
+  );
+
+  // 2. Process in the foreground; hold the upload drain open the whole time.
   UploadQueue.beginFeeding();
   try {
-    for (final item in items) {
-      try {
-        final uri = Uri.parse("$_kDriveApiBase/files/${item.id}")
-            .replace(queryParameters: {"alt": "media"});
-        final req = http.Request("GET", uri)..headers.addAll(headers);
-        final streamed = await http.Client().send(req);
-        if (streamed.statusCode != 200) continue;
-        final fname = item.name.isNotEmpty ? item.name : "${item.id}.bin";
-        final tmp = File("${tmpDir.path}/drive_${item.id}_$fname");
-        final sink = tmp.openWrite();
-        await streamed.stream.pipe(sink);
-        // hashFile reads the file in small chunks so SHA256 never
-        // blocks the isolate long enough to trigger an ANR.
-        final sha = await UploadQueue.hashFile(tmp);
-        final q = await UploadQueue.open();
-        await q.enqueue(
-          filePath: tmp.path,
-          virtualPath: virtualPath,
-          sha256Hex: sha,
-        );
-        // Kick drain after each enqueue: no-op if already running.
-        unawaited(UploadQueue.drain());
-      } catch (_) {
-        // Skip this file; continue with the rest.
-      }
-    }
+    int downloaded;
+    do {
+      downloaded = await DriveDownloadQueue.processAll(
+        headers,
+        await getTemporaryDirectory(),
+      );
+    } while (downloaded > 0);
   } finally {
     UploadQueue.endFeeding();
+    unawaited(UploadQueue.drain());
   }
-  // Fire-and-forget (never await): when feeders hit 0 the live drain finishes
-  // the tail. Awaiting here would deadlock the import-all page loop, which
-  // calls this per page while its own feeder ref is still held.
-  unawaited(UploadQueue.drain());
 }
 
-// Paginates through ALL Drive files and feeds each page into
-// _downloadAndEnqueueAll. Used by "Import all" so the UI list never needs to
-// be fully loaded into memory.
+// Paginates through ALL Drive files, persisting each page to DriveDownloadQueue
+// and processing in the foreground. Used by "Import all."
 Future<void> _downloadAllPagesFromDrive(
   Map<String, String> headers,
   String virtualPath,
-  Directory tmpDir,
 ) async {
-  // Hold a feeder ref across the whole paginated import so the drain (and the
-  // upload bar) stay alive between pages too.
   UploadQueue.beginFeeding();
   try {
     String? pageToken;
@@ -113,12 +94,37 @@ Future<void> _downloadAllPagesFromDrive(
             .cast<Map<String, dynamic>>()
             .map(_DriveItem.fromJson)
             .toList();
-        await _downloadAndEnqueueAll(items, virtualPath, headers, tmpDir);
+
+        // Persist this page before processing so WorkManager can resume
+        // anything not finished if the process is killed mid-import.
+        final driveQ = await DriveDownloadQueue.open();
+        await driveQ.enqueue(
+          items
+              .map((i) => (id: i.id, name: i.name, mimeType: i.mimeType))
+              .toList(),
+          virtualPath,
+        );
+
+        // Process what's now in the queue (foreground fast path).
+        await DriveDownloadQueue.processAll(
+          headers,
+          await getTemporaryDirectory(),
+        );
+
         pageToken = j["nextPageToken"] as String?;
       } catch (_) {
         break;
       }
     } while (pageToken != null);
+
+    // Drain any leftover items from multi-batch queues.
+    int downloaded;
+    do {
+      downloaded = await DriveDownloadQueue.processAll(
+        headers,
+        await getTemporaryDirectory(),
+      );
+    } while (downloaded > 0);
   } finally {
     UploadQueue.endFeeding();
   }
@@ -315,15 +321,21 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     setState(() => _importing = true);
     try {
       final headers = await _authHeaders();
-      final tmpDir = await getTemporaryDirectory();
-      unawaited(_downloadAllPagesFromDrive(headers, widget.virtualPath, tmpDir));
+      // Schedule WorkManager as the background fallback before we start —
+      // if the process is killed mid-pagination the task resumes from the queue.
+      unawaited(Workmanager().registerOneOffTask(
+        kDriveDownloadTask, kDriveDownloadTask,
+        existingWorkPolicy: ExistingWorkPolicy.keep,
+        constraints: Constraints(networkType: NetworkType.connected),
+      ));
+      unawaited(_downloadAllPagesFromDrive(headers, widget.virtualPath));
     } finally {
       if (mounted) setState(() => _importing = false);
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text("Importing all Drive files in the background."),
+        content: Text("Importing all Drive files — continues even if you leave."),
       ),
     );
     Navigator.of(context).pop(true);
@@ -338,11 +350,16 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
 
     try {
       final headers = await _authHeaders();
-      final tmpDir = await getTemporaryDirectory();
-
-      // Hand off to a top-level function so work continues even if the user
-      // navigates away and this widget is disposed mid-download.
-      unawaited(_downloadAndEnqueueAll(items, virtualPath, headers, tmpDir));
+      // Schedule WorkManager as the background fallback before downloading —
+      // surviving process death requires both the persistent queue and the task.
+      unawaited(Workmanager().registerOneOffTask(
+        kDriveDownloadTask, kDriveDownloadTask,
+        existingWorkPolicy: ExistingWorkPolicy.keep,
+        constraints: Constraints(networkType: NetworkType.connected),
+      ));
+      // Hand off to a top-level function so downloads continue even if the
+      // user navigates away and this widget is disposed mid-download.
+      unawaited(_downloadAndEnqueueAll(items, virtualPath, headers));
     } finally {
       if (mounted) setState(() => _importing = false);
     }
@@ -352,7 +369,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          "Downloading $n file${n == 1 ? '' : 's'} — uploading in the background.",
+          "Downloading $n file${n == 1 ? '' : 's'} — continues even if you leave.",
         ),
       ),
     );

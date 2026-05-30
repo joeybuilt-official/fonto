@@ -16,6 +16,7 @@ import "package:app_links/app_links.dart";
 import "package:firebase_core/firebase_core.dart";
 import "package:firebase_messaging/firebase_messaging.dart";
 import "package:flutter/material.dart";
+import "package:flutter_local_notifications/flutter_local_notifications.dart";
 import "package:url_launcher/url_launcher.dart";
 import "package:workmanager/workmanager.dart";
 
@@ -25,6 +26,7 @@ import "src/screens/asset_detail_screen.dart";
 import "src/screens/login_screen.dart";
 import "src/screens/main_shell.dart";
 import "src/state/auth_store.dart";
+import "src/state/drive_download_queue.dart";
 import "src/state/push_notifications.dart";
 import "src/state/upload_queue.dart";
 import "src/state/workmanager_dispatcher.dart";
@@ -35,11 +37,39 @@ import "src/state/workmanager_dispatcher.dart";
 @pragma("vm:entry-point")
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {}
 
+Future<void> _initLocalNotifications() async {
+  final plugin = FlutterLocalNotificationsPlugin();
+  await plugin.initialize(
+    const InitializationSettings(
+      android: AndroidInitializationSettings("@mipmap/ic_launcher"),
+      iOS: DarwinInitializationSettings(),
+    ),
+  );
+  // Pre-create the Drive import channel so its low-importance setting is
+  // applied before the first notification fires (Android ignores importance
+  // changes after a channel is created by a notification).
+  await plugin
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          "fonto_drive_import",
+          "Drive Import",
+          description: "Background Google Drive import progress",
+          importance: Importance.low,
+          playSound: false,
+          enableVibration: false,
+        ),
+      );
+}
+
 final _navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await UploadQueue.open();
+  await DriveDownloadQueue.open();
+  await _initLocalNotifications();
   await Workmanager().initialize(callbackDispatcher);
   // Firebase init is best-effort: a platform without a config file (e.g. an
   // iOS build before GoogleService-Info.plist lands) must not brick startup.

@@ -11,14 +11,21 @@
 // initialize Flutter bindings, drain the queue, return.
 
 import "package:flutter/widgets.dart";
+import "package:flutter_local_notifications/flutter_local_notifications.dart";
 import "package:workmanager/workmanager.dart";
 
 import "camera_roll_scanner.dart";
+import "drive_download_queue.dart";
 import "settings_store.dart";
 import "upload_queue.dart";
 
+export "drive_download_queue.dart" show kDriveDownloadTask;
+
 const kUploadDrainTask = "fonto.uploadDrain";
 const kCameraRollScanTask = "fonto.cameraRollScan";
+
+const _kNotifId = 43;
+const _kNotifChannelId = "fonto_drive_import";
 
 @pragma("vm:entry-point")
 void callbackDispatcher() {
@@ -34,6 +41,37 @@ void callbackDispatcher() {
         if (enabled) {
           await CameraRollScanner.scanAndEnqueue();
           await UploadQueue.drain();
+        }
+        return true;
+      }
+      if (task == kDriveDownloadTask) {
+        final notif = FlutterLocalNotificationsPlugin();
+        await notif.initialize(
+          const InitializationSettings(
+            android: AndroidInitializationSettings("@mipmap/ic_launcher"),
+          ),
+        );
+        await notif.show(
+          _kNotifId,
+          "Fonto",
+          "Downloading Drive files in the background…",
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              _kNotifChannelId,
+              "Drive Import",
+              channelDescription: "Background Google Drive import progress",
+              importance: Importance.low,
+              priority: Priority.low,
+              ongoing: true,
+              playSound: false,
+              enableVibration: false,
+            ),
+          ),
+        );
+        try {
+          await DriveDownloadQueue.processFromBackground();
+        } finally {
+          await notif.cancel(_kNotifId);
         }
         return true;
       }
