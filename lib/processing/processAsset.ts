@@ -113,6 +113,10 @@ async function processAssetInner(
   let clipSuggestedTags: string[] = [];
   let description: string | null = null;
   let plexoWorkspaceId: string | null = null;
+  // Vision labels are now collected pre-describe for image grounding; this
+  // carries them forward so the later tag-suggestion path doesn't make a
+  // second labelImageUrl round-trip for the same asset.
+  let visionLabelsCarried: string[] = [];
   // Phase 6.x — document text (PDF text layer / OCR / plain text), extracted
   // in the non-image branch below and persisted as ocr_text further down.
   let docText: string | null = null;
@@ -158,7 +162,61 @@ async function processAssetInner(
         subClassification = null;
       }
 
-      description = await plexoDescribeImage(plexoWorkspaceId, filename, mimeType);
+      // Image-grounded signals BEFORE description so the caption can quote
+      // real OCR text and reference the objects/scene the vision model saw.
+      // The old pipeline asked the LLM to invent a caption from the filename
+      // alone — that is exactly why auto-labels read as generic filler.
+      let preDescribeLabels: string[] = [];
+      let preDescribeOcrText: string | null = null;
+      if (visionConfigured()) {
+        try {
+          const [imgRow] = await db
+            .select({ workspaceId: schema.assets.workspaceId })
+            .from(schema.assets)
+            .where(eq(schema.assets.id, assetId))
+            .limit(1);
+          if (imgRow) {
+            const signedUrl = await getSignedUrl(
+              getS3Client(),
+              new GetObjectCommand({
+                Bucket: process.env.R2_BUCKET!,
+                Key: assetStorageKey(imgRow.workspaceId, assetId, filename),
+              }),
+              { expiresIn: 300 }
+            );
+            preDescribeLabels = (await labelImageUrl(signedUrl)).labels;
+          }
+        } catch (err) {
+          console.warn("[fonto] pre-describe labels failed for", assetId, err);
+        }
+      }
+      // OCR runs before describe too — receipt totals, sign text, slide
+      // headings, etc. become grounded inputs to the caption prompt instead
+      // of being persisted after the caption is already wrong.
+      await runOcrForAsset(assetId, plexoWorkspaceId).catch((err) => {
+        console.warn("[fonto] OCR (pre-describe) failed for asset", assetId, err);
+      });
+      const [ocrRow] = await db
+        .select({ ocrText: schema.assets.ocrText })
+        .from(schema.assets)
+        .where(eq(schema.assets.id, assetId))
+        .limit(1);
+      preDescribeOcrText = ocrRow?.ocrText ?? null;
+
+      description = await plexoDescribeImage(
+        plexoWorkspaceId,
+        filename,
+        mimeType,
+        {
+          classification,
+          labels: preDescribeLabels,
+          ocrText: preDescribeOcrText,
+        }
+      );
+
+      // Stash for the tag-suggestion path below so we don't re-call the
+      // vision label endpoint a second time.
+      visionLabelsCarried = preDescribeLabels;
     } else if (mimeType.startsWith("video/")) {
       // Phase 8a — video classification is deterministic by mime, no
       // round-trip to Plexo. (A future revision could ask Plexo to
@@ -243,14 +301,11 @@ async function processAssetInner(
     .set({ processingState: "ready" })
     .where(eq(schema.assets.id, assetId));
 
-  // ── Text layer / OCR. Images hit the vision OCR path; documents persist
-  // the text extracted above; anything else is marked skipped. All failures
-  // are non-fatal — recorded via ocrState.
-  if (plexoWorkspaceId && mimeType.startsWith("image/")) {
-    await runOcrForAsset(assetId, plexoWorkspaceId).catch((err) => {
-      console.warn("[fonto] OCR failed for asset", assetId, err);
-    });
-  } else if (docOcrState !== null) {
+  // ── Text layer / OCR. Image OCR already ran above (pre-describe) so the
+  // caption could quote the visible text; here we only handle the document
+  // and non-image branches. All failures are non-fatal — recorded via
+  // ocrState.
+  if (docOcrState !== null) {
     await db
       .update(schema.assets)
       .set({ ocrText: docText, ocrState: docOcrState })
@@ -340,24 +395,10 @@ async function processAssetInner(
       .where(eq(schema.assets.id, assetId))
       .limit(1);
 
-    // Phase 4.x — object/scene "things" labels for images, from the vision
-    // sidecar's VLM. Folded into the same AI-tag path as CLIP/LLM tags.
-    let visionLabels: string[] = [];
-    if (asset && mimeType.startsWith("image/") && visionConfigured()) {
-      try {
-        const signedUrl = await getSignedUrl(
-          getS3Client(),
-          new GetObjectCommand({
-            Bucket: process.env.R2_BUCKET!,
-            Key: assetStorageKey(asset.workspaceId, assetId, filename),
-          }),
-          { expiresIn: 300 }
-        );
-        visionLabels = (await labelImageUrl(signedUrl)).labels;
-      } catch (err) {
-        console.warn("[fonto] vision labels failed for", assetId, err);
-      }
-    }
+    // Vision labels were collected pre-describe so the caption could
+    // ground in them; reuse the same list here for tag suggestion instead
+    // of paying for a second labelImageUrl round-trip per asset.
+    const visionLabels = visionLabelsCarried;
 
     // Phase 4.6 — fold in zero-shot CLIP tag suggestions when CLIP was the
     // chosen classifier. Dedupe case-insensitively but preserve the CLIP

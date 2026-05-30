@@ -220,22 +220,66 @@ export async function plexoSuggestTags(
   }
 }
 
+/** Image-grounded signals threaded into `plexoDescribeImage`. Each field is
+ *  collected from the actual image (vision-VLM labels, PaddleOCR text, the
+ *  classifier's top-level bucket) before the description prompt runs. The
+ *  legacy zero-argument call site sees an empty object and falls back to
+ *  filename-only — same behaviour as the old "describe by filename" prompt. */
+export interface DescribeImageContext {
+  classification?: string
+  labels?: string[]
+  ocrText?: string | null
+}
+
 export async function plexoDescribeImage(
   workspaceId: string,
   filename: string,
   mimeType: string,
+  ctx: DescribeImageContext = {},
 ): Promise<string> {
+  const { classification, labels = [], ocrText } = ctx
+  // Trim each grounding signal so the prompt fits in 120 token budget.
+  const labelHint = labels.length
+    ? `\nObjects/scene the vision model saw in this image: ${labels.slice(0, 12).join(", ")}.`
+    : ""
+  const ocrSnippet = ocrText?.trim().slice(0, 500) ?? ""
+  const textHint = ocrSnippet
+    ? `\nText visible in the image (verbatim from OCR):\n"""${ocrSnippet}"""`
+    : ""
+  const catHint = classification ? `\nCategory: ${classification}.` : ""
+
+  // Strong prompt + grounded inputs. The old "describe an image named X"
+  // prompt was filename-only and the model literally invented content — that
+  // is the root cause of the AI labels being unusably generic. With labels +
+  // OCR, the model has real signals to anchor to and the rules forbid the
+  // filler phrases ("captures", "depicts a scene", "a photo of") it would
+  // otherwise default to.
+  const prompt = `Write a specific 1-2 sentence caption for an image in a personal photo library. Use the grounding signals below — they are derived from the actual image. Do not invent details that aren't supported by the signals.
+
+Filename: ${filename}
+MIME type: ${mimeType}${catHint}${labelHint}${textHint}
+
+Rules:
+- Name the subject concretely (people, objects, scene). Never write "a photo of an image" or similar.
+- Include setting, time of day, mood, or a notable detail when the signals support it.
+- If short text is visible (receipt total, sign, headline, document title), quote it verbatim.
+- Avoid filler verbs like "captures", "showcases", "depicts a scene".
+- Maximum 40 words. No leading "Caption:" or quotes.
+
+Caption:`
+
   const text = await plexoAiComplete(
     workspaceId,
-    [
-      {
-        role: "user",
-        content: `Write a brief 1-sentence description for an image file named "${filename}" (type: ${mimeType}). Keep it under 20 words.`,
-      },
-    ],
-    64,
+    [{ role: "user", content: prompt }],
+    120,
   )
-  return text.trim()
+  // The model sometimes leaks a leading "Caption:" or wraps the answer in
+  // quotes despite the prompt — strip both.
+  return text
+    .trim()
+    .replace(/^caption[:\-—]\s*/i, "")
+    .replace(/^["“'](.*)["”']$/s, "$1")
+    .trim()
 }
 
 // Summarises a document into a one-line description. When `content` is
