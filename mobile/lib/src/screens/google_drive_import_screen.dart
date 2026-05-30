@@ -366,22 +366,21 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
                 icon: Icon(
                   _selected.isNotEmpty ? Icons.deselect : Icons.select_all,
                 ),
-                onPressed: () => _toggleSelectAll(),
+                onPressed: _toggleSelectAll,
               ),
           ],
           if (_user != null)
             PopupMenuButton<String>(
-              onSelected: (v) {
-                if (v == "import_all") _importAll();
+              onSelected: (v) async {
+                if (v == "import_all") await _importAll();
                 if (v == "sign_out") {
-                  _driveSignIn.signOut().then((_) {
-                    if (!mounted) return;
-                    setState(() {
-                      _user = null;
-                      _items.clear();
-                      _selected.clear();
-                      _nextPage = null;
-                    });
+                  await _driveSignIn.signOut();
+                  if (!mounted) return;
+                  setState(() {
+                    _user = null;
+                    _items.clear();
+                    _selected.clear();
+                    _nextPage = null;
                   });
                 }
               },
