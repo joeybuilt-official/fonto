@@ -187,6 +187,26 @@ function LibraryContent() {
 
   const handleLoadedAssets = useCallback((a: Asset[]) => setAssets(a), []);
 
+  // Timeline tile selection — mirrors AssetGrid: shift-click ranges over the
+  // loaded ordered set, plain click toggles. `assets` here is the flattened
+  // loaded-in-order list surfaced by the timeline.
+  const lastSelectedRef = useRef<string | null>(null);
+  const handleTimelineSelect = useCallback(
+    (assetId: string, e?: React.MouseEvent) => {
+      if (e?.shiftKey && lastSelectedRef.current) {
+        toolbar.selectRange(
+          assets.map((a) => a.id),
+          lastSelectedRef.current,
+          assetId
+        );
+      } else {
+        toolbar.toggleSelect(assetId);
+      }
+      lastSelectedRef.current = assetId;
+    },
+    [assets, toolbar]
+  );
+
   // Lightbox is URL-based so back button restores chip state.
   // Opening pushes ?lb=<id>; closing calls router.back().
   const lbId = searchParams.get("lb");
@@ -400,6 +420,9 @@ function LibraryContent() {
               fetchMonth={fetchMonth}
               onAssetClick={(a) => openLightbox(a.id, 0)}
               onLoadedAssetsChange={handleLoadedAssets}
+              selectMode={toolbar.selectMode}
+              selectedIds={toolbar.selectedIds}
+              onToggleSelect={handleTimelineSelect}
             />
           </div>
         )

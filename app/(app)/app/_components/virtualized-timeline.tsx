@@ -19,6 +19,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2 } from "lucide-react";
@@ -68,12 +69,20 @@ export interface VirtualizedTimelineProps {
   /** Flattened loaded assets in timeline order — lets the parent drive a
    *  lightbox with prev/next over what's currently loaded. */
   onLoadedAssetsChange?: (assets: Asset[]) => void;
+  /** Selection wiring — when selectMode is on, tile clicks toggle selection
+   *  instead of opening the lightbox (PhotoCard handles the branch). */
+  selectMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (assetId: string, e?: ReactMouseEvent) => void;
 }
 
 export function VirtualizedTimeline({
   buckets,
   fetchMonth,
   onAssetClick,
+  selectMode = false,
+  selectedIds,
+  onToggleSelect,
   onLoadedAssetsChange,
 }: VirtualizedTimelineProps) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -288,6 +297,9 @@ export function VirtualizedTimeline({
                           asset={asset}
                           thumbUrl={thumbUrls[asset.id]}
                           showQuickActions
+                          selectMode={selectMode}
+                          selected={selectedIds?.has(asset.id) ?? false}
+                          onSelect={(e) => onToggleSelect?.(asset.id, e)}
                           onClick={() => onAssetClick(asset)}
                         />
                       ))}
