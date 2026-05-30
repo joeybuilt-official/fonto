@@ -329,6 +329,8 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
                 : CachedNetworkImage(
                     imageUrl: url,
                     fit: BoxFit.contain,
+                    clearMemoryCacheWhenDispose: true,
+                    memCacheWidth: 1920,
                     placeholder: (_, __) => const Center(
                       child: CircularProgressIndicator(),
                     ),
