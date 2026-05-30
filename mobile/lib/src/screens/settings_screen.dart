@@ -82,9 +82,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
               shrinkWrap: true,
               children: [
                 CheckboxListTile(
-                  title: const Text("All folders"),
-                  value: working.isEmpty,
-                  onChanged: (_) => setLocal(working.clear),
+                  title: const Text("Select all"),
+                  // Checked only when every folder is selected. Tapping it
+                  // ticks (or clears) every folder checkbox below — the old
+                  // "All folders" row meant all-via-empty and left the
+                  // individual boxes unchecked, which read as broken.
+                  value:
+                      albums.isNotEmpty && albums.every((a) => working.contains(a.id)),
+                  onChanged: (v) => setLocal(() {
+                    working.clear();
+                    if (v == true) {
+                      for (final a in albums) {
+                        working.add(a.id);
+                      }
+                    }
+                  }),
                 ),
                 const Divider(height: 1),
                 ...albums.map(
