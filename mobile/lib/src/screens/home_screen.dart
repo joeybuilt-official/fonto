@@ -51,6 +51,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   AssetCursor? _cursor;
   bool _uploading = false;
   Timer? _processingPoll;
+  // Full-library month buckets for the scrubber's domain. Refreshed any time
+  // the asset grid is refreshed; null while the first load is still pending.
+  List<AssetBucket> _buckets = const [];
 
   /// `null` → workspace root view (all assets, no filter).
   /// Otherwise filters via directoryPathPrefix.
@@ -151,9 +154,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _cursor = null;
     });
     try {
-      // Tree + stats fetched once per refresh; not per-page.
+      // Tree + stats + scrubber buckets fetched once per refresh; not per-page.
+      // assetBuckets() failure is non-fatal — the timeline still works, the
+      // scrubber just doesn't render.
       final tree = await _client.folderTree();
       final stats = await _client.stats();
+      final buckets = await _client.assetBuckets().catchError((_) => <AssetBucket>[]);
       final page = await _client.listAssets(
         limit: _kPageSize,
         directoryPathPrefix: _folder,
@@ -168,6 +174,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() {
         _stats = stats;
         _tree = tree;
+        _buckets = buckets;
         _assets.addAll(page.assets);
         _thumbs.addAll(thumbs);
         _cursor = page.nextCursor;
@@ -648,7 +655,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
     }
 
-    return RefreshIndicator(
+    final groups = _groupAssetsByMonth(_assets);
+
+    final scroll = RefreshIndicator(
       onRefresh: _refresh,
       child: CustomScrollView(
         controller: _scroll,
@@ -663,25 +672,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             )
           else
-            SliverPadding(
-              padding: const EdgeInsets.all(4),
-              sliver: SliverGrid(
-                gridDelegate:
-                    const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  crossAxisSpacing: 4,
-                  mainAxisSpacing: 4,
-                ),
-                delegate: SliverChildBuilderDelegate(
-                  (context, i) => _AssetTile(
-                    asset: _assets[i],
-                    url: _thumbs[_assets[i].id],
-                    onTap: () => _openDetail(i),
-                  ),
-                  childCount: _assets.length,
+            for (final g in groups) ...[
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _MonthHeaderDelegate(
+                  label: _monthLabel(g.month),
+                  count: g.assets.length,
                 ),
               ),
-            ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                sliver: SliverGrid(
+                  gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: 4,
+                    mainAxisSpacing: 4,
+                  ),
+                  delegate: SliverChildBuilderDelegate(
+                    (context, i) {
+                      final asset = g.assets[i];
+                      final flatIndex = _assets.indexOf(asset);
+                      return _AssetTile(
+                        asset: asset,
+                        url: _thumbs[asset.id],
+                        onTap: () => _openDetail(flatIndex),
+                      );
+                    },
+                    childCount: g.assets.length,
+                  ),
+                ),
+              ),
+            ],
           if (_loadingMore)
             const SliverToBoxAdapter(
               child: Padding(
@@ -691,6 +713,267 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
         ],
       ),
+    );
+
+    // Scrubber overlay — full-library bucket-driven, drags through every
+    // month in the workspace (not just the loaded pages). On release we hop
+    // to the loaded-data offset of that month; if the month isn't loaded yet
+    // we kick a few _loadMore() calls until it is.
+    if (_buckets.length <= 1 || _assets.isEmpty) return scroll;
+    return Stack(
+      children: [
+        scroll,
+        Positioned(
+          top: 4,
+          right: 0,
+          bottom: 4,
+          width: 32,
+          child: _TimelineScrubber(
+            buckets: _buckets,
+            onSeek: _seekToMonth,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Walks the loaded grid forward until the target month surfaces (or we
+  // run out of pages), then scrolls the matching month header to the top.
+  // No-op when the month is already on-screen.
+  Future<void> _seekToMonth(String month) async {
+    for (int safety = 0; safety < 12; safety++) {
+      final idx = _assets.indexWhere((a) => _monthKey(a) == month);
+      if (idx >= 0) break;
+      if (_cursor == null) break;
+      await _loadMore();
+    }
+    if (!mounted) return;
+    final groups = _groupAssetsByMonth(_assets);
+    final estTile = MediaQuery.of(context).size.width / 3 - 4;
+    double offset = (_stats != null && _folder == null) ? 64 : 0;
+    for (final g in groups) {
+      if (g.month == month) break;
+      final rows = (g.assets.length / 3).ceil();
+      offset += _kMonthHeaderHeight + rows * (estTile + 4) + 8;
+    }
+    if (_scroll.hasClients) {
+      final max = _scroll.position.maxScrollExtent;
+      final clamped = offset < 0 ? 0.0 : (offset > max ? max : offset);
+      _scroll.animateTo(
+        clamped,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+}
+
+const double _kMonthHeaderHeight = 36;
+
+// `num.clamp` returns num (not double) which the analyzer rejects in
+// double-typed slots. This tiny helper keeps the call sites readable.
+double _clampDouble(double v, double lo, double hi) =>
+    v < lo ? lo : (v > hi ? hi : v);
+
+/// "YYYY-MM" key from an asset, using captured-at when present so the
+/// grouping matches the server's sort=captured ordering.
+String _monthKey(Asset a) {
+  final ts = a.capturedAt ?? a.createdAt;
+  return ts.length >= 7 ? ts.substring(0, 7) : ts;
+}
+
+String _monthLabel(String key) {
+  if (key.length < 7) return key;
+  final y = int.tryParse(key.substring(0, 4));
+  final m = int.tryParse(key.substring(5, 7));
+  if (y == null || m == null || m < 1 || m > 12) return key;
+  const names = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  return "${names[m - 1]} $y";
+}
+
+class _MonthGroup {
+  _MonthGroup(this.month, this.assets);
+  final String month;
+  final List<Asset> assets;
+}
+
+List<_MonthGroup> _groupAssetsByMonth(List<Asset> assets) {
+  if (assets.isEmpty) return const [];
+  final out = <_MonthGroup>[];
+  String? cur;
+  List<Asset>? bucket;
+  for (final a in assets) {
+    final k = _monthKey(a);
+    if (k != cur) {
+      if (cur != null && bucket != null) out.add(_MonthGroup(cur, bucket));
+      cur = k;
+      bucket = <Asset>[];
+    }
+    bucket!.add(a);
+  }
+  if (cur != null && bucket != null) out.add(_MonthGroup(cur, bucket));
+  return out;
+}
+
+class _MonthHeaderDelegate extends SliverPersistentHeaderDelegate {
+  const _MonthHeaderDelegate({required this.label, required this.count});
+  final String label;
+  final int count;
+
+  @override
+  double get minExtent => _kMonthHeaderHeight;
+
+  @override
+  double get maxExtent => _kMonthHeaderHeight;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final theme = Theme.of(context);
+    return Container(
+      color: theme.scaffoldBackgroundColor.withOpacity(0.96),
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            "· $count",
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(_MonthHeaderDelegate old) =>
+      old.label != label || old.count != count;
+}
+
+/// Right-rail draggable scrubber. The thumb position represents the whole
+/// library — cumulative count across `buckets`. Drag fires a live month/year
+/// bubble; release calls `onSeek(month)`.
+class _TimelineScrubber extends StatefulWidget {
+  const _TimelineScrubber({required this.buckets, required this.onSeek});
+  final List<AssetBucket> buckets;
+  final void Function(String month) onSeek;
+
+  @override
+  State<_TimelineScrubber> createState() => _TimelineScrubberState();
+}
+
+class _TimelineScrubberState extends State<_TimelineScrubber> {
+  double? _localY;
+  bool _dragging = false;
+
+  int _total() {
+    int t = 0;
+    for (final b in widget.buckets) {
+      t += b.count;
+    }
+    return t;
+  }
+
+  String _monthAt(double fraction) {
+    final total = _total();
+    if (total == 0 || widget.buckets.isEmpty) {
+      return widget.buckets.isEmpty ? "" : widget.buckets.first.month;
+    }
+    final target = (fraction * total).clamp(0, total - 1);
+    int running = 0;
+    for (final b in widget.buckets) {
+      running += b.count;
+      if (running > target) return b.month;
+    }
+    return widget.buckets.last.month;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final height = c.maxHeight;
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onVerticalDragStart: (d) {
+            setState(() {
+              _dragging = true;
+              _localY = _clampDouble(d.localPosition.dy, 0, height);
+            });
+          },
+          onVerticalDragUpdate: (d) {
+            setState(() {
+              _localY = _clampDouble(d.localPosition.dy, 0, height);
+            });
+          },
+          onVerticalDragEnd: (_) {
+            final y = _localY ?? 0;
+            final month = _monthAt(height > 0 ? y / height : 0);
+            setState(() {
+              _dragging = false;
+              _localY = null;
+            });
+            if (month.isNotEmpty) widget.onSeek(month);
+          },
+          onTapDown: (d) {
+            final y = _clampDouble(d.localPosition.dy, 0, height);
+            final month = _monthAt(height > 0 ? y / height : 0);
+            if (month.isNotEmpty) widget.onSeek(month);
+          },
+          child: Stack(
+            children: [
+              // Track
+              Align(
+                alignment: Alignment.centerRight,
+                child: Container(
+                  width: 3,
+                  margin: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              // Bubble (drag preview)
+              if (_dragging && _localY != null)
+                Positioned(
+                  right: 28,
+                  top: _clampDouble(_localY! - 14, 0, height - 28),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.inverseSurface,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _monthLabel(
+                          _monthAt(_localY! / (height == 0 ? 1 : height))),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onInverseSurface,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

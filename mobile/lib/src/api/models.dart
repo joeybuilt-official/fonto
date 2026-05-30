@@ -105,6 +105,19 @@ class AssetCursor {
       );
 }
 
+/// One row of `/api/v1/assets/buckets` — count of assets in a given month,
+/// keyed by COALESCE(captured_at, created_at). Newest first.
+class AssetBucket {
+  AssetBucket({required this.month, required this.count});
+  final String month; // "YYYY-MM"
+  final int count;
+
+  static AssetBucket fromJson(Map<String, dynamic> j) => AssetBucket(
+        month: j["month"] as String,
+        count: (j["count"] as num).toInt(),
+      );
+}
+
 class AssetPage {
   AssetPage({required this.assets, required this.nextCursor});
   final List<Asset> assets;

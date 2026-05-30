@@ -106,6 +106,15 @@ class FontoClient {
     );
   }
 
+  /// Full-library month buckets (newest first) — `[{month: "YYYY-MM",
+  /// count: int}]`. Drives the mobile timeline's right-rail scrubber so the
+  /// thumb position represents the whole library, not just loaded pages.
+  Future<List<AssetBucket>> assetBuckets() async {
+    final j = await _getJson("/api/v1/assets/buckets");
+    final raw = (j["buckets"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(AssetBucket.fromJson).toList();
+  }
+
   /// Text search across filename / description / OCR. Single page; the
   /// search endpoint doesn't paginate today.
   Future<List<Asset>> search(String q) async {
