@@ -20,6 +20,7 @@
 // concurrent foreground + WorkManager runners don't double-process the same item.
 // recoverStuck() resets any 'downloading' rows left orphaned by a killed process.
 
+import "dart:async";
 import "dart:io";
 
 import "package:flutter/foundation.dart";
