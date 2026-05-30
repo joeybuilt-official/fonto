@@ -58,8 +58,9 @@ export function TimelineScrubber({
   const [bubble, setBubble] = useState<{ month: string; y: number } | null>(null);
   // Throttle bubble updates to ~30 fps.
   const lastBubbleAtRef = useRef(0);
-  // Dwell timer — a slow drag that pauses fires a seek without releasing.
-  const dwellRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Throttle live scroll-follow seeks during a drag (~14 fps is plenty for
+  // month-granularity scrolling and keeps scrollToIndex from thrashing).
+  const lastSeekAtRef = useRef(0);
 
   // Cumulative count *above* each bucket + the grand total. Used to map a
   // fractional track position to a month and vice-versa.
@@ -141,19 +142,18 @@ export function TimelineScrubber({
         return;
       }
 
-      // Dwell-to-seek: if the pointer settles on this month for a beat, seek
-      // without waiting for release so a slow scrub previews real content.
-      if (dwellRef.current) clearTimeout(dwellRef.current);
-      dwellRef.current = setTimeout(() => onSeek(month), 220);
+      // Live-follow: scroll the timeline as the thumb moves (throttled so a
+      // fling doesn't fire scrollToIndex on every pointermove). This is what
+      // makes the scrubber feel like a scrollbar instead of a tap-to-jump.
+      if (now - lastSeekAtRef.current >= 70) {
+        lastSeekAtRef.current = now;
+        onSeek(month);
+      }
     },
     [monthAtFraction, onSeek]
   );
 
   const endDrag = useCallback(() => {
-    if (dwellRef.current) {
-      clearTimeout(dwellRef.current);
-      dwellRef.current = null;
-    }
     setDragging(false);
     setBubble(null);
     onScrubStateChange?.(false);

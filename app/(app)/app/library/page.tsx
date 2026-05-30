@@ -95,15 +95,24 @@ function LibraryContent() {
   const savedScrollRef = useRef(0);
   const prevLbIndexRef = useRef<number | null>(null);
 
-  // The dated timeline is the default browse surface. Free-text search and
-  // explicit date-range bounds can't be expressed by the month-bucket
-  // scrubber / per-month windowed fetch, so those two fall back to the flat
-  // chronological grid (which loads the whole filtered set + filters
-  // client-side). Every other chip (lifecycle / mime / type / favorite /
-  // rating / folder) maps to server-side params the timeline + buckets
-  // endpoints both honour, so the scrubber stays exact under them.
+  // The dated timeline is the default browse surface. It owns the capture-date
+  // axis, so only the newest/oldest sort options apply to it; name / rating /
+  // largest fall back to the flat chronological grid (which sorts client-side),
+  // as do free-text search and explicit date-range bounds (neither is
+  // expressible by the month-bucket scrubber / per-month windowed fetch).
+  // Every other chip (lifecycle / mime / type / favorite / rating / folder)
+  // maps to server-side params the timeline + buckets endpoints both honour.
+  const timelineSort =
+    toolbar.filters.sort === "newest" || toolbar.filters.sort === "oldest";
   const timelineMode =
-    !toolbar.filters.q && !toolbar.filters.from && !toolbar.filters.to;
+    !toolbar.filters.q &&
+    !toolbar.filters.from &&
+    !toolbar.filters.to &&
+    timelineSort;
+  // Oldest just reverses the (newest-first) bucket order; the per-month fetch
+  // is direction-agnostic so no extra backend support is needed.
+  const orderedBuckets =
+    toolbar.filters.sort === "oldest" ? [...buckets].reverse() : buckets;
 
   // Server-side filter params shared by the buckets fetch and per-month
   // windowed fetch. Its identity changes whenever a filter changes, which is
@@ -386,7 +395,8 @@ function LibraryContent() {
         ) : (
           <div className="px-4">
             <VirtualizedTimeline
-              buckets={buckets}
+              key={toolbar.filters.sort}
+              buckets={orderedBuckets}
               fetchMonth={fetchMonth}
               onAssetClick={(a) => openLightbox(a.id, 0)}
               onLoadedAssetsChange={handleLoadedAssets}

@@ -283,8 +283,9 @@ function SortMenu({
   options: SortKey[];
   onChange: (v: SortKey) => void;
 }) {
+  const [open, setOpen] = useState(false);
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         className={buttonVariants({ variant: "outline", size: "sm" })}
       >
@@ -295,7 +296,10 @@ function SortMenu({
         {options.map((o) => (
           <button
             key={o}
-            onClick={() => onChange(o)}
+            onClick={() => {
+              onChange(o);
+              setOpen(false);
+            }}
             className={cn(
               "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-xs hover:bg-muted",
               value === o && "bg-muted font-medium"
@@ -323,8 +327,9 @@ function DensityMenu({
   value: "comfortable" | "compact" | "dense";
   onChange: (v: "comfortable" | "compact" | "dense") => void;
 }) {
+  const [open, setOpen] = useState(false);
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         className={buttonVariants({ variant: "outline", size: "icon-sm" })}
         title={`Density: ${DENSITY_META[value].label}`}
@@ -337,7 +342,10 @@ function DensityMenu({
           (d) => (
             <button
               key={d}
-              onClick={() => onChange(d)}
+              onClick={() => {
+                onChange(d);
+                setOpen(false);
+              }}
               className={cn(
                 "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-xs hover:bg-muted",
                 value === d && "bg-muted font-medium"

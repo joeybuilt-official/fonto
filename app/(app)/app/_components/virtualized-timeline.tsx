@@ -77,7 +77,11 @@ export function VirtualizedTimeline({
   onLoadedAssetsChange,
 }: VirtualizedTimelineProps) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const scrollElRef = useRef<HTMLElement | null>(null);
+  // The timeline owns its scroll container (with the native scrollbar hidden)
+  // rather than riding AppShell's <main>. That kills the "two scrollbars"
+  // problem — only the custom scrubber shows on the right — and lets the
+  // scrubber drive scrolling directly.
+  const scrollElRef = useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(1024);
   const [cols, setCols] = useState<number>(() =>
     typeof window === "undefined" ? 6 : detectCols(window.innerWidth)
@@ -93,13 +97,6 @@ export function VirtualizedTimeline({
     setLoaded(new Map());
     inFlightRef.current = new Set();
   }, [fetchMonth]);
-
-  // Resolve the page scroll container (AppShell's <main>).
-  useLayoutEffect(() => {
-    if (!parentRef.current) return;
-    const main = parentRef.current.closest("main");
-    scrollElRef.current = (main ?? document.scrollingElement) as HTMLElement | null;
-  }, []);
 
   // Track container width (for square-tile height estimate) + column count.
   useLayoutEffect(() => {
@@ -219,18 +216,22 @@ export function VirtualizedTimeline({
   const scrubBuckets: ScrubBucket[] = buckets;
 
   return (
-    <div className="relative" role="grid" aria-label="Asset timeline" aria-rowcount={buckets.length}>
-      {activeMonth && (
-        <div className="pointer-events-none sticky top-2 z-20 mb-1 flex">
-          <div className="pointer-events-auto rounded-full border border-border bg-background/95 px-3 py-1 text-xs font-semibold text-foreground shadow-sm backdrop-blur-sm">
-            {monthLabel(activeMonth)}
+    <div className="relative flex gap-2" role="grid" aria-label="Asset timeline" aria-rowcount={buckets.length}>
+      {/* Own scroll container — native scrollbar hidden so the custom scrubber
+          is the only thing on the right edge. Height fills the viewport below
+          the toolbar + chip strip. */}
+      <div
+        ref={scrollElRef}
+        className="relative h-[calc(100dvh-12rem)] min-w-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {activeMonth && (
+          <div className="pointer-events-none sticky top-2 z-20 mb-1 flex">
+            <div className="pointer-events-auto rounded-full border border-border bg-background/95 px-3 py-1 text-xs font-semibold text-foreground shadow-sm backdrop-blur-sm">
+              {monthLabel(activeMonth)}
+            </div>
           </div>
-        </div>
-      )}
-
-      <div className="flex gap-2">
-        <div ref={parentRef} className="min-w-0 flex-1">
-          <div style={{ height: `${totalSize}px`, width: "100%", position: "relative" }}>
+        )}
+        <div ref={parentRef} style={{ height: `${totalSize}px`, width: "100%", position: "relative" }}>
             {virtualItems.map((virtualRow) => {
               const b = buckets[virtualRow.index];
               if (!b) return null;
@@ -290,16 +291,15 @@ export function VirtualizedTimeline({
                 </div>
               );
             })}
-          </div>
         </div>
-
-        <TimelineScrubber
-          buckets={scrubBuckets}
-          activeMonth={activeMonth}
-          onSeek={seekToMonth}
-          onScrubStateChange={handleScrubStateChange}
-        />
       </div>
+
+      <TimelineScrubber
+        buckets={scrubBuckets}
+        activeMonth={activeMonth}
+        onSeek={seekToMonth}
+        onScrubStateChange={handleScrubStateChange}
+      />
     </div>
   );
 }
