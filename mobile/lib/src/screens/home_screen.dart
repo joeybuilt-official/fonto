@@ -658,6 +658,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     final groups = _groupAssetsByMonth(_assets);
+    // O(1) lookup replaces the O(n) indexOf call that ran on every tile render,
+    // which was causing a freeze on back-navigation from AssetDetailScreen.
+    final flatIdxById = <String, int>{
+      for (var i = 0; i < _assets.length; i++) _assets[i].id: i,
+    };
 
     final scroll = RefreshIndicator(
       onRefresh: _refresh,
@@ -694,11 +699,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   delegate: SliverChildBuilderDelegate(
                     (context, i) {
                       final asset = g.assets[i];
-                      final flatIndex = _assets.indexOf(asset);
-                      return _AssetTile(
-                        asset: asset,
-                        url: _thumbs[asset.id],
-                        onTap: () => _openDetail(flatIndex),
+                      return RepaintBoundary(
+                        child: _AssetTile(
+                          asset: asset,
+                          url: _thumbs[asset.id],
+                          onTap: () =>
+                              _openDetail(flatIdxById[asset.id] ?? 0),
+                        ),
                       );
                     },
                     childCount: g.assets.length,
@@ -1202,6 +1209,9 @@ class _AssetTile extends StatelessWidget {
         child: CachedNetworkImage(
           imageUrl: url!,
           fit: BoxFit.cover,
+          // Decode at grid-tile resolution to cap per-tile memory ~130×130px.
+          memCacheWidth: 260,
+          memCacheHeight: 260,
           placeholder: (_, __) => Container(color: Colors.black12),
           errorWidget: (_, __, ___) => const ColoredBox(
             color: Colors.black12,
@@ -1220,6 +1230,8 @@ class _AssetTile extends StatelessWidget {
         child: CachedNetworkImage(
           imageUrl: url!,
           fit: BoxFit.cover,
+          memCacheWidth: 260,
+          memCacheHeight: 260,
           placeholder: (_, __) => _DocPlaceholder(asset: asset),
           errorWidget: (_, __, ___) => _DocPlaceholder(asset: asset),
         ),

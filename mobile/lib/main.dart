@@ -67,6 +67,9 @@ final _navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Cap decoded image cache at 60 MB. Default (100 MB) lets preview-size images
+  // from AssetDetailScreen evict grid thumbnails, forcing reloads on back-nav.
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 60 * 1024 * 1024;
   await UploadQueue.open();
   await DriveDownloadQueue.open();
   await _initLocalNotifications();
