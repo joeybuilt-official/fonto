@@ -1084,35 +1084,42 @@ class _ProgressBanners extends StatelessWidget {
               rows.add(
                 ValueListenableBuilder<bool>(
                   valueListenable: DriveDownloadQueue.importingAll,
-                  builder: (context, importingAll, _) {
-                    return Container(
-                      width: double.infinity,
-                      color: scheme.tertiaryContainer,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 8),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: scheme.onTertiaryContainer,
-                            ),
+                  builder: (context, isImportingAll, _) {
+                    return ValueListenableBuilder<int>(
+                      valueListenable: DriveDownloadQueue.totalEnqueued,
+                      builder: (context, total, _) {
+                        final label = isImportingAll
+                            ? "Importing all Drive files…"
+                              "${total > 0 ? ' ($total queued)' : ''}"
+                            : "Downloading $dlPending Drive "
+                              "${dlPending == 1 ? 'file' : 'files'}…";
+                        return Container(
+                          width: double.infinity,
+                          color: scheme.tertiaryContainer,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: scheme.onTertiaryContainer,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                label,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.onTertiaryContainer,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 10),
-                          Text(
-                            importingAll
-                                ? "Importing all Drive files…"
-                                : "Downloading $dlPending Drive "
-                                  "${dlPending == 1 ? 'file' : 'files'}…",
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: scheme.onTertiaryContainer,
-                            ),
-                          ),
-                        ],
-                      ),
+                        );
+                      },
                     );
                   },
                 ),

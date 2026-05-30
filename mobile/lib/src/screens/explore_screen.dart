@@ -295,7 +295,6 @@ class _PlacesTabState extends State<_PlacesTab> {
         itemCount: _assets.length,
         itemBuilder: (context, i) => _PlaceThumb(
           url: _thumbs[_assets[i].id],
-          heroTag: _assets[i].id,
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => AssetDetailScreen(
@@ -314,25 +313,20 @@ class _PlacesTabState extends State<_PlacesTab> {
 class _PlaceThumb extends StatelessWidget {
   const _PlaceThumb({
     required this.url,
-    required this.heroTag,
     required this.onTap,
   });
   final String? url;
-  final String heroTag;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final inner = url == null
         ? Container(color: Colors.black12)
-        : Hero(
-            tag: heroTag,
-            child: CachedNetworkImage(
-              imageUrl: url!,
-              fit: BoxFit.cover,
-              placeholder: (_, __) => Container(color: Colors.black12),
-              errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
-            ),
+        : CachedNetworkImage(
+            imageUrl: url!,
+            fit: BoxFit.cover,
+            placeholder: (_, __) => Container(color: Colors.black12),
+            errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
           );
     return GestureDetector(onTap: onTap, child: inner);
   }
