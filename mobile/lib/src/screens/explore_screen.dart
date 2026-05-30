@@ -202,18 +202,27 @@ class _PersonTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            child: ClipOval(
-              child: url == null
-                  ? Container(
-                      color: Colors.black12,
-                      child: const Icon(Icons.person, size: 36),
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: url!,
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) => Container(color: Colors.black12),
-                      errorWidget: (_, __, ___) => const Icon(Icons.person),
-                    ),
+            child: LayoutBuilder(
+              builder: (_, constraints) {
+                final d = constraints.maxWidth;
+                final bbox = person.coverBbox;
+                final Widget inner = url == null
+                    ? Container(
+                        color: Colors.black12,
+                        child: const Icon(Icons.person, size: 36),
+                      )
+                    : (bbox != null
+                        ? _buildFaceZoom(url!, bbox, d)
+                        : CachedNetworkImage(
+                            imageUrl: url!,
+                            fit: BoxFit.cover,
+                            placeholder: (_, __) =>
+                                Container(color: Colors.black12),
+                            errorWidget: (_, __, ___) =>
+                                const Icon(Icons.person),
+                          ));
+                return ClipOval(child: SizedBox(width: d, height: d, child: inner));
+              },
             ),
           ),
           const SizedBox(height: 4),
@@ -234,6 +243,35 @@ class _PersonTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Zoom into the face described by [bbox] (normalised 0..1) within [url].
+/// Translates + scales the image so the face center aligns with the widget
+/// center and the face fills ~65% of the circle diameter.
+Widget _buildFaceZoom(String url, PersonBbox bbox, double d) {
+  final cx = bbox.cx;
+  final cy = bbox.cy;
+  final faceSize = bbox.w > bbox.h ? bbox.w : bbox.h;
+  final scale = (0.65 / faceSize.clamp(0.05, 1.0)).clamp(1.5, 8.0);
+  final tx = d / 2 - cx * d * scale;
+  final ty = d / 2 - cy * d * scale;
+  return Transform.translate(
+    offset: Offset(tx, ty),
+    child: Transform.scale(
+      scale: scale,
+      alignment: Alignment.topLeft,
+      child: SizedBox(
+        width: d,
+        height: d,
+        child: CachedNetworkImage(
+          imageUrl: url,
+          fit: BoxFit.cover,
+          placeholder: (_, __) => Container(color: Colors.black12),
+          errorWidget: (_, __, ___) => const Icon(Icons.person),
+        ),
+      ),
+    ),
+  );
 }
 
 // --------------------------------------------------------------------------

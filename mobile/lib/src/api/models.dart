@@ -20,6 +20,8 @@ class Asset {
     this.rating,
     this.ocrText,
     this.processingState,
+    this.widthPx,
+    this.heightPx,
   });
 
   final String id;
@@ -43,6 +45,11 @@ class Asset {
   // (or failed). Anything other than ready/failed means work is still in
   // flight on the server.
   final String? processingState;
+  // Native pixel dimensions. Present for processed images; null for videos,
+  // PDFs, and assets still in the pipeline. Used by the face overlay to map
+  // normalised bbox coordinates to screen positions.
+  final int? widthPx;
+  final int? heightPx;
 
   bool get isProcessing =>
       processingState != null &&
@@ -65,6 +72,8 @@ class Asset {
         rating: (j["rating"] as num?)?.toInt(),
         ocrText: j["ocrText"] as String?,
         processingState: j["processingState"] as String?,
+        widthPx: (j["widthPx"] as num?)?.toInt(),
+        heightPx: (j["heightPx"] as num?)?.toInt(),
       );
 }
 
@@ -334,8 +343,35 @@ class SharedAsset {
   }
 }
 
+/// Normalised face bounding box (all values 0..1 relative to image dimensions).
+class PersonBbox {
+  const PersonBbox({
+    required this.x,
+    required this.y,
+    required this.w,
+    required this.h,
+  });
+
+  final double x, y, w, h;
+
+  double get cx => x + w / 2;
+  double get cy => y + h / 2;
+
+  static PersonBbox? fromJson(dynamic j) {
+    if (j == null) return null;
+    final m = j as Map<String, dynamic>;
+    return PersonBbox(
+      x: (m["x"] as num).toDouble(),
+      y: (m["y"] as num).toDouble(),
+      w: (m["w"] as num).toDouble(),
+      h: (m["h"] as num).toDouble(),
+    );
+  }
+}
+
 /// A face cluster (Phase 5.1). `coverAssetId` is the asset the cover face
-/// lives on — used to render an (uncropped, per C2) grid thumbnail.
+/// lives on. `coverBbox` is the normalised bbox of the cover face — used to
+/// zoom into the face in the People grid circle.
 /// `name` is null until the user labels the cluster.
 class Person {
   Person({
@@ -343,18 +379,50 @@ class Person {
     required this.instanceCount,
     this.name,
     this.coverAssetId,
+    this.coverBbox,
   });
 
   final String id;
   final int instanceCount;
   final String? name;
   final String? coverAssetId;
+  final PersonBbox? coverBbox;
 
   static Person fromJson(Map<String, dynamic> j) => Person(
         id: j["id"] as String,
         instanceCount: (j["instanceCount"] as num?)?.toInt() ?? 0,
         name: j["name"] as String?,
         coverAssetId: j["coverAssetId"] as String?,
+        coverBbox: PersonBbox.fromJson(j["coverBbox"]),
+      );
+}
+
+/// One detected face on an asset. `bbox` is normalised (0..1). `personId` /
+/// `personName` are null when the face hasn't been assigned to a cluster yet.
+class AssetFace {
+  const AssetFace({
+    required this.id,
+    required this.bbox,
+    required this.confidence,
+    this.personId,
+    this.personName,
+    this.hidden = false,
+  });
+
+  final String id;
+  final PersonBbox bbox;
+  final double confidence;
+  final String? personId;
+  final String? personName;
+  final bool hidden;
+
+  static AssetFace fromJson(Map<String, dynamic> j) => AssetFace(
+        id: j["id"] as String,
+        bbox: PersonBbox.fromJson(j["bbox"])!,
+        confidence: (j["confidence"] as num).toDouble(),
+        personId: j["personId"] as String?,
+        personName: j["personName"] as String?,
+        hidden: j["hidden"] as bool? ?? false,
       );
 }
 

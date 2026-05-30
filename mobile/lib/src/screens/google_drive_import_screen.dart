@@ -76,58 +76,50 @@ Future<void> _downloadAllPagesFromDrive(
   DriveDownloadQueue.importingAll.value = true;
   UploadQueue.beginFeeding();
   try {
+    // Phase 1: walk ALL Drive pages and persist every file to the durable
+    // queue before downloading anything. Separating enumeration from download
+    // means a transient network error during download cannot abort pagination —
+    // every file that exists in Drive will be enqueued.
+    final driveQ = await DriveDownloadQueue.open();
     String? pageToken;
     do {
-      try {
-        final query = {
-          "q": "trashed = false and (mimeType contains 'image/' or "
-              "mimeType contains 'video/' or mimeType = 'application/pdf')",
-          "fields": "nextPageToken, files(id, name, mimeType, size)",
-          "pageSize": "100",
-          "orderBy": "modifiedTime desc",
-          "spaces": "drive",
-          if (pageToken != null) "pageToken": pageToken,
-        };
-        final uri =
-            Uri.parse("$_kDriveApiBase/files").replace(queryParameters: query);
-        final res = await http.get(uri, headers: headers);
-        if (res.statusCode != 200) break;
-        final j = json.decode(res.body) as Map<String, dynamic>;
-        final items = (j["files"] as List? ?? const [])
-            .cast<Map<String, dynamic>>()
-            .map(_DriveItem.fromJson)
-            .toList();
-
-        // Persist this page before processing so WorkManager can resume
-        // anything not finished if the process is killed mid-import.
-        final driveQ = await DriveDownloadQueue.open();
-        await driveQ.enqueue(
-          items
-              .map((i) => (id: i.id, name: i.name, mimeType: i.mimeType))
-              .toList(),
-          virtualPath,
-        );
-
-        // Process what's now in the queue (foreground fast path).
-        await DriveDownloadQueue.processAll(
-          headers,
-          await getTemporaryDirectory(),
-        );
-
-        pageToken = j["nextPageToken"] as String?;
-      } catch (_) {
-        break;
-      }
+      final query = {
+        "q": "trashed = false and (mimeType contains 'image/' or "
+            "mimeType contains 'video/' or mimeType = 'application/pdf')",
+        "fields": "nextPageToken, files(id, name, mimeType, size)",
+        "pageSize": "100",
+        "orderBy": "modifiedTime desc",
+        "spaces": "drive",
+        if (pageToken != null) "pageToken": pageToken,
+      };
+      final uri =
+          Uri.parse("$_kDriveApiBase/files").replace(queryParameters: query);
+      final res = await http.get(uri, headers: headers);
+      if (res.statusCode != 200) break;
+      final j = json.decode(res.body) as Map<String, dynamic>;
+      final items = (j["files"] as List? ?? const [])
+          .cast<Map<String, dynamic>>()
+          .map(_DriveItem.fromJson)
+          .toList();
+      await driveQ.enqueue(
+        items.map((i) => (id: i.id, name: i.name, mimeType: i.mimeType)).toList(),
+        virtualPath,
+      );
+      pageToken = j["nextPageToken"] as String?;
     } while (pageToken != null);
 
-    // Drain any leftover items from multi-batch queues.
-    int downloaded;
-    do {
-      downloaded = await DriveDownloadQueue.processAll(
+    // Phase 2: all files are now in the durable queue.
+    // Switch banner from "importing all…" to "downloading N files".
+    DriveDownloadQueue.importingAll.value = false;
+    // Loop on pendingCount, not on downloaded > 0. The previous approach
+    // exited prematurely when a batch returned 0 successes (auth expiry,
+    // transient error) even though pending items remained in the queue.
+    while (await driveQ.pendingCount() > 0) {
+      await DriveDownloadQueue.processAll(
         headers,
         await getTemporaryDirectory(),
       );
-    } while (downloaded > 0);
+    }
   } finally {
     UploadQueue.endFeeding();
     DriveDownloadQueue.importingAll.value = false;

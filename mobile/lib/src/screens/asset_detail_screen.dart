@@ -6,6 +6,8 @@
 // favorite toggle, trash, native share. Preview-variant URLs fetched
 // lazily as the user scrolls — keeps the initial route push cheap.
 
+import "dart:math" show min, max;
+
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
 import "package:photo_view/photo_view.dart";
@@ -185,6 +187,16 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  void _showFaceTagger() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => _FaceTaggingScreen(
+        client: widget.client,
+        asset: _cur,
+        imageUrl: _previews[_cur.id],
+      ),
+    ));
+  }
+
   String _fmtSize(int bytes) {
     if (bytes <= 0) return "—";
     if (bytes < 1024) return "$bytes B";
@@ -275,6 +287,12 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
           style: const TextStyle(fontSize: 14),
         ),
         actions: [
+          if (_cur.mimeType.startsWith("image/"))
+            IconButton(
+              tooltip: "Tag people",
+              icon: const Icon(Icons.face_outlined),
+              onPressed: () => _showFaceTagger(),
+            ),
           IconButton(
             tooltip: "Info",
             icon: const Icon(Icons.info_outline),
@@ -381,6 +399,456 @@ class _TextPage extends StatelessWidget {
             fontFamily: "monospace",
             fontSize: code ? 13 : 14,
             height: code ? 1.35 : 1.5,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Face tagging — static image overlay with tappable face circles.
+// ---------------------------------------------------------------------------
+
+class _FaceTaggingScreen extends StatefulWidget {
+  const _FaceTaggingScreen({
+    required this.client,
+    required this.asset,
+    this.imageUrl,
+  });
+
+  final FontoClient client;
+  final Asset asset;
+  final String? imageUrl;
+
+  @override
+  State<_FaceTaggingScreen> createState() => _FaceTaggingScreenState();
+}
+
+class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
+  bool _loading = true;
+  String? _error;
+  List<AssetFace> _faces = const [];
+  List<Person> _persons = const [];
+  String? _resolvedUrl;
+  // Actual pixel dimensions of the image — from asset or resolved from ImageInfo.
+  Size? _imageDims;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final results = await Future.wait([
+        widget.client.assetFaces(widget.asset.id),
+        widget.client.listPersons(),
+      ]);
+      String? url = widget.imageUrl;
+      if (url == null) {
+        final urlMap = await widget.client
+            .assetUrls([widget.asset.id], variant: "preview");
+        url = urlMap[widget.asset.id];
+      }
+      if (!mounted) return;
+      final faces = results[0] as List<AssetFace>;
+      final persons = results[1] as List<Person>;
+      final wPx = widget.asset.widthPx;
+      final hPx = widget.asset.heightPx;
+      setState(() {
+        _faces = faces;
+        _persons = persons;
+        _resolvedUrl = url;
+        if (wPx != null && hPx != null) {
+          _imageDims = Size(wPx.toDouble(), hPx.toDouble());
+        }
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  void _onFaceTapped(AssetFace face) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _FaceTaggingSheet(
+        face: face,
+        persons: _persons,
+        client: widget.client,
+        onUpdated: (updated) {
+          setState(() {
+            final idx = _faces.indexWhere((f) => f.id == updated.id);
+            if (idx >= 0) _faces[idx] = updated;
+          });
+        },
+        onPersonCreated: (p) {
+          setState(() => _persons = [p, ..._persons]);
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: const Text("Tag people"),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.error_outline, size: 40, color: Colors.white54),
+                        const SizedBox(height: 12),
+                        Text(_error!, style: const TextStyle(color: Colors.white70)),
+                        const SizedBox(height: 16),
+                        FilledButton(onPressed: _load, child: const Text("Retry")),
+                      ],
+                    ),
+                  ),
+                )
+              : _resolvedUrl == null
+                  ? const Center(
+                      child: Text(
+                        "Image not available",
+                        style: TextStyle(color: Colors.white54),
+                      ),
+                    )
+                  : _FaceImageOverlay(
+                      imageUrl: _resolvedUrl!,
+                      faces: _faces,
+                      imageDims: _imageDims,
+                      onDimsResolved: (size) {
+                        if (_imageDims == null) {
+                          setState(() => _imageDims = size);
+                        }
+                      },
+                      onFaceTapped: _onFaceTapped,
+                    ),
+    );
+  }
+}
+
+class _FaceImageOverlay extends StatelessWidget {
+  const _FaceImageOverlay({
+    required this.imageUrl,
+    required this.faces,
+    required this.imageDims,
+    required this.onDimsResolved,
+    required this.onFaceTapped,
+  });
+
+  final String imageUrl;
+  final List<AssetFace> faces;
+  final Size? imageDims;
+  final void Function(Size) onDimsResolved;
+  final void Function(AssetFace) onFaceTapped;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (ctx, constraints) {
+      final ww = constraints.maxWidth;
+      final wh = constraints.maxHeight;
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          CachedNetworkImage(
+            imageUrl: imageUrl,
+            fit: BoxFit.contain,
+            imageBuilder: (ctx, imageProvider) {
+              imageProvider.resolve(ImageConfiguration.empty).addListener(
+                ImageStreamListener((info, _) {
+                  onDimsResolved(Size(
+                    info.image.width.toDouble(),
+                    info.image.height.toDouble(),
+                  ));
+                }),
+              );
+              return Image(image: imageProvider, fit: BoxFit.contain);
+            },
+            placeholder: (_, __) =>
+                const Center(child: CircularProgressIndicator()),
+            errorWidget: (_, __, ___) =>
+                const Icon(Icons.broken_image, color: Colors.white54, size: 48),
+          ),
+          if (imageDims != null)
+            ..._buildFaceOverlays(ww, wh, imageDims!),
+        ],
+      );
+    });
+  }
+
+  List<Widget> _buildFaceOverlays(double ww, double wh, Size dims) {
+    final s = min(ww / dims.width, wh / dims.height);
+    final rx = (ww - dims.width * s) / 2;
+    final ry = (wh - dims.height * s) / 2;
+    return faces.map((face) {
+      final b = face.bbox;
+      final left = rx + b.x * dims.width * s;
+      final top = ry + b.y * dims.height * s;
+      final fw = b.w * dims.width * s;
+      final fh = b.h * dims.height * s;
+      final d = max(fw, fh) + 12;
+      final cx = left + fw / 2;
+      final cy = top + fh / 2;
+      return Positioned(
+        left: cx - d / 2,
+        top: cy - d / 2,
+        width: d,
+        height: d,
+        child: GestureDetector(
+          onTap: () => onFaceTapped(face),
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: face.personId != null
+                    ? Colors.lightBlueAccent
+                    : Colors.white70,
+                width: 2,
+              ),
+            ),
+            child: face.personName != null
+                ? Align(
+                    alignment: Alignment.bottomCenter,
+                    child: FractionalTranslation(
+                      translation: const Offset(0, 1),
+                      child: Container(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          face.personName!,
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 10),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  )
+                : null,
+          ),
+        ),
+      );
+    }).toList();
+  }
+}
+
+class _FaceTaggingSheet extends StatefulWidget {
+  const _FaceTaggingSheet({
+    required this.face,
+    required this.persons,
+    required this.client,
+    required this.onUpdated,
+    required this.onPersonCreated,
+  });
+
+  final AssetFace face;
+  final List<Person> persons;
+  final FontoClient client;
+  final void Function(AssetFace) onUpdated;
+  final void Function(Person) onPersonCreated;
+
+  @override
+  State<_FaceTaggingSheet> createState() => _FaceTaggingSheetState();
+}
+
+class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
+  final _ctrl = TextEditingController();
+  bool _saving = false;
+  String? _saveError;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  List<Person> get _filtered {
+    final q = _ctrl.text.toLowerCase().trim();
+    if (q.isEmpty) return widget.persons;
+    return widget.persons
+        .where((p) => (p.name ?? "").toLowerCase().contains(q))
+        .toList();
+  }
+
+  Future<void> _assignTo(Person person) async {
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    try {
+      await widget.client.assignFace(widget.face.id, person.id);
+      if (!mounted) return;
+      widget.onUpdated(AssetFace(
+        id: widget.face.id,
+        bbox: widget.face.bbox,
+        confidence: widget.face.confidence,
+        personId: person.id,
+        personName: person.name,
+      ));
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
+    }
+  }
+
+  Future<void> _createAndAssign() async {
+    final name = _ctrl.text.trim();
+    if (name.isEmpty) return;
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    try {
+      final person = await widget.client.createPerson(name: name);
+      widget.onPersonCreated(person);
+      await widget.client.assignFace(widget.face.id, person.id);
+      if (!mounted) return;
+      widget.onUpdated(AssetFace(
+        id: widget.face.id,
+        bbox: widget.face.bbox,
+        confidence: widget.face.confidence,
+        personId: person.id,
+        personName: person.name,
+      ));
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
+    }
+  }
+
+  Future<void> _clearAssignment() async {
+    setState(() { _saving = true; _saveError = null; });
+    try {
+      await widget.client.assignFace(widget.face.id, null);
+      if (!mounted) return;
+      widget.onUpdated(AssetFace(
+        id: widget.face.id,
+        bbox: widget.face.bbox,
+        confidence: widget.face.confidence,
+      ));
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filtered;
+    final query = _ctrl.text.trim();
+    final exactMatch = widget.persons.any(
+      (p) => (p.name ?? "").toLowerCase() == query.toLowerCase(),
+    );
+
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.65,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 8),
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: Text(
+                  widget.face.personName != null
+                      ? "Reassign: ${widget.face.personName}"
+                      : "Who is this?",
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  controller: _ctrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    hintText: "Search or type a name…",
+                    prefixIcon: Icon(Icons.search),
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              if (_saveError != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Text(
+                    _saveError!,
+                    style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12),
+                  ),
+                ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    if (query.isNotEmpty && !exactMatch)
+                      ListTile(
+                        leading: const Icon(Icons.person_add_outlined),
+                        title: Text('Create "$query"'),
+                        onTap: _saving ? null : _createAndAssign,
+                      ),
+                    if (widget.face.personId != null)
+                      ListTile(
+                        leading: const Icon(Icons.person_remove_outlined),
+                        title: const Text("Remove assignment"),
+                        onTap: _saving ? null : _clearAssignment,
+                      ),
+                    ...filtered.map(
+                      (p) => ListTile(
+                        leading: const Icon(Icons.person_outline),
+                        title: Text(p.name ?? "Unnamed"),
+                        subtitle: Text("${p.instanceCount} photos"),
+                        onTap: _saving ? null : () => _assignTo(p),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (_saving)
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+            ],
           ),
         ),
       ),
