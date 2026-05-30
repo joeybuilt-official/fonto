@@ -28,6 +28,7 @@ void main() {
       filename: "photo.jpg",
       mimeType: "image/jpeg",
       sizeBytes: 1024,
+      createdAt: DateTime.utc(2026, 1, 1),
     );
 
     await tester.pumpWidget(
