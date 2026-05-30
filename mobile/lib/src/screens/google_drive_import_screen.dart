@@ -41,31 +41,40 @@ Future<void> _downloadAndEnqueueAll(
   Map<String, String> headers,
   Directory tmpDir,
 ) async {
-  for (final item in items) {
-    try {
-      final uri = Uri.parse("$_kDriveApiBase/files/${item.id}")
-          .replace(queryParameters: {"alt": "media"});
-      final res = await http.get(uri, headers: headers);
-      if (res.statusCode != 200) continue;
-      final fname = item.name.isNotEmpty ? item.name : "${item.id}.bin";
-      final tmp = File("${tmpDir.path}/drive_${item.id}_$fname");
-      await tmp.writeAsBytes(res.bodyBytes);
-      final sha = sha256.convert(res.bodyBytes).toString();
-      final q = await UploadQueue.open();
-      await q.enqueue(
-        filePath: tmp.path,
-        virtualPath: virtualPath,
-        sha256Hex: sha,
-      );
-      // Kick drain after each enqueue: no-op if already running, restarts
-      // it if drain exited between two enqueues.
-      unawaited(UploadQueue.drain());
-    } catch (_) {
-      // Skip this file; continue with the rest.
+  // Mark "still feeding" so the single live drain holds open (and the upload
+  // bar stays put) across the slow gaps between downloads instead of exiting
+  // and re-spawning per file — that cycle is what flickered "0 of 1".
+  UploadQueue.beginFeeding();
+  try {
+    for (final item in items) {
+      try {
+        final uri = Uri.parse("$_kDriveApiBase/files/${item.id}")
+            .replace(queryParameters: {"alt": "media"});
+        final res = await http.get(uri, headers: headers);
+        if (res.statusCode != 200) continue;
+        final fname = item.name.isNotEmpty ? item.name : "${item.id}.bin";
+        final tmp = File("${tmpDir.path}/drive_${item.id}_$fname");
+        await tmp.writeAsBytes(res.bodyBytes);
+        final sha = sha256.convert(res.bodyBytes).toString();
+        final q = await UploadQueue.open();
+        await q.enqueue(
+          filePath: tmp.path,
+          virtualPath: virtualPath,
+          sha256Hex: sha,
+        );
+        // Kick drain after each enqueue: no-op if already running.
+        unawaited(UploadQueue.drain());
+      } catch (_) {
+        // Skip this file; continue with the rest.
+      }
     }
+  } finally {
+    UploadQueue.endFeeding();
   }
-  // Final pass to catch anything enqueued after drain's last empty-batch check.
-  await UploadQueue.drain();
+  // Fire-and-forget (never await): when feeders hit 0 the live drain finishes
+  // the tail. Awaiting here would deadlock the import-all page loop, which
+  // calls this per page while its own feeder ref is still held.
+  unawaited(UploadQueue.drain());
 }
 
 // Paginates through ALL Drive files and feeds each page into
@@ -76,33 +85,41 @@ Future<void> _downloadAllPagesFromDrive(
   String virtualPath,
   Directory tmpDir,
 ) async {
-  String? pageToken;
-  do {
-    try {
-      final query = {
-        "q": "trashed = false and (mimeType contains 'image/' or "
-            "mimeType contains 'video/' or mimeType = 'application/pdf')",
-        "fields": "nextPageToken, files(id, name, mimeType, size)",
-        "pageSize": "100",
-        "orderBy": "modifiedTime desc",
-        "spaces": "drive",
-        if (pageToken != null) "pageToken": pageToken,
-      };
-      final uri =
-          Uri.parse("$_kDriveApiBase/files").replace(queryParameters: query);
-      final res = await http.get(uri, headers: headers);
-      if (res.statusCode != 200) break;
-      final j = json.decode(res.body) as Map<String, dynamic>;
-      final items = (j["files"] as List? ?? const [])
-          .cast<Map<String, dynamic>>()
-          .map(_DriveItem.fromJson)
-          .toList();
-      await _downloadAndEnqueueAll(items, virtualPath, headers, tmpDir);
-      pageToken = j["nextPageToken"] as String?;
-    } catch (_) {
-      break;
-    }
-  } while (pageToken != null);
+  // Hold a feeder ref across the whole paginated import so the drain (and the
+  // upload bar) stay alive between pages too.
+  UploadQueue.beginFeeding();
+  try {
+    String? pageToken;
+    do {
+      try {
+        final query = {
+          "q": "trashed = false and (mimeType contains 'image/' or "
+              "mimeType contains 'video/' or mimeType = 'application/pdf')",
+          "fields": "nextPageToken, files(id, name, mimeType, size)",
+          "pageSize": "100",
+          "orderBy": "modifiedTime desc",
+          "spaces": "drive",
+          if (pageToken != null) "pageToken": pageToken,
+        };
+        final uri =
+            Uri.parse("$_kDriveApiBase/files").replace(queryParameters: query);
+        final res = await http.get(uri, headers: headers);
+        if (res.statusCode != 200) break;
+        final j = json.decode(res.body) as Map<String, dynamic>;
+        final items = (j["files"] as List? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(_DriveItem.fromJson)
+            .toList();
+        await _downloadAndEnqueueAll(items, virtualPath, headers, tmpDir);
+        pageToken = j["nextPageToken"] as String?;
+      } catch (_) {
+        break;
+      }
+    } while (pageToken != null);
+  } finally {
+    UploadQueue.endFeeding();
+  }
+  unawaited(UploadQueue.drain());
 }
 
 class GoogleDriveImportScreen extends StatefulWidget {

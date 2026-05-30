@@ -92,6 +92,17 @@ class UploadQueue {
   static final ValueNotifier<UploadProgress?> progress =
       ValueNotifier<UploadProgress?>(null);
 
+  /// Ref-counted "a bulk import is still feeding files in" flag. While > 0 a
+  /// running drain won't exit when the queue momentarily empties (downloads
+  /// are slower than uploads) — that empty/refill cycle is what made the
+  /// upload indicator flicker "0 of 1" on/off during a Drive import-all.
+  static int _feeders = 0;
+  static bool get feeding => _feeders > 0;
+  static void beginFeeding() => _feeders++;
+  static void endFeeding() {
+    if (_feeders > 0) _feeders--;
+  }
+
   static Future<UploadQueue> open() async {
     if (_instance != null) return _instance!;
     final docs = await getApplicationDocumentsDirectory();
@@ -285,7 +296,7 @@ class UploadQueue {
     // + attempt-exhausted pending) before counting, so they're retried this
     // run instead of the count flooring out.
     await queue.recoverStuck();
-    final total = await queue.pendingCount();
+    var total = await queue.pendingCount();
     var processed = 0;
     var ok = 0;
     if (total > 0) {
@@ -299,7 +310,25 @@ class UploadQueue {
     try {
       for (;;) {
         final batch = await queue.nextBatch(limit: 30);
-        if (batch.isEmpty) break;
+        if (batch.isEmpty) {
+          // Queue drained — but if a bulk import is still downloading + adding
+          // files, hold the drain open (and the progress bar) instead of
+          // exiting and re-spawning per file.
+          if (feeding) {
+            await Future.delayed(const Duration(milliseconds: 600));
+            continue;
+          }
+          break;
+        }
+        // Grow the total to include files added since the drain started (a
+        // bulk import keeps feeding mid-drain), so the bar reads "X of Y"
+        // monotonically instead of resetting. pendingCount still includes this
+        // batch (rows are marked in_flight just below), so no double-count.
+        final known = processed + await queue.pendingCount();
+        if (known > total) {
+          total = known;
+          progress.value = UploadProgress(done: processed, total: total);
+        }
         // Mark every entry in the batch in_flight up front so a parallel
         // foreground drain trigger doesn't pick up the same rows again.
         for (final entry in batch) {
