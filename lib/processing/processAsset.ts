@@ -9,7 +9,7 @@
 // fire-and-forget function — see Phase 0 plan item 0.1. It is now invoked
 // from the BullMQ worker; the API route just enqueues a job.
 
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { db, schema } from "@/lib/db";
@@ -411,6 +411,31 @@ async function processAssetInner(
       if (!key || seen.has(key)) continue;
       seen.add(key);
       suggestedNames.push(name);
+    }
+
+    // Re-scan hygiene: drop this asset's existing AI-suggested tag links
+    // before re-attaching the fresh suggestions. Without this, a re-scan
+    // ACCUMULATES labels — the stale, filename-derived "Things" the user is
+    // complaining about would survive alongside the new grounded ones. Tags
+    // the user created by hand (ai_suggested = false) are left untouched.
+    if (asset) {
+      await db.delete(schema.assetTags).where(
+        and(
+          eq(schema.assetTags.assetId, assetId),
+          inArray(
+            schema.assetTags.tagId,
+            db
+              .select({ id: schema.tags.id })
+              .from(schema.tags)
+              .where(
+                and(
+                  eq(schema.tags.workspaceId, asset.workspaceId),
+                  eq(schema.tags.aiSuggested, true)
+                )
+              )
+          )
+        )
+      );
     }
 
     if (asset && suggestedNames.length > 0) {
