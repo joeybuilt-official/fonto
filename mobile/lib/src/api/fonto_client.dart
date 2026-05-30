@@ -394,7 +394,7 @@ class FontoClient {
     }
   }
 
-  Future<Person> createPerson(String name) async {
+  Future<Person> createPerson({required String name}) async {
     final j = await _postJson("/api/v1/persons", {"name": name});
     return Person.fromJson(j["person"] as Map<String, dynamic>);
   }
