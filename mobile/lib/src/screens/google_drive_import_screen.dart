@@ -185,6 +185,23 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     });
   }
 
+  // True when every currently-loaded item is selected. "Select all" acts on
+  // the loaded page set; scroll to load more pages then tap again to extend.
+  bool get _allLoadedSelected =>
+      _items.isNotEmpty && _items.every((it) => _selected.containsKey(it.id));
+
+  void _toggleSelectAll() {
+    setState(() {
+      if (_allLoadedSelected) {
+        _selected.clear();
+      } else {
+        for (final it in _items) {
+          _selected[it.id] = it;
+        }
+      }
+    });
+  }
+
   Future<void> _import() async {
     if (_selected.isEmpty || _importing) return;
     final items = List<_DriveItem>.from(_selected.values);
@@ -248,6 +265,14 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
       appBar: AppBar(
         title: const Text("Import from Google Drive"),
         actions: [
+          if (_user != null && _items.isNotEmpty)
+            IconButton(
+              tooltip: _allLoadedSelected ? "Deselect all" : "Select all",
+              icon: Icon(
+                _allLoadedSelected ? Icons.deselect : Icons.select_all,
+              ),
+              onPressed: _toggleSelectAll,
+            ),
           if (_user != null)
             TextButton(
               onPressed: () async {
