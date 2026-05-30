@@ -118,33 +118,6 @@ export async function POST(request: NextRequest) {
 
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length)
-    return NextResponse.json({ error: "Workspace required" }, { status: 400 });
-  const ws = workspaces[0];
-
-  const gate = await requireWorkspaceAccessOrResponse(user.id, ws.id, "editor");
-  if (!gate.ok) return gate.response;
-
-  const body = await request.json().catch(() => ({})) as { name?: unknown };
-  const name =
-    typeof body.name === "string" && body.name.trim()
-      ? body.name.trim()
-      : null;
-
-  const [person] = await db
-    .insert(schema.persons)
-    .values({ workspaceId: ws.id, name, instanceCount: 0 })
-    .returning();
-
-  return NextResponse.json({ person }, { status: 201 });
-}
-
-export async function POST(request: NextRequest) {
-  const user = await getAuthUser();
-  if (!user)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const workspaces = await getUserWorkspaces(user.id);
-  if (!workspaces.length)
     return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -152,21 +125,30 @@ export async function POST(request: NextRequest) {
     workspaceId?: unknown;
   };
 
-  const name =
-    typeof body.name === "string" && body.name.trim()
-      ? body.name.trim()
-      : null;
-
   const workspaceId =
     typeof body.workspaceId === "string" &&
     workspaces.some((w) => w.id === body.workspaceId)
       ? (body.workspaceId as string)
       : workspaces[0].id;
 
+  const gate = await requireWorkspaceAccessOrResponse(user.id, workspaceId, "editor");
+  if (!gate.ok) return gate.response;
+
+  const name =
+    typeof body.name === "string" && body.name.trim()
+      ? body.name.trim()
+      : null;
+
   const [person] = await db
     .insert(schema.persons)
-    .values({ workspaceId, name })
+    .values({ workspaceId, name, instanceCount: 0 })
     .returning();
 
-  return NextResponse.json({ person: { ...person, createdAt: person.createdAt.toISOString(), updatedAt: person.updatedAt.toISOString() } }, { status: 201 });
+  return NextResponse.json({
+    person: {
+      ...person,
+      createdAt: person.createdAt.toISOString(),
+      updatedAt: person.updatedAt.toISOString(),
+    },
+  }, { status: 201 });
 }
