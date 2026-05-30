@@ -407,30 +407,5 @@ class FontoClient {
     return raw.map(SharedAsset.fromJson).toList();
   }
 
-  Future<List<AssetFace>> assetFaces(String assetId) async {
-    final j = await _getJson("/api/v1/assets/$assetId/faces");
-    final raw = (j["faces"] as List? ?? const []).cast<Map<String, dynamic>>();
-    return raw.map(AssetFace.fromJson).toList();
-  }
-
-  Future<void> assignFace(String faceId, String? personId) async {
-    final res = await _http.patch(
-      _uri("/api/v1/faces/$faceId"),
-      headers: {..._headers, "Content-Type": "application/json"},
-      body: json.encode({"person_id": personId}),
-    );
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
-    }
-  }
-
-  Future<Person> createPerson({String? name, String? workspaceId}) async {
-    final j = await _postJson("/api/v1/persons", {
-      if (name != null) "name": name,
-      if (workspaceId != null) "workspaceId": workspaceId,
-    });
-    return Person.fromJson(j["person"] as Map<String, dynamic>);
-  }
-
   void close() => _http.close();
 }
