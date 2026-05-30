@@ -38,7 +38,7 @@ final _driveSignIn = GoogleSignIn(scopes: [_kDriveScope]);
 Future<void> _downloadAndEnqueueAll(
   List<_DriveItem> items,
   String virtualPath,
-  Map<String, String> headers,
+  GoogleSignInAccount account,
 ) async {
   DriveDownloadQueue.totalEnqueued.value = 0;
   // 1. Persist to the durable queue before downloading anything.
@@ -51,10 +51,16 @@ Future<void> _downloadAndEnqueueAll(
   );
 
   // 2. Process in the foreground; hold the upload drain open the whole time.
+  // Refresh the auth token before each batch — OAuth tokens expire in ~1 hour,
+  // and a large import easily spans that window.
   UploadQueue.beginFeeding();
   try {
     int downloaded;
     do {
+      final auth = await account.authentication;
+      final token = auth.accessToken;
+      final headers =
+          token == null ? <String, String>{} : {"Authorization": "Bearer $token"};
       downloaded = await DriveDownloadQueue.processAll(
         headers,
         await getTemporaryDirectory(),
@@ -69,7 +75,7 @@ Future<void> _downloadAndEnqueueAll(
 // Paginates through ALL Drive files, persisting each page to DriveDownloadQueue
 // and processing in the foreground. Used by "Import all."
 Future<void> _downloadAllPagesFromDrive(
-  Map<String, String> headers,
+  GoogleSignInAccount account,
   String virtualPath,
 ) async {
   DriveDownloadQueue.totalEnqueued.value = 0;
@@ -83,6 +89,13 @@ Future<void> _downloadAllPagesFromDrive(
     final driveQ = await DriveDownloadQueue.open();
     String? pageToken;
     do {
+      // Refresh token each listing page — pagination across a large Drive can
+      // span the 1-hour OAuth token lifetime.
+      final listAuth = await account.authentication;
+      final listToken = listAuth.accessToken;
+      final listHeaders = listToken == null
+          ? <String, String>{}
+          : {"Authorization": "Bearer $listToken"};
       final query = {
         "q": "trashed = false and (mimeType contains 'image/' or "
             "mimeType contains 'video/' or mimeType = 'application/pdf')",
@@ -94,7 +107,7 @@ Future<void> _downloadAllPagesFromDrive(
       };
       final uri =
           Uri.parse("$_kDriveApiBase/files").replace(queryParameters: query);
-      final res = await http.get(uri, headers: headers);
+      final res = await http.get(uri, headers: listHeaders);
       if (res.statusCode != 200) break;
       final j = json.decode(res.body) as Map<String, dynamic>;
       final items = (j["files"] as List? ?? const [])
@@ -114,9 +127,15 @@ Future<void> _downloadAllPagesFromDrive(
     // Loop on pendingCount, not on downloaded > 0. The previous approach
     // exited prematurely when a batch returned 0 successes (auth expiry,
     // transient error) even though pending items remained in the queue.
+    // Refresh the token before each batch to survive the 1-hour expiry window.
     while (await driveQ.pendingCount() > 0) {
+      final dlAuth = await account.authentication;
+      final dlToken = dlAuth.accessToken;
+      final dlHeaders = dlToken == null
+          ? <String, String>{}
+          : {"Authorization": "Bearer $dlToken"};
       await DriveDownloadQueue.processAll(
-        headers,
+        dlHeaders,
         await getTemporaryDirectory(),
       );
     }
@@ -314,9 +333,10 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
   // feeds directly into the download queue.
   Future<void> _importAll() async {
     if (_importing) return;
+    final account = _user;
+    if (account == null) return;
     setState(() => _importing = true);
     try {
-      final headers = await _authHeaders();
       // Schedule WorkManager as the background fallback before we start —
       // if the process is killed mid-pagination the task resumes from the queue.
       unawaited(Workmanager().registerOneOffTask(
@@ -324,7 +344,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
         existingWorkPolicy: ExistingWorkPolicy.keep,
         constraints: Constraints(networkType: NetworkType.connected),
       ));
-      unawaited(_downloadAllPagesFromDrive(headers, widget.virtualPath));
+      unawaited(_downloadAllPagesFromDrive(account, widget.virtualPath));
     } finally {
       if (mounted) setState(() => _importing = false);
     }
@@ -339,13 +359,14 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
 
   Future<void> _import() async {
     if (_selected.isEmpty || _importing) return;
+    final account = _user;
+    if (account == null) return;
     final items = List<_DriveItem>.from(_selected.values);
     final virtualPath = widget.virtualPath;
 
     setState(() => _importing = true);
 
     try {
-      final headers = await _authHeaders();
       // Schedule WorkManager as the background fallback before downloading —
       // surviving process death requires both the persistent queue and the task.
       unawaited(Workmanager().registerOneOffTask(
@@ -355,7 +376,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
       ));
       // Hand off to a top-level function so downloads continue even if the
       // user navigates away and this widget is disposed mid-download.
-      unawaited(_downloadAndEnqueueAll(items, virtualPath, headers));
+      unawaited(_downloadAndEnqueueAll(items, virtualPath, account));
     } finally {
       if (mounted) setState(() => _importing = false);
     }

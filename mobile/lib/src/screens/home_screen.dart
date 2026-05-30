@@ -91,7 +91,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _onUploadProgress() {
-    if (UploadQueue.progress.value == null) _refreshQueueBadge();
+    if (UploadQueue.progress.value == null) {
+      _refreshQueueBadge();
+      _softRefresh();
+    }
   }
 
   /// Drive queue emptied — kick a drain so any freshly-uploaded assets land,

@@ -191,36 +191,45 @@ class DriveDownloadQueue {
     if (rows.isEmpty) return 0;
 
     final uploadQ = await UploadQueue.open();
+    final client = http.Client();
     int done = 0;
 
-    for (final row in rows) {
-      final id = row["id"] as String;
-      final name = row["name"] as String;
-      final virtualPath = row["virtual_path"] as String;
-      try {
-        final uri = Uri.parse("$_kDriveApiBase/files/$id")
-            .replace(queryParameters: {"alt": "media"});
-        final req = http.Request("GET", uri)..headers.addAll(headers);
-        final streamed = await http.Client().send(req);
-        if (streamed.statusCode != 200) {
-          await q.markFailed(id, "HTTP ${streamed.statusCode}");
-          continue;
+    try {
+      for (final row in rows) {
+        final id = row["id"] as String;
+        final name = row["name"] as String;
+        final virtualPath = row["virtual_path"] as String;
+        try {
+          final uri = Uri.parse("$_kDriveApiBase/files/$id")
+              .replace(queryParameters: {"alt": "media"});
+          final req = http.Request("GET", uri)..headers.addAll(headers);
+          final streamed = await client
+              .send(req)
+              .timeout(const Duration(seconds: 30));
+          if (streamed.statusCode != 200) {
+            await q.markFailed(id, "HTTP ${streamed.statusCode}");
+            continue;
+          }
+          final fname = name.isNotEmpty ? name : "$id.bin";
+          final tmp = File("${tmpDir.path}/drive_${id}_$fname");
+          final sink = tmp.openWrite();
+          await streamed.stream
+              .pipe(sink)
+              .timeout(const Duration(minutes: 10));
+          final sha = await UploadQueue.hashFile(tmp);
+          await uploadQ.enqueue(
+            filePath: tmp.path,
+            virtualPath: virtualPath,
+            sha256Hex: sha,
+          );
+          await q.markDone(id);
+          done++;
+        } catch (e) {
+          await q.markFailed(id, e.toString());
         }
-        final fname = name.isNotEmpty ? name : "$id.bin";
-        final tmp = File("${tmpDir.path}/drive_${id}_$fname");
-        final sink = tmp.openWrite();
-        await streamed.stream.pipe(sink);
-        final sha = await UploadQueue.hashFile(tmp);
-        await uploadQ.enqueue(
-          filePath: tmp.path,
-          virtualPath: virtualPath,
-          sha256Hex: sha,
-        );
-        await q.markDone(id);
-        done++;
-      } catch (e) {
-        await q.markFailed(id, e.toString());
       }
+    } finally {
+      client.close();
     }
 
     unawaited(UploadQueue.drain());
