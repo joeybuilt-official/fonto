@@ -13,6 +13,7 @@
 // Testing mode this restricted scope works for registered test users without
 // Google's verification/security assessment (required only for production).
 
+import "dart:async";
 import "dart:convert";
 import "dart:io";
 
@@ -29,6 +30,80 @@ const _kDriveScope = "https://www.googleapis.com/auth/drive.readonly";
 
 // Module-level singleton so sign-in state survives screen push/pop.
 final _driveSignIn = GoogleSignIn(scopes: [_kDriveScope]);
+
+// Top-level so it runs independently of any widget lifecycle — the user can
+// navigate away and downloads + uploads continue. After each enqueue, drain()
+// is kicked (no-op if already running) so uploads pipeline alongside downloads
+// rather than waiting for all files to land before any upload starts.
+Future<void> _downloadAndEnqueueAll(
+  List<_DriveItem> items,
+  String virtualPath,
+  Map<String, String> headers,
+  Directory tmpDir,
+) async {
+  for (final item in items) {
+    try {
+      final uri = Uri.parse("$_kDriveApiBase/files/${item.id}")
+          .replace(queryParameters: {"alt": "media"});
+      final res = await http.get(uri, headers: headers);
+      if (res.statusCode != 200) continue;
+      final fname = item.name.isNotEmpty ? item.name : "${item.id}.bin";
+      final tmp = File("${tmpDir.path}/drive_${item.id}_$fname");
+      await tmp.writeAsBytes(res.bodyBytes);
+      final sha = sha256.convert(res.bodyBytes).toString();
+      final q = await UploadQueue.open();
+      await q.enqueue(
+        filePath: tmp.path,
+        virtualPath: virtualPath,
+        sha256Hex: sha,
+      );
+      // Kick drain after each enqueue: no-op if already running, restarts
+      // it if drain exited between two enqueues.
+      unawaited(UploadQueue.drain());
+    } catch (_) {
+      // Skip this file; continue with the rest.
+    }
+  }
+  // Final pass to catch anything enqueued after drain's last empty-batch check.
+  await UploadQueue.drain();
+}
+
+// Paginates through ALL Drive files and feeds each page into
+// _downloadAndEnqueueAll. Used by "Import all" so the UI list never needs to
+// be fully loaded into memory.
+Future<void> _downloadAllPagesFromDrive(
+  Map<String, String> headers,
+  String virtualPath,
+  Directory tmpDir,
+) async {
+  String? pageToken;
+  do {
+    try {
+      final query = {
+        "q": "trashed = false and (mimeType contains 'image/' or "
+            "mimeType contains 'video/' or mimeType = 'application/pdf')",
+        "fields": "nextPageToken, files(id, name, mimeType, size)",
+        "pageSize": "100",
+        "orderBy": "modifiedTime desc",
+        "spaces": "drive",
+        if (pageToken != null) "pageToken": pageToken,
+      };
+      final uri =
+          Uri.parse("$_kDriveApiBase/files").replace(queryParameters: query);
+      final res = await http.get(uri, headers: headers);
+      if (res.statusCode != 200) break;
+      final j = json.decode(res.body) as Map<String, dynamic>;
+      final items = (j["files"] as List? ?? const [])
+          .cast<Map<String, dynamic>>()
+          .map(_DriveItem.fromJson)
+          .toList();
+      await _downloadAndEnqueueAll(items, virtualPath, headers, tmpDir);
+      pageToken = j["nextPageToken"] as String?;
+    } catch (_) {
+      break;
+    }
+  } while (pageToken != null);
+}
 
 class GoogleDriveImportScreen extends StatefulWidget {
   const GoogleDriveImportScreen({super.key, required this.virtualPath});
@@ -54,8 +129,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
 
   final Map<String, _DriveItem> _selected = {};
   bool _importing = false;
-  int _importDone = 0;
-  int _importTotal = 0;
+  bool _selectingAll = false;
 
   @override
   void initState() {
@@ -185,72 +259,83 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     });
   }
 
-  // True when every currently-loaded item is selected. "Select all" acts on
-  // the loaded page set; scroll to load more pages then tap again to extend.
   bool get _allLoadedSelected =>
       _items.isNotEmpty && _items.every((it) => _selected.containsKey(it.id));
 
-  void _toggleSelectAll() {
+  // Deselect if anything is selected; otherwise load ALL pages then select
+  // everything — so "select all" truly means every file in Drive, not just
+  // the first 100.
+  Future<void> _toggleSelectAll() async {
+    if (_selectingAll) return;
+    if (_selected.isNotEmpty) {
+      setState(() => _selected.clear());
+      return;
+    }
+    // Select whatever is already loaded, then fetch remaining pages.
     setState(() {
-      if (_allLoadedSelected) {
-        _selected.clear();
-      } else {
-        for (final it in _items) {
-          _selected[it.id] = it;
-        }
-      }
+      for (final it in _items) _selected[it.id] = it;
+      _selectingAll = _nextPage != null;
     });
+    while (_nextPage != null && mounted) {
+      await _loadFiles(more: true);
+      if (mounted) {
+        setState(() {
+          for (final it in _items) _selected[it.id] = it;
+        });
+      }
+    }
+    if (mounted) setState(() => _selectingAll = false);
+  }
+
+  // Import EVERY file in Drive without browsing — paginates server-side and
+  // feeds directly into the download queue.
+  Future<void> _importAll() async {
+    if (_importing) return;
+    setState(() => _importing = true);
+    try {
+      final headers = await _authHeaders();
+      final tmpDir = await getTemporaryDirectory();
+      unawaited(_downloadAllPagesFromDrive(headers, widget.virtualPath, tmpDir));
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Importing all Drive files in the background."),
+      ),
+    );
+    Navigator.of(context).pop(true);
   }
 
   Future<void> _import() async {
     if (_selected.isEmpty || _importing) return;
     final items = List<_DriveItem>.from(_selected.values);
-    setState(() {
-      _importing = true;
-      _importDone = 0;
-      _importTotal = items.length;
-    });
+    final virtualPath = widget.virtualPath;
 
-    var ok = 0;
+    setState(() => _importing = true);
+
     try {
       final headers = await _authHeaders();
       final tmpDir = await getTemporaryDirectory();
-      for (final item in items) {
-        if (!mounted) return;
-        try {
-          final uri = Uri.parse("$_kDriveApiBase/files/${item.id}")
-              .replace(queryParameters: {"alt": "media"});
-          final res = await http.get(uri, headers: headers);
-          if (res.statusCode != 200) {
-            setState(() => _importDone++);
-            continue;
-          }
-          final fname = item.name.isNotEmpty ? item.name : "${item.id}.bin";
-          final tmp = File("${tmpDir.path}/drive_${item.id}_$fname");
-          await tmp.writeAsBytes(res.bodyBytes);
-          final sha = sha256.convert(res.bodyBytes).toString();
-          final q = await UploadQueue.open();
-          await q.enqueue(
-            filePath: tmp.path,
-            virtualPath: widget.virtualPath,
-            sha256Hex: sha,
-          );
-          ok++;
-        } catch (_) {
-          // Skip; continue with the rest.
-        }
-        setState(() => _importDone++);
-      }
-      await UploadQueue.drain();
+
+      // Hand off to a top-level function so work continues even if the user
+      // navigates away and this widget is disposed mid-download.
+      unawaited(_downloadAndEnqueueAll(items, virtualPath, headers, tmpDir));
     } finally {
       if (mounted) setState(() => _importing = false);
     }
 
     if (!mounted) return;
+    final n = items.length;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Queued $ok / ${items.length} for upload to Fonto.")),
+      SnackBar(
+        content: Text(
+          "Downloading $n file${n == 1 ? '' : 's'} — uploading in the background.",
+        ),
+      ),
     );
-    Navigator.of(context).pop(ok > 0);
+    Navigator.of(context).pop(true);
   }
 
   IconData _iconFor(String mime) {
@@ -265,27 +350,51 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
       appBar: AppBar(
         title: const Text("Import from Google Drive"),
         actions: [
-          if (_user != null && _items.isNotEmpty)
-            IconButton(
-              tooltip: _allLoadedSelected ? "Deselect all" : "Select all",
-              icon: Icon(
-                _allLoadedSelected ? Icons.deselect : Icons.select_all,
+          if (_user != null && _items.isNotEmpty) ...[
+            if (_selectingAll)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else
+              IconButton(
+                tooltip: _selected.isNotEmpty ? "Deselect all" : "Select all",
+                icon: Icon(
+                  _selected.isNotEmpty ? Icons.deselect : Icons.select_all,
+                ),
+                onPressed: () => _toggleSelectAll(),
               ),
-              onPressed: _toggleSelectAll,
-            ),
+          ],
           if (_user != null)
-            TextButton(
-              onPressed: () async {
-                await _driveSignIn.signOut();
-                if (!mounted) return;
-                setState(() {
-                  _user = null;
-                  _items.clear();
-                  _selected.clear();
-                  _nextPage = null;
-                });
+            PopupMenuButton<String>(
+              onSelected: (v) {
+                if (v == "import_all") _importAll();
+                if (v == "sign_out") {
+                  _driveSignIn.signOut().then((_) {
+                    if (!mounted) return;
+                    setState(() {
+                      _user = null;
+                      _items.clear();
+                      _selected.clear();
+                      _nextPage = null;
+                    });
+                  });
+                }
               },
-              child: const Text("Sign out"),
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: "import_all",
+                  child: Text("Import all from Drive"),
+                ),
+                const PopupMenuItem(
+                  value: "sign_out",
+                  child: Text("Sign out"),
+                ),
+              ],
             ),
         ],
       ),
@@ -304,9 +413,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
                     )
                   : const Icon(Icons.download),
               label: Text(
-                _importing
-                    ? "Importing $_importDone/$_importTotal"
-                    : "Import (${_selected.length})",
+                _importing ? "Starting…" : "Import (${_selected.length})",
               ),
             ),
       body: _buildBody(),
