@@ -291,35 +291,54 @@ class UploadQueue {
     if (total > 0) {
       progress.value = UploadProgress(done: 0, total: total);
     }
+    // Bulk imports used to bog down because we processed one upload at a
+    // time and a single slow file (network glitch → 120s timeout) blocked
+    // every queued file behind it. Run a small fan-out (3 in flight) so a
+    // stuck upload only burns its own slot — the other two keep draining.
+    const concurrency = 3;
     try {
       for (;;) {
-        final batch = await queue.nextBatch(limit: 10);
+        final batch = await queue.nextBatch(limit: 30);
         if (batch.isEmpty) break;
+        // Mark every entry in the batch in_flight up front so a parallel
+        // foreground drain trigger doesn't pick up the same rows again.
         for (final entry in batch) {
           await queue._markInFlight(entry.id);
-          try {
-            final asset = await client.uploadFile(
-              File(entry.filePath),
-              virtualPath: entry.virtualPath,
-            );
-            await queue._markSuccess(entry.id, asset.id);
-            ok++;
-          } on ApiException catch (e) {
-            // 4xx (except 429) is terminal — body's malformed, retry won't help.
-            final terminal = e.status >= 400 &&
-                e.status < 500 &&
-                e.status != 429 &&
-                e.status != 408;
-            await queue._markFailure(entry.id, "${e.status}: ${e.message}",
-                terminal: terminal);
-          } catch (e) {
-            await queue._markFailure(entry.id, e.toString(), terminal: false);
-          }
-          processed++;
-          progress.value = UploadProgress(
-            done: processed,
-            total: processed > total ? processed : total,
+        }
+        // Process the batch with bounded concurrency. Dart's single-threaded
+        // event loop makes counter increments safe across awaiting futures.
+        for (int i = 0; i < batch.length; i += concurrency) {
+          final chunk = batch.sublist(
+            i,
+            i + concurrency > batch.length ? batch.length : i + concurrency,
           );
+          await Future.wait(chunk.map((entry) async {
+            try {
+              final asset = await client.uploadFile(
+                File(entry.filePath),
+                virtualPath: entry.virtualPath,
+              );
+              await queue._markSuccess(entry.id, asset.id);
+              ok++;
+            } on ApiException catch (e) {
+              final terminal = e.status >= 400 &&
+                  e.status < 500 &&
+                  e.status != 429 &&
+                  e.status != 408;
+              await queue._markFailure(
+                entry.id,
+                "${e.status}: ${e.message}",
+                terminal: terminal,
+              );
+            } catch (e) {
+              await queue._markFailure(entry.id, e.toString(), terminal: false);
+            }
+            processed++;
+            progress.value = UploadProgress(
+              done: processed,
+              total: processed > total ? processed : total,
+            );
+          }));
         }
       }
     } finally {

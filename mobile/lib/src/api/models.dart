@@ -88,13 +88,19 @@ class TopTag {
       );
 }
 
+/// Keyset cursor for the asset list. Field is sort-axis agnostic — the
+/// backend returns `capturedBefore` when we ask for `sort=captured`, which
+/// is what the mobile grid now does so photos and documents are ordered by
+/// their EXIF capture time (i.e. the meta-data date), not by ingest time.
 class AssetCursor {
-  AssetCursor({required this.createdBefore, required this.idBefore});
-  final String createdBefore;
+  AssetCursor({required this.before, required this.idBefore});
+  final String before;
   final String idBefore;
 
   static AssetCursor fromJson(Map<String, dynamic> j) => AssetCursor(
-        createdBefore: j["createdBefore"] as String,
+        // Backend serialises the keyset under whichever axis the request
+        // used; accept either so a legacy nextCursor response still parses.
+        before: (j["capturedBefore"] ?? j["createdBefore"]) as String,
         idBefore: j["idBefore"] as String,
       );
 }

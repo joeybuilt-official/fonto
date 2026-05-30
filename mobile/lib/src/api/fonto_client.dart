@@ -76,9 +76,10 @@ class FontoClient {
     return WorkspaceStats.fromJson(j);
   }
 
-  /// One page of assets ordered (createdAt DESC, id DESC). Pass back
-  /// `nextCursor` to fetch the next page. `directoryPathPrefix` filters
-  /// to a folder subtree (e.g. "/Photos").
+  /// One page of assets ordered by capture date (COALESCE(captured_at,
+  /// created_at) DESC, id DESC) so photos and documents land in their real
+  /// meta-data order, not ingest order. Pass back `nextCursor` to fetch the
+  /// next page. `directoryPathPrefix` filters to a folder subtree.
   Future<AssetPage> listAssets({
     String? mime,
     int limit = 60,
@@ -86,11 +87,11 @@ class FontoClient {
     String? directoryPathPrefix,
     bool hasGeo = false,
   }) async {
-    final query = <String, String>{"limit": "$limit"};
+    final query = <String, String>{"limit": "$limit", "sort": "captured"};
     if (mime != null) query["mime"] = mime;
     if (hasGeo) query["hasGeo"] = "1";
     if (after != null) {
-      query["createdBefore"] = after.createdBefore;
+      query["capturedBefore"] = after.before;
       query["idBefore"] = after.idBefore;
     }
     if (directoryPathPrefix != null && directoryPathPrefix.isNotEmpty) {
