@@ -17,7 +17,6 @@ import "dart:async";
 import "dart:convert";
 import "dart:io";
 
-import "package:crypto/crypto.dart";
 import "package:flutter/material.dart";
 import "package:google_sign_in/google_sign_in.dart";
 import "package:http/http.dart" as http;
@@ -50,12 +49,16 @@ Future<void> _downloadAndEnqueueAll(
       try {
         final uri = Uri.parse("$_kDriveApiBase/files/${item.id}")
             .replace(queryParameters: {"alt": "media"});
-        final res = await http.get(uri, headers: headers);
-        if (res.statusCode != 200) continue;
+        final req = http.Request("GET", uri)..headers.addAll(headers);
+        final streamed = await http.Client().send(req);
+        if (streamed.statusCode != 200) continue;
         final fname = item.name.isNotEmpty ? item.name : "${item.id}.bin";
         final tmp = File("${tmpDir.path}/drive_${item.id}_$fname");
-        await tmp.writeAsBytes(res.bodyBytes);
-        final sha = sha256.convert(res.bodyBytes).toString();
+        final sink = tmp.openWrite();
+        await streamed.stream.pipe(sink);
+        // hashFile reads the file in small chunks so SHA256 never
+        // blocks the isolate long enough to trigger an ANR.
+        final sha = await UploadQueue.hashFile(tmp);
         final q = await UploadQueue.open();
         await q.enqueue(
           filePath: tmp.path,
