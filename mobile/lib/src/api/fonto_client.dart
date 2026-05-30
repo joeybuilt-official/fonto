@@ -355,6 +355,28 @@ class FontoClient {
     return raw.map(Asset.fromJson).toList();
   }
 
+  Future<List<Asset>> assetsByPerson(String personId) async {
+    final j = await _getJson(
+      "/api/v1/persons/$personId/faces",
+      {"limit": "200"},
+    );
+    final faces = (j["faces"] as List? ?? const []).cast<Map<String, dynamic>>();
+    final seen = <String>{};
+    final assets = <Asset>[];
+    for (final f in faces) {
+      final a = f["asset"] as Map<String, dynamic>?;
+      if (a == null) continue;
+      final id = a["id"] as String?;
+      if (id == null || !seen.add(id)) continue;
+      assets.add(Asset.fromJson({
+        "sizeBytes": 0,
+        "createdAt": DateTime.now().toIso8601String(),
+        ...a,
+      }));
+    }
+    return assets;
+  }
+
   /// Assets shared into the active workspace from other workspaces.
   /// Full list; the endpoint doesn't paginate.
   Future<List<SharedAsset>> sharedWithMe() async {

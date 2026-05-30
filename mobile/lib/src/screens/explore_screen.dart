@@ -118,7 +118,9 @@ class _PeopleTabState extends State<_PeopleTab> {
       _thumbs.clear();
     });
     try {
-      final items = await widget.client.listPersons();
+      final raw = await widget.client.listPersons();
+      final seen = <String>{};
+      final items = raw.where((p) => seen.add(p.id)).toList();
       final coverIds = items
           .map((p) => p.coverAssetId)
           .whereType<String>()
@@ -167,6 +169,14 @@ class _PeopleTabState extends State<_PeopleTab> {
         itemBuilder: (context, i) => _PersonTile(
           person: _items[i],
           url: _thumbs[_items[i].coverAssetId],
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => _PersonAssetsScreen(
+                client: widget.client,
+                person: _items[i],
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -174,46 +184,54 @@ class _PeopleTabState extends State<_PeopleTab> {
 }
 
 class _PersonTile extends StatelessWidget {
-  const _PersonTile({required this.person, required this.url});
+  const _PersonTile({
+    required this.person,
+    required this.url,
+    required this.onTap,
+  });
   final Person person;
   final String? url;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          child: ClipOval(
-            child: url == null
-                ? Container(
-                    color: Colors.black12,
-                    child: const Icon(Icons.person, size: 36),
-                  )
-                : CachedNetworkImage(
-                    imageUrl: url!,
-                    fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(color: Colors.black12),
-                    errorWidget: (_, __, ___) => const Icon(Icons.person),
-                  ),
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: ClipOval(
+              child: url == null
+                  ? Container(
+                      color: Colors.black12,
+                      child: const Icon(Icons.person, size: 36),
+                    )
+                  : CachedNetworkImage(
+                      imageUrl: url!,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => Container(color: Colors.black12),
+                      errorWidget: (_, __, ___) => const Icon(Icons.person),
+                    ),
+            ),
           ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          person.name ?? "Unnamed",
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: theme.textTheme.bodySmall,
-        ),
-        Text(
-          "${person.instanceCount}",
-          textAlign: TextAlign.center,
-          style: theme.textTheme.labelSmall
-              ?.copyWith(color: theme.colorScheme.outline),
-        ),
-      ],
+          const SizedBox(height: 4),
+          Text(
+            person.name ?? "Unnamed",
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall,
+          ),
+          Text(
+            "${person.instanceCount}",
+            textAlign: TextAlign.center,
+            style: theme.textTheme.labelSmall
+                ?.copyWith(color: theme.colorScheme.outline),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -579,6 +597,107 @@ class _TagAssetsScreenState extends State<_TagAssetsScreen> {
                     placeholder: (_, __) => Container(color: Colors.black12),
                     errorWidget: (_, __, ___) =>
                         const ColoredBox(color: Colors.black12, child: Icon(Icons.broken_image)),
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Drill-in: all assets containing a recognised face for one person.
+class _PersonAssetsScreen extends StatefulWidget {
+  const _PersonAssetsScreen({required this.client, required this.person});
+  final FontoClient client;
+  final Person person;
+
+  @override
+  State<_PersonAssetsScreen> createState() => _PersonAssetsScreenState();
+}
+
+class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
+  bool _loading = true;
+  String? _error;
+  List<Asset> _assets = const [];
+  final Map<String, String> _thumbs = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final assets = await widget.client.assetsByPerson(widget.person.id);
+      final thumbs = assets.isEmpty
+          ? <String, String>{}
+          : await widget.client
+              .assetUrls(assets.map((a) => a.id).toList(), variant: "thumb");
+      if (!mounted) return;
+      setState(() {
+        _assets = assets;
+        _thumbs.addAll(thumbs);
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      _fail("${e.status}: ${e.message}");
+    } catch (e) {
+      _fail(e.toString());
+    }
+  }
+
+  void _fail(String msg) {
+    if (!mounted) return;
+    setState(() {
+      _error = msg;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.person.name ?? "Unnamed";
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: _stateScaffold(
+        loading: _loading,
+        error: _error,
+        isEmpty: _assets.isEmpty,
+        emptyText: "No photos found for this person.",
+        onRetry: _load,
+        builder: () => GridView.builder(
+          padding: const EdgeInsets.all(4),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 4,
+            mainAxisSpacing: 4,
+          ),
+          itemCount: _assets.length,
+          itemBuilder: (context, i) => GestureDetector(
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => AssetDetailScreen(
+                  client: widget.client,
+                  assets: _assets,
+                  initialIndex: i,
+                ),
+              ),
+            ),
+            child: _thumbs[_assets[i].id] == null
+                ? Container(color: Colors.black12)
+                : CachedNetworkImage(
+                    imageUrl: _thumbs[_assets[i].id]!,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(color: Colors.black12),
+                    errorWidget: (_, __, ___) => const ColoredBox(
+                      color: Colors.black12,
+                      child: Icon(Icons.broken_image),
+                    ),
                   ),
           ),
         ),
