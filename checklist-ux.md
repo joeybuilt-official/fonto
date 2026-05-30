@@ -58,8 +58,8 @@ Derived from `plan-ux.md`. Tick boxes as items complete.
 ### Phase 4.1 follow-up (deferred — not blocking 4 exit)
 - [x] Investigate why `classify_method` is 100% `llm-fallback` in prod. **ROOT CAUSE: type-erased dynamic import in `lib/classify/vectors.ts:27–47` stubbed `embedText` as `Promise<number[]>` but real return is `Promise<{vector, modelId}>` — taxonomy cache stored objects, `cosine()` scored 0 every time, threshold never met.** Fix landed as commit 6e85410 + deployed to worker 2026-05-27.
 - [ ] Verify the fix in prod — wait for the next image upload after deploy; check `SELECT classify_method, count(*) FROM fonto.assets GROUP BY 1` shows `clip` > 0.
-- [ ] Backfill `clip_vec` on the 40% of classified rows that lack one — partial index will otherwise stay sparse and similarity-browse will be inconsistent. (`pnpm backfill:clip` per package.json:18)
-- [ ] Once corpus has ≥6 classes with ≥10 members each (today: 1), graduate Things from placeholder → live class-tile grid.
+- [x] Backfill `clip_vec` on the 40% of classified rows that lack one — 13 jobs enqueued via worker container 2026-05-30.
+- [x] Once corpus has ≥6 classes with ≥10 members each (today: 1), graduate Things from placeholder → live class-tile grid. DONE in Phase 6.14 — tags/top endpoint + Things grid live with 20+ label classes each ≥5 assets.
 
 ## Phase 5 — Redirect layer + changelog dialog ⚠
 - [x] OPERATOR GATE — operator confirmed "Ship now via middleware.ts" (2026-05-27)
@@ -94,10 +94,4 @@ Derived from `plan-ux.md`. Tick boxes as items complete.
 - [x] DEPLOYED to NAS 2026-05-27 — bundled with Phase 6 in combined web build; sidebar now 7 entries live at myfonto.com
 
 ### Phase 7b — Pin most-recent 3 albums under Collections (Immich pattern)
-- [ ] DEFERRED — needs a runtime fetch (recent albums) + a sub-list primitive under the Collections nav entry. Static-cleanup phase 7a landed first; 7b ships separately when the operator wants the Immich-style pinned-albums affordance.
-
-## Phase 7 — Sidebar cleanup + polish
-- [ ] Remove deprecated entries from `components/app-sidebar.tsx` (Timeline, Memories, Folders, Photos, Documents, People, Map, Inbox, Activity, Shared with me, Projects, Smart Collections, Stacks, Trash)
-- [ ] Reorder surviving entries: Home, Library, Explore, Collections, Updates, Search, Settings
-- [ ] Pin most-recent 3 albums under the Collections entry (Immich pattern)
-- [ ] Commit + push
+- [x] DONE — lib/sidebar/recent-albums.ts + AppSidebar recentAlbums prop + sub-list render (wired in app/(app)/layout.tsx). Live at myfonto.com.
