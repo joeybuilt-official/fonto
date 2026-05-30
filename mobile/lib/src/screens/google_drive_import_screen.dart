@@ -259,9 +259,6 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     });
   }
 
-  bool get _allLoadedSelected =>
-      _items.isNotEmpty && _items.every((it) => _selected.containsKey(it.id));
-
   // Deselect if anything is selected; otherwise load ALL pages then select
   // everything — so "select all" truly means every file in Drive, not just
   // the first 100.
@@ -273,14 +270,18 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     }
     // Select whatever is already loaded, then fetch remaining pages.
     setState(() {
-      for (final it in _items) _selected[it.id] = it;
+      for (final it in _items) {
+        _selected[it.id] = it;
+      }
       _selectingAll = _nextPage != null;
     });
     while (_nextPage != null && mounted) {
       await _loadFiles(more: true);
       if (mounted) {
         setState(() {
-          for (final it in _items) _selected[it.id] = it;
+          for (final it in _items) {
+            _selected[it.id] = it;
+          }
         });
       }
     }
