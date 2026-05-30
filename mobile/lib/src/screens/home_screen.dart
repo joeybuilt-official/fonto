@@ -779,7 +779,8 @@ double _clampDouble(double v, double lo, double hi) =>
 /// grouping matches the server's sort=captured ordering.
 String _monthKey(Asset a) {
   final ts = a.capturedAt ?? a.createdAt;
-  return ts.length >= 7 ? ts.substring(0, 7) : ts;
+  return "${ts.year.toString().padLeft(4, '0')}-"
+      "${ts.month.toString().padLeft(2, '0')}";
 }
 
 String _monthLabel(String key) {

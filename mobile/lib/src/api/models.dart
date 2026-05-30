@@ -11,6 +11,7 @@ class Asset {
     required this.filename,
     required this.mimeType,
     required this.sizeBytes,
+    required this.createdAt,
     this.description,
     this.classification,
     this.capturedAt,
@@ -28,6 +29,10 @@ class Asset {
   final String? description;
   final String? classification;
   final DateTime? capturedAt;
+  // Ingest time — always present (notNull server-side). The timeline groups
+  // by capturedAt and falls back to this when EXIF capture time is missing,
+  // mirroring the server's COALESCE(captured_at, created_at) sort.
+  final DateTime createdAt;
   final String? directoryPath;
   final bool? isFavorite;
   final int? rating;
@@ -54,6 +59,7 @@ class Asset {
         capturedAt: j["capturedAt"] == null
             ? null
             : DateTime.parse(j["capturedAt"] as String),
+        createdAt: DateTime.parse(j["createdAt"] as String),
         directoryPath: j["directoryPath"] as String?,
         isFavorite: j["isFavorite"] as bool?,
         rating: (j["rating"] as num?)?.toInt(),
