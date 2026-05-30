@@ -750,7 +750,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     final groups = _groupAssetsByMonth(_assets);
     final estTile = MediaQuery.of(context).size.width / 3 - 4;
-    double offset = (_stats != null && _folder == null) ? 64 : 0;
+    double offset = (_stats != null && _folder == null) ? 64.0 : 0.0;
     for (final g in groups) {
       if (g.month == month) break;
       final rows = (g.assets.length / 3).ceil();
@@ -833,7 +833,10 @@ class _MonthHeaderDelegate extends SliverPersistentHeaderDelegate {
   Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
     final theme = Theme.of(context);
     return Container(
-      color: theme.scaffoldBackgroundColor.withOpacity(0.96),
+      // Solid (not translucent) so the pinned header fully masks tiles
+      // scrolling underneath — and avoids the deprecated withOpacity on
+      // current stable Flutter, which fails `flutter analyze`.
+      color: theme.scaffoldBackgroundColor,
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
@@ -918,8 +921,8 @@ class _TimelineScrubberState extends State<_TimelineScrubber> {
             });
           },
           onVerticalDragEnd: (_) {
-            final y = _localY ?? 0;
-            final month = _monthAt(height > 0 ? y / height : 0);
+            final double y = _localY ?? 0.0;
+            final month = _monthAt(height > 0 ? y / height : 0.0);
             setState(() {
               _dragging = false;
               _localY = null;
@@ -928,7 +931,7 @@ class _TimelineScrubberState extends State<_TimelineScrubber> {
           },
           onTapDown: (d) {
             final y = _clampDouble(d.localPosition.dy, 0, height);
-            final month = _monthAt(height > 0 ? y / height : 0);
+            final month = _monthAt(height > 0 ? y / height : 0.0);
             if (month.isNotEmpty) widget.onSeek(month);
           },
           child: Stack(
