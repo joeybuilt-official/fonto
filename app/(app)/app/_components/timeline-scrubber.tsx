@@ -36,11 +36,14 @@ function formatYear(month: string): string {
 interface TimelineScrubberProps {
   /** Full-library month buckets, newest first. Drives the scrubber domain. */
   buckets: ScrubBucket[];
-  /** Month currently at the top of the viewport — positions the thumb when
-   *  the user isn't actively dragging. */
-  activeMonth: string | null;
-  /** Fired when the user releases (or dwells) on a month — seek the timeline. */
-  onSeek: (month: string) => void;
+  /** Live scroll position of the timeline as a 0..1 fraction. Positions the
+   *  thumb when idle so the scrubber tracks scrolling like a real scrollbar —
+   *  including within a single huge month, where a month-boundary thumb would
+   *  sit frozen. */
+  thumbFraction: number;
+  /** Scroll the timeline so this 0..1 fraction is at the top. Fired live
+   *  while dragging the thumb. */
+  onScrubTo: (fraction: number) => void;
   /** Fired on drag start/end so the timeline can gate lazy month fetches
    *  while the user is flinging through the scrubber. */
   onScrubStateChange?: (scrubbing: boolean) => void;
@@ -48,8 +51,8 @@ interface TimelineScrubberProps {
 
 export function TimelineScrubber({
   buckets,
-  activeMonth,
-  onSeek,
+  thumbFraction,
+  onScrubTo,
   onScrubStateChange,
 }: TimelineScrubberProps) {
   const trackRef = useRef<HTMLDivElement>(null);
@@ -58,9 +61,8 @@ export function TimelineScrubber({
   const [bubble, setBubble] = useState<{ month: string; y: number } | null>(null);
   // Throttle bubble updates to ~30 fps.
   const lastBubbleAtRef = useRef(0);
-  // Throttle live scroll-follow seeks during a drag (~14 fps is plenty for
-  // month-granularity scrolling and keeps scrollToIndex from thrashing).
-  const lastSeekAtRef = useRef(0);
+  // Current drag fraction (0..1) — positions the thumb while dragging.
+  const [dragFrac, setDragFrac] = useState(0);
 
   // Cumulative count *above* each bucket + the grand total. Used to map a
   // fractional track position to a month and vice-versa.
@@ -107,50 +109,32 @@ export function TimelineScrubber({
     [buckets, cumBefore, total]
   );
 
-  // Thumb position (fraction 0..1) reflecting the active month when idle, or
-  // the live bubble target while dragging.
-  const thumbFrac = useMemo(() => {
-    if (dragging && bubble) {
-      const idx = buckets.findIndex((b) => b.month === bubble.month);
-      if (idx >= 0 && total > 0) return cumBefore[idx] / total;
-    }
-    if (activeMonth) {
-      const idx = buckets.findIndex((b) => b.month === activeMonth);
-      if (idx >= 0 && total > 0) return cumBefore[idx] / total;
-    }
-    return 0;
-  }, [dragging, bubble, activeMonth, buckets, cumBefore, total]);
+  // Thumb position (fraction 0..1): the live drag fraction while dragging,
+  // otherwise the timeline's actual scroll fraction so it tracks scrolling
+  // smoothly even through one giant month.
+  const thumbFrac = dragging ? dragFrac : Math.min(1, Math.max(0, thumbFraction));
 
   const updateFromClientY = useCallback(
-    (clientY: number, seekImmediately: boolean) => {
+    (clientY: number) => {
       const track = trackRef.current;
       if (!track) return;
       const rect = track.getBoundingClientRect();
       const y = Math.min(rect.height, Math.max(0, clientY - rect.top));
       const frac = rect.height > 0 ? y / rect.height : 0;
-      const month = monthAtFraction(frac);
-      if (!month) return;
+      setDragFrac(frac);
 
+      const month = monthAtFraction(frac);
       const now = performance.now();
-      if (seekImmediately || now - lastBubbleAtRef.current >= 33) {
+      if (month && now - lastBubbleAtRef.current >= 33) {
         lastBubbleAtRef.current = now;
         setBubble({ month, y });
       }
 
-      if (seekImmediately) {
-        onSeek(month);
-        return;
-      }
-
-      // Live-follow: scroll the timeline as the thumb moves (throttled so a
-      // fling doesn't fire scrollToIndex on every pointermove). This is what
-      // makes the scrubber feel like a scrollbar instead of a tap-to-jump.
-      if (now - lastSeekAtRef.current >= 70) {
-        lastSeekAtRef.current = now;
-        onSeek(month);
-      }
+      // Scroll the timeline live to this fraction — this is what makes the
+      // scrubber behave like a real scrollbar instead of a tap-to-jump.
+      onScrubTo(frac);
     },
-    [monthAtFraction, onSeek]
+    [monthAtFraction, onScrubTo]
   );
 
   const endDrag = useCallback(() => {
@@ -165,10 +149,10 @@ export function TimelineScrubber({
     if (!dragging) return;
     const move = (e: PointerEvent) => {
       e.preventDefault();
-      updateFromClientY(e.clientY, false);
+      updateFromClientY(e.clientY);
     };
     const up = (e: PointerEvent) => {
-      updateFromClientY(e.clientY, true);
+      updateFromClientY(e.clientY);
       endDrag();
     };
     window.addEventListener("pointermove", move, { passive: false });
@@ -183,11 +167,11 @@ export function TimelineScrubber({
 
   if (buckets.length <= 1) return null;
 
-  const TRACK_LABEL_ACTIVE = bubble?.month ?? activeMonth;
+  const labelMonth = bubble?.month ?? monthAtFraction(thumbFrac);
 
   return (
     <div
-      className="sticky top-0 hidden h-[calc(100dvh-8rem)] w-12 shrink-0 select-none self-start md:block"
+      className="sticky top-0 hidden h-[calc(100dvh-12rem)] w-12 shrink-0 select-none self-start md:block"
       aria-hidden={false}
     >
       <div
@@ -195,37 +179,33 @@ export function TimelineScrubber({
         role="slider"
         aria-label="Scrub timeline by date"
         aria-valuemin={0}
-        aria-valuemax={Math.max(0, buckets.length - 1)}
-        aria-valuenow={
-          TRACK_LABEL_ACTIVE
-            ? Math.max(0, buckets.findIndex((b) => b.month === TRACK_LABEL_ACTIVE))
-            : 0
-        }
-        aria-valuetext={TRACK_LABEL_ACTIVE ? formatMonth(TRACK_LABEL_ACTIVE) : undefined}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(thumbFrac * 100)}
+        aria-valuetext={labelMonth ? formatMonth(labelMonth) : undefined}
         tabIndex={0}
         onPointerDown={(e) => {
           e.preventDefault();
           (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
           setDragging(true);
           onScrubStateChange?.(true);
-          updateFromClientY(e.clientY, false);
+          updateFromClientY(e.clientY);
         }}
         onKeyDown={(e) => {
-          if (!activeMonth) return;
-          const idx = buckets.findIndex((b) => b.month === activeMonth);
-          if (idx < 0) return;
+          // Arrow / PageUp-Down nudge the scroll fraction; Home/End jump to
+          // the newest/oldest end.
+          const step = e.key === "PageDown" || e.key === "PageUp" ? 0.1 : 0.02;
           if (e.key === "ArrowDown" || e.key === "PageDown") {
             e.preventDefault();
-            onSeek(buckets[Math.min(buckets.length - 1, idx + 1)].month);
+            onScrubTo(Math.min(1, thumbFrac + step));
           } else if (e.key === "ArrowUp" || e.key === "PageUp") {
             e.preventDefault();
-            onSeek(buckets[Math.max(0, idx - 1)].month);
+            onScrubTo(Math.max(0, thumbFrac - step));
           } else if (e.key === "Home") {
             e.preventDefault();
-            onSeek(buckets[0].month);
+            onScrubTo(0);
           } else if (e.key === "End") {
             e.preventDefault();
-            onSeek(buckets[buckets.length - 1].month);
+            onScrubTo(1);
           }
         }}
         className="relative h-full w-full cursor-pointer rounded-full outline-none focus-visible:ring-1 focus-visible:ring-ring"

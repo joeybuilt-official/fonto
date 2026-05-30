@@ -196,13 +196,29 @@ export function VirtualizedTimeline({
   // Active (top-of-viewport) month for the scrubber + sticky chip.
   const activeMonth = virtualItems[0] != null ? buckets[virtualItems[0].index]?.month ?? null : null;
 
-  const seekToMonth = useCallback(
-    (month: string) => {
-      const idx = buckets.findIndex((b) => b.month === month);
-      if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "start" });
-    },
-    [buckets, virtualizer]
-  );
+  // Live scroll fraction (0..1) of the scroll container, so the scrubber thumb
+  // tracks scrolling smoothly — including within a single huge month.
+  const [scrollFrac, setScrollFrac] = useState(0);
+  useEffect(() => {
+    const el = scrollElRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const max = el.scrollHeight - el.clientHeight;
+      setScrollFrac(max > 0 ? el.scrollTop / max : 0);
+    };
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [buckets.length]);
+
+  // Drag-to-scrub: map a 0..1 fraction straight onto the scroll container's
+  // scroll range. Continuous, so the timeline scrolls as the thumb moves.
+  const scrubToFraction = useCallback((fraction: number) => {
+    const el = scrollElRef.current;
+    if (!el) return;
+    const max = el.scrollHeight - el.clientHeight;
+    el.scrollTop = Math.min(1, Math.max(0, fraction)) * max;
+  }, []);
 
   const handleScrubStateChange = useCallback((scrubbing: boolean) => {
     scrubbingRef.current = scrubbing;
@@ -296,8 +312,8 @@ export function VirtualizedTimeline({
 
       <TimelineScrubber
         buckets={scrubBuckets}
-        activeMonth={activeMonth}
-        onSeek={seekToMonth}
+        thumbFraction={scrollFrac}
+        onScrubTo={scrubToFraction}
         onScrubStateChange={handleScrubStateChange}
       />
     </div>
