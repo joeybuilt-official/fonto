@@ -727,45 +727,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           top: 4,
           right: 0,
           bottom: 4,
-          width: 32,
+          width: 28,
           child: _TimelineScrubber(
+            controller: _scroll,
             buckets: _buckets,
-            onSeek: _seekToMonth,
           ),
         ),
       ],
     );
   }
 
-  // Walks the loaded grid forward until the target month surfaces (or we
-  // run out of pages), then scrolls the matching month header to the top.
-  // No-op when the month is already on-screen.
-  Future<void> _seekToMonth(String month) async {
-    for (int safety = 0; safety < 12; safety++) {
-      final idx = _assets.indexWhere((a) => _monthKey(a) == month);
-      if (idx >= 0) break;
-      if (_cursor == null) break;
-      await _loadMore();
-    }
-    if (!mounted) return;
-    final groups = _groupAssetsByMonth(_assets);
-    final estTile = MediaQuery.of(context).size.width / 3 - 4;
-    double offset = (_stats != null && _folder == null) ? 64.0 : 0.0;
-    for (final g in groups) {
-      if (g.month == month) break;
-      final rows = (g.assets.length / 3).ceil();
-      offset += _kMonthHeaderHeight + rows * (estTile + 4) + 8;
-    }
-    if (_scroll.hasClients) {
-      final max = _scroll.position.maxScrollExtent;
-      final clamped = offset < 0 ? 0.0 : (offset > max ? max : offset);
-      _scroll.animateTo(
-        clamped,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      );
-    }
-  }
 }
 
 const double _kMonthHeaderHeight = 36;
@@ -865,21 +836,60 @@ class _MonthHeaderDelegate extends SliverPersistentHeaderDelegate {
       old.label != label || old.count != count;
 }
 
-/// Right-rail draggable scrubber. The thumb position represents the whole
-/// library — cumulative count across `buckets`. Drag fires a live month/year
-/// bubble; release calls `onSeek(month)`.
+/// Right-rail fast-scroll scrubber (Google/Apple-Photos style). No always-on
+/// track — a pill thumb fades in while the list scrolls and fades out ~1.2s
+/// after it settles. Drag the pill (or anywhere down the right edge) to
+/// fast-scroll; a month/year bubble follows the finger.
 class _TimelineScrubber extends StatefulWidget {
-  const _TimelineScrubber({required this.buckets, required this.onSeek});
+  const _TimelineScrubber({required this.controller, required this.buckets});
+  final ScrollController controller;
   final List<AssetBucket> buckets;
-  final void Function(String month) onSeek;
 
   @override
   State<_TimelineScrubber> createState() => _TimelineScrubberState();
 }
 
 class _TimelineScrubberState extends State<_TimelineScrubber> {
-  double? _localY;
+  static const double _pillH = 44;
+
+  double _frac = 0; // scroll position 0..1 — drives the pill's Y.
+  bool _visible = false; // fades in on scroll, out when idle.
   bool _dragging = false;
+  String? _bubbleMonth;
+  Timer? _hideTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onScroll);
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!widget.controller.hasClients) return;
+    final pos = widget.controller.position;
+    final frac =
+        pos.maxScrollExtent > 0 ? pos.pixels / pos.maxScrollExtent : 0.0;
+    if (!mounted) return;
+    setState(() {
+      _frac = _clampDouble(frac, 0, 1);
+      if (!_dragging) _visible = true;
+    });
+    _scheduleHide();
+  }
+
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (mounted && !_dragging) setState(() => _visible = false);
+    });
+  }
 
   int _total() {
     int t = 0;
@@ -903,71 +913,83 @@ class _TimelineScrubberState extends State<_TimelineScrubber> {
     return widget.buckets.last.month;
   }
 
+  void _seekToFraction(double frac) {
+    if (!widget.controller.hasClients) return;
+    widget.controller.jumpTo(
+      _clampDouble(frac, 0, 1) * widget.controller.position.maxScrollExtent,
+    );
+  }
+
+  void _onDrag(double localY, double height) {
+    final frac = height > 0 ? _clampDouble(localY, 0, height) / height : 0.0;
+    setState(() {
+      _bubbleMonth = _monthAt(frac);
+      _visible = true;
+    });
+    _seekToFraction(frac);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, c) {
         final height = c.maxHeight;
+        final pillTop = _clampDouble(_frac * (height - _pillH), 0, height - _pillH);
         return GestureDetector(
-          behavior: HitTestBehavior.opaque,
+          // translucent so plain taps on tiles near the right edge still pass
+          // through; only vertical drags in this strip fast-scroll.
+          behavior: HitTestBehavior.translucent,
           onVerticalDragStart: (d) {
-            setState(() {
-              _dragging = true;
-              _localY = _clampDouble(d.localPosition.dy, 0, height);
-            });
+            _hideTimer?.cancel();
+            setState(() => _dragging = true);
+            _onDrag(d.localPosition.dy, height);
           },
-          onVerticalDragUpdate: (d) {
-            setState(() {
-              _localY = _clampDouble(d.localPosition.dy, 0, height);
-            });
-          },
+          onVerticalDragUpdate: (d) => _onDrag(d.localPosition.dy, height),
           onVerticalDragEnd: (_) {
-            final double y = _localY ?? 0.0;
-            final month = _monthAt(height > 0 ? y / height : 0.0);
             setState(() {
               _dragging = false;
-              _localY = null;
+              _bubbleMonth = null;
             });
-            if (month.isNotEmpty) widget.onSeek(month);
-          },
-          onTapDown: (d) {
-            final y = _clampDouble(d.localPosition.dy, 0, height);
-            final month = _monthAt(height > 0 ? y / height : 0.0);
-            if (month.isNotEmpty) widget.onSeek(month);
+            _scheduleHide();
           },
           child: Stack(
             children: [
-              // Track
-              Align(
-                alignment: Alignment.centerRight,
-                child: Container(
-                  width: 3,
-                  margin: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                    borderRadius: BorderRadius.circular(2),
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 80),
+                top: pillTop,
+                right: 6,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 200),
+                  opacity: _visible || _dragging ? 1 : 0,
+                  child: Container(
+                    width: 8,
+                    height: _pillH,
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      borderRadius: BorderRadius.circular(4),
+                      boxShadow: const [
+                        BoxShadow(color: Colors.black26, blurRadius: 4),
+                      ],
+                    ),
                   ),
                 ),
               ),
-              // Bubble (drag preview)
-              if (_dragging && _localY != null)
+              if (_dragging && _bubbleMonth != null)
                 Positioned(
-                  right: 28,
-                  top: _clampDouble(_localY! - 14, 0, height - 28),
+                  right: 22,
+                  top: _clampDouble(pillTop + _pillH / 2 - 16, 0, height - 32),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.inverseSurface,
+                      color: scheme.inverseSurface,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      _monthLabel(
-                          _monthAt(_localY! / (height == 0 ? 1 : height))),
+                      _monthLabel(_bubbleMonth!),
                       style: TextStyle(
-                        color: Theme.of(context).colorScheme.onInverseSurface,
+                        color: scheme.onInverseSurface,
                         fontWeight: FontWeight.w600,
                         fontSize: 13,
                       ),
