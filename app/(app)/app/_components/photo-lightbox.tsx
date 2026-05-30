@@ -821,8 +821,14 @@ export function PhotoLightbox({
 
       {/* Main area */}
       <div className="flex flex-1 min-h-0">
-        {/* Photo area */}
-        <div className="flex flex-1 items-center justify-center relative min-w-0">
+        {/* Photo area — clicking the black space around the image (but not
+            the image, nav arrows, or stack chip) closes the lightbox. */}
+        <div
+          className="flex flex-1 items-center justify-center relative min-w-0"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) onClose();
+          }}
+        >
           {hasPrev && (
             <button
               onClick={onPrev}
