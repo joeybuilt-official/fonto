@@ -442,10 +442,10 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
 
   Future<void> _load() async {
     try {
-      final results = await Future.wait([
-        widget.client.assetFaces(widget.asset.id),
-        widget.client.listPersons(),
-      ]);
+      final facesFuture = widget.client.assetFaces(widget.asset.id);
+      final personsFuture = widget.client.listPersons();
+      final faces = await facesFuture;
+      final persons = await personsFuture;
       String? url = widget.imageUrl;
       if (url == null) {
         final urlMap = await widget.client
@@ -453,8 +453,6 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
         url = urlMap[widget.asset.id];
       }
       if (!mounted) return;
-      final faces = results[0] as List<AssetFace>;
-      final persons = results[1] as List<Person>;
       final wPx = widget.asset.widthPx;
       final hPx = widget.asset.heightPx;
       setState(() {
@@ -696,6 +694,7 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
       _saving = true;
       _saveError = null;
     });
+    final nav = Navigator.of(context);
     try {
       await widget.client.assignFace(widget.face.id, person.id);
       if (!mounted) return;
@@ -706,7 +705,7 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
         personId: person.id,
         personName: person.name,
       ));
-      Navigator.of(context).pop();
+      nav.pop();
     } catch (e) {
       if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
     }
@@ -719,8 +718,10 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
       _saving = true;
       _saveError = null;
     });
+    final nav = Navigator.of(context);
     try {
       final person = await widget.client.createPerson(name: name);
+      if (!mounted) return;
       widget.onPersonCreated(person);
       await widget.client.assignFace(widget.face.id, person.id);
       if (!mounted) return;
@@ -731,7 +732,7 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
         personId: person.id,
         personName: person.name,
       ));
-      Navigator.of(context).pop();
+      nav.pop();
     } catch (e) {
       if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
     }
@@ -739,6 +740,7 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
 
   Future<void> _clearAssignment() async {
     setState(() { _saving = true; _saveError = null; });
+    final nav = Navigator.of(context);
     try {
       await widget.client.assignFace(widget.face.id, null);
       if (!mounted) return;
@@ -747,7 +749,7 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
         bbox: widget.face.bbox,
         confidence: widget.face.confidence,
       ));
-      Navigator.of(context).pop();
+      nav.pop();
     } catch (e) {
       if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
     }
