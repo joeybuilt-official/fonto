@@ -112,7 +112,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     UploadQueue.drain().then((n) {
       if (!mounted) return;
       _refreshQueueBadge();
-      if (n > 0) _softRefresh();
+      _softRefresh();
     });
   }
 

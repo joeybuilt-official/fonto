@@ -128,16 +128,23 @@ Future<void> _downloadAllPagesFromDrive(
     // exited prematurely when a batch returned 0 successes (auth expiry,
     // transient error) even though pending items remained in the queue.
     // Refresh the token before each batch to survive the 1-hour expiry window.
-    while (await driveQ.pendingCount() > 0) {
+    int consecutiveZeros = 0;
+    while (await driveQ.pendingCount() > 0 && consecutiveZeros < 3) {
       final dlAuth = await account.authentication;
       final dlToken = dlAuth.accessToken;
       final dlHeaders = dlToken == null
           ? <String, String>{}
           : {"Authorization": "Bearer $dlToken"};
-      await DriveDownloadQueue.processAll(
+      final downloaded = await DriveDownloadQueue.processAll(
         dlHeaders,
         await getTemporaryDirectory(),
       );
+      if (downloaded == 0) {
+        consecutiveZeros++;
+        await Future.delayed(const Duration(seconds: 5));
+      } else {
+        consecutiveZeros = 0;
+      }
     }
   } finally {
     UploadQueue.endFeeding();
