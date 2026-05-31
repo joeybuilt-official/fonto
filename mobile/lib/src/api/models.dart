@@ -271,10 +271,13 @@ class AssetStack {
 
   static AssetStack fromJson(Map<String, dynamic> j) => AssetStack(
         id: j["id"] as String,
-        name: j["name"] as String,
-        primaryAssetId: j["primaryAssetId"] as String,
-        primaryFilename: j["primaryFilename"] as String,
-        primaryMimeType: j["primaryMimeType"] as String,
+        // Auto-detected (burst/duplicate) stacks have no name, and a primary
+        // with missing metadata can leave these null — cast defensively so the
+        // Stacks page doesn't crash with a Null→String type error.
+        name: (j["name"] as String?) ?? "Untitled stack",
+        primaryAssetId: (j["primaryAssetId"] as String?) ?? "",
+        primaryFilename: (j["primaryFilename"] as String?) ?? "",
+        primaryMimeType: (j["primaryMimeType"] as String?) ?? "",
         memberCount: (j["memberCount"] as num?)?.toInt() ?? 0,
         primaryCapturedAt: j["primaryCapturedAt"] == null
             ? null
