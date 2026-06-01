@@ -662,10 +662,12 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   List<Asset> _assets = const [];
   final Map<String, String> _thumbs = {};
   bool _merging = false;
+  late String? _name;
 
   @override
   void initState() {
     super.initState();
+    _name = widget.person.name;
     _load();
   }
 
@@ -763,7 +765,7 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final title = widget.person.name ?? "Unnamed";
+    final title = _name ?? "Unnamed";
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
@@ -805,6 +807,12 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                   client: widget.client,
                   assets: _assets,
                   initialIndex: i,
+                  onPersonUpdated: (p) {
+                    if (p.id == widget.person.id && p.name != null) {
+                      setState(() => _name = p.name);
+                      Navigator.of(context).pop(true);
+                    }
+                  },
                 ),
               ),
             ),

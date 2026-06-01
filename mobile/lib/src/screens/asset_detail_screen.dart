@@ -23,11 +23,14 @@ class AssetDetailScreen extends StatefulWidget {
     required this.client,
     required this.assets,
     required this.initialIndex,
+    this.onPersonUpdated,
   });
 
   final FontoClient client;
   final List<Asset> assets;
   final int initialIndex;
+  /// Called whenever a person is created or renamed from within this screen.
+  final void Function(Person)? onPersonUpdated;
 
   @override
   State<AssetDetailScreen> createState() => _AssetDetailScreenState();
@@ -487,7 +490,15 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
           });
         },
         onPersonCreated: (p) {
-          setState(() => _persons = [p, ..._persons]);
+          setState(() {
+            final idx = _persons.indexWhere((x) => x.id == p.id);
+            if (idx >= 0) {
+              _persons[idx] = p;
+            } else {
+              _persons = [p, ..._persons];
+            }
+          });
+          widget.onPersonUpdated?.call(p);
         },
       ),
     );
