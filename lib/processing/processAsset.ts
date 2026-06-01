@@ -171,16 +171,29 @@ async function processAssetInner(
       if (visionConfigured()) {
         try {
           const [imgRow] = await db
-            .select({ workspaceId: schema.assets.workspaceId })
+            .select({
+              workspaceId: schema.assets.workspaceId,
+              previewKey: schema.assets.previewKey,
+            })
             .from(schema.assets)
             .where(eq(schema.assets.id, assetId))
             .limit(1);
           if (imgRow) {
+            // Feed the vision model the decoded preview (sharp/libheif webp),
+            // not the original. The VLM can't decode HEIC/RAW, so handing it
+            // the raw original makes it confabulate a generic scene — which is
+            // exactly how Drive-imported HEIC photos all got tagged
+            // sunset/golden-hour. Falls back to the original only when the
+            // preview derivative isn't ready yet (thumbnail job races this one);
+            // a reprocess pass then picks up the now-present preview.
+            const visionKey =
+              imgRow.previewKey ??
+              assetStorageKey(imgRow.workspaceId, assetId, filename);
             const signedUrl = await getSignedUrl(
               getS3Client(),
               new GetObjectCommand({
                 Bucket: process.env.R2_BUCKET!,
-                Key: assetStorageKey(imgRow.workspaceId, assetId, filename),
+                Key: visionKey,
               }),
               { expiresIn: 300 }
             );
@@ -554,7 +567,10 @@ export async function runOcrForAsset(
   }
 
   const bucket = process.env.R2_BUCKET!;
-  const key = assetStorageKey(asset.workspaceId, asset.id, asset.filename);
+  // Prefer the decoded preview so OCR works on HEIC/RAW originals the VLM
+  // can't decode; fall back to the original until the preview derivative lands.
+  const key =
+    asset.previewKey ?? assetStorageKey(asset.workspaceId, asset.id, asset.filename);
   let signedUrl: string;
   try {
     signedUrl = await getSignedUrl(
