@@ -422,6 +422,19 @@ class FontoClient {
     return Person.fromJson(j["person"] as Map<String, dynamic>);
   }
 
+  Future<Person> updatePersonName(String personId, String name) async {
+    final res = await _http.patch(
+      _uri("/api/v1/persons/$personId"),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode({"name": name}),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+    final j = json.decode(res.body) as Map<String, dynamic>;
+    return Person.fromJson(j["person"] as Map<String, dynamic>);
+  }
+
   /// Merge [sourceId] into [intoId]: every face moves to the target person and
   /// the source person is deleted. Mirrors the web person-detail merge action.
   Future<void> mergePerson(String sourceId, String intoId) async {

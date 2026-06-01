@@ -719,11 +719,20 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
     });
     final nav = Navigator.of(context);
     try {
-      final person = await widget.client.createPerson(name: name);
-      if (!mounted) return;
-      widget.onPersonCreated(person);
-      await widget.client.assignFace(widget.face.id, person.id);
-      if (!mounted) return;
+      final Person person;
+      if (widget.face.personId != null) {
+        // Face already belongs to a cluster — rename the whole cluster so every
+        // photo in the group picks up the name without re-assigning faces.
+        person = await widget.client.updatePersonName(widget.face.personId!, name);
+        if (!mounted) return;
+        widget.onPersonCreated(person);
+      } else {
+        person = await widget.client.createPerson(name: name);
+        if (!mounted) return;
+        widget.onPersonCreated(person);
+        await widget.client.assignFace(widget.face.id, person.id);
+        if (!mounted) return;
+      }
       widget.onUpdated(AssetFace(
         id: widget.face.id,
         bbox: widget.face.bbox,
