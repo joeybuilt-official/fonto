@@ -213,9 +213,7 @@ class DriveDownloadQueue {
           final fname = name.isNotEmpty ? name : "$id.bin";
           final tmp = File("${tmpDir.path}/drive_${id}_$fname");
           final sink = tmp.openWrite();
-          await streamed.stream
-              .pipe(sink)
-              .timeout(const Duration(minutes: 10));
+          await streamed.stream.pipe(sink);
           final sha = await UploadQueue.hashFile(tmp);
           await uploadQ.enqueue(
             filePath: tmp.path,
