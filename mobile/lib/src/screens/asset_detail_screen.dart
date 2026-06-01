@@ -196,6 +196,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
         client: widget.client,
         asset: _cur,
         imageUrl: _previews[_cur.id],
+        onPersonUpdated: widget.onPersonUpdated,
       ),
     ));
   }
@@ -417,11 +418,13 @@ class _FaceTaggingScreen extends StatefulWidget {
     required this.client,
     required this.asset,
     this.imageUrl,
+    this.onPersonUpdated,
   });
 
   final FontoClient client;
   final Asset asset;
   final String? imageUrl;
+  final void Function(Person)? onPersonUpdated;
 
   @override
   State<_FaceTaggingScreen> createState() => _FaceTaggingScreenState();
