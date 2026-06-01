@@ -22,7 +22,13 @@ function actorHue(id: string): number {
   return h % 360;
 }
 
-function ActorAvatar({ actorUserId }: { actorUserId: string | null }) {
+function ActorAvatar({
+  actorUserId,
+  actorUserName,
+}: {
+  actorUserId: string | null;
+  actorUserName?: string | null;
+}) {
   if (!actorUserId) {
     return (
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground text-xs">
@@ -30,7 +36,10 @@ function ActorAvatar({ actorUserId }: { actorUserId: string | null }) {
       </span>
     );
   }
-  const initials = actorUserId.slice(0, 2).toUpperCase();
+  // Initials from the display name when we have it; fall back to the id so a
+  // never-resolved actor still renders something stable.
+  const initialsSource = actorUserName?.trim() || actorUserId;
+  const initials = initialsSource.slice(0, 2).toUpperCase();
   const hue = actorHue(actorUserId);
   return (
     <span
@@ -76,6 +85,8 @@ interface ActivityEvent {
   id: string;
   workspaceId: string;
   actorUserId: string | null;
+  actorUserName?: string | null;
+  actorUserEmail?: string | null;
   kind: string;
   targetType: string | null;
   targetId: string | null;
@@ -88,7 +99,9 @@ function summarize(ev: ActivityEvent): { text: string; assetId: string | null } 
   const assetId =
     (typeof payload.assetId === "string" ? payload.assetId : null) ??
     (ev.targetType === "asset" ? ev.targetId : null);
-  const actor = ev.actorUserId ? ev.actorUserId.slice(0, 8) : "someone";
+  const actor =
+    ev.actorUserName?.trim() ||
+    (ev.actorUserId ? ev.actorUserId.slice(0, 8) : "someone");
   switch (ev.kind) {
     case "comment.posted": {
       const excerpt = typeof payload.excerpt === "string" ? payload.excerpt : "";
@@ -196,7 +209,10 @@ export function ActivitySection() {
             const s = summarize(ev);
             return (
               <li key={ev.id} className="flex items-center gap-3 rounded-md border border-border bg-card p-3">
-                <ActorAvatar actorUserId={ev.actorUserId} />
+                <ActorAvatar
+                  actorUserId={ev.actorUserId}
+                  actorUserName={ev.actorUserName}
+                />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-foreground">
                     {s.assetId ? (

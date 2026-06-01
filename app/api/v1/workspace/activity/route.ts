@@ -16,6 +16,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { and, desc, eq, lt } from "drizzle-orm";
+import { loadUsersByIds, userDisplayName, userEmail } from "@/lib/auth/lookupUsers";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -61,17 +62,30 @@ export async function GET(request: NextRequest) {
   const nextCursor =
     lastRow && rows.length === limit ? lastRow.createdAt.toISOString() : null;
 
+  // Resolve actor ids to names so the feed renders "Alice" instead of the raw
+  // uuid. One batched adapter lookup over the distinct ids on this page.
+  const actors = await loadUsersByIds(
+    rows.map((r) => r.actorUserId).filter((id): id is string => Boolean(id))
+  );
+
   return NextResponse.json({
-    events: rows.map((r) => ({
-      id: r.id,
-      workspaceId: r.workspaceId,
-      actorUserId: r.actorUserId,
-      kind: r.kind,
-      targetType: r.targetType,
-      targetId: r.targetId,
-      payload: r.payload,
-      createdAt: r.createdAt.toISOString(),
-    })),
+    events: rows.map((r) => {
+      const actor = r.actorUserId ? actors.get(r.actorUserId) : undefined;
+      return {
+        id: r.id,
+        workspaceId: r.workspaceId,
+        actorUserId: r.actorUserId,
+        actorUserName: r.actorUserId
+          ? userDisplayName(actor, r.actorUserId)
+          : null,
+        actorUserEmail: userEmail(actor),
+        kind: r.kind,
+        targetType: r.targetType,
+        targetId: r.targetId,
+        payload: r.payload,
+        createdAt: r.createdAt.toISOString(),
+      };
+    }),
     nextCursor,
   });
 }
