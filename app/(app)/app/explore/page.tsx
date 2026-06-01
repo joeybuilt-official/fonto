@@ -89,9 +89,9 @@ const TILES: TileDef[] = [
     countLoader: loadPersonsCount,
   },
   {
-    href: "/app/map",
+    href: "/app/explore/places",
     label: "Places",
-    subtitle: "Geo-tagged photos plotted on a map.",
+    subtitle: "Photos grouped by where they were taken.",
     icon: MapIcon,
     accent: "bg-emerald-500/10 text-emerald-500",
     countLoader: loadPlacesCount,

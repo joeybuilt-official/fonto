@@ -99,6 +99,13 @@ export async function GET(request: NextRequest) {
     where.push(isNotNull(schema.assets.latitude));
     where.push(isNotNull(schema.assets.longitude));
   }
+
+  // Explore → Places drill-in: `?place=<reverse-geocoded name>` filters to one
+  // place group. Backed by the place_name column the worker populates from EXIF.
+  const placeParam = searchParams.get("place");
+  if (placeParam != null && placeParam.trim() !== "") {
+    where.push(eq(schema.assets.placeName, placeParam.trim()));
+  }
   if (directoryPath != null) {
     if (directoryPath === "" || directoryPath === "/") {
       where.push(isNull(schema.assets.directoryPath));
