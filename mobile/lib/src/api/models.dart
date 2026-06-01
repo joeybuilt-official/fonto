@@ -406,6 +406,21 @@ class Person {
       );
 }
 
+class FaceSuggestion {
+  const FaceSuggestion({required this.person, required this.distance});
+  final Person person;
+  final double distance;
+
+  static FaceSuggestion fromJson(Map<String, dynamic> j) => FaceSuggestion(
+        person: Person(
+          id: j["id"] as String,
+          instanceCount: (j["instanceCount"] as num?)?.toInt() ?? 0,
+          name: j["name"] as String?,
+        ),
+        distance: (j["distance"] as num).toDouble(),
+      );
+}
+
 /// One detected face on an asset. `bbox` is normalised (0..1). `personId` /
 /// `personName` are null when the face hasn't been assigned to a cluster yet.
 class AssetFace {

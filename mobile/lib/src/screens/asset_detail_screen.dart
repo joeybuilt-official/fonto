@@ -438,6 +438,7 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
   String? _resolvedUrl;
   // Actual pixel dimensions of the image — from asset or resolved from ImageInfo.
   Size? _imageDims;
+  bool _showNames = true;
 
   @override
   void initState() {
@@ -551,6 +552,8 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
                         }
                       },
                       onFaceTapped: _onFaceTapped,
+                      showNames: _showNames,
+                      onImageTapped: () => setState(() => _showNames = !_showNames),
                     ),
     );
   }
@@ -563,6 +566,8 @@ class _FaceImageOverlay extends StatelessWidget {
     required this.imageDims,
     required this.onDimsResolved,
     required this.onFaceTapped,
+    required this.showNames,
+    required this.onImageTapped,
   });
 
   final String imageUrl;
@@ -570,6 +575,8 @@ class _FaceImageOverlay extends StatelessWidget {
   final Size? imageDims;
   final void Function(Size) onDimsResolved;
   final void Function(AssetFace) onFaceTapped;
+  final bool showNames;
+  final VoidCallback onImageTapped;
 
   @override
   Widget build(BuildContext context) {
@@ -579,6 +586,10 @@ class _FaceImageOverlay extends StatelessWidget {
       return Stack(
         fit: StackFit.expand,
         children: [
+          GestureDetector(
+            onTap: onImageTapped,
+            child: const SizedBox.expand(),
+          ),
           CachedNetworkImage(
             imageUrl: imageUrl,
             fit: BoxFit.contain,
@@ -635,7 +646,7 @@ class _FaceImageOverlay extends StatelessWidget {
                 width: 2,
               ),
             ),
-            child: face.personName != null
+            child: showNames && face.personName != null
                 ? Align(
                     alignment: Alignment.bottomCenter,
                     child: FractionalTranslation(
@@ -687,6 +698,24 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
   final _ctrl = TextEditingController();
   bool _saving = false;
   String? _saveError;
+  List<FaceSuggestion> _suggestions = const [];
+  bool _suggestionsLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSuggestions();
+  }
+
+  Future<void> _loadSuggestions() async {
+    setState(() => _suggestionsLoading = true);
+    try {
+      final s = await widget.client.faceSuggestions(widget.face.id);
+      if (mounted) setState(() { _suggestions = s; _suggestionsLoading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _suggestionsLoading = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -839,6 +868,44 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
                     _saveError!,
                     style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12),
                   ),
+                ),
+              if (_suggestionsLoading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+                )
+              else if (_suggestions.isNotEmpty && _ctrl.text.trim().isEmpty)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      child: Text("Suggestions", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54)),
+                    ),
+                    ..._suggestions
+                        .where((s) => s.person.id != widget.face.personId)
+                        .map((s) {
+                      final String subtitle;
+                      if (s.distance < 0.20) {
+                        subtitle = "Best match";
+                      } else if (s.distance < 0.28) {
+                        subtitle = "Good match";
+                      } else {
+                        subtitle = "Possible match";
+                      }
+                      return ListTile(
+                        leading: const Icon(Icons.person_outline),
+                        title: Text(s.person.name ?? "Unnamed"),
+                        subtitle: Text(subtitle),
+                        onTap: _saving ? null : () => _assignTo(s.person),
+                      );
+                    }),
+                    const Divider(),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
+                      child: Text("All people", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54)),
+                    ),
+                  ],
                 ),
               Flexible(
                 child: ListView(

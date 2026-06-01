@@ -435,6 +435,12 @@ class FontoClient {
     return Person.fromJson(j["person"] as Map<String, dynamic>);
   }
 
+  Future<List<FaceSuggestion>> faceSuggestions(String faceId) async {
+    final j = await _getJson("/api/v1/faces/$faceId/suggestions");
+    final raw = (j["suggestions"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(FaceSuggestion.fromJson).toList();
+  }
+
   /// Merge [sourceId] into [intoId]: every face moves to the target person and
   /// the source person is deleted. Mirrors the web person-detail merge action.
   Future<void> mergePerson(String sourceId, String intoId) async {

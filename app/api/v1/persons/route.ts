@@ -14,7 +14,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -56,7 +56,10 @@ export async function GET(request: NextRequest) {
     .select()
     .from(schema.persons)
     .where(where)
-    .orderBy(desc(schema.persons.instanceCount));
+    .orderBy(
+      sql`(${schema.persons.name} IS NOT NULL) DESC`,
+      desc(schema.persons.instanceCount)
+    );
 
   // Resolve cover face -> asset + bbox in a single batch lookup.
   const coverFaceIds = rows

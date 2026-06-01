@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { propagateNamedPerson } from "@/lib/faces/propagate";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -185,6 +186,11 @@ export async function PATCH(
     .set(patch)
     .where(eq(schema.persons.id, person.id))
     .returning();
+
+  // When a name is freshly set, propagate to visually similar untagged faces.
+  if (patch.name && !person.name) {
+    propagateNamedPerson(updated.id, updated.workspaceId).catch(() => {});
+  }
 
   return NextResponse.json({
     person: {
