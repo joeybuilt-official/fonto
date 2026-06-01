@@ -10,6 +10,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "asset_detail_screen.dart";
 
 class CollectionsScreen extends StatelessWidget {
   const CollectionsScreen({super.key, required this.client});
@@ -283,6 +284,13 @@ class _ProjectsTabState extends State<_ProjectsTab> {
             subtitle: p.description == null
                 ? null
                 : Text(p.description!, overflow: TextOverflow.ellipsis),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) =>
+                    _ProjectDetailScreen(client: widget.client, project: p),
+              ),
+            ),
           );
         },
       ),
@@ -412,6 +420,196 @@ class _StackTile extends StatelessWidget {
               ?.copyWith(color: theme.colorScheme.outline),
         ),
       ],
+    );
+  }
+}
+
+/// Project detail — lists the collections that belong to a project. Tapping a
+/// collection opens its asset grid. Projects group collections, not assets
+/// directly, so this is a project → collection → photos drill-in.
+class _ProjectDetailScreen extends StatefulWidget {
+  const _ProjectDetailScreen({required this.client, required this.project});
+  final FontoClient client;
+  final Project project;
+
+  @override
+  State<_ProjectDetailScreen> createState() => _ProjectDetailScreenState();
+}
+
+class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
+  bool _loading = true;
+  String? _error;
+  List<Collection> _items = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final items = await widget.client.projectCollections(widget.project.id);
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      _fail("${e.status}: ${e.message}");
+    } catch (e) {
+      _fail(e.toString());
+    }
+  }
+
+  void _fail(String msg) {
+    if (!mounted) return;
+    setState(() {
+      _error = msg;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.project.name)),
+      body: _stateScaffold(
+        loading: _loading,
+        error: _error,
+        isEmpty: _items.isEmpty,
+        onRetry: _load,
+        builder: () => ListView.builder(
+          itemCount: _items.length,
+          itemBuilder: (context, i) {
+            final c = _items[i];
+            return ListTile(
+              leading: const Icon(Icons.photo_album_outlined),
+              title: Text(c.name),
+              subtitle: c.description == null
+                  ? null
+                  : Text(c.description!, overflow: TextOverflow.ellipsis),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => _CollectionAssetsScreen(
+                    client: widget.client,
+                    collection: c,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// Asset grid for one collection. Mirrors the People → person-assets grid.
+class _CollectionAssetsScreen extends StatefulWidget {
+  const _CollectionAssetsScreen({
+    required this.client,
+    required this.collection,
+  });
+  final FontoClient client;
+  final Collection collection;
+
+  @override
+  State<_CollectionAssetsScreen> createState() =>
+      _CollectionAssetsScreenState();
+}
+
+class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
+  bool _loading = true;
+  String? _error;
+  List<Asset> _assets = const [];
+  final Map<String, String> _thumbs = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final assets =
+          await widget.client.assetsByCollection(widget.collection.id);
+      final thumbs = assets.isEmpty
+          ? <String, String>{}
+          : await widget.client
+              .assetUrls(assets.map((a) => a.id).toList(), variant: "thumb");
+      if (!mounted) return;
+      setState(() {
+        _assets = assets;
+        _thumbs.addAll(thumbs);
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      _fail("${e.status}: ${e.message}");
+    } catch (e) {
+      _fail(e.toString());
+    }
+  }
+
+  void _fail(String msg) {
+    if (!mounted) return;
+    setState(() {
+      _error = msg;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.collection.name)),
+      body: _stateScaffold(
+        loading: _loading,
+        error: _error,
+        isEmpty: _assets.isEmpty,
+        onRetry: _load,
+        builder: () => GridView.builder(
+          padding: const EdgeInsets.all(4),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 4,
+            mainAxisSpacing: 4,
+          ),
+          itemCount: _assets.length,
+          itemBuilder: (context, i) => GestureDetector(
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => AssetDetailScreen(
+                  client: widget.client,
+                  assets: _assets,
+                  initialIndex: i,
+                ),
+              ),
+            ),
+            child: _thumbs[_assets[i].id] == null
+                ? Container(color: Colors.black12)
+                : CachedNetworkImage(
+                    imageUrl: _thumbs[_assets[i].id]!,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(color: Colors.black12),
+                    errorWidget: (_, __, ___) => const ColoredBox(
+                      color: Colors.black12,
+                      child: Icon(Icons.broken_image),
+                    ),
+                  ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -237,7 +237,11 @@ class _FeedRow extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _Avatar(actorUserId: event.actorUserId, kind: event.kind),
+            _Avatar(
+              actorUserId: event.actorUserId,
+              actorUserName: event.actorUserName,
+              kind: event.kind,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -292,9 +296,14 @@ class _FeedRow extends StatelessWidget {
 /// hash so distinct actors read apart at a glance. Falls back to a
 /// kind-specific icon for system (actor-less) events.
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.actorUserId, required this.kind});
+  const _Avatar({
+    required this.actorUserId,
+    required this.kind,
+    this.actorUserName,
+  });
 
   final String? actorUserId;
+  final String? actorUserName;
   final String kind;
 
   @override
@@ -307,9 +316,13 @@ class _Avatar extends StatelessWidget {
         child: Icon(_iconFor(kind), size: 18),
       );
     }
-    final initials = actorUserId!.length >= 2
-        ? actorUserId!.substring(0, 2).toUpperCase()
-        : actorUserId!.toUpperCase();
+    final initialsSource =
+        (actorUserName != null && actorUserName!.trim().isNotEmpty)
+            ? actorUserName!.trim()
+            : actorUserId!;
+    final initials = initialsSource.length >= 2
+        ? initialsSource.substring(0, 2).toUpperCase()
+        : initialsSource.toUpperCase();
     final hue = (actorUserId!.hashCode & 0x7fffffff) % 360;
     final bg = HSLColor.fromAHSL(1, hue.toDouble(), 0.5, 0.45).toColor();
     return CircleAvatar(
@@ -356,9 +369,12 @@ IconData _iconFor(String kind) {
 /// chars of the user id (or "someone"); message varies by kind.
 String _summarize(ActivityEvent e) {
   final id = e.actorUserId;
-  final actor = (id != null && id.isNotEmpty)
-      ? (id.length <= 8 ? id : id.substring(0, 8))
-      : "someone";
+  final name = e.actorUserName;
+  final actor = (name != null && name.trim().isNotEmpty)
+      ? name.trim()
+      : (id != null && id.isNotEmpty)
+          ? (id.length <= 8 ? id : id.substring(0, 8))
+          : "someone";
   switch (e.kind) {
     case "comment.posted":
       final excerpt = e.payload["excerpt"];

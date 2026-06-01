@@ -162,6 +162,29 @@ class FontoClient {
     return raw.map(Project.fromJson).toList();
   }
 
+  /// Collections belonging to a project. GET /projects/:id returns the
+  /// project plus its collections; the project-detail screen lists those.
+  Future<List<Collection>> projectCollections(String projectId) async {
+    final j = await _getJson("/api/v1/projects/$projectId");
+    final raw = (j["collections"] as List? ?? const [])
+        .cast<Map<String, dynamic>>();
+    return raw.map(Collection.fromJson).toList();
+  }
+
+  /// Assets in a manual collection. GET /collections/:id/assets → full rows.
+  Future<List<Asset>> assetsByCollection(String collectionId) async {
+    final j = await _getJson("/api/v1/collections/$collectionId/assets");
+    final raw =
+        (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw
+        .map((a) => Asset.fromJson({
+              "sizeBytes": 0,
+              "createdAt": DateTime.now().toIso8601String(),
+              ...a,
+            }))
+        .toList();
+  }
+
   /// Stacks (near-duplicate groups). Full list; no pagination.
   Future<List<AssetStack>> listStacks() async {
     final j = await _getJson("/api/v1/stacks");
@@ -397,6 +420,12 @@ class FontoClient {
   Future<Person> createPerson({required String name}) async {
     final j = await _postJson("/api/v1/persons", {"name": name});
     return Person.fromJson(j["person"] as Map<String, dynamic>);
+  }
+
+  /// Merge [sourceId] into [intoId]: every face moves to the target person and
+  /// the source person is deleted. Mirrors the web person-detail merge action.
+  Future<void> mergePerson(String sourceId, String intoId) async {
+    await _postJson("/api/v1/persons/$sourceId/merge", {"into": intoId});
   }
 
   /// Assets shared into the active workspace from other workspaces.

@@ -299,12 +299,16 @@ class ActivityEvent {
     required this.payload,
     required this.createdAt,
     this.actorUserId,
+    this.actorUserName,
+    this.actorUserEmail,
     this.targetType,
     this.targetId,
   });
 
   final String id;
   final String? actorUserId;
+  final String? actorUserName;
+  final String? actorUserEmail;
   final String kind;
   final String? targetType;
   final String? targetId;
@@ -314,6 +318,8 @@ class ActivityEvent {
   static ActivityEvent fromJson(Map<String, dynamic> j) => ActivityEvent(
         id: j["id"] as String,
         actorUserId: j["actorUserId"] as String?,
+        actorUserName: j["actorUserName"] as String?,
+        actorUserEmail: j["actorUserEmail"] as String?,
         kind: j["kind"] as String? ?? "",
         targetType: j["targetType"] as String?,
         targetId: j["targetId"] as String?,

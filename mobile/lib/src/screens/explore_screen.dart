@@ -169,14 +169,17 @@ class _PeopleTabState extends State<_PeopleTab> {
         itemBuilder: (context, i) => _PersonTile(
           person: _items[i],
           url: _thumbs[_items[i].coverAssetId],
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => _PersonAssetsScreen(
-                client: widget.client,
-                person: _items[i],
+          onTap: () async {
+            final merged = await Navigator.of(context).push<bool>(
+              MaterialPageRoute(
+                builder: (_) => _PersonAssetsScreen(
+                  client: widget.client,
+                  person: _items[i],
+                ),
               ),
-            ),
-          ),
+            );
+            if (merged == true) _load();
+          },
         ),
       ),
     );
@@ -658,11 +661,72 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   String? _error;
   List<Asset> _assets = const [];
   final Map<String, String> _thumbs = {};
+  bool _merging = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  /// Merge this person into another. Loads the other people, lets the user
+  /// pick a target, then POSTs the merge and pops back so the People grid
+  /// reloads without the now-absorbed person.
+  Future<void> _pickAndMerge() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    List<Person> others;
+    try {
+      others = (await widget.client.listPersons())
+          .where((p) => p.id != widget.person.id)
+          .toList();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text("Couldn't load people: $e")));
+      return;
+    }
+    if (!mounted) return;
+    if (others.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text("No other people to merge into yet.")),
+      );
+      return;
+    }
+    final target = await showModalBottomSheet<Person>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text("Merge into…",
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            for (final p in others)
+              ListTile(
+                leading: const Icon(Icons.person_outline),
+                title: Text(p.name ?? "Unnamed"),
+                subtitle: Text("${p.instanceCount} faces"),
+                onTap: () => Navigator.of(ctx).pop(p),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (target == null || !mounted) return;
+    setState(() => _merging = true);
+    try {
+      await widget.client.mergePerson(widget.person.id, target.id);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text("Merged into ${target.name ?? "person"}")),
+      );
+      navigator.pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _merging = false);
+      messenger.showSnackBar(SnackBar(content: Text("Merge failed: $e")));
+    }
   }
 
   Future<void> _load() async {
@@ -701,7 +765,25 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   Widget build(BuildContext context) {
     final title = widget.person.name ?? "Unnamed";
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      appBar: AppBar(
+        title: Text(title),
+        actions: [
+          _merging
+              ? const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : IconButton(
+                  icon: const Icon(Icons.merge_type),
+                  tooltip: "Merge into…",
+                  onPressed: _pickAndMerge,
+                ),
+        ],
+      ),
       body: _stateScaffold(
         loading: _loading,
         error: _error,
