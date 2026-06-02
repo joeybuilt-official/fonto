@@ -135,7 +135,7 @@ function MetadataPanel({
   }
 
   return (
-    <div className="w-72 shrink-0 border-l border-border bg-card overflow-y-auto text-sm">
+    <div className="absolute inset-y-0 right-0 z-30 w-full max-w-sm shrink-0 overflow-y-auto border-l border-border bg-card text-sm sm:static sm:inset-auto sm:z-auto sm:w-72 sm:max-w-none">
       <div className="p-4 space-y-5">
         {/* DETAILS */}
         <div>
@@ -822,7 +822,7 @@ export function PhotoLightbox({
       </div>
 
       {/* Main area */}
-      <div className="flex flex-1 min-h-0">
+      <div className="relative flex flex-1 min-h-0">
         {/* Photo area — clicking the black space around the image (but not
             the image, nav arrows, or stack chip) closes the lightbox. */}
         <div

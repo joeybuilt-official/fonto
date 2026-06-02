@@ -30,6 +30,7 @@ RUN apk add --no-cache \
       libc6-compat \
       libheif \
       libheif-tools \
+      libde265 \
       libraw \
       libraw-tools \
       exiftool \
@@ -63,6 +64,7 @@ RUN apk add --no-cache \
       libc6-compat \
       libheif \
       libheif-tools \
+      libde265 \
       libraw \
       libraw-tools \
       exiftool \

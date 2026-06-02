@@ -166,6 +166,7 @@ export default function SettingsPage() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <select
+              aria-label="Re-scan scope"
               value={rescanScope}
               onChange={(e) => setRescanScope(e.target.value as "all" | "images" | "failed")}
               disabled={rescanBusy}

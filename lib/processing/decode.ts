@@ -76,11 +76,12 @@ const HEIC_MIMES = new Set<string>([
 // ─── Capability detection (run once at module load) ─────────────────────────
 
 /**
- * `true` if `sharp.format` reports an input-capable `heif` codec — meaning
- * the bundled libvips was linked against libheif and HEIC files can be
- * decoded directly via `sharp(buffer)`. If false we fall back to the
- * `heif-convert` CLI (libheif tools); if THAT's missing too the decoder
- * throws a clear error.
+ * Diagnostic only — `true` if `sharp.format` reports an input-capable `heif`
+ * codec. NOTE: this does NOT imply sharp can actually decode iPhone HEIC: the
+ * prebuilt binary's bundled libheif lacks the HEVC (libde265) decoder plugin,
+ * so HEVC-compressed HEIC fails at encode time. We therefore always decode
+ * HEIC via the system `heif-convert` regardless of this flag (see
+ * decodeToBuffer). Kept for capability logging / metrics.
  */
 const SHARP_HAS_HEIF: boolean = (() => {
   try {
@@ -118,9 +119,13 @@ export async function decodeToBuffer(
   }
 
   if (HEIC_MIMES.has(mime)) {
-    if (SHARP_HAS_HEIF) {
-      return { buffer: input, sourceFormat: "heic-sharp" };
-    }
+    // Always route HEIC through the system `heif-convert` (libheif + libde265).
+    // sharp's prebuilt binary reports `format.heif.input` but its BUNDLED
+    // libheif ships without the HEVC decoder plugin — iPhone HEIC is HEVC, so
+    // sharp passthrough fails with "Support for this compression format has
+    // not been built in", silently leaving the asset thumbnail-less (and the
+    // VLM then confabulates from the raw bytes → "sunset" mislabels). The
+    // system heif-convert HAS the libde265 plugin and decodes these correctly.
     return decodeWithHeifConvert(input, filename);
   }
 

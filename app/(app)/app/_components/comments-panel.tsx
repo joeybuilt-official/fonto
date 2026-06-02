@@ -111,7 +111,7 @@ export function CommentsPanel({ assetId, currentUserId, canModerate }: CommentsP
   }
 
   return (
-    <div className="w-80 shrink-0 border-l border-border bg-card flex flex-col text-sm">
+    <div className="absolute inset-y-0 right-0 z-30 flex w-full max-w-sm shrink-0 flex-col border-l border-border bg-card text-sm sm:static sm:inset-auto sm:z-auto sm:w-80 sm:max-w-none">
       <div className="px-4 py-3 border-b border-border">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
           Comments

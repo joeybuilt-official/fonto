@@ -51,7 +51,7 @@ const QUICK_JUMP: Array<{
   { href: "/app/timeline", label: "Timeline", icon: Clock, hint: "Chronological" },
   { href: "/app/memories", label: "Memories", icon: Sparkles, hint: "On this day" },
   { href: "/app/map", label: "Map", icon: MapIcon, hint: "Geo-tagged photos" },
-  { href: "/app/folders", label: "Folders", icon: FolderTree, hint: "Directory tree" },
+  { href: "/app/library?directoryPathPrefix=/", label: "Folders", icon: FolderTree, hint: "Browse by folder" },
   { href: "/app/people", label: "People", icon: Users, hint: "Face clusters" },
   { href: "/app/documents", label: "Documents", icon: FileText, hint: "PDFs + text" },
   { href: "/app/stacks", label: "Stacks", icon: Layers, hint: "Bursts + RAW pairs" },
