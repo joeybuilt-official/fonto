@@ -208,6 +208,16 @@ class FontoClient {
     return urls.map((k, v) => MapEntry(k, v as String));
   }
 
+  /// On-demand HLS manifest for a video asset. Returns state "ready" with
+  /// a relative `playlistUrl` (auth-gated proxy) once transcoded, or
+  /// "transcoding" (202, kicks off the job) — poll until ready. The
+  /// player resolves playlistUrl against [auth.baseUrl] and sends the PAT
+  /// on every segment fetch.
+  Future<HlsManifest> assetHls(String id) async {
+    final j = await _getJson("/api/v1/assets/$id/hls");
+    return HlsManifest.fromJson(j);
+  }
+
   /// Uploads a single file via multipart. `virtualPath` becomes
   /// X-Fonto-Path (the directory_path the server records).
   Future<Asset> uploadFile(File file, {String virtualPath = "/"}) async {

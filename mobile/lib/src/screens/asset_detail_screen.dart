@@ -16,6 +16,7 @@ import "package:share_plus/share_plus.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../widgets/asset_video_player.dart";
 
 class AssetDetailScreen extends StatefulWidget {
   const AssetDetailScreen({
@@ -48,6 +49,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   bool _acting = false;
 
   static bool _isText(Asset a) => a.mimeType.startsWith("text/");
+  static bool _isVideo(Asset a) => a.mimeType.startsWith("video/");
 
   Asset get _cur => _assets[_index];
 
@@ -342,6 +344,14 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
                 text: _texts[a.id],
                 code: a.mimeType != "text/plain",
               ),
+            );
+          }
+          if (_isVideo(a)) {
+            // PhotoView gestures would swallow the player's tap/scrub —
+            // disable them and let the player own the surface.
+            return PhotoViewGalleryPageOptions.customChild(
+              disableGestures: true,
+              child: AssetVideoPlayer(client: widget.client, asset: a),
             );
           }
           final url = _previews[a.id];

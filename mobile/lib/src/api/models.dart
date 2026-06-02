@@ -477,3 +477,22 @@ class WorkspaceStats {
         processing: (j["processing"] as num?)?.toInt() ?? 0,
       );
 }
+
+/// Response of GET /api/v1/assets/:id/hls. `state` is "ready" |
+/// "transcoding" | "failed" | "idle". `playlistUrl` (a relative,
+/// auth-gated proxy path) is present only when state == "ready".
+class HlsManifest {
+  HlsManifest({required this.state, this.playlistUrl});
+
+  final String state;
+  final String? playlistUrl;
+
+  bool get isReady => state == "ready" && playlistUrl != null;
+  bool get isTranscoding => state == "transcoding" || state == "idle";
+  bool get isFailed => state == "failed";
+
+  static HlsManifest fromJson(Map<String, dynamic> j) => HlsManifest(
+        state: (j["state"] as String?) ?? "idle",
+        playlistUrl: j["playlistUrl"] as String?,
+      );
+}
