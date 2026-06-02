@@ -171,7 +171,7 @@ export function TimelineScrubber({
 
   return (
     <div
-      className="sticky top-0 hidden h-[calc(100dvh-12rem)] w-12 shrink-0 select-none self-start md:block"
+      className="sticky top-0 h-[calc(100dvh-12rem)] w-12 shrink-0 select-none self-start"
       aria-hidden={false}
     >
       <div

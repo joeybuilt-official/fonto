@@ -250,7 +250,11 @@ export function VirtualizedTimeline({
         className="relative h-[calc(100dvh-12rem)] min-w-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {activeMonth && (
-          <div className="pointer-events-none sticky top-2 z-20 mb-1 flex">
+          // Hidden on mobile: the per-section <h2> headers + the now-visible
+          // scrubber's drag-label already supply date context there, so the
+          // floating pill would just duplicate the section header. Desktop
+          // keeps it for mid-section context while mouse-scrolling.
+          <div className="pointer-events-none sticky top-2 z-20 mb-1 hidden md:flex">
             <div className="pointer-events-auto rounded-full border border-border bg-background/95 px-3 py-1 text-xs font-semibold text-foreground shadow-sm backdrop-blur-sm">
               {monthLabel(activeMonth)}
             </div>
