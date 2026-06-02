@@ -8,6 +8,7 @@ import { db, schema } from "@/lib/db";
 import { eq, inArray } from "drizzle-orm";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { nextSeq } from "@/lib/db/seq";
+import { jsonSafe } from "@/lib/assets/createAssetRow";
 
 export async function GET() {
   const user = await getAuthUser();
@@ -22,7 +23,9 @@ export async function GET() {
     .from(schema.tags)
     .where(inArray(schema.tags.workspaceId, workspaceIds));
 
-  return NextResponse.json({ tags });
+  // tags.seq is a bigint — JSON.stringify can't serialize BigInt, so run the
+  // rows through jsonSafe (bigint → number/string) before responding.
+  return NextResponse.json({ tags: jsonSafe(tags) });
 }
 
 export async function POST(request: NextRequest) {

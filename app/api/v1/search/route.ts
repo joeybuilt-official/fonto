@@ -7,6 +7,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq, and, or, ilike, inArray, gte, lte, isNull, sql } from "drizzle-orm";
 import { plexoMemorySearch } from "@/lib/plexo";
+import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { deltaE76, parseHex, rgbToLab, type PaletteColor } from "@/lib/perceptual";
 
 const COLOR_DELTA_E_THRESHOLD = 30;
@@ -126,11 +127,11 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Cap to 100 and serialize phash bigint → string for JSON encoding.
-  const trimmed = assets.slice(0, 100).map((a) => ({
-    ...a,
-    phash: a.phash != null ? a.phash.toString() : null,
-  }));
+  // Cap to 100 and serialize via serializeAsset — handles ALL bigint columns
+  // (phash AND seq). The previous hand-rolled map only converted phash, so the
+  // unconverted `seq` bigint threw "Do not know how to serialize a BigInt" and
+  // 500'd every search.
+  const trimmed = assets.slice(0, 100).map((a) => serializeAsset(a));
 
   return NextResponse.json({ assets: trimmed, total: trimmed.length });
 }

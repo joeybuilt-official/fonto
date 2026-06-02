@@ -512,11 +512,13 @@ export function PhotoLightbox({
 
   useEffect(() => {
     fetch(`/api/v1/assets/${asset.id}/tags`)
-      .then((r) => r.json())
-      .then((d) => setTags(d.tags ?? []));
+      .then((r) => (r.ok ? r.json() : { tags: [] }))
+      .then((d) => setTags(d.tags ?? []))
+      .catch(() => setTags([]));
     fetch("/api/v1/tags")
-      .then((r) => r.json())
-      .then((d) => setAllTags(d.tags ?? []));
+      .then((r) => (r.ok ? r.json() : { tags: [] }))
+      .then((d) => setAllTags(d.tags ?? []))
+      .catch(() => setAllTags([]));
     fetch("/api/v1/collections")
       .then((r) => r.json())
       .then((d) => setCollections(d.collections ?? []));

@@ -5,6 +5,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
+import { jsonSafe } from "@/lib/assets/createAssetRow";
 
 export async function GET(
   _request: NextRequest,
@@ -20,7 +21,8 @@ export async function GET(
     .innerJoin(schema.tags, eq(schema.assetTags.tagId, schema.tags.id))
     .where(eq(schema.assetTags.assetId, assetId));
 
-  return NextResponse.json({ tags: rows.map((r) => r.tag) });
+  // tags.seq is a bigint — jsonSafe it so JSON serialization doesn't throw.
+  return NextResponse.json({ tags: jsonSafe(rows.map((r) => r.tag)) });
 }
 
 export async function POST(

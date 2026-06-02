@@ -676,7 +676,7 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
  * number so consumers don't have to parse strings for the common case; the
  * giant ones (rare, but real) are stringified to preserve precision.
  */
-function jsonSafe(value: unknown): unknown {
+export function jsonSafe(value: unknown): unknown {
   if (typeof value === "bigint") {
     const n = Number(value);
     return Number.isSafeInteger(n) ? n : value.toString();

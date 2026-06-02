@@ -51,7 +51,7 @@ const MOVES: MoveRow[] = [
   {
     icon: Compass,
     destination: "Explore",
-    movedItems: "People · Places (Map) · Things (coming soon)",
+    movedItems: "People · Places · Things",
     destinationHref: "/app/explore",
   },
 ];
@@ -88,6 +88,18 @@ export function UiV2ChangelogDialog() {
     }
     setOpen(false);
   }
+
+  // Escape dismisses the dialog — without this the modal is a keyboard trap
+  // (mouse-click was the only way out).
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") dismiss();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   if (!open) return null;
 
