@@ -24,6 +24,7 @@ import { eq } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
+import { dateFromFilename } from "@/lib/exif";
 import { assetProcessingQueue, thumbnailQueue, JobNames } from "@/lib/queue";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 
@@ -246,7 +247,10 @@ export function getTusServer(): Server {
           processingState: "captured",
           lifecycleState: "active",
           source: "tus",
-          capturedAt: new Date(),
+          // Placeholder from the filename only (no EXIF read on this path yet —
+          // the worker folds real EXIF in later). Never "now": that floods the
+          // current month for date-less assets. Null ⇒ undated until processed.
+          capturedAt: dateFromFilename(filename),
           ocrState: mimeType.startsWith("image/") ? "pending" : "skipped",
           directoryPath,
         })

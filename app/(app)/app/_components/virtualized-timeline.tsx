@@ -47,6 +47,7 @@ function detectCols(width: number): number {
 }
 
 function monthLabel(month: string): string {
+  if (month === "undated") return "Undated";
   const [y, m] = month.split("-");
   return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString(undefined, {
     month: "long",

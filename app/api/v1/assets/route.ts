@@ -91,6 +91,17 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Capture-date segregation for the dated timeline. The month grid only wants
+  // assets with a real capture date; the "Undated" section wants only those
+  // without one. `?capturedState=dated|undated` splits the two so neither the
+  // per-month windowed fetch nor the undated fetch leaks into the other.
+  const capturedState = searchParams.get("capturedState");
+  if (capturedState === "dated") {
+    where.push(isNotNull(schema.assets.capturedAt));
+  } else if (capturedState === "undated") {
+    where.push(isNull(schema.assets.capturedAt));
+  }
+
   // Explore → Places: geo-tagged assets only. `?hasGeo=1` keeps rows where
   // both EXIF coordinates resolved. Served index-driven by
   // `assets_lat_lon_idx`. Mirrors the web Explore "Places" tile probe.

@@ -29,7 +29,7 @@ import {
 // fonto-graph (FalkorDB mirror) was retired in Phase 4.3 (ADR 0002) in favor
 // of pgvector. The module and its callers are gone; pHash NN now happens
 // in-DB via findPHashNearDuplicate() above.
-import { extractExif } from "@/lib/exif";
+import { extractExif, dateFromFilename } from "@/lib/exif";
 import { nearestPlace, formatPlaceName } from "@/lib/geocoder";
 import { assetProcessingQueue, clipDedupCheckQueue, JobNames } from "@/lib/queue";
 import { emitWebhook } from "@/lib/webhooks/emit";
@@ -545,7 +545,11 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
       lifecycleState: "active",
       source,
       extractedText,
-      capturedAt: exifData.capturedAt ?? new Date(),
+      // EXIF date first; then a date parsed from the filename (screenshots /
+      // web / Drive images have no EXIF). NEVER fall back to "now" — a
+      // date-less asset stamped with the import time floods the current month
+      // and breaks the timeline + Memories. Null ⇒ treated as undated.
+      capturedAt: exifData.capturedAt ?? dateFromFilename(filename),
       // Convert the unsigned 64-bit pHash to signed two's-complement before
       // handing it to Drizzle — Postgres BIGINT is signed int8 and overflows
       // when the high bit is set (~50% of natural images). phashFromDb()

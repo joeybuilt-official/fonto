@@ -24,6 +24,7 @@ export interface ScrubBucket {
 }
 
 function formatMonth(month: string): string {
+  if (month === "undated") return "Undated";
   const [y, m] = month.split("-");
   const d = new Date(Number(y), Number(m) - 1, 1);
   return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
@@ -57,10 +58,6 @@ export function TimelineScrubber({
 }: TimelineScrubberProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
-  // Bubble state: the month under the pointer + the pointer Y (px from track top).
-  const [bubble, setBubble] = useState<{ month: string; y: number } | null>(null);
-  // Throttle bubble updates to ~30 fps.
-  const lastBubbleAtRef = useRef(0);
   // Current drag fraction (0..1) — positions the thumb while dragging.
   const [dragFrac, setDragFrac] = useState(0);
 
@@ -82,6 +79,7 @@ export function TimelineScrubber({
     const ticks: { year: string; frac: number }[] = [];
     let lastYear = "";
     buckets.forEach((b, i) => {
+      if (b.month === "undated") return;
       const y = formatYear(b.month);
       if (y !== lastYear) {
         ticks.push({ year: y, frac: total > 0 ? cumBefore[i] / total : 0 });
@@ -123,23 +121,15 @@ export function TimelineScrubber({
       const frac = rect.height > 0 ? y / rect.height : 0;
       setDragFrac(frac);
 
-      const month = monthAtFraction(frac);
-      const now = performance.now();
-      if (month && now - lastBubbleAtRef.current >= 33) {
-        lastBubbleAtRef.current = now;
-        setBubble({ month, y });
-      }
-
       // Scroll the timeline live to this fraction — this is what makes the
       // scrubber behave like a real scrollbar instead of a tap-to-jump.
       onScrubTo(frac);
     },
-    [monthAtFraction, onScrubTo]
+    [onScrubTo]
   );
 
   const endDrag = useCallback(() => {
     setDragging(false);
-    setBubble(null);
     onScrubStateChange?.(false);
   }, [onScrubStateChange]);
 
@@ -167,7 +157,7 @@ export function TimelineScrubber({
 
   if (buckets.length <= 1) return null;
 
-  const labelMonth = bubble?.month ?? monthAtFraction(thumbFrac);
+  const labelMonth = monthAtFraction(thumbFrac);
 
   return (
     <div
@@ -208,7 +198,7 @@ export function TimelineScrubber({
             onScrubTo(1);
           }
         }}
-        className="relative h-full w-full cursor-pointer rounded-full outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="relative h-full w-full cursor-pointer touch-none rounded-full outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         {/* Year tick labels */}
         {yearTicks.map((t) => (
@@ -228,13 +218,15 @@ export function TimelineScrubber({
         />
       </div>
 
-      {/* Floating bubble — follows the pointer during a drag. */}
-      {dragging && bubble && (
+      {/* Floating bubble — shows the date under the thumb while dragging.
+          Positioned by the live thumb fraction (not throttled state) so it
+          appears immediately on touch and tracks the drag on every platform. */}
+      {dragging && labelMonth && (
         <div
           className="pointer-events-none absolute right-10 z-30 -translate-y-1/2 whitespace-nowrap rounded-lg bg-foreground px-3 py-1.5 text-sm font-semibold text-background shadow-lg"
-          style={{ top: `${bubble.y}px` }}
+          style={{ top: `${thumbFrac * 100}%` }}
         >
-          {formatMonth(bubble.month)}
+          {formatMonth(labelMonth)}
         </div>
       )}
     </div>

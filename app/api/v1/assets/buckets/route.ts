@@ -89,14 +89,23 @@ export async function GET(request: NextRequest) {
     where.push(like(schema.assets.directoryPath, `${normalised}/%`));
   }
 
-  const monthExpr = sql<string>`to_char(COALESCE(${schema.assets.capturedAt}, ${schema.assets.createdAt}), 'YYYY-MM')`;
+  // Bucket strictly by capture date. Assets with no real capture date (NULL
+  // captured_at — i.e. the big Drive import's date-less placeholders) collapse
+  // into a single "undated" bucket instead of being coalesced onto created_at,
+  // which would dump the whole import into the current month. The client renders
+  // "undated" as a segregated "Undated" section pinned to the bottom.
+  const monthExpr = sql<string>`COALESCE(to_char(${schema.assets.capturedAt}, 'YYYY-MM'), 'undated')`;
 
   const rows = await db
     .select({ month: monthExpr, count: sql<number>`COUNT(*)::int` })
     .from(schema.assets)
     .where(and(...where))
     .groupBy(monthExpr)
-    .orderBy(sql`${monthExpr} DESC`);
+    // Dated months newest-first; the undated bucket always sorts last.
+    .orderBy(
+      sql`CASE WHEN ${monthExpr} = 'undated' THEN 1 ELSE 0 END`,
+      sql`${monthExpr} DESC`
+    );
 
   return NextResponse.json({ buckets: rows });
 }

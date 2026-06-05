@@ -149,11 +149,41 @@ function LibraryContent() {
   // month. Stable per filter set (depends on baseParams).
   const fetchMonth = useCallback(
     async (month: string): Promise<Asset[]> => {
+      // Undated bucket — assets with no real capture date. They have no
+      // captured_at to window on, so page through them in ingestion order
+      // (created_at keyset) with the capturedState=undated server filter.
+      if (month === "undated") {
+        const base = baseParams();
+        base.set("sort", "created");
+        base.set("capturedState", "undated");
+        base.set("limit", "200");
+        let cursorBefore: string | null = null;
+        let cursorId: string | null = null;
+        const acc: Asset[] = [];
+        for (let page = 0; page < 30; page++) {
+          const sp = new URLSearchParams(base);
+          if (cursorBefore) sp.set("createdBefore", cursorBefore);
+          if (cursorId) sp.set("idBefore", cursorId);
+          const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+          if (!r.ok) break;
+          const d = (await r.json()) as {
+            assets?: Asset[];
+            nextCursor?: { createdBefore: string; idBefore: string } | null;
+          };
+          acc.push(...(d.assets ?? []));
+          if (!d.nextCursor) break;
+          cursorBefore = d.nextCursor.createdBefore;
+          cursorId = d.nextCursor.idBefore;
+        }
+        return acc;
+      }
+
       const [y, m] = month.split("-").map(Number);
       const firstOfThis = Date.UTC(y, m - 1, 1);
       const firstOfNext = Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1);
       const base = baseParams();
       base.set("sort", "captured");
+      base.set("capturedState", "dated");
       base.set("limit", "200");
       let cursorBefore = new Date(firstOfNext).toISOString();
       let cursorId: string | null = null;

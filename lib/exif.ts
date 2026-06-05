@@ -28,6 +28,36 @@ const EXIFTOOL_FALLBACK_MIMES = new Set<string>([
   "image/x-sigma-x3f",
 ]);
 
+/**
+ * Best-effort capture date parsed from a filename, used as a fallback when an
+ * asset carries no EXIF date — most importantly SCREENSHOTS and web/Drive
+ * images, which have no DateTimeOriginal. Without this they'd all collapse to
+ * the import timestamp and flood the current month in the timeline.
+ *
+ * Handles the common device patterns (the date component is what matters for
+ * timeline bucketing): `Screenshot_20260220-060543`, `IMG_20260220_060543`,
+ * `PXL_20260220_...`, `Screenshot 2026-02-20 at ...`, `20260220_060543`, etc.
+ * A `drive_<fileId>_` import prefix is stripped first. Returns null when no
+ * plausible date is found (asset is then treated as "undated", not "today").
+ */
+export function dateFromFilename(name: string): Date | null {
+  if (!name) return null;
+  // Strip the Drive-import prefix: drive_<fileId>_<originalName>.
+  const original = name.replace(/^drive_[^_]+_/i, "");
+  const m = original.match(
+    /(20\d{2})[-_.]?(0[1-9]|1[0-2])[-_.]?(0[1-9]|[12]\d|3[01])(?:[-_.tT ]+(?:at[-_. ]+)?([01]\d|2[0-3])[-_.:h]?([0-5]\d)[-_.:m]?([0-5]\d)?)?/,
+  );
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m;
+  const dt = new Date(
+    Date.UTC(+y, +mo - 1, +d, h ? +h : 12, mi ? +mi : 0, s ? +s : 0),
+  );
+  const t = dt.getTime();
+  // Reject parse errors + implausible dates (digital photos only; not future).
+  if (Number.isNaN(t) || +y < 1995 || t > Date.now() + 86_400_000) return null;
+  return dt;
+}
+
 export interface ExifData {
   /** Raw exifr merged output, kept verbatim for forensic / future-use queries. */
   raw: Record<string, unknown> | null;
