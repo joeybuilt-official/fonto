@@ -404,7 +404,7 @@ async function tryEnqueueClipEmbed(assetId: string, workspaceId: string, mimeTyp
  * 1080px preview derivative; if it hasn't been generated yet, it falls
  * back to the original. (Both downloads are R2 GETs — equivalent cost.)
  */
-async function tryEnqueueFaceDetect(
+export async function tryEnqueueFaceDetect(
   assetId: string,
   workspaceId: string,
   mimeType: string
@@ -454,7 +454,10 @@ export async function enqueueAssetProcessing(args: {
   }
   await tryEnqueueThumbnail(assetId, workspaceId, mimeType);
   void tryEnqueueClipEmbed(assetId, workspaceId, mimeType);
-  void tryEnqueueFaceDetect(assetId, workspaceId, mimeType);
+  // Face detection is NOT enqueued here. It's deferred to processAsset (after
+  // classification), where it only fires for `classification === "photo"` —
+  // enqueuing at upload raced the classifier and ran face-detect on every
+  // screenshot/document, flooding the People view with junk clusters.
 }
 
 /**

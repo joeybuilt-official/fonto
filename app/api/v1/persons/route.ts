@@ -14,7 +14,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -45,11 +45,16 @@ export async function GET(request: NextRequest) {
 
   const includeHidden = request.nextUrl.searchParams.get("hidden") === "true";
 
+  // Default grid excludes hidden persons AND empty clusters (instance_count
+  // = 0). A re-cluster zeroes-out persons whose faces were all detached
+  // (e.g. the junk-screenshot prune) but keeps the row to preserve any
+  // name/hidden edits — those empty rows must never render as ghost cards.
   const where = includeHidden
     ? inArray(schema.persons.workspaceId, workspaceIds)
     : and(
         inArray(schema.persons.workspaceId, workspaceIds),
-        eq(schema.persons.hidden, false)
+        eq(schema.persons.hidden, false),
+        gt(schema.persons.instanceCount, 0)
       );
 
   const rows = await db

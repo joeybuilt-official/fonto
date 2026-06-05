@@ -152,6 +152,7 @@ export async function detectFacesForAsset(assetId: string): Promise<void> {
       workspaceId: schema.assets.workspaceId,
       filename: schema.assets.filename,
       mimeType: schema.assets.mimeType,
+      classification: schema.assets.classification,
       previewKey: schema.assets.previewKey,
     })
     .from(schema.assets)
@@ -164,6 +165,16 @@ export async function detectFacesForAsset(assetId: string): Promise<void> {
   }
   if (!asset.mimeType.startsWith("image/")) {
     log.info({ mimeType: asset.mimeType }, "non-image asset — skipping");
+    return;
+  }
+  // Only real photographs get face detection. Screenshots / documents /
+  // receipts / memes etc. (classification != "photo") flooded the People view
+  // with junk clusters. The enqueue is already gated in processAsset; this is
+  // defense-in-depth for any direct/legacy caller. A null classification means
+  // the asset hasn't been classified yet — let it through (the enqueue path
+  // guarantees it was a photo).
+  if (asset.classification != null && asset.classification !== "photo") {
+    log.info({ classification: asset.classification }, "non-photo asset — skipping face detection");
     return;
   }
 

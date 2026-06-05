@@ -29,6 +29,7 @@ import {
 import { assetProcessingDurationSeconds } from "@/lib/metrics";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { classifyAsset } from "@/lib/classify/classify";
+import { tryEnqueueFaceDetect } from "@/lib/assets/createAssetRow";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
 import { labelImageUrl, visionConfigured } from "@/lib/plexo-vision";
 
@@ -313,6 +314,22 @@ async function processAssetInner(
     .update(schema.assets)
     .set({ processingState: "ready" })
     .where(eq(schema.assets.id, assetId));
+
+  // Face detection — only for real photographs. Screenshots, documents,
+  // receipts, memes/art (classification != "photo") and non-images don't
+  // carry faces worth clustering; running detection on them flooded the
+  // People view with hundreds of junk clusters. Deferred to here (post-
+  // classification) so the gate is reliable — the old upload-time enqueue
+  // raced the classifier. The worker re-runs is non-idempotent, so this
+  // fires exactly once per processed photo.
+  if (classification === "photo" && mimeType.startsWith("image/")) {
+    const [wsRow] = await db
+      .select({ workspaceId: schema.assets.workspaceId })
+      .from(schema.assets)
+      .where(eq(schema.assets.id, assetId))
+      .limit(1);
+    if (wsRow) void tryEnqueueFaceDetect(assetId, wsRow.workspaceId, mimeType);
+  }
 
   // ── Text layer / OCR. Image OCR already ran above (pre-describe) so the
   // caption could quote the visible text; here we only handle the document
