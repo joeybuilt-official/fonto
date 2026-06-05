@@ -9,6 +9,7 @@ import { eq, and, desc, gte, isNull, isNotNull, lt, or, sql, SQL, like } from "d
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
+import { isKind } from "@/lib/classify/kind";
 import { detectMime } from "@/lib/mime";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
@@ -89,6 +90,14 @@ export async function GET(request: NextRequest) {
         eq(schema.assets.mimeType, "application/msword")
       )!
     );
+  }
+
+  // Task 20 — KIND lens filter (moment | screenshot | document | video).
+  // Server-side so keyset pagination + the /buckets scrubber counts stay
+  // exact. Backed by assets_workspace_kind_idx. Unknown values are ignored.
+  const kindFilter = searchParams.get("kind");
+  if (kindFilter && isKind(kindFilter)) {
+    where.push(eq(schema.assets.kind, kindFilter));
   }
 
   // Capture-date segregation for the dated timeline. The month grid only wants

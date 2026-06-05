@@ -252,6 +252,13 @@ export const assets = fontoSchema.table(
     // scanner). NULL for non-document assets; populated by the worker via
     // pdfinfo during processAsset.
     pageCount: integer("page_count"),
+    // Task 20 — KIND: the library's primary partition (moment | screenshot |
+    // document | video). Deterministic function of (mimeType, classification)
+    // via `lib/classify/kind.ts:deriveKind`, written alongside classification
+    // in processAsset. NULL until resolved (the in-flight `captured` backlog
+    // self-populates as the worker drains it; `ready` rows are backfilled
+    // once). Drives the lens-based library + bucket facets.
+    kind: text("kind"),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
@@ -298,6 +305,11 @@ export const assets = fontoSchema.table(
     index("assets_workspace_stack_idx")
       .on(table.workspaceId, table.stackId)
       .where(sql`${table.stackId} IS NOT NULL`),
+    // Task 20 — lens faceting + per-kind bucket counts. Partial on active
+    // rows (the only rows any lens lists) keeps the BTree small.
+    index("assets_workspace_kind_idx")
+      .on(table.workspaceId, table.kind)
+      .where(sql`${table.lifecycleState} = 'active'`),
   ]
 );
 

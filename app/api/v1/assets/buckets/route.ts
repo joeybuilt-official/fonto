@@ -17,6 +17,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { and, eq, gte, isNull, like, or, sql, SQL } from "drizzle-orm";
+import { isKind } from "@/lib/classify/kind";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -72,6 +73,11 @@ export async function GET(request: NextRequest) {
 
   const subtypeFilter = searchParams.get("subtype");
   if (subtypeFilter) where.push(eq(schema.assets.classification, subtypeFilter));
+
+  // Task 20 — KIND lens filter; keeps the scrubber domain in lockstep with
+  // the list route's ?kind= lens. Backed by assets_workspace_kind_idx.
+  const kindFilter = searchParams.get("kind");
+  if (kindFilter && isKind(kindFilter)) where.push(eq(schema.assets.kind, kindFilter));
 
   const directoryPathRaw = searchParams.get("directoryPath");
   const directoryPathPrefixRaw = searchParams.get("directoryPathPrefix");

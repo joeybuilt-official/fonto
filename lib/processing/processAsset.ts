@@ -29,6 +29,7 @@ import {
 import { assetProcessingDurationSeconds } from "@/lib/metrics";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { classifyAsset } from "@/lib/classify/classify";
+import { deriveKind } from "@/lib/classify/kind";
 import { tryEnqueueFaceDetect } from "@/lib/assets/createAssetRow";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
 import { labelImageUrl, visionConfigured } from "@/lib/plexo-vision";
@@ -311,6 +312,10 @@ async function processAssetInner(
         : "document";
   }
 
+  // Task 20 — resolve KIND from the final classification + mime, written in
+  // the same pass so it can never drift from classification.
+  const kind = deriveKind({ mimeType, classification });
+
   await db
     .update(schema.assets)
     .set({
@@ -320,6 +325,7 @@ async function processAssetInner(
       subClassification,
       classifyMethod: classifyMethodLabel,
       classifyConfidence,
+      kind,
     })
     .where(eq(schema.assets.id, assetId));
 
