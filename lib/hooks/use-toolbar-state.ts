@@ -38,6 +38,10 @@ export interface FilterState {
   sort: SortKey;
   type: string | null;          // classification (photo/screenshot/etc.) or top-level mime prefix
   mime: string | null;          // explicit mime filter — distinct from `type` (subtype)
+  // Task 20 — library lens (KIND). null = no lens filter ("All"); otherwise
+  // one of moment|screenshot|document|video. The library page treats a
+  // missing value as the default "Moments" lens.
+  kind: string | null;
   from: string | null;          // ISO date (yyyy-mm-dd)
   to: string | null;
   color: string | null;         // dominant color name or hex
@@ -65,6 +69,7 @@ const DEFAULT_FILTERS: FilterState = {
   sort: "newest",
   type: null,
   mime: null,
+  kind: null,
   from: null,
   to: null,
   color: null,
@@ -100,6 +105,7 @@ function readFilters(sp: URLSearchParams): FilterState {
     sort: (sp.get("sort") as SortKey) || "newest",
     type: sp.get("type"),
     mime: sp.get("mime"),
+    kind: sp.get("kind"),
     from: sp.get("from"),
     to: sp.get("to"),
     color: sp.get("color"),
@@ -126,6 +132,7 @@ function writeFilters(base: URLSearchParams, f: FilterState): URLSearchParams {
   setOrDel("sort", f.sort === "newest" ? null : f.sort);
   setOrDel("type", f.type);
   setOrDel("mime", f.mime);
+  setOrDel("kind", f.kind);
   setOrDel("from", f.from);
   setOrDel("to", f.to);
   setOrDel("color", f.color);
@@ -362,7 +369,7 @@ export function useToolbarState(
     const sp = new URLSearchParams(searchParams.toString());
     // Drop every key the toolbar manages; preserve unrelated params (e.g. a
     // page's own ?folder= parameter).
-    for (const k of ["q", "sort", "type", "mime", "from", "to", "color", "fav", "rating", "person", "tag", "lc", "path", "pathPrefix"]) {
+    for (const k of ["q", "sort", "type", "mime", "kind", "from", "to", "color", "fav", "rating", "person", "tag", "lc", "path", "pathPrefix"]) {
       sp.delete(k);
     }
     const qs = sp.toString();

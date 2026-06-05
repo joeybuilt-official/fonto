@@ -23,7 +23,7 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
-import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download } from "lucide-react";
+import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download, Smartphone, LayoutGrid } from "lucide-react";
 import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
@@ -57,6 +57,33 @@ const MIMES: MimeOption[] = [
   { value: "application/", label: "Documents", icon: FileText },
 ];
 
+// Task 20 — library lenses. KIND is the library's primary partition; the lens
+// selector is the headline control, the chip strip below it is power-filtering.
+// "Moments" is the default (a missing ?kind= resolves to it); "All" clears the
+// kind filter. Each lens maps to the server-side ?kind= preset that feeds both
+// the timeline and its scrubber buckets. ("Saved" is deferred — see ADR D5.)
+interface LensOption {
+  value: string; // "moment" | "screenshot" | "document" | "video" | "all"
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+const LENSES: LensOption[] = [
+  { value: "moment", label: "Moments", icon: ImageIcon },
+  { value: "screenshot", label: "Screenshots", icon: Smartphone },
+  { value: "document", label: "Documents", icon: FileText },
+  { value: "video", label: "Videos", icon: Film },
+  { value: "all", label: "All", icon: LayoutGrid },
+];
+
+const LENS_EMPTY: Record<string, string> = {
+  moment: "No moments yet. Photos you take show up here.",
+  screenshot: "No screenshots.",
+  document: "No documents.",
+  video: "No videos.",
+  all: "No assets match the current filters.",
+};
+
 const CLASSIFICATION_CHIPS = [
   { value: "photo", label: "Photos" },
   { value: "screenshot", label: "Screenshots" },
@@ -73,6 +100,7 @@ function LibraryContent() {
     availableFilters: [
       "type",
       "mime",
+      "kind",
       "favorite",
       "ratingMin",
       "lifecycle",
@@ -114,12 +142,18 @@ function LibraryContent() {
   const orderedBuckets =
     toolbar.filters.sort === "oldest" ? [...buckets].reverse() : buckets;
 
+  // Active lens — a missing ?kind= resolves to the default "Moments" lens.
+  const activeLens = toolbar.filters.kind ?? "moment";
+
   // Server-side filter params shared by the buckets fetch and per-month
   // windowed fetch. Its identity changes whenever a filter changes, which is
   // exactly the signal VirtualizedTimeline uses to drop its per-month cache.
   const baseParams = useCallback(() => {
     const sp = new URLSearchParams();
     sp.set("lifecycle", toolbar.filters.lifecycle);
+    // Task 20 — lens. Missing ?kind= => default "Moments"; "all" clears it.
+    const lensKind = toolbar.filters.kind ?? "moment";
+    if (lensKind !== "all") sp.set("kind", lensKind);
     if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
     if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
     if (toolbar.filters.favorite) sp.set("favorite", "1");
@@ -135,6 +169,7 @@ function LibraryContent() {
     return sp;
   }, [
     toolbar.filters.lifecycle,
+    toolbar.filters.kind,
     toolbar.filters.mime,
     toolbar.filters.type,
     toolbar.filters.favorite,
@@ -340,6 +375,8 @@ function LibraryContent() {
       setLoading(true);
       const sp = new URLSearchParams();
       sp.set("lifecycle", toolbar.filters.lifecycle);
+      const lensKind = toolbar.filters.kind ?? "moment";
+      if (lensKind !== "all") sp.set("kind", lensKind);
       if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
       if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
       if (toolbar.filters.favorite) sp.set("favorite", "1");
@@ -402,6 +439,7 @@ function LibraryContent() {
   }, [
     timelineMode,
     toolbar.filters.lifecycle,
+    toolbar.filters.kind,
     toolbar.filters.mime,
     toolbar.filters.type,
     toolbar.filters.favorite,
@@ -487,6 +525,12 @@ function LibraryContent() {
       />
 
       <div className="px-4 space-y-3">
+        <LensSelector
+          active={activeLens}
+          onChange={(value) =>
+            toolbar.setFilters({ kind: value === "moment" ? null : value })
+          }
+        />
         <LibraryChipStrip toolbar={toolbar} />
         {isTrash && (
           <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
@@ -507,7 +551,7 @@ function LibraryContent() {
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <ImageIcon className="h-10 w-10 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              No assets match the current filters.
+              {LENS_EMPTY[activeLens] ?? "No assets match the current filters."}
             </p>
           </div>
         ) : (
@@ -521,6 +565,7 @@ function LibraryContent() {
               selectMode={toolbar.selectMode}
               selectedIds={toolbar.selectedIds}
               onToggleSelect={handleTimelineSelect}
+              density={toolbar.view.density}
             />
           </div>
         )
@@ -908,6 +953,43 @@ function ClassificationChip({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function LensSelector({
+  active,
+  onChange,
+}: {
+  active: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div
+      className="flex items-center gap-1 overflow-x-auto pb-0.5"
+      role="tablist"
+      aria-label="Library lens"
+    >
+      {LENSES.map((lens) => {
+        const isActive = active === lens.value;
+        const Icon = lens.icon;
+        return (
+          <button
+            key={lens.value}
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onChange(lens.value)}
+            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
+              isActive
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+            {lens.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

@@ -25,25 +25,20 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2 } from "lucide-react";
 import { PhotoCard, type Asset } from "./photo-card";
 import { TimelineScrubber, type ScrubBucket } from "./timeline-scrubber";
+import { type Density } from "@/lib/hooks/use-toolbar-state";
 
 const HEADER_HEIGHT_PX = 44;
 const TILE_GAP_PX = 4; // matches `gap-1`
 const SECTION_PADDING_PX = 24;
 const BATCH_URL_CHUNK = 250;
 
-// Column counts at each Tailwind breakpoint. Mirrors the grid below
-// (`grid-cols-3 sm:4 md:5 lg:6 xl:8`).
-const BREAKPOINTS = [
-  { min: 1280, cols: 8 },
-  { min: 1024, cols: 6 },
-  { min: 768, cols: 5 },
-  { min: 640, cols: 4 },
-  { min: 0, cols: 3 },
-] as const;
-
-function detectCols(width: number): number {
-  for (const bp of BREAKPOINTS) if (width >= bp.min) return bp.cols;
-  return 3;
+// Column count per density × responsive width. Mirrors AssetGrid.columnsFor
+// so the density zoom behaves identically on the timeline and the flat grid.
+function columnsFor(density: Density, width: number): number {
+  if (width < 480) return density === "dense" ? 4 : density === "compact" ? 3 : 2;
+  if (width < 768) return density === "dense" ? 6 : density === "compact" ? 4 : 3;
+  if (width < 1280) return density === "dense" ? 8 : density === "compact" ? 6 : 4;
+  return density === "dense" ? 10 : density === "compact" ? 8 : 6;
 }
 
 function monthLabel(month: string): string {
@@ -75,6 +70,8 @@ export interface VirtualizedTimelineProps {
   selectMode?: boolean;
   selectedIds?: Set<string>;
   onToggleSelect?: (assetId: string, e?: ReactMouseEvent) => void;
+  /** Grid density (zoom). Drives column count; defaults to comfortable. */
+  density?: Density;
 }
 
 export function VirtualizedTimeline({
@@ -85,6 +82,7 @@ export function VirtualizedTimeline({
   selectedIds,
   onToggleSelect,
   onLoadedAssetsChange,
+  density = "comfortable",
 }: VirtualizedTimelineProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   // The timeline owns its scroll container (with the native scrollbar hidden)
@@ -93,8 +91,11 @@ export function VirtualizedTimeline({
   // scrubber drive scrolling directly.
   const scrollElRef = useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(1024);
-  const [cols, setCols] = useState<number>(() =>
-    typeof window === "undefined" ? 6 : detectCols(window.innerWidth)
+  // Column count tracks the live container width × density zoom. Memoised so
+  // the height math and the rendered grid always agree on `cols`.
+  const cols = useMemo(
+    () => columnsFor(density, containerWidth),
+    [density, containerWidth]
   );
 
   // Per-month asset cache + in-flight guard. Reset when fetchMonth identity
@@ -116,12 +117,6 @@ export function VirtualizedTimeline({
     ro.observe(el);
     setContainerWidth(el.clientWidth);
     return () => ro.disconnect();
-  }, []);
-  useEffect(() => {
-    const update = () => setCols(detectCols(window.innerWidth));
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
   }, []);
 
   const tilePx = useMemo(() => {
@@ -295,7 +290,10 @@ export function VirtualizedTimeline({
                   </div>
 
                   {monthAssets ? (
-                    <div className="grid grid-cols-3 gap-1 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
+                    <div
+                      className="grid gap-1"
+                      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+                    >
                       {monthAssets.map((asset) => (
                         <PhotoCard
                           key={asset.id}
