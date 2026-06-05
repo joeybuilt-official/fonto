@@ -18,8 +18,9 @@
 // Cosine-distance DBSCAN. Embeddings are L2-normalised by the embed step,
 // so cosine distance is `1 - dot(a, b)` and falls in [0, 2]. Defaults:
 //   - eps    = 0.32   (≈ "moderately similar" in ArcFace space)
-//   - minPts = 3      (a singleton face or a pair is noise by default —
-//                      avoids surfacing one-off strangers)
+//   - minPts = 5      (fewer than 5 similar faces is noise by default —
+//                      avoids flooding People with coincidental look-alike
+//                      trios; one-off strangers never get a card)
 //
 // Idempotency / hand-edit preservation
 // ------------------------------------
@@ -153,7 +154,11 @@ export async function clusterWorkspaceFaces(
 ): Promise<ClusterStats> {
   const log = logger.child({ component: "face-cluster", workspaceId });
   const eps = opts.eps ?? 0.32;
-  const minPts = opts.minPts ?? 3;
+  // minPts 5: a person card needs ≥5 similar faces. At minPts 3 the People
+  // grid flooded with hundreds of coincidental 3-face look-alike trios; 5
+  // keeps recurring people while dropping spurious groups into noise (their
+  // faces stay attached to assets + searchable — they just get no card).
+  const minPts = opts.minPts ?? 5;
 
   // Pull every non-hidden, embedded face for the workspace.
   const rows = (await db
