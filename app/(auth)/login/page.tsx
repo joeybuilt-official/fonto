@@ -59,8 +59,18 @@ function LoginPageInner() {
         }
       }
       router.push(safeCallback ?? "/app/home");
-    } catch {
-      setError("Something went wrong");
+    } catch (err) {
+      // better-auth throws (rather than returning result.error) on transport
+      // failures — notably a 429 rate-limit, whose body comes back as
+      // text/plain and fails JSON parsing. Surface something actionable.
+      const status = (err as { status?: number; statusCode?: number } | null);
+      const code = status?.status ?? status?.statusCode;
+      const msg = String((err as { message?: string } | null)?.message ?? "");
+      if (code === 429 || /too many|rate.?limit/i.test(msg)) {
+        setError("Too many attempts. Please wait a minute and try again.");
+      } else {
+        setError("Couldn't sign in — check your connection and try again.");
+      }
     } finally {
       setLoading(false);
     }

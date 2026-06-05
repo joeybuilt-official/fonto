@@ -18,6 +18,21 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
   },
+  // better-auth's built-in rate limiter defaults to a very tight per-path
+  // budget for sensitive endpoints — a user who mistypes their password a
+  // couple times (or whose page just fires a few /get-session calls) trips a
+  // 429, which the client surfaces as the generic "Something went wrong".
+  // Raise the sign-in/up budget to a humane level that still blunts
+  // brute-force (10 attempts / minute).
+  rateLimit: {
+    enabled: true,
+    window: 60,
+    max: 100,
+    customRules: {
+      "/sign-in/email": { window: 60, max: 10 },
+      "/sign-up/email": { window: 60, max: 10 },
+    },
+  },
   trustedOrigins: [
     process.env.BETTER_AUTH_URL,
     "https://myfonto.com",
