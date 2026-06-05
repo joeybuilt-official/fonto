@@ -57,6 +57,7 @@ import { clusterWorkspaceFaces } from "@/lib/faces/cluster";
 import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { runDailyDigest } from "@/lib/notifications/runDailyDigest";
 import { transcodeVideoHls } from "@/lib/processing/transcodeVideoHls";
+import { runAutoStack } from "@/lib/stacks/autoStack";
 import { generateSpriteSheet } from "@/lib/processing/generateSpriteSheet";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
@@ -169,6 +170,14 @@ const AUDIT_PRUNE_INTERVAL_MS = Math.max(
 // development.
 const DIGEST_INTERVAL_MS = Math.max(
   parseInt(process.env.DIGEST_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
+  1000
+);
+
+// Task 20 (Phase 3) — auto-stacking sweep. Default once per day. Reversible +
+// idempotent (suggestStacks excludes already-stacked assets), so re-running is
+// safe. Override via AUTO_STACK_INTERVAL_MS for "tick every 60s and watch".
+const AUTO_STACK_INTERVAL_MS = Math.max(
+  parseInt(process.env.AUTO_STACK_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
   1000
 );
 
@@ -1068,6 +1077,15 @@ function startMaintenanceWorker(): Worker {
         log.info(result, "storage reconcile tick complete");
         return result;
       }
+      if (job.name === JobNames.AutoStack) {
+        // Task 20 (Phase 3) — materialise conservative stack suggestions
+        // (bursts / screenshot-runs / near-dups). Reversible; sets stack_id
+        // only, never hides/deletes members.
+        log.info("auto-stack tick start");
+        const result = await runAutoStack();
+        log.info(result, "auto-stack tick complete");
+        return result;
+      }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");
       return null;
     },
@@ -1163,6 +1181,23 @@ async function ensureStorageReconcileSchedule(): Promise<void> {
   logger.info(
     { intervalMs: RECONCILE_INTERVAL_MS, jobName: JobNames.ReconcileStorageUsage },
     "storage reconcile schedule registered"
+  );
+}
+
+/**
+ * Task 20 (Phase 3) — register the recurring auto-stacking sweep on the
+ * maintenance queue. Same idempotent `upsertJobScheduler` pattern; safe to
+ * re-run on boot. Reversible by design (sets stack_id only).
+ */
+async function ensureAutoStackSchedule(): Promise<void> {
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.AutoStack,
+    { every: AUTO_STACK_INTERVAL_MS },
+    { name: JobNames.AutoStack }
+  );
+  logger.info(
+    { intervalMs: AUTO_STACK_INTERVAL_MS, jobName: JobNames.AutoStack },
+    "auto-stack schedule registered"
   );
 }
 
@@ -1280,6 +1315,14 @@ async function main(): Promise<void> {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
       "failed to register storage reconcile schedule — drift correction disabled until next boot"
+    );
+  }
+  try {
+    await ensureAutoStackSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register auto-stack schedule — auto-stacking disabled until next boot"
     );
   }
 

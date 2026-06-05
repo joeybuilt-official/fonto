@@ -130,6 +130,12 @@ export type DailyDigestJob = z.infer<typeof DailyDigestJobSchema>;
 export const ReconcileStorageUsageJobSchema = z.object({}).strict();
 export type ReconcileStorageUsageJob = z.infer<typeof ReconcileStorageUsageJobSchema>;
 
+// Task 20 (Phase 3) — auto-stacking sweep. Empty payload; the worker scans
+// every workspace, derives stack suggestions, and materialises the
+// conservative ones. Reversible (sets stack_id only) + idempotent.
+export const AutoStackJobSchema = z.object({}).strict();
+export type AutoStackJob = z.infer<typeof AutoStackJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -164,6 +170,9 @@ export const JobNames = {
   // Corrects any drift from incremental updates (dedup edge cases, bugs,
   // direct R2 deletes that bypassed the API).
   ReconcileStorageUsage: "reconcile-storage-usage",
+  // Task 20 (Phase 3) — auto-stacking sweep (bursts / screenshot-runs /
+  // near-dups). Reversible; sets stack_id only.
+  AutoStack: "auto-stack",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];
