@@ -18,6 +18,7 @@ import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "../state/auth_store.dart";
 import "../state/drive_download_queue.dart";
+import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
 import "asset_detail_screen.dart";
 import "settings_screen.dart";
@@ -116,6 +117,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// wedged queue. Cheap no-op when nothing is pending. Fire-and-forget.
   void _kickDrain() {
     _refreshQueueBadge();
+    // Start the background sync service so the drain survives the app being
+    // backgrounded/closed. No-op when nothing is pending or already running.
+    SyncService.ensureRunning();
     UploadQueue.drain().then((n) {
       if (!mounted) return;
       _refreshQueueBadge();
@@ -130,6 +134,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Fire-and-forget; the `pending` ValueNotifier drives the banner.
   void _kickDriveDrain() {
     if (DriveDownloadQueue.pending.value == 0) return;
+    SyncService.ensureRunning();
     DriveDownloadQueue.processForeground();
   }
 

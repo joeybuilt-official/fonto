@@ -14,8 +14,10 @@ import "../api/fonto_client.dart";
 import "../state/auth_store.dart";
 import "../state/camera_roll_scanner.dart";
 import "../state/settings_store.dart";
+import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
 import "../state/workmanager_dispatcher.dart";
+import "../widgets/sync_permission_sheet.dart";
 import "google_drive_import_screen.dart";
 import "nextcloud_import_screen.dart";
 
@@ -160,12 +162,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
         kCameraRollScanTask,
         frequency: const Duration(minutes: 30),
         constraints: Constraints(
+          // Backstop only; the foreground service does the real draining.
           networkType: NetworkType.connected,
-          requiresBatteryNotLow: true,
         ),
         existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
       );
       if (mounted) setState(() => _autoImport = true);
+      // Nudge the user to grant the reliability gates so backups continue in
+      // the background.
+      if (mounted) await SyncPermissionSheet.maybePrompt(context);
     } else {
       await SettingsStore.setAutoImport(false);
       await Workmanager().cancelByUniqueName(kCameraRollScanTask);
@@ -183,7 +188,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _lastImportTs = ts;
         _scanning = false;
       });
-      if (n > 0) await UploadQueue.drain();
+      if (n > 0) {
+        await SyncService.ensureRunning();
+        await UploadQueue.drain();
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -329,6 +337,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             onPressed: _scanNow,
                           ),
                   ),
+                ListTile(
+                  leading: const Icon(Icons.cloud_sync_outlined),
+                  title: const Text("Background sync"),
+                  subtitle: const Text(
+                    "Allow uploads and Drive imports to keep running when the "
+                    "app is closed.",
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => SyncPermissionSheet.show(context),
+                ),
                 const Divider(),
                 ListTile(
                   title: const Text("Re-scan recognition (AI)"),

@@ -16,6 +16,7 @@ import "package:app_links/app_links.dart";
 import "package:firebase_core/firebase_core.dart";
 import "package:firebase_messaging/firebase_messaging.dart";
 import "package:flutter/material.dart";
+import "package:flutter_foreground_task/flutter_foreground_task.dart";
 import "package:flutter_local_notifications/flutter_local_notifications.dart";
 import "package:url_launcher/url_launcher.dart";
 import "package:workmanager/workmanager.dart";
@@ -28,6 +29,7 @@ import "src/screens/main_shell.dart";
 import "src/state/auth_store.dart";
 import "src/state/drive_download_queue.dart";
 import "src/state/push_notifications.dart";
+import "src/state/sync_service.dart";
 import "src/state/upload_queue.dart";
 import "src/state/workmanager_dispatcher.dart";
 
@@ -73,6 +75,10 @@ Future<void> main() async {
   await UploadQueue.open();
   await DriveDownloadQueue.open();
   await _initLocalNotifications();
+  // Foreground-service plumbing for reliable background sync (uploads + Drive
+  // imports continue when the app is backgrounded/closed).
+  FlutterForegroundTask.initCommunicationPort();
+  SyncService.init();
   await Workmanager().initialize(callbackDispatcher);
   // Firebase init is best-effort: a platform without a config file (e.g. an
   // iOS build before GoogleService-Info.plist lands) must not brick startup.
@@ -96,8 +102,11 @@ Future<void> registerUploadDrain() async {
     kUploadDrainTask,
     frequency: const Duration(minutes: 15),
     constraints: Constraints(
+      // No requiresBatteryNotLow: this WorkManager task is only the BACKSTOP
+      // (the foreground service does the real work). Gating it on battery
+      // level just made the backstop fire less often. Connectivity is the
+      // only hard requirement.
       networkType: NetworkType.connected,
-      requiresBatteryNotLow: true,
     ),
     existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
   );

@@ -23,7 +23,9 @@ import "package:path_provider/path_provider.dart";
 import "package:workmanager/workmanager.dart";
 
 import "../state/drive_download_queue.dart";
+import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
+import "../widgets/sync_permission_sheet.dart";
 
 const _kDriveApiBase = "https://www.googleapis.com/drive/v3";
 const _kDriveScope = "https://www.googleapis.com/auth/drive.readonly";
@@ -49,6 +51,8 @@ Future<void> _downloadAndEnqueueAll(
         .toList(),
     virtualPath,
   );
+  // Start the background service so the import survives the app closing.
+  unawaited(SyncService.ensureRunning());
 
   // 2. Process in the foreground; hold the upload drain open the whole time.
   // Refresh the auth token before each batch — OAuth tokens expire in ~1 hour,
@@ -118,6 +122,8 @@ Future<void> _downloadAllPagesFromDrive(
         items.map((i) => (id: i.id, name: i.name, mimeType: i.mimeType)).toList(),
         virtualPath,
       );
+      // Kick the background service as soon as the first page is queued.
+      unawaited(SyncService.ensureRunning());
       pageToken = j["nextPageToken"] as String?;
     } while (pageToken != null);
 
@@ -342,6 +348,9 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     if (_importing) return;
     final account = _user;
     if (account == null) return;
+    // Nudge for the background-reliability permissions before a big import.
+    await SyncPermissionSheet.maybePrompt(context);
+    if (!mounted) return;
     setState(() => _importing = true);
     try {
       // Schedule WorkManager as the background fallback before we start —
@@ -371,6 +380,8 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     final items = List<_DriveItem>.from(_selected.values);
     final virtualPath = widget.virtualPath;
 
+    await SyncPermissionSheet.maybePrompt(context);
+    if (!mounted) return;
     setState(() => _importing = true);
 
     try {
