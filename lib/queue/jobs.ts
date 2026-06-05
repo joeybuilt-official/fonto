@@ -75,6 +75,11 @@ export type PruneAuditLogJob = z.infer<typeof PruneAuditLogJobSchema>;
 export const ClipDedupCheckJobSchema = z.object({
   assetId: z.string().uuid(),
   workspaceId: z.string().uuid(),
+  // Count of times this check has re-enqueued itself while waiting for the
+  // upstream CLIP-embed to populate `clip_vec`. Bounds the self-re-enqueue
+  // so an asset whose embed never lands (e.g. missing R2 original) cannot
+  // loop forever. Absent on the first enqueue (treated as 0).
+  dedupRetries: z.number().int().min(0).optional(),
 });
 export type ClipDedupCheckJob = z.infer<typeof ClipDedupCheckJobSchema>;
 

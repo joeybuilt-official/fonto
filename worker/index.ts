@@ -89,6 +89,16 @@ const CLIP_DEDUP_RETRY_DELAY_MS = Math.max(
   parseInt(process.env.CLIP_DEDUP_RETRY_DELAY_MS ?? "30000", 10),
   1000
 );
+// Phase 4.5 hardening — cap the self-re-enqueue so an asset whose CLIP-embed
+// never lands (e.g. the R2 original is missing → embed fails permanently)
+// cannot loop forever. At the 30s default delay, 40 retries ≈ 20 min of
+// waiting before we give up. Giving up leaves `clip_dedup_checked_at` NULL so
+// a later backfill sweep (scripts/scan-clip-duplicates.ts) can re-check the
+// asset once its embedding finally exists — no data is lost.
+const CLIP_DEDUP_MAX_RETRIES = Math.max(
+  parseInt(process.env.CLIP_DEDUP_MAX_RETRIES ?? "40", 10),
+  1
+);
 // Phase 4.5 — CLIP similarity threshold. Mirrored from createAssetRow's
 // env-aware helper, but read here so the worker stays self-contained.
 function clipDedupThreshold(): number {
@@ -663,7 +673,9 @@ function startClipDedupCheckWorker(): Worker<ClipDedupCheckJob> {
       }
       const { assetId, workspaceId } = parsed.data;
 
-      type ClipVecRow = { clip_vec: number[] | null; lifecycle_state: string };
+      // NB: a pgvector column read via raw `db.execute` comes back as a string
+      // literal ("[...]"), not a number[]. nearestNeighbors() normalises it.
+      type ClipVecRow = { clip_vec: string | null; lifecycle_state: string };
       let rows: ClipVecRow[] = [];
       try {
         const result = await db.execute<ClipVecRow>(
@@ -692,10 +704,23 @@ function startClipDedupCheckWorker(): Worker<ClipDedupCheckJob> {
       }
 
       if (!row.clip_vec || row.clip_vec.length === 0) {
-        log.info("clip_vec not yet populated; re-enqueuing");
+        const retries = parsed.data.dedupRetries ?? 0;
+        if (retries >= CLIP_DEDUP_MAX_RETRIES) {
+          // The upstream embed never populated clip_vec (commonly a missing
+          // R2 original). Stop the self-re-enqueue loop. Leave
+          // clip_dedup_checked_at NULL so a backfill sweep can re-check the
+          // asset if/when its embedding lands — the row and any other data
+          // are untouched.
+          log.warn(
+            { retries, maxRetries: CLIP_DEDUP_MAX_RETRIES },
+            "clip_vec still missing after max retries; giving up (asset preserved for backfill)"
+          );
+          return { skipped: true, reason: "clip_vec pending — gave up" };
+        }
+        log.info({ retries }, "clip_vec not yet populated; re-enqueuing");
         await clipDedupCheckQueue().add(
           JobNames.ClipDedupCheck,
-          { assetId, workspaceId },
+          { assetId, workspaceId, dedupRetries: retries + 1 },
           { delay: CLIP_DEDUP_RETRY_DELAY_MS }
         );
         return { skipped: true, reason: "clip_vec pending" };
