@@ -154,12 +154,25 @@ async function processAssetInner(
       // Force screenshots — the classifier otherwise tends to file text-heavy
       // screenshots as documents/scans.
       const [dims] = await db
-        .select({ widthPx: schema.assets.widthPx, heightPx: schema.assets.heightPx })
+        .select({
+          widthPx: schema.assets.widthPx,
+          heightPx: schema.assets.heightPx,
+          cameraMake: schema.assets.cameraMake,
+        })
         .from(schema.assets)
         .where(eq(schema.assets.id, assetId))
         .limit(1);
       if (isScreenshot(filename, mimeType, dims?.widthPx ?? null, dims?.heightPx ?? null)) {
         classification = "screenshot";
+        subClassification = null;
+      }
+      // A genuine screenshot never carries camera make/model EXIF. If anything
+      // (the aspect-ratio heuristic above OR the CLIP/LLM classifier) tagged an
+      // asset "screenshot" but it has camera EXIF, it's a real photo — override.
+      // This is what flooded the Screenshots lens with phone PNGs + jpeg photos
+      // (and got their faces pruned from People).
+      if (classification === "screenshot" && dims?.cameraMake) {
+        classification = "photo";
         subClassification = null;
       }
 
