@@ -29,6 +29,7 @@ import "src/screens/main_shell.dart";
 import "src/state/auth_store.dart";
 import "src/state/drive_download_queue.dart";
 import "src/state/push_notifications.dart";
+import "src/state/settings_store.dart";
 import "src/state/sync_service.dart";
 import "src/state/upload_queue.dart";
 import "src/state/workmanager_dispatcher.dart";
@@ -95,18 +96,18 @@ Future<void> main() async {
   runApp(FontoApp(auth: auth));
 }
 
-/// Idempotent — Workmanager dedupes by uniqueName.
+/// Idempotent — Workmanager dedupes by uniqueName. The foreground service does
+/// the real draining; this periodic task is only a backstop. No
+/// requiresBatteryNotLow (it just made the backstop fire less). Honours the
+/// "Wi-Fi only" setting so the backstop never spends cellular data either.
 Future<void> registerUploadDrain() async {
+  final wifiOnly = await SettingsStore.getSyncWifiOnly();
   await Workmanager().registerPeriodicTask(
     kUploadDrainTask,
     kUploadDrainTask,
     frequency: const Duration(minutes: 15),
     constraints: Constraints(
-      // No requiresBatteryNotLow: this WorkManager task is only the BACKSTOP
-      // (the foreground service does the real work). Gating it on battery
-      // level just made the backstop fire less often. Connectivity is the
-      // only hard requirement.
-      networkType: NetworkType.connected,
+      networkType: wifiOnly ? NetworkType.unmetered : NetworkType.connected,
     ),
     existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
   );

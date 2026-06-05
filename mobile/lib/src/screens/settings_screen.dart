@@ -31,6 +31,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _loading = true;
   bool _autoImport = false;
+  bool _wifiOnly = false;
   int _lastImportTs = 0;
   bool _scanning = false;
   bool _reprocessing = false;
@@ -46,13 +47,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final enabled = await SettingsStore.getAutoImport();
     final ts = await SettingsStore.getLastImportTs();
     final albums = await SettingsStore.getSelectedAlbumIds();
+    final wifiOnly = await SettingsStore.getSyncWifiOnly();
     if (!mounted) return;
     setState(() {
       _autoImport = enabled;
       _lastImportTs = ts;
       _selectedAlbumIds = albums;
+      _wifiOnly = wifiOnly;
       _loading = false;
     });
+  }
+
+  Future<void> _onWifiOnlyToggle(bool value) async {
+    await SettingsStore.setSyncWifiOnly(value);
+    if (mounted) setState(() => _wifiOnly = value);
+    // Re-apply the network constraint to the WorkManager backstop tasks so the
+    // setting is honoured in the background too (unmetered vs any connection).
+    final netType = value ? NetworkType.unmetered : NetworkType.connected;
+    await Workmanager().registerPeriodicTask(
+      kUploadDrainTask,
+      kUploadDrainTask,
+      frequency: const Duration(minutes: 15),
+      constraints: Constraints(networkType: netType),
+      existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
+    );
+    if (await SettingsStore.getAutoImport()) {
+      await Workmanager().cancelByUniqueName(kCameraRollScanTask);
+      await Workmanager().registerPeriodicTask(
+        kCameraRollScanTask,
+        kCameraRollScanTask,
+        frequency: const Duration(minutes: 30),
+        constraints: Constraints(
+          networkType: value ? NetworkType.unmetered : NetworkType.connected,
+        ),
+        existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
+      );
+    }
   }
 
   Future<void> _pickFolders() async {
@@ -337,6 +367,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             onPressed: _scanNow,
                           ),
                   ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.wifi),
+                  title: const Text("Sync on Wi-Fi only"),
+                  subtitle: const Text(
+                    "Pause uploads and Drive imports on mobile data to save "
+                    "data and battery.",
+                  ),
+                  value: _wifiOnly,
+                  onChanged: _onWifiOnlyToggle,
+                ),
                 ListTile(
                   leading: const Icon(Icons.cloud_sync_outlined),
                   title: const Text("Background sync"),

@@ -13,10 +13,11 @@
 // dataSync foreground service from the background on API 31+ — so callers kick
 // SyncService.ensureRunning() from the home screen / import flow.
 
-import "package:flutter/foundation.dart";
+import "package:connectivity_plus/connectivity_plus.dart";
 import "package:flutter_foreground_task/flutter_foreground_task.dart";
 
 import "drive_download_queue.dart";
+import "settings_store.dart";
 import "upload_queue.dart";
 
 const _kChannelId = "fonto_sync";
@@ -31,6 +32,13 @@ void startSyncCallback() {
 
 class _SyncTaskHandler extends TaskHandler {
   bool _busy = false;
+  // Battery guard: after this many consecutive ticks that make no progress
+  // (offline, Wi-Fi-only on cellular, or a transient auth/server failure) we
+  // STOP the service instead of holding a wakelock spinning. The durable
+  // queues keep the backlog; the WorkManager backstop + the next app launch
+  // resume it once conditions are good. At a 15s tick that's ~45s of grace.
+  int _idleTicks = 0;
+  static const _maxIdleTicks = 3;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -47,22 +55,51 @@ class _SyncTaskHandler extends TaskHandler {
 
   /// One drain pass. Re-entrancy guarded so a long drain isn't re-entered by
   /// the next timer tick. Drive downloads run first (they feed the upload
-  /// queue), then uploads. Stops the service when nothing remains.
+  /// queue), then uploads. Self-stops when the queue empties or when it can't
+  /// make progress (to save battery).
   Future<void> _tick() async {
     if (_busy) return;
     _busy = true;
     try {
-      await DriveDownloadQueue.processForeground();
-      await UploadQueue.drain();
-
-      final remaining = await _pendingTotal();
-      if (remaining == 0) {
+      final before = await _pendingTotal();
+      if (before == 0) {
         await FlutterForegroundTask.stopService();
-      } else {
+        return;
+      }
+
+      // Don't burn battery transferring when we shouldn't / can't.
+      final transfer = await SyncService.transferableNow();
+      if (transfer != TransferState.ok) {
+        _idleTicks++;
         FlutterForegroundTask.updateService(
           notificationTitle: "Fonto sync",
-          notificationText: "Syncing — $remaining item(s) left",
+          notificationText: transfer == TransferState.offline
+              ? "Paused — waiting for connection ($before left)"
+              : "Paused — waiting for Wi-Fi ($before left)",
         );
+        if (_idleTicks >= _maxIdleTicks) await FlutterForegroundTask.stopService();
+        return;
+      }
+
+      await DriveDownloadQueue.processForeground();
+      await UploadQueue.drain();
+      final after = await _pendingTotal();
+
+      if (after == 0) {
+        await FlutterForegroundTask.stopService();
+        return;
+      }
+      if (after < before) {
+        _idleTicks = 0; // made progress — keep going
+        FlutterForegroundTask.updateService(
+          notificationTitle: "Fonto sync",
+          notificationText: "Syncing — $after item(s) left",
+        );
+      } else {
+        // Usable connection but nothing moved (auth gap / server hiccup):
+        // back off rather than spin the radio + CPU.
+        _idleTicks++;
+        if (_idleTicks >= _maxIdleTicks) await FlutterForegroundTask.stopService();
       }
     } catch (_) {
       // Keep the service alive; the next tick retries.
@@ -71,6 +108,9 @@ class _SyncTaskHandler extends TaskHandler {
     }
   }
 }
+
+/// Whether sync may transfer right now.
+enum TransferState { ok, offline, waitingForWifi }
 
 Future<int> _pendingTotal() async {
   final driveQ = await DriveDownloadQueue.open();
@@ -101,7 +141,9 @@ class SyncService {
         playSound: false,
       ),
       foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(10000),
+        // 15s between drain checks — the drains themselves loop internally, so
+        // this is just a "still working / conditions still ok?" heartbeat.
+        eventAction: ForegroundTaskEventAction.repeat(15000),
         autoRunOnBoot: true,
         autoRunOnMyPackageReplaced: true,
         allowWakeLock: true,
@@ -162,5 +204,20 @@ class SyncService {
   static Future<bool> isFullyEnabled() async {
     return (await hasNotificationPermission()) &&
         (await isBatteryOptimizationExempt());
+  }
+
+  /// Whether sync is allowed to transfer right now, honouring the "Wi-Fi only"
+  /// setting. Used by the service to pause (and back off) instead of spinning
+  /// the radio + CPU on a connection it shouldn't use.
+  static Future<TransferState> transferableNow() async {
+    final results = await Connectivity().checkConnectivity();
+    final online = results.any((r) => r != ConnectivityResult.none);
+    if (!online) return TransferState.offline;
+    if (await SettingsStore.getSyncWifiOnly()) {
+      final unmetered = results.any((r) =>
+          r == ConnectivityResult.wifi || r == ConnectivityResult.ethernet);
+      if (!unmetered) return TransferState.waitingForWifi;
+    }
+    return TransferState.ok;
   }
 }

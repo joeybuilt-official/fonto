@@ -12,6 +12,7 @@ class SettingsStore {
   static const _kAutoImport = "fonto.auto_import_enabled";
   static const _kLastImportTs = "fonto.last_import_ts";
   static const _kSelectedAlbums = "fonto.selected_album_ids";
+  static const _kWifiOnly = "fonto.sync_wifi_only";
 
   static Future<bool> getAutoImport() async {
     final p = await SharedPreferences.getInstance();
@@ -21,6 +22,19 @@ class SettingsStore {
   static Future<void> setAutoImport(bool enabled) async {
     final p = await SharedPreferences.getInstance();
     await p.setBool(_kAutoImport, enabled);
+  }
+
+  /// When true, sync only transfers on un-metered (Wi-Fi/ethernet) networks —
+  /// saves cellular data + the battery cost of the mobile radio. Default off
+  /// so a fresh install still backs up immediately on any connection.
+  static Future<bool> getSyncWifiOnly() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_kWifiOnly) ?? false;
+  }
+
+  static Future<void> setSyncWifiOnly(bool value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_kWifiOnly, value);
   }
 
   /// Epoch milliseconds; 0 when no scan has ever run.
