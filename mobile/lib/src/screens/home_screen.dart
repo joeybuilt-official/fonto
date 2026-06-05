@@ -22,6 +22,7 @@ import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
 import "asset_detail_screen.dart";
 import "settings_screen.dart";
+import "transfers_screen.dart";
 import "../state/camera_roll_scanner.dart";
 import "../state/push_notifications.dart";
 import "../state/settings_store.dart";
@@ -1100,6 +1101,9 @@ class _ProgressBanners extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    void openTransfers() => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const TransfersScreen()),
+        );
     return ValueListenableBuilder<int>(
       valueListenable: downloadPending,
       builder: (context, dlPending, _) {
@@ -1117,34 +1121,42 @@ class _ProgressBanners extends StatelessWidget {
                       valueListenable: DriveDownloadQueue.totalEnqueued,
                       builder: (context, total, _) {
                         final label = isImportingAll
-                            ? "Importing all Drive files…"
+                            ? "Importing all Drive files to your library…"
                               "${total > 0 ? ' ($total queued)' : ''}"
                             : "Downloading $dlPending Drive "
-                              "${dlPending == 1 ? 'file' : 'files'}…";
-                        return Container(
-                          width: double.infinity,
-                          color: scheme.tertiaryContainer,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: scheme.onTertiaryContainer,
+                              "${dlPending == 1 ? 'file' : 'files'} from the cloud…";
+                        return InkWell(
+                          onTap: openTransfers,
+                          child: Container(
+                            width: double.infinity,
+                            color: scheme.tertiaryContainer,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 8),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: scheme.onTertiaryContainer,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 10),
-                              Text(
-                                label,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: scheme.onTertiaryContainer,
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    label,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: scheme.onTertiaryContainer,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ],
+                                Icon(Icons.chevron_right,
+                                    size: 16,
+                                    color: scheme.onTertiaryContainer),
+                              ],
+                            ),
                           ),
                         );
                       },
@@ -1156,36 +1168,43 @@ class _ProgressBanners extends StatelessWidget {
 
             if (up != null && up.total > 0) {
               rows.add(
-                Container(
-                  width: double.infinity,
-                  color: scheme.primaryContainer,
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.cloud_upload_outlined,
-                              size: 16, color: scheme.onPrimaryContainer),
-                          const SizedBox(width: 8),
-                          Text(
-                            "Uploading ${up.done.clamp(0, up.total)} of ${up.total}",
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: scheme.onPrimaryContainer,
+                InkWell(
+                  onTap: openTransfers,
+                  child: Container(
+                    width: double.infinity,
+                    color: scheme.primaryContainer,
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.cloud_upload_outlined,
+                                size: 16, color: scheme.onPrimaryContainer),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                "Uploading ${up.done.clamp(0, up.total)} of ${up.total} to your library",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.onPrimaryContainer,
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(3),
-                        child: LinearProgressIndicator(
-                          value: up.total == 0 ? null : up.done / up.total,
-                          minHeight: 4,
+                            Icon(Icons.chevron_right,
+                                size: 16, color: scheme.onPrimaryContainer),
+                          ],
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 6),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(3),
+                          child: LinearProgressIndicator(
+                            value: up.total == 0 ? null : up.done / up.total,
+                            minHeight: 4,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               );
@@ -1193,31 +1212,38 @@ class _ProgressBanners extends StatelessWidget {
 
             if (processing > 0) {
               rows.add(
-                Container(
-                  width: double.infinity,
-                  color: scheme.secondaryContainer,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 8),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: scheme.onSecondaryContainer,
+                InkWell(
+                  onTap: openTransfers,
+                  child: Container(
+                    width: double.infinity,
+                    color: scheme.secondaryContainer,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 8),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: scheme.onSecondaryContainer,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        "Processing $processing "
-                        "${processing == 1 ? 'item' : 'items'}…",
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: scheme.onSecondaryContainer,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            "Processing $processing "
+                            "${processing == 1 ? 'item' : 'items'} on Fonto…",
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onSecondaryContainer,
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
+                        Icon(Icons.chevron_right,
+                            size: 16, color: scheme.onSecondaryContainer),
+                      ],
+                    ),
                   ),
                 ),
               );

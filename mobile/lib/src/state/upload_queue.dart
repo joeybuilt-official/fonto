@@ -223,6 +223,18 @@ class UploadQueue {
     return rows.map(UploadQueueEntry.fromRow).toList();
   }
 
+  /// In-progress rows (queued or actively uploading), oldest first — the
+  /// order the drain works through them. For the Transfers queue detail view.
+  Future<List<UploadQueueEntry>> pendingItems({int limit = 200}) async {
+    final rows = await _db.query(
+      "uploads",
+      where: "state IN ('pending','in_flight')",
+      orderBy: "created_at ASC",
+      limit: limit,
+    );
+    return rows.map(UploadQueueEntry.fromRow).toList();
+  }
+
   /// Reset every failed row back to a fresh pending attempt. Returns count.
   Future<int> retryFailed() async {
     return _db.rawUpdate(

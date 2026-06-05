@@ -20,6 +20,7 @@ import "../state/workmanager_dispatcher.dart";
 import "../widgets/sync_permission_sheet.dart";
 import "google_drive_import_screen.dart";
 import "nextcloud_import_screen.dart";
+import "transfers_screen.dart";
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -327,6 +328,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
+                ListTile(
+                  leading: const Icon(Icons.swap_vert),
+                  title: const Text("Transfers"),
+                  subtitle: const Text(
+                    "See what's downloading, uploading, and processing.",
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const TransfersScreen(),
+                    ),
+                  ),
+                ),
+                const Divider(height: 1),
                 SwitchListTile(
                   title: const Text("Auto-import camera roll"),
                   subtitle: const Text(

@@ -39,6 +39,40 @@ const _kDriveScope = "https://www.googleapis.com/auth/drive.readonly";
 /// WorkManager task name for background Drive downloads.
 const kDriveDownloadTask = "fonto.driveDownload";
 
+/// A single row of the Drive download queue — for the Transfers detail view.
+class DriveDownloadEntry {
+  DriveDownloadEntry({
+    required this.id,
+    required this.name,
+    required this.mimeType,
+    required this.virtualPath,
+    required this.state,
+    required this.attempts,
+    required this.createdAtMs,
+    this.error,
+  });
+
+  final String id;
+  final String name;
+  final String mimeType;
+  final String virtualPath;
+  final String state;
+  final int attempts;
+  final int createdAtMs;
+  final String? error;
+
+  static DriveDownloadEntry fromRow(Map<String, Object?> r) => DriveDownloadEntry(
+        id: r["id"] as String,
+        name: r["name"] as String,
+        mimeType: r["mime_type"] as String,
+        virtualPath: r["virtual_path"] as String,
+        state: r["state"] as String,
+        attempts: r["attempts"] as int,
+        createdAtMs: r["created_at"] as int,
+        error: r["error"] as String?,
+      );
+}
+
 class DriveDownloadQueue {
   DriveDownloadQueue._(this._db);
 
@@ -176,6 +210,62 @@ class DriveDownloadQueue {
 
   Future<void> _refreshPending() async {
     pending.value = await pendingCount();
+  }
+
+  /// Items still waiting / actively downloading, oldest first. For the
+  /// Transfers queue detail view.
+  Future<List<DriveDownloadEntry>> pendingItems({int limit = 200}) async {
+    final rows = await _db.query(
+      "drive_downloads",
+      where: "state IN ('pending','downloading') AND attempts < ?",
+      whereArgs: [_maxAttempts],
+      orderBy: "created_at ASC",
+      limit: limit,
+    );
+    return rows.map(DriveDownloadEntry.fromRow).toList();
+  }
+
+  /// Rows that exhausted their retries, newest first — "what's stuck and why".
+  Future<List<DriveDownloadEntry>> failures({int limit = 50}) async {
+    final rows = await _db.query(
+      "drive_downloads",
+      where: "state = 'failed' OR (state = 'pending' AND attempts >= ?)",
+      whereArgs: [_maxAttempts],
+      orderBy: "created_at DESC",
+      limit: limit,
+    );
+    return rows.map(DriveDownloadEntry.fromRow).toList();
+  }
+
+  Future<int> failedCount() async {
+    final r = await _db.rawQuery(
+      "SELECT COUNT(*) AS c FROM drive_downloads "
+      "WHERE state = 'failed' OR (state = 'pending' AND attempts >= ?)",
+      [_maxAttempts],
+    );
+    return (r.first["c"] as int?) ?? 0;
+  }
+
+  /// Reset failed/exhausted rows back to a fresh pending attempt. Returns count.
+  Future<int> retryFailed() async {
+    final n = await _db.rawUpdate(
+      "UPDATE drive_downloads SET state = 'pending', attempts = 0, error = NULL "
+      "WHERE state = 'failed' OR (state = 'pending' AND attempts >= ?)",
+      [_maxAttempts],
+    );
+    await _refreshPending();
+    return n;
+  }
+
+  /// Drop failed/exhausted rows from the queue entirely. Returns count.
+  Future<int> clearFailed() async {
+    final n = await _db.rawDelete(
+      "DELETE FROM drive_downloads "
+      "WHERE state = 'failed' OR (state = 'pending' AND attempts >= ?)",
+      [_maxAttempts],
+    );
+    await _refreshPending();
+    return n;
   }
 
   /// Download one batch of pending items using [headers] for Drive auth.
