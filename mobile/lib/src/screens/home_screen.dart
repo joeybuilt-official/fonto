@@ -76,6 +76,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // untouched. A foreground drain is the most reliable path and shows live
     // progress.
     _kickDrain();
+    _kickDriveDrain();
     _maybeScanCameraRoll();
   }
 
@@ -101,7 +102,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// then let _kickDrain call _softRefresh when the upload drain finishes.
   void _onDrivePendingChange() {
     if (!mounted) return;
-    if (DriveDownloadQueue.pending.value == 0) _kickDrain();
+    if (DriveDownloadQueue.pending.value == 0) {
+      // Backlog cleared — freshly-downloaded files are now in the upload queue.
+      _kickDrain();
+    } else {
+      // Items are still pending — make sure a foreground drain is running.
+      _kickDriveDrain();
+    }
   }
 
   /// Refresh the badge and kick a foreground drain. drain() requeues rows a
@@ -116,9 +123,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Foreground drain of the Drive download backlog. The home screen is the
+  /// only always-mounted surface, so without this a backlog left by a closed
+  /// import screen (or a throttled WorkManager task) would never download —
+  /// the count just sits there. Re-entrancy is guarded inside the queue.
+  /// Fire-and-forget; the `pending` ValueNotifier drives the banner.
+  void _kickDriveDrain() {
+    if (DriveDownloadQueue.pending.value == 0) return;
+    DriveDownloadQueue.processForeground();
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _kickDrain();
+    if (state == AppLifecycleState.resumed) {
+      _kickDrain();
+      _kickDriveDrain();
+    }
   }
 
   /// While the server is still processing freshly-uploaded assets, poll the

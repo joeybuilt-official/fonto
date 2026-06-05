@@ -234,6 +234,58 @@ class DriveDownloadQueue {
     return done;
   }
 
+  /// Re-entrancy guard for [processForeground] so overlapping kicks (cold
+  /// launch + lifecycle-resume + pending-change all fire near each other)
+  /// don't run concurrent drains of the same queue.
+  static bool _foregroundDraining = false;
+
+  /// Foreground drain of the durable backlog. Silently re-auths with Drive,
+  /// then downloads every pending item in a loop (refreshing the token per
+  /// batch to survive the ~1h OAuth expiry). This is the reliable path: the
+  /// background WorkManager task is heavily throttled by Android, and the
+  /// import screen only drains while it's open — so a backlog left by a closed
+  /// screen or a killed process would otherwise sit forever. The home screen
+  /// kicks this on launch + resume. No-op when nothing is pending or Drive
+  /// isn't (silently) signed in.
+  static Future<void> processForeground() async {
+    if (_foregroundDraining) return;
+    _foregroundDraining = true;
+    try {
+      final q = await open();
+      if (await q.pendingCount() == 0) return;
+      final gsi = GoogleSignIn(scopes: [_kDriveScope]);
+      final user = await gsi.signInSilently();
+      if (user == null) return;
+      final tmpDir = await getTemporaryDirectory();
+      var consecutiveZeros = 0;
+      while (await q.pendingCount() > 0 && consecutiveZeros < 3) {
+        final auth = await user.authentication;
+        final token = auth.accessToken;
+        if (token == null) break;
+        final headers = {"Authorization": "Bearer $token"};
+        final downloaded = await processAll(headers, tmpDir);
+        if (downloaded == 0) {
+          consecutiveZeros++;
+          await Future.delayed(const Duration(seconds: 3));
+        } else {
+          consecutiveZeros = 0;
+        }
+      }
+      // Anything still pending (e.g. silent auth unavailable now) falls back to
+      // the background task, which Android will run when it sees fit.
+      if (await q.pendingCount() > 0) {
+        await Workmanager().registerOneOffTask(
+          kDriveDownloadTask,
+          kDriveDownloadTask,
+          existingWorkPolicy: ExistingWorkPolicy.keep,
+          constraints: Constraints(networkType: NetworkType.connected),
+        );
+      }
+    } finally {
+      _foregroundDraining = false;
+    }
+  }
+
   /// Called from the WorkManager callback isolate.
   /// Signs in silently → downloads one batch → reschedules if more remain.
   /// Each run stays well under the 10-minute WorkManager execution window.
