@@ -816,6 +816,32 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
     }
   }
 
+  /// Phase 3 (faces/UX) — clear the NAME of the cluster this face belongs to
+  /// (keeps the face assigned to the cluster). Sends `null`, which the PATCH
+  /// route treats as "unname". This is the in-flow fix for the reported
+  /// name-removal bug; distinct from "Remove assignment" which detaches a face.
+  Future<void> _removeClusterName() async {
+    final personId = widget.face.personId;
+    if (personId == null) return;
+    setState(() { _saving = true; _saveError = null; });
+    final nav = Navigator.of(context);
+    try {
+      final person = await widget.client.updatePersonName(personId, null);
+      if (!mounted) return;
+      widget.onPersonCreated(person);
+      widget.onUpdated(AssetFace(
+        id: widget.face.id,
+        bbox: widget.face.bbox,
+        confidence: widget.face.confidence,
+        personId: personId,
+        personName: person.name,
+      ));
+      nav.pop();
+    } catch (e) {
+      if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final filtered = _filtered;
@@ -926,6 +952,15 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
                         leading: const Icon(Icons.person_add_outlined),
                         title: Text('Create "$query"'),
                         onTap: _saving ? null : _createAndAssign,
+                      ),
+                    // Phase 3 (faces/UX) — clear just the cluster NAME (keeps
+                    // the face assigned). Only when the cluster has a name.
+                    if (widget.face.personId != null &&
+                        widget.face.personName != null)
+                      ListTile(
+                        leading: const Icon(Icons.label_off_outlined),
+                        title: const Text("Remove name"),
+                        onTap: _saving ? null : _removeClusterName,
                       ),
                     if (widget.face.personId != null)
                       ListTile(

@@ -389,6 +389,7 @@ class Person {
     this.name,
     this.coverAssetId,
     this.coverBbox,
+    this.coverFaceCropUrl,
   });
 
   final String id;
@@ -397,12 +398,18 @@ class Person {
   final String? coverAssetId;
   final PersonBbox? coverBbox;
 
+  /// Phase 3 (faces/UX) — relative API path to the dedicated, sharp, centered
+  /// square crop of the cover face (`variant=face`). Null until the crop is
+  /// generated/backfilled; clients fall back to a zoomed thumb.
+  final String? coverFaceCropUrl;
+
   static Person fromJson(Map<String, dynamic> j) => Person(
         id: j["id"] as String,
         instanceCount: (j["instanceCount"] as num?)?.toInt() ?? 0,
         name: j["name"] as String?,
         coverAssetId: j["coverAssetId"] as String?,
         coverBbox: PersonBbox.fromJson(j["coverBbox"]),
+        coverFaceCropUrl: j["coverFaceCropUrl"] as String?,
       );
 }
 

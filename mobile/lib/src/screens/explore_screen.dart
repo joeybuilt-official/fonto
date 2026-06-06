@@ -104,6 +104,9 @@ class _PeopleTabState extends State<_PeopleTab> {
   String? _error;
   List<Person> _items = const [];
   final Map<String, String> _thumbs = {};
+  // Phase 3 (faces/UX) — resolved signed face-crop URLs, keyed by person id.
+  // Prefer these sharp, centered crops over zooming a 256px thumb.
+  final Map<String, String> _faceCrops = {};
 
   @override
   void initState() {
@@ -116,6 +119,7 @@ class _PeopleTabState extends State<_PeopleTab> {
       _loading = true;
       _error = null;
       _thumbs.clear();
+      _faceCrops.clear();
     });
     try {
       final raw = await widget.client.listPersons();
@@ -128,10 +132,21 @@ class _PeopleTabState extends State<_PeopleTab> {
       final thumbs = coverIds.isEmpty
           ? <String, String>{}
           : await widget.client.assetUrls(coverIds, variant: "thumb");
+      // Phase 3 (faces/UX) — resolve the dedicated face-crop signed URL for any
+      // person that has one. Done in parallel; failures just leave the thumb
+      // fallback in place. NULL coverFaceCropUrl => not yet backfilled.
+      final cropTargets =
+          items.where((p) => p.coverFaceCropUrl != null).toList();
+      final crops = <String, String>{};
+      await Future.wait(cropTargets.map((p) async {
+        final u = await widget.client.resolveSignedUrl(p.coverFaceCropUrl!);
+        if (u != null) crops[p.id] = u;
+      }));
       if (!mounted) return;
       setState(() {
         _items = items;
         _thumbs.addAll(thumbs);
+        _faceCrops.addAll(crops);
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -169,6 +184,7 @@ class _PeopleTabState extends State<_PeopleTab> {
         itemBuilder: (context, i) => _PersonTile(
           person: _items[i],
           url: _thumbs[_items[i].coverAssetId],
+          faceCropUrl: _faceCrops[_items[i].id],
           onTap: () async {
             final merged = await Navigator.of(context).push<bool>(
               MaterialPageRoute(
@@ -191,9 +207,13 @@ class _PersonTile extends StatelessWidget {
     required this.person,
     required this.url,
     required this.onTap,
+    this.faceCropUrl,
   });
   final Person person;
   final String? url;
+  // Phase 3 (faces/UX) — resolved signed face-crop URL; preferred over zooming
+  // the thumb when present (sharp + already centered).
+  final String? faceCropUrl;
   final VoidCallback onTap;
 
   @override
@@ -209,21 +229,32 @@ class _PersonTile extends StatelessWidget {
               builder: (_, constraints) {
                 final d = constraints.maxWidth;
                 final bbox = person.coverBbox;
-                final Widget inner = url == null
-                    ? Container(
-                        color: Colors.black12,
-                        child: const Icon(Icons.person, size: 36),
-                      )
-                    : (bbox != null
-                        ? _buildFaceZoom(url!, bbox, d)
-                        : CachedNetworkImage(
-                            imageUrl: url!,
-                            fit: BoxFit.cover,
-                            placeholder: (_, __) =>
-                                Container(color: Colors.black12),
-                            errorWidget: (_, __, ___) =>
-                                const Icon(Icons.person),
-                          ));
+                final Widget inner;
+                if (faceCropUrl != null) {
+                  // Preferred: the dedicated sharp, centered crop. Render
+                  // cover — the crop is already a tight square around the face.
+                  inner = CachedNetworkImage(
+                    imageUrl: faceCropUrl!,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(color: Colors.black12),
+                    errorWidget: (_, __, ___) => const Icon(Icons.person),
+                  );
+                } else if (url == null) {
+                  inner = Container(
+                    color: Colors.black12,
+                    child: const Icon(Icons.person, size: 36),
+                  );
+                } else if (bbox != null) {
+                  // Fallback: zoom the thumb to the bbox (pre-backfill).
+                  inner = _buildFaceZoom(url!, bbox, d);
+                } else {
+                  inner = CachedNetworkImage(
+                    imageUrl: url!,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(color: Colors.black12),
+                    errorWidget: (_, __, ___) => const Icon(Icons.person),
+                  );
+                }
                 return ClipOval(child: SizedBox(width: d, height: d, child: inner));
               },
             ),
@@ -731,6 +762,64 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
     }
   }
 
+  /// Phase 3 (faces/UX) — rename this person. Prompts for a new name and PATCHes
+  /// it. Updates the local title; pops `true` so the People grid reloads.
+  Future<void> _rename() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final controller = TextEditingController(text: _name ?? "");
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Rename person"),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: "Name"),
+          onSubmitted: (v) => Navigator.of(ctx).pop(v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            child: const Text("Save"),
+          ),
+        ],
+      ),
+    );
+    if (newName == null || !mounted) return;
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty) return;
+    try {
+      final updated =
+          await widget.client.updatePersonName(widget.person.id, trimmed);
+      if (!mounted) return;
+      setState(() => _name = updated.name);
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text("Rename failed: $e")));
+    }
+  }
+
+  /// Phase 3 (faces/UX) — remove (clear) this person's name. Sends `null`,
+  /// which the PATCH route treats as "unname". Fixes the reported bug where the
+  /// app could not clear a name at all.
+  Future<void> _removeName() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final updated =
+          await widget.client.updatePersonName(widget.person.id, null);
+      if (!mounted) return;
+      setState(() => _name = updated.name);
+      messenger.showSnackBar(const SnackBar(content: Text("Name removed")));
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text("Couldn't remove name: $e")));
+    }
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -779,10 +868,46 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
-              : IconButton(
-                  icon: const Icon(Icons.merge_type),
-                  tooltip: "Merge into…",
-                  onPressed: _pickAndMerge,
+              // Phase 3 (faces/UX) — Rename + Remove-name alongside Merge.
+              : PopupMenuButton<String>(
+                  tooltip: "Person actions",
+                  onSelected: (v) {
+                    switch (v) {
+                      case "rename":
+                        _rename();
+                        break;
+                      case "remove":
+                        _removeName();
+                        break;
+                      case "merge":
+                        _pickAndMerge();
+                        break;
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
+                      value: "rename",
+                      child: ListTile(
+                        leading: Icon(Icons.edit_outlined),
+                        title: Text("Rename"),
+                      ),
+                    ),
+                    if (_name != null)
+                      const PopupMenuItem(
+                        value: "remove",
+                        child: ListTile(
+                          leading: Icon(Icons.label_off_outlined),
+                          title: Text("Remove name"),
+                        ),
+                      ),
+                    const PopupMenuItem(
+                      value: "merge",
+                      child: ListTile(
+                        leading: Icon(Icons.merge_type),
+                        title: Text("Merge into…"),
+                      ),
+                    ),
+                  ],
                 ),
         ],
       ),
@@ -808,7 +933,10 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                   assets: _assets,
                   initialIndex: i,
                   onPersonUpdated: (p) {
-                    if (p.id == widget.person.id && p.name != null) {
+                    // Phase 3 (faces/UX) — propagate even when the name was
+                    // CLEARED (p.name == null). The old `p.name != null` guard
+                    // made a removed name invisible to the grid.
+                    if (p.id == widget.person.id) {
                       setState(() => _name = p.name);
                       Navigator.of(context).pop(true);
                     }

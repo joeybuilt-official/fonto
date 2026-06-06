@@ -208,6 +208,20 @@ class FontoClient {
     return urls.map((k, v) => MapEntry(k, v as String));
   }
 
+  /// Phase 3 (faces/UX) — resolve a relative API URL endpoint that returns a
+  /// signed object URL as `{ "url": "..." }`. Used for the dedicated face crop
+  /// (`Person.coverFaceCropUrl`, `AssetFace.faceCropUrl`), which point at
+  /// /api/v1/assets/:id/url?variant=face&faceId=… . Returns null on failure so
+  /// callers can fall back to a zoomed thumb.
+  Future<String?> resolveSignedUrl(String relativePath) async {
+    try {
+      final j = await _getJson(relativePath);
+      return j["url"] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// On-demand HLS manifest for a video asset. Returns state "ready" with
   /// a relative `playlistUrl` (auth-gated proxy) once transcoded, or
   /// "transcoding" (202, kicks off the job) — poll until ready. The
@@ -432,7 +446,11 @@ class FontoClient {
     return Person.fromJson(j["person"] as Map<String, dynamic>);
   }
 
-  Future<Person> updatePersonName(String personId, String name) async {
+  /// Update (or clear) a person's name. Passing `null` (or an empty string)
+  /// clears the name — the PATCH route treats null/empty as "unname".
+  /// Phase 3 (faces/UX): the param is nullable so the app can remove a name,
+  /// which was previously impossible (non-nullable param + name != null guards).
+  Future<Person> updatePersonName(String personId, String? name) async {
     final res = await _http.patch(
       _uri("/api/v1/persons/$personId"),
       headers: {..._headers, "Content-Type": "application/json"},
