@@ -95,6 +95,19 @@ export async function GET(request: NextRequest) {
     where.push(like(schema.assets.directoryPath, `${normalised}/%`));
   }
 
+  // Phase 5.5 / Task 20 — collapse stacks the same way the list route does
+  // (count standalone assets OR each stack's primary), so the scrubber's
+  // per-month counts and height reservation match the collapsed grid the
+  // timeline actually renders. The timeline never expands stacks, so this is
+  // unconditional here. Correlated subquery is index-driven via
+  // stacks_primary_asset_id_idx + assets_workspace_stack_idx.
+  where.push(
+    or(
+      isNull(schema.assets.stackId),
+      sql`${schema.assets.id} = (SELECT ${schema.stacks.primaryAssetId} FROM ${schema.stacks} WHERE ${schema.stacks.id} = ${schema.assets.stackId})`
+    )!
+  );
+
   // Bucket strictly by capture date. Assets with no real capture date (NULL
   // captured_at — i.e. the big Drive import's date-less placeholders) collapse
   // into a single "undated" bucket instead of being coalesced onto created_at,
