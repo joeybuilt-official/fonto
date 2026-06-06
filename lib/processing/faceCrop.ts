@@ -171,27 +171,30 @@ function clipPaddingAgainstNeighbors(
     const nRight = n.x + n.w;
     const nBottom = n.y + n.h;
 
-    // Neighbor primarily to the RIGHT of target.
+    // Each clip is bounded so the resulting region always still contains
+    // the WHOLE target bbox — clipping into the target itself produces
+    // a degenerate or face-cut crop, which is worse than including a
+    // sliver of a neighbor. The padded edge can be tightened down to
+    // the target's own edge, no further.
     if (nCx > targetCx && right > n.x) {
-      // Stop the padded region at the midpoint between target's right
-      // edge and neighbor's left edge so we never include neighbor pixels.
       const limit = (targetRight + n.x) / 2;
-      if (limit > target.x && limit < right) right = limit;
+      if (limit > targetRight && limit < right) right = limit;
+      else if (limit <= targetRight) right = Math.min(right, targetRight);
     }
-    // Neighbor primarily to the LEFT.
     if (nCx < targetCx && nx < nRight) {
       const limit = (target.x + nRight) / 2;
-      if (limit < targetRight && limit > nx) nx = limit;
+      if (limit < target.x && limit > nx) nx = limit;
+      else if (limit >= target.x) nx = Math.max(nx, target.x);
     }
-    // Neighbor primarily BELOW.
     if (nCy > targetCy && bottom > n.y) {
       const limit = (targetBottom + n.y) / 2;
-      if (limit > target.y && limit < bottom) bottom = limit;
+      if (limit > targetBottom && limit < bottom) bottom = limit;
+      else if (limit <= targetBottom) bottom = Math.min(bottom, targetBottom);
     }
-    // Neighbor primarily ABOVE.
     if (nCy < targetCy && ny < nBottom) {
       const limit = (target.y + nBottom) / 2;
-      if (limit < targetBottom && limit > ny) ny = limit;
+      if (limit < target.y && limit > ny) ny = limit;
+      else if (limit >= target.y) ny = Math.max(ny, target.y);
     }
   }
 
