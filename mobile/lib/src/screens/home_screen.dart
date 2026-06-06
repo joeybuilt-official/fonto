@@ -753,8 +753,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             )
           else
             for (final g in groups) ...[
+              // pinned: false — Flutter stacks every `pinned: true`
+              // SliverPersistentHeader at the top instead of swapping one for
+              // the next, so 13 month headers ate ~468 px of viewport and the
+              // photos disappeared off-screen. Section labels still ride above
+              // each grid; the right-rail scrubber gives "where am I" context.
               SliverPersistentHeader(
-                pinned: true,
+                pinned: false,
                 delegate: _MonthHeaderDelegate(
                   label: _monthLabel(g.month),
                   count: g.assets.length,
