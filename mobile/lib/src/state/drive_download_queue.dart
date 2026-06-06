@@ -76,8 +76,14 @@ class DriveDownloadEntry {
 class DriveDownloadQueue {
   DriveDownloadQueue._(this._db);
 
-  static const _maxAttempts = 3;
-  static const _batchSize = 30;
+  // Retries now back off (see processAll), so a higher cap actually helps the
+  // Drive per-user rate-limit window recover instead of burning all attempts
+  // in seconds. Smaller batch = gentler on the quota during a 15k-file import.
+  static const _maxAttempts = 6; // was 3
+  static const _batchSize = 8; // was 30
+  static const _baseBackoff = Duration(seconds: 2);
+  static const _maxBackoff = Duration(seconds: 60);
+  static const _interRequestDelay = Duration(milliseconds: 120);
   final Database _db;
   static DriveDownloadQueue? _instance;
 
@@ -178,6 +184,8 @@ class DriveDownloadQueue {
     await _refreshPending();
   }
 
+  /// Retryable failure: bump attempts and keep the row 'pending' so a later
+  /// batch re-drives it (only flipping to 'failed' once the attempt cap is hit).
   Future<void> markFailed(String id, String err) async {
     await _db.rawUpdate(
       """
@@ -190,6 +198,45 @@ class DriveDownloadQueue {
       [err, _maxAttempts, id],
     );
     await _refreshPending();
+  }
+
+  /// Permanent failure (404 / gone / non-retryable): fail immediately without
+  /// wasting the remaining attempts on something that will never succeed.
+  Future<void> markPermanent(String id, String err) async {
+    await _db.rawUpdate(
+      "UPDATE drive_downloads SET attempts = attempts + 1, error = ?, state = 'failed' WHERE id = ?",
+      [err, id],
+    );
+    await _refreshPending();
+  }
+
+  /// HTTP statuses worth retrying: rate-limit (403/429), request timeout (408),
+  /// transient 5xx, and expired-token 401 (the next batch refreshes the token).
+  static bool _isRetryableStatus(int code) =>
+      code == 401 || code == 403 || code == 408 || code == 429 || (code >= 500 && code <= 599);
+
+  /// Network-level exceptions are transient: socket drops, stream idle-timeout.
+  static bool _isRetryableError(Object e) =>
+      e is SocketException || e is TimeoutException || e is http.ClientException || e is HttpException;
+
+  /// Exponential backoff for the row's current attempt count, with jitter,
+  /// capped at [_maxBackoff]. `2s, 4s, 8s, 16s, 32s, 60s…`.
+  static Duration _backoffFor(int attempts) {
+    final ms = _baseBackoff.inMilliseconds * (1 << attempts);
+    final capped = ms.clamp(0, _maxBackoff.inMilliseconds).toInt();
+    final jitter = (capped * 0.2 * (DateTime.now().millisecond / 1000)).toInt();
+    return Duration(milliseconds: capped + jitter);
+  }
+
+  /// Sleep before re-driving a rate-limited request: honor a `Retry-After`
+  /// header (seconds) if Drive sent one, else fall back to exponential backoff.
+  static Future<void> _respectBackoff(int attempts, Map<String, String> headers) async {
+    final ra = int.tryParse(headers["retry-after"] ?? "");
+    if (ra != null && ra > 0) {
+      await Future.delayed(Duration(seconds: ra.clamp(0, _maxBackoff.inSeconds)));
+    } else {
+      await Future.delayed(_backoffFor(attempts));
+    }
   }
 
   /// Reset rows orphaned by a killed process back to 'pending'.
@@ -289,21 +336,35 @@ class DriveDownloadQueue {
         final id = row["id"] as String;
         final name = row["name"] as String;
         final virtualPath = row["virtual_path"] as String;
+        final attempts = (row["attempts"] as int?) ?? 0;
+        File? tmp;
         try {
           final uri = Uri.parse("$_kDriveApiBase/files/$id")
               .replace(queryParameters: {"alt": "media"});
           final req = http.Request("GET", uri)..headers.addAll(headers);
+          // Timeout here is on receiving response HEADERS only.
           final streamed = await client
               .send(req)
-              .timeout(const Duration(seconds: 30));
+              .timeout(const Duration(seconds: 60));
           if (streamed.statusCode != 200) {
-            await q.markFailed(id, "HTTP ${streamed.statusCode}");
+            if (_isRetryableStatus(streamed.statusCode)) {
+              // Back off (honoring Retry-After) so the per-user rate-limit
+              // window can recover instead of burning every attempt in seconds.
+              await _respectBackoff(attempts, streamed.headers);
+              await q.markFailed(id, "HTTP ${streamed.statusCode}");
+            } else {
+              await q.markPermanent(id, "HTTP ${streamed.statusCode}");
+            }
             continue;
           }
           final fname = name.isNotEmpty ? name : "$id.bin";
-          final tmp = File("${tmpDir.path}/drive_${id}_$fname");
+          tmp = File("${tmpDir.path}/drive_${id}_$fname");
           final sink = tmp.openWrite();
-          await streamed.stream.pipe(sink);
+          // IDLE timeout (resets on each chunk) — large videos that keep
+          // streaming complete; only a stalled connection trips it.
+          await streamed.stream
+              .timeout(const Duration(seconds: 30))
+              .pipe(sink);
           final sha = await UploadQueue.hashFile(tmp);
           await uploadQ.enqueue(
             filePath: tmp.path,
@@ -312,8 +373,21 @@ class DriveDownloadQueue {
           );
           await q.markDone(id);
           done++;
+          // Gentle throttle between files so a batch doesn't burst the quota.
+          await Future.delayed(_interRequestDelay);
         } catch (e) {
-          await q.markFailed(id, e.toString());
+          // Clean up any partial download so a retry starts fresh.
+          if (tmp != null) {
+            try {
+              if (await tmp.exists()) await tmp.delete();
+            } catch (_) {/* best-effort */}
+          }
+          if (_isRetryableError(e)) {
+            await Future.delayed(_backoffFor(attempts));
+            await q.markFailed(id, e.toString());
+          } else {
+            await q.markPermanent(id, e.toString());
+          }
         }
       }
     } finally {
