@@ -47,6 +47,12 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   // from the per-asset detail endpoint as the user scrolls onto one.
   final Map<String, String> _texts = {};
   bool _acting = false;
+  // Faces for the current asset (and ±neighbors as the user pages) +
+  // a single bool that toggles the overlay on a tap of the image.
+  // `null` = not yet fetched; `const []` = fetched, no faces. Reuse the
+  // bool across page swipes — taps consistently flip the same flag.
+  final Map<String, List<AssetFace>?> _facesByAsset = {};
+  bool _showFaceLabels = false;
 
   static bool _isText(Asset a) => a.mimeType.startsWith("text/");
   static bool _isVideo(Asset a) => a.mimeType.startsWith("video/");
@@ -58,6 +64,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     super.initState();
     _ensurePreviews(_index);
     _ensureText(_index);
+    _ensureFaces(_index);
   }
 
   @override
@@ -90,6 +97,25 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     setState(() => _index = i);
     _ensurePreviews(i);
     _ensureText(i);
+    _ensureFaces(i);
+  }
+
+  /// Lazy-load the face list for asset `i`. Skips non-images and ids
+  /// already cached. Stores `const []` on failure or empty result so we
+  /// don't refetch on every tap.
+  Future<void> _ensureFaces(int i) async {
+    final a = _assets[i];
+    if (!a.mimeType.startsWith("image/")) return;
+    if (_facesByAsset.containsKey(a.id)) return;
+    _facesByAsset[a.id] = null; // mark in-flight
+    try {
+      final faces = await widget.client.assetFaces(a.id);
+      if (!mounted) return;
+      setState(() => _facesByAsset[a.id] = faces);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _facesByAsset[a.id] = const []);
+    }
   }
 
   /// Fetch the text layer for a text/code asset on demand. No-op for media
@@ -328,55 +354,149 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
           ),
         ],
       ),
-      body: PhotoViewGallery.builder(
-        pageController: _page,
-        itemCount: _assets.length,
-        onPageChanged: _onPageChanged,
-        backgroundDecoration: const BoxDecoration(color: Colors.black),
-        loadingBuilder: (_, __) =>
-            const Center(child: CircularProgressIndicator()),
-        builder: (context, i) {
-          final a = _assets[i];
-          if (_isText(a)) {
-            return PhotoViewGalleryPageOptions.customChild(
-              disableGestures: true,
-              child: _TextPage(
-                text: _texts[a.id],
-                code: a.mimeType != "text/plain",
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          PhotoViewGallery.builder(
+            pageController: _page,
+            itemCount: _assets.length,
+            onPageChanged: _onPageChanged,
+            backgroundDecoration: const BoxDecoration(color: Colors.black),
+            loadingBuilder: (_, __) =>
+                const Center(child: CircularProgressIndicator()),
+            builder: (context, i) {
+              final a = _assets[i];
+              if (_isText(a)) {
+                return PhotoViewGalleryPageOptions.customChild(
+                  disableGestures: true,
+                  child: _TextPage(
+                    text: _texts[a.id],
+                    code: a.mimeType != "text/plain",
+                  ),
+                );
+              }
+              if (_isVideo(a)) {
+                // PhotoView gestures would swallow the player's tap/scrub —
+                // disable them and let the player own the surface.
+                return PhotoViewGalleryPageOptions.customChild(
+                  disableGestures: true,
+                  child: AssetVideoPlayer(client: widget.client, asset: a),
+                );
+              }
+              final url = _previews[a.id];
+              return PhotoViewGalleryPageOptions.customChild(
+                child: url == null
+                    ? const Center(child: CircularProgressIndicator())
+                    : CachedNetworkImage(
+                        imageUrl: url,
+                        fit: BoxFit.contain,
+                        memCacheWidth: 1920,
+                        placeholder: (_, __) => const Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                        errorWidget: (_, __, ___) => const Icon(
+                          Icons.broken_image,
+                          color: Colors.white,
+                          size: 48,
+                        ),
+                      ),
+                minScale: PhotoViewComputedScale.contained,
+                maxScale: PhotoViewComputedScale.covered * 4,
+                heroAttributes: PhotoViewHeroAttributes(tag: a.id),
+                // Single-tap toggles the face-label overlay. PhotoView's
+                // own onTapUp fires AFTER its double-tap-zoom and
+                // pinch-zoom paths, so neither gesture regresses.
+                onTapUp: (_, __, ___) {
+                  if (_isViewableImage(a)) {
+                    setState(() => _showFaceLabels = !_showFaceLabels);
+                  }
+                },
+              );
+            },
+          ),
+          // IgnorePointer-wrapped overlay so PhotoView gestures aren't
+          // intercepted. The overlay only paints when labels are on AND
+          // we have faces + dims for the current image.
+          if (_showFaceLabels) _buildFaceOverlay(),
+        ],
+      ),
+    );
+  }
+
+  static bool _isViewableImage(Asset a) =>
+      a.mimeType.startsWith("image/");
+
+  Widget _buildFaceOverlay() {
+    final a = _cur;
+    if (!_isViewableImage(a)) return const SizedBox.shrink();
+    final faces = _facesByAsset[a.id];
+    if (faces == null || faces.isEmpty) return const SizedBox.shrink();
+    final wPx = a.widthPx;
+    final hPx = a.heightPx;
+    if (wPx == null || hPx == null) return const SizedBox.shrink();
+    final dims = Size(wPx.toDouble(), hPx.toDouble());
+    return IgnorePointer(
+      child: LayoutBuilder(builder: (ctx, constraints) {
+        final ww = constraints.maxWidth;
+        final wh = constraints.maxHeight;
+        final s = min(ww / dims.width, wh / dims.height);
+        final rx = (ww - dims.width * s) / 2;
+        final ry = (wh - dims.height * s) / 2;
+        return Stack(
+          fit: StackFit.expand,
+          children: faces.map((face) {
+            final b = face.bbox;
+            final left = rx + b.x * dims.width * s;
+            final top = ry + b.y * dims.height * s;
+            final fw = b.w * dims.width * s;
+            final fh = b.h * dims.height * s;
+            final d = max(fw, fh) + 12;
+            final cx = left + fw / 2;
+            final cy = top + fh / 2;
+            return Positioned(
+              left: cx - d / 2,
+              top: cy - d / 2,
+              width: d,
+              height: d,
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: face.personId != null
+                        ? Colors.lightBlueAccent
+                        : Colors.white70,
+                    width: 2,
+                  ),
+                ),
+                child: face.personName != null
+                    ? Align(
+                        alignment: Alignment.bottomCenter,
+                        child: FractionalTranslation(
+                          translation: const Offset(0, 1),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              face.personName!,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      )
+                    : null,
               ),
             );
-          }
-          if (_isVideo(a)) {
-            // PhotoView gestures would swallow the player's tap/scrub —
-            // disable them and let the player own the surface.
-            return PhotoViewGalleryPageOptions.customChild(
-              disableGestures: true,
-              child: AssetVideoPlayer(client: widget.client, asset: a),
-            );
-          }
-          final url = _previews[a.id];
-          return PhotoViewGalleryPageOptions.customChild(
-            child: url == null
-                ? const Center(child: CircularProgressIndicator())
-                : CachedNetworkImage(
-                    imageUrl: url,
-                    fit: BoxFit.contain,
-                    memCacheWidth: 1920,
-                    placeholder: (_, __) => const Center(
-                      child: CircularProgressIndicator(),
-                    ),
-                    errorWidget: (_, __, ___) => const Icon(
-                      Icons.broken_image,
-                      color: Colors.white,
-                      size: 48,
-                    ),
-                  ),
-            minScale: PhotoViewComputedScale.contained,
-            maxScale: PhotoViewComputedScale.covered * 4,
-            heroAttributes: PhotoViewHeroAttributes(tag: a.id),
-          );
-        },
-      ),
+          }).toList(),
+        );
+      }),
     );
   }
 }

@@ -31,8 +31,16 @@ const FACE_CROP_SIZE_PX = 256;
 const FACE_CROP_QUALITY = 82;
 // Padding added around the detected bbox (fraction of the box's own
 // width/height) so the crop frames the head + a little context, not a tight
-// chin-to-brow rectangle. ~30% per ADR 0001.
-const FACE_CROP_PADDING = 0.3;
+// chin-to-brow rectangle. Was 0.30 — group photos with adjacent faces
+// produced cluster avatars containing 2-3 faces because the padding ate
+// into neighbors. 0.15 + per-side neighbor-aware clipping (see
+// `clipPaddingAgainstNeighbors`) now enforces one face per circle.
+const FACE_CROP_PADDING = 0.15;
+// When the source bbox in the chosen source image is smaller than this
+// many pixels on its shorter side, the 256-target crop would have to
+// upscale by 2× or more and the face goes soft. We switch to the original
+// asset for that one decode so small in-frame faces stay sharp.
+const HI_RES_SOURCE_MIN_BBOX_PX = 256;
 const DERIVATIVE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
 export interface FaceBbox {
@@ -80,21 +88,51 @@ async function downloadFromR2(bucket: string, key: string): Promise<Buffer> {
  */
 async function loadOrientedSource(
   bucket: string,
-  src: FaceCropSource
+  src: FaceCropSource,
+  faces: FaceCropTarget[]
 ): Promise<{ buffer: Buffer; width: number; height: number }> {
-  let raw: Buffer;
   const previewKey =
     src.previewKey ??
     assetDerivativeKey(src.workspaceId, src.assetId, "preview");
-  try {
-    raw = await downloadFromR2(bucket, previewKey);
-  } catch {
-    raw = await downloadFromR2(
-      bucket,
-      assetStorageKey(src.workspaceId, src.assetId, src.filename)
-    );
+  const originalKey = assetStorageKey(
+    src.workspaceId,
+    src.assetId,
+    src.filename
+  );
+
+  // Load preview first; it's the same frame the detector ran on so the
+  // normalised bbox lines up exactly.
+  const previewOriented = await loadAndOrient(bucket, previewKey).catch(
+    () => null
+  );
+
+  // If the smallest face's bbox in preview-space would be <256 px on its
+  // shorter side, falling back to the original gives us sharp pixels.
+  // Preview and original share aspect (preview is just a downscale), so
+  // the normalised bbox maps 1:1 in both.
+  if (previewOriented && faces.length > 0) {
+    const minPxInPreview = faces.reduce((min, f) => {
+      const w = f.bbox.w * previewOriented.width;
+      const h = f.bbox.h * previewOriented.height;
+      return Math.min(min, Math.min(w, h));
+    }, Infinity);
+    if (minPxInPreview >= HI_RES_SOURCE_MIN_BBOX_PX) return previewOriented;
   }
-  // Bake EXIF orientation in once, then read the visual dimensions.
+
+  // Either preview is missing OR there's at least one small face — use original.
+  try {
+    return await loadAndOrient(bucket, originalKey);
+  } catch {
+    if (previewOriented) return previewOriented;
+    throw new Error("could not load preview or original for face crops");
+  }
+}
+
+async function loadAndOrient(
+  bucket: string,
+  key: string
+): Promise<{ buffer: Buffer; width: number; height: number }> {
+  const raw = await downloadFromR2(bucket, key);
   const oriented = await sharp(raw, { failOn: "none" }).rotate().toBuffer();
   const meta = await sharp(oriented).metadata();
   const width = meta.width ?? 0;
@@ -105,9 +143,68 @@ async function loadOrientedSource(
   return { buffer: oriented, width, height };
 }
 
-/** Map a normalised bbox (+padding) to a clamped pixel extract region. */
+/**
+ * Per-side clipping: shrink the padded region on any side that would
+ * otherwise contain a NEIGHBOR face's center. Without this, a 15% pad
+ * still bleeds into a close-by neighbor's chin/forehead and the cluster
+ * avatar shows two heads. Operates entirely in normalised space.
+ */
+function clipPaddingAgainstNeighbors(
+  target: FaceBbox,
+  padded: { nx: number; ny: number; nw: number; nh: number },
+  neighbors: FaceBbox[]
+): { nx: number; ny: number; nw: number; nh: number } {
+  if (neighbors.length === 0) return padded;
+
+  const targetCx = target.x + target.w / 2;
+  const targetCy = target.y + target.h / 2;
+  const targetRight = target.x + target.w;
+  const targetBottom = target.y + target.h;
+
+  let { nx, ny, nw, nh } = padded;
+  let right = nx + nw;
+  let bottom = ny + nh;
+
+  for (const n of neighbors) {
+    const nCx = n.x + n.w / 2;
+    const nCy = n.y + n.h / 2;
+    const nRight = n.x + n.w;
+    const nBottom = n.y + n.h;
+
+    // Neighbor primarily to the RIGHT of target.
+    if (nCx > targetCx && right > n.x) {
+      // Stop the padded region at the midpoint between target's right
+      // edge and neighbor's left edge so we never include neighbor pixels.
+      const limit = (targetRight + n.x) / 2;
+      if (limit > target.x && limit < right) right = limit;
+    }
+    // Neighbor primarily to the LEFT.
+    if (nCx < targetCx && nx < nRight) {
+      const limit = (target.x + nRight) / 2;
+      if (limit < targetRight && limit > nx) nx = limit;
+    }
+    // Neighbor primarily BELOW.
+    if (nCy > targetCy && bottom > n.y) {
+      const limit = (targetBottom + n.y) / 2;
+      if (limit > target.y && limit < bottom) bottom = limit;
+    }
+    // Neighbor primarily ABOVE.
+    if (nCy < targetCy && ny < nBottom) {
+      const limit = (target.y + nBottom) / 2;
+      if (limit < targetBottom && limit > ny) ny = limit;
+    }
+  }
+
+  nw = right - nx;
+  nh = bottom - ny;
+  return { nx, ny, nw, nh };
+}
+
+/** Map a normalised bbox (+padding, clipped against neighbors) to a clamped
+ *  pixel extract region. */
 function bboxToExtractRegion(
   bbox: FaceBbox,
+  neighbors: FaceBbox[],
   width: number,
   height: number
 ): { left: number; top: number; width: number; height: number } | null {
@@ -117,7 +214,14 @@ function bboxToExtractRegion(
   let ny = bbox.y - padH;
   let nw = bbox.w + padW * 2;
   let nh = bbox.h + padH * 2;
-  // Clamp to [0,1] in normalised space first.
+  // Clip the padded region per-side against any neighbor face's center, so
+  // a cluster avatar never contains two heads.
+  ({ nx, ny, nw, nh } = clipPaddingAgainstNeighbors(
+    bbox,
+    { nx, ny, nw, nh },
+    neighbors
+  ));
+  // Clamp to [0,1] in normalised space.
   if (nx < 0) {
     nw += nx;
     nx = 0;
@@ -157,6 +261,9 @@ export async function generateFaceCrop(args: {
   assetId: string;
   faceId: string;
   bbox: FaceBbox;
+  /** Other faces on the same asset (their bboxes). Used to clip padding
+   *  so a crop never contains a neighbor's face. Empty array is fine. */
+  neighbors?: FaceBbox[];
   sourceBuffer: Buffer;
   sourceWidth: number;
   sourceHeight: number;
@@ -169,6 +276,7 @@ export async function generateFaceCrop(args: {
   try {
     const region = bboxToExtractRegion(
       args.bbox,
+      args.neighbors ?? [],
       args.sourceWidth,
       args.sourceHeight
     );
@@ -226,7 +334,7 @@ export async function generateFaceCropsForAsset(
   const log = logger.child({ component: "face-crop", assetId: src.assetId });
   let source: { buffer: Buffer; width: number; height: number };
   try {
-    source = await loadOrientedSource(bucket, src);
+    source = await loadOrientedSource(bucket, src, faces);
   } catch (err) {
     log.warn(
       { err: err instanceof Error ? err.message : String(err) },
@@ -236,12 +344,16 @@ export async function generateFaceCropsForAsset(
   }
 
   for (const face of faces) {
+    const neighbors = faces
+      .filter((f) => f.faceId !== face.faceId)
+      .map((f) => f.bbox);
     const key = await generateFaceCrop({
       bucket,
       workspaceId: src.workspaceId,
       assetId: src.assetId,
       faceId: face.faceId,
       bbox: face.bbox,
+      neighbors,
       sourceBuffer: source.buffer,
       sourceWidth: source.width,
       sourceHeight: source.height,
