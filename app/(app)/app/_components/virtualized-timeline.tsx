@@ -26,6 +26,7 @@ import { Loader2 } from "lucide-react";
 import { PhotoCard, type Asset } from "./photo-card";
 import { TimelineScrubber, type ScrubBucket } from "./timeline-scrubber";
 import { type Density } from "@/lib/hooks/use-toolbar-state";
+import { segmentEventsByGap, eventGapMs } from "@/lib/events/segment";
 
 const HEADER_HEIGHT_PX = 44;
 const TILE_GAP_PX = 4; // matches `gap-1`
@@ -72,6 +73,34 @@ export interface VirtualizedTimelineProps {
   onToggleSelect?: (assetId: string, e?: ReactMouseEvent) => void;
   /** Grid density (zoom). Drives column count; defaults to comfortable. */
   density?: Density;
+  /** Task 20 (Phase 4) — when true, split each month's assets into inline
+   *  event sub-sections (gap-based) with a date/time header. Gated to the
+   *  Moments lens by the parent; the "Undated" bucket is never grouped. */
+  groupByEvents?: boolean;
+}
+
+// Event header label from an event's [startAt, endAt] epoch-ms span. Same-day
+// events show a time (or time range, disambiguating multiple events the same
+// day); multi-day events (gap-merged overnight) show a date range.
+function eventHeaderLabel(startAt: number, endAt: number): { date: string; detail: string } {
+  const s = new Date(startAt);
+  const e = new Date(endAt);
+  const fmtTime = (d: Date) =>
+    d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (s.toDateString() === e.toDateString()) {
+    const date = e.toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    const detail = startAt === endAt ? fmtTime(s) : `${fmtTime(s)} – ${fmtTime(e)}`;
+    return { date, detail };
+  }
+  const dm = { month: "short", day: "numeric" } as const;
+  return {
+    date: `${s.toLocaleDateString(undefined, dm)} – ${e.toLocaleDateString(undefined, dm)}`,
+    detail: "",
+  };
 }
 
 export function VirtualizedTimeline({
@@ -83,6 +112,7 @@ export function VirtualizedTimeline({
   onToggleSelect,
   onLoadedAssetsChange,
   density = "comfortable",
+  groupByEvents = false,
 }: VirtualizedTimelineProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   // The timeline owns its scroll container (with the native scrollbar hidden)
@@ -290,23 +320,59 @@ export function VirtualizedTimeline({
                   </div>
 
                   {monthAssets ? (
-                    <div
-                      className="grid gap-1"
-                      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
-                    >
-                      {monthAssets.map((asset) => (
-                        <PhotoCard
-                          key={asset.id}
-                          asset={asset}
-                          thumbUrl={thumbUrls[asset.id]}
-                          showQuickActions
-                          selectMode={selectMode}
-                          selected={selectedIds?.has(asset.id) ?? false}
-                          onSelect={(e) => onToggleSelect?.(asset.id, e)}
-                          onClick={() => onAssetClick(asset)}
-                        />
-                      ))}
-                    </div>
+                    groupByEvents && b.month !== "undated" ? (
+                      segmentEventsByGap(monthAssets, eventGapMs()).map((ev, evIdx) => {
+                        const { date, detail } = eventHeaderLabel(ev.startAt, ev.endAt);
+                        return (
+                          <div key={ev.key} className={evIdx > 0 ? "mt-4" : undefined}>
+                            <div className="mb-1.5 flex items-baseline gap-2 px-1">
+                              <h3 className="text-sm font-medium text-foreground">{date}</h3>
+                              {detail && (
+                                <span className="text-xs text-muted-foreground">{detail}</span>
+                              )}
+                              <span className="text-xs text-muted-foreground">
+                                · {ev.assets.length} {ev.assets.length === 1 ? "item" : "items"}
+                              </span>
+                            </div>
+                            <div
+                              className="grid gap-1"
+                              style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+                            >
+                              {ev.assets.map((asset) => (
+                                <PhotoCard
+                                  key={asset.id}
+                                  asset={asset}
+                                  thumbUrl={thumbUrls[asset.id]}
+                                  showQuickActions
+                                  selectMode={selectMode}
+                                  selected={selectedIds?.has(asset.id) ?? false}
+                                  onSelect={(e) => onToggleSelect?.(asset.id, e)}
+                                  onClick={() => onAssetClick(asset)}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div
+                        className="grid gap-1"
+                        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+                      >
+                        {monthAssets.map((asset) => (
+                          <PhotoCard
+                            key={asset.id}
+                            asset={asset}
+                            thumbUrl={thumbUrls[asset.id]}
+                            showQuickActions
+                            selectMode={selectMode}
+                            selected={selectedIds?.has(asset.id) ?? false}
+                            onSelect={(e) => onToggleSelect?.(asset.id, e)}
+                            onClick={() => onAssetClick(asset)}
+                          />
+                        ))}
+                      </div>
+                    )
                   ) : (
                     // Height-reserved skeleton so the scrollbar is accurate
                     // before the month's assets arrive.

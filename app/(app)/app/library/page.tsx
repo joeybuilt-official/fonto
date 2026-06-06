@@ -566,6 +566,7 @@ function LibraryContent() {
               selectedIds={toolbar.selectedIds}
               onToggleSelect={handleTimelineSelect}
               density={toolbar.view.density}
+              groupByEvents={activeLens === "moment"}
             />
           </div>
         )
