@@ -136,6 +136,21 @@ const VIDEO_HLS_CONCURRENCY = Math.max(
   1
 );
 
+// "could not renew lock" cascade fix: CPU-heavy jobs (video probe/thumbnail,
+// sharp, ffmpeg) can starve the Node event loop past BullMQ's default 30s
+// lock, so a still-running job gets marked stalled, re-runs, piles on more
+// load, and the queue wedges (captured backlog grows, HLS never drains). Give
+// the heavy workers a generous lock + longer stalled sweep so a briefly-busy
+// loop doesn't lose its lock. BullMQ renews at lockDuration/2.
+const HEAVY_LOCK_DURATION_MS = Math.max(
+  parseInt(process.env.WORKER_LOCK_DURATION_MS ?? `${5 * 60 * 1000}`, 10),
+  60_000
+);
+const HEAVY_STALLED_INTERVAL_MS = Math.max(
+  parseInt(process.env.WORKER_STALLED_INTERVAL_MS ?? "60000", 10),
+  10_000
+);
+
 // Exponential backoff for webhook delivery retries (in milliseconds).
 // One entry per delay between attempts: index 0 = delay before attempt 2,
 // index 1 = delay before attempt 3, etc. We cap total attempts at 6, so the
@@ -309,6 +324,8 @@ function startAssetProcessingWorker(): Worker<ProcessAssetJob> {
     {
       connection: getRedisConnection(),
       concurrency: CONCURRENCY,
+      lockDuration: HEAVY_LOCK_DURATION_MS,
+      stalledInterval: HEAVY_STALLED_INTERVAL_MS,
     }
   );
 
@@ -379,6 +396,8 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
     {
       connection: getRedisConnection(),
       concurrency: THUMBNAIL_CONCURRENCY,
+      lockDuration: HEAVY_LOCK_DURATION_MS,
+      stalledInterval: HEAVY_STALLED_INTERVAL_MS,
     }
   );
 
@@ -998,6 +1017,8 @@ function startVideoHlsTranscodeWorker(): Worker<VideoHlsTranscodeJob> {
     {
       connection: getRedisConnection(),
       concurrency: VIDEO_HLS_CONCURRENCY,
+      lockDuration: HEAVY_LOCK_DURATION_MS,
+      stalledInterval: HEAVY_STALLED_INTERVAL_MS,
     }
   );
 
