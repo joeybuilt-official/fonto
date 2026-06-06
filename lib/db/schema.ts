@@ -895,6 +895,13 @@ export const faceInstances = fontoSchema.table(
     // DBSCAN cluster assignment. NULL means the face hasn't been clustered
     // yet, or landed in DBSCAN noise (no cluster met minPts).
     personId: uuid("person_id"),
+    // Phase 1 (faces/UX) — R2 key of the dedicated square face-crop derivative
+    // (sharp `.extract` of bbox + ~30% padding, EXIF-correct, ~256px webp) at
+    // `derivatives/face/{faceId}.webp`. NULL until the crop lands (new faces
+    // crop inline at detect; existing faces via the `backfill-face-crops`
+    // maintenance job). Served to web + app so face circles are sharp +
+    // centered instead of CSS-zooming a whole-frame derivative.
+    faceCropKey: text("face_crop_key"),
     // User-hidden flag (false positives, strangers). Hidden faces are
     // excluded from clustering inputs on the next run.
     hidden: boolean("hidden").notNull().default(false),
@@ -906,6 +913,12 @@ export const faceInstances = fontoSchema.table(
       table.personId
     ),
     index("face_instances_asset_idx").on(table.assetId),
+    // Phase 1 (faces/UX) — the `backfill-face-crops` sweep scans for faces
+    // with no crop yet. Partial index keeps that "WHERE face_crop_key IS NULL"
+    // probe cheap as the column fills in. Matches 0034.
+    index("face_instances_crop_pending_idx")
+      .on(table.workspaceId)
+      .where(sql`${table.faceCropKey} IS NULL`),
     // The HNSW pgvector index is declared in 0021 directly via raw SQL
     // (Drizzle's index builder doesn't speak HNSW); we don't redeclare it
     // here.

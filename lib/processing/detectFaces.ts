@@ -39,6 +39,7 @@ import {
   assetStorageKey,
   getS3Client,
 } from "@/lib/r2";
+import { generateFaceCropsForAsset } from "@/lib/processing/faceCrop";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -248,15 +249,60 @@ export async function detectFacesForAsset(assetId: string): Promise<void> {
   }
 
   // Bulk insert. Each row carries the workspace_id so the People page can
-  // scope queries from a single index.
-  await db.insert(schema.faceInstances).values(
-    faces.map((f) => ({
-      assetId: asset.id,
-      workspaceId: asset.workspaceId,
-      bbox: f.bbox as unknown as Record<string, number>,
-      confidence: f.confidence,
-      embedding: f.embedding,
-    }))
-  );
+  // scope queries from a single index. `.returning({ id })` (paired with the
+  // values order) gives us each new faceId so we can crop a centered face
+  // derivative per face below.
+  const inserted = await db
+    .insert(schema.faceInstances)
+    .values(
+      faces.map((f) => ({
+        assetId: asset.id,
+        workspaceId: asset.workspaceId,
+        bbox: f.bbox as unknown as Record<string, number>,
+        confidence: f.confidence,
+        embedding: f.embedding,
+      }))
+    )
+    .returning({ id: schema.faceInstances.id });
   log.info({ count: faces.length }, "face instances inserted");
+
+  // Phase 1 (faces/UX) — generate a dedicated square face-crop derivative per
+  // face from the highest-res source (preview → original), reusing one decode.
+  // Resilient: a crop failure for one face must not fail the whole job.
+  try {
+    const targets = inserted.map((row, i) => ({
+      faceId: row.id,
+      bbox: faces[i].bbox,
+    }));
+    const crops = await generateFaceCropsForAsset(
+      bucket,
+      {
+        workspaceId: asset.workspaceId,
+        assetId: asset.id,
+        filename: asset.filename,
+        previewKey: asset.previewKey,
+      },
+      targets
+    );
+    if (crops.size > 0) {
+      // One UPDATE per distinct key via a CASE map would be ideal; the face
+      // count per asset is tiny (typically < 10), so individual updates are
+      // cheaper to read and well within budget.
+      for (const [faceId, key] of crops) {
+        await db
+          .update(schema.faceInstances)
+          .set({ faceCropKey: key })
+          .where(eq(schema.faceInstances.id, faceId));
+      }
+    }
+    log.info(
+      { cropped: crops.size, faces: faces.length },
+      "face crops generated"
+    );
+  } catch (err) {
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "face crop pass failed — faces inserted without crops (backfill will fill)"
+    );
+  }
 }

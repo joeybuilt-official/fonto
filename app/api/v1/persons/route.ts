@@ -18,6 +18,7 @@ import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
+import { propagateNamedPerson } from "@/lib/faces/propagate";
 import { db, schema } from "@/lib/db";
 
 interface PersonOut {
@@ -33,6 +34,11 @@ interface PersonOut {
   // NULL when the person has no faces yet, or coverFaceId is stale.
   coverAssetId: string | null;
   coverBbox: { x: number; y: number; w: number; h: number } | null;
+  // Phase 1 (faces/UX) — dedicated square crop for the cover face. NULL until
+  // the crop is generated (detect-time or backfill). When present the grid
+  // renders this sharp, centered crop instead of CSS-zooming `preview`.
+  coverFaceCropKey: string | null;
+  coverFaceCropUrl: string | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -73,7 +79,7 @@ export async function GET(request: NextRequest) {
 
   const facesById = new Map<
     string,
-    { assetId: string; bbox: unknown }
+    { assetId: string; bbox: unknown; faceCropKey: string | null }
   >();
   if (coverFaceIds.length > 0) {
     const faceRows = await db
@@ -81,11 +87,16 @@ export async function GET(request: NextRequest) {
         id: schema.faceInstances.id,
         assetId: schema.faceInstances.assetId,
         bbox: schema.faceInstances.bbox,
+        faceCropKey: schema.faceInstances.faceCropKey,
       })
       .from(schema.faceInstances)
       .where(inArray(schema.faceInstances.id, coverFaceIds));
     for (const f of faceRows) {
-      facesById.set(f.id, { assetId: f.assetId, bbox: f.bbox });
+      facesById.set(f.id, {
+        assetId: f.assetId,
+        bbox: f.bbox,
+        faceCropKey: f.faceCropKey,
+      });
     }
   }
 
@@ -113,6 +124,11 @@ export async function GET(request: NextRequest) {
       updatedAt: p.updatedAt.toISOString(),
       coverAssetId: cover?.assetId ?? null,
       coverBbox: bbox,
+      coverFaceCropKey: cover?.faceCropKey ?? null,
+      coverFaceCropUrl:
+        cover && cover.faceCropKey && p.coverFaceId
+          ? `/api/v1/assets/${cover.assetId}/url?variant=face&faceId=${p.coverFaceId}`
+          : null,
     };
   });
 
@@ -151,6 +167,14 @@ export async function POST(request: NextRequest) {
     .insert(schema.persons)
     .values({ workspaceId, name, instanceCount: 0 })
     .returning();
+
+  // Phase 1 (faces/UX), D2 — naming a NEW person is the primary "name a face"
+  // path on mobile; trigger the hybrid match pass so tight matches auto-assign
+  // and the borderline band is surfaced for review. Fire-and-forget: a slow /
+  // failed pgvector sweep must not block the create response (mirrors PATCH).
+  if (name) {
+    propagateNamedPerson(person.id, person.workspaceId).catch(() => {});
+  }
 
   return NextResponse.json({
     person: {

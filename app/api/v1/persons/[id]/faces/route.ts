@@ -69,6 +69,7 @@ export async function GET(
       confidence: schema.faceInstances.confidence,
       hidden: schema.faceInstances.hidden,
       createdAt: schema.faceInstances.createdAt,
+      faceCropKey: schema.faceInstances.faceCropKey,
       assetFilename: schema.assets.filename,
       assetMimeType: schema.assets.mimeType,
       thumbnailKey: schema.assets.thumbnailKey,
@@ -92,6 +93,12 @@ export async function GET(
       confidence: f.confidence,
       hidden: f.hidden,
       createdAt: f.createdAt.toISOString(),
+      // Phase 1 (faces/UX) — dedicated square crop (NULL until generated). The
+      // detail grid renders this sharp crop instead of CSS-zooming `preview`.
+      faceCropKey: f.faceCropKey,
+      faceCropUrl: f.faceCropKey
+        ? `/api/v1/assets/${f.assetId}/url?variant=face&faceId=${f.id}`
+        : null,
       asset: {
         id: f.assetId,
         filename: f.assetFilename,

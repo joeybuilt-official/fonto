@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 import { NextRequest, NextResponse } from "next/server";
+import { and, eq } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { resolveAssetAccess } from "@/lib/assets/access";
+import { db, schema } from "@/lib/db";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -11,10 +13,18 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 // `thumb` / `preview` resolve the derivative R2 keys if present (and fall
 // back to the original when NULL, so legacy assets keep rendering until the
 // backfill catches them).
-type Variant = "thumb" | "preview" | "original";
+// Phase 1 (faces/UX) — `face` resolves a single face's dedicated crop key
+// (requires &faceId=…); the face must belong to this asset's workspace.
+type Variant = "thumb" | "preview" | "original" | "face";
 
 function parseVariant(raw: string | null): Variant {
-  if (raw === "thumb" || raw === "preview" || raw === "original") return raw;
+  if (
+    raw === "thumb" ||
+    raw === "preview" ||
+    raw === "original" ||
+    raw === "face"
+  )
+    return raw;
   return "original";
 }
 
@@ -42,7 +52,38 @@ export async function GET(
   // in-flight backfill.
   let key: string;
   let servedVariant: Variant = variant;
-  if (variant === "thumb" && asset.thumbnailKey) {
+  if (variant === "face") {
+    // Resolve a single face's dedicated crop. The face must belong to this
+    // asset (and so to a workspace the caller can already read this asset in).
+    const faceId = request.nextUrl.searchParams.get("faceId");
+    if (!faceId) {
+      return NextResponse.json({ error: "faceId required" }, { status: 400 });
+    }
+    const [face] = await db
+      .select({ faceCropKey: schema.faceInstances.faceCropKey })
+      .from(schema.faceInstances)
+      .where(
+        and(
+          eq(schema.faceInstances.id, faceId),
+          eq(schema.faceInstances.assetId, asset.id),
+          eq(schema.faceInstances.workspaceId, asset.workspaceId)
+        )
+      )
+      .limit(1);
+    if (!face) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    if (face.faceCropKey) {
+      key = face.faceCropKey;
+    } else {
+      // Crop not generated yet — fall back to the preview (or original) so the
+      // client still renders something while the backfill catches up.
+      key = asset.previewKey
+        ? asset.previewKey
+        : assetStorageKey(asset.workspaceId, asset.id, asset.filename);
+      servedVariant = asset.previewKey ? "preview" : "original";
+    }
+  } else if (variant === "thumb" && asset.thumbnailKey) {
     key = asset.thumbnailKey;
   } else if (variant === "preview" && asset.previewKey) {
     key = asset.previewKey;

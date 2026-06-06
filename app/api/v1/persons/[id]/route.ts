@@ -69,6 +69,7 @@ export async function GET(
       confidence: schema.faceInstances.confidence,
       hidden: schema.faceInstances.hidden,
       createdAt: schema.faceInstances.createdAt,
+      faceCropKey: schema.faceInstances.faceCropKey,
     })
     .from(schema.faceInstances)
     .where(
@@ -93,6 +94,10 @@ export async function GET(
     faces: faces.map((f) => ({
       ...f,
       createdAt: f.createdAt.toISOString(),
+      // Phase 1 (faces/UX) — dedicated square crop URL (NULL until generated).
+      faceCropUrl: f.faceCropKey
+        ? `/api/v1/assets/${f.assetId}/url?variant=face&faceId=${f.id}`
+        : null,
     })),
   });
 }

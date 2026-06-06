@@ -136,6 +136,14 @@ export type ReconcileStorageUsageJob = z.infer<typeof ReconcileStorageUsageJobSc
 export const AutoStackJobSchema = z.object({}).strict();
 export type AutoStackJob = z.infer<typeof AutoStackJobSchema>;
 
+// Phase 1 (faces/UX) — backfill face-crop derivatives for existing faces.
+// Optional `batchSize` overrides the default small batch; the handler scans
+// `face_crop_key IS NULL` so it's idempotent + resumable per tick.
+export const BackfillFaceCropsJobSchema = z
+  .object({ batchSize: z.number().int().positive().max(500).optional() })
+  .strict();
+export type BackfillFaceCropsJob = z.infer<typeof BackfillFaceCropsJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -173,6 +181,10 @@ export const JobNames = {
   // Task 20 (Phase 3) — auto-stacking sweep (bursts / screenshot-runs /
   // near-dups). Reversible; sets stack_id only.
   AutoStack: "auto-stack",
+  // Phase 1 (faces/UX) — throttled backfill of face-crop derivatives for
+  // existing faces. Default-off recurring schedule (BACKFILL_FACE_CROPS=1) +
+  // deliberate one-off enqueue.
+  BackfillFaceCrops: "backfill-face-crops",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

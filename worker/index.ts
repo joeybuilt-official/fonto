@@ -38,6 +38,7 @@ import {
   ClipDedupCheckJobSchema,
   FaceDetectJobSchema,
   VideoHlsTranscodeJobSchema,
+  BackfillFaceCropsJobSchema,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
@@ -58,6 +59,10 @@ import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { runDailyDigest } from "@/lib/notifications/runDailyDigest";
 import { transcodeVideoHls } from "@/lib/processing/transcodeVideoHls";
 import { runAutoStack } from "@/lib/stacks/autoStack";
+import {
+  backfillFaceCrops,
+  DEFAULT_BACKFILL_BATCH_SIZE,
+} from "@/lib/processing/backfillFaceCrops";
 import { generateSpriteSheet } from "@/lib/processing/generateSpriteSheet";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
@@ -201,6 +206,34 @@ const AUTO_STACK_INTERVAL_MS = Math.max(
 // previously-registered scheduler so the tick actually stops.
 const AUTO_STACK_ENABLED = !["0", "false", "no"].includes(
   (process.env.AUTO_STACK_ENABLED ?? "true").trim().toLowerCase()
+);
+
+// Phase 1 (faces/UX) — throttled backfill of face-crop derivatives for
+// existing faces. DEFAULT-OFF: the recurring schedule is only registered when
+// BACKFILL_FACE_CROPS is truthy ("1"/"true"/"yes"), so the heavy crop loop
+// never runs unless the operator deliberately turns it on (or enqueues a
+// one-off via enqueueBackfillFaceCrops). Small batch (default 25) reuses the
+// per-asset shared decode + the heavy lock so a briefly-busy loop keeps its
+// lock; idempotent + resumable.
+const BACKFILL_FACE_CROPS_ENABLED = ["1", "true", "yes"].includes(
+  (process.env.BACKFILL_FACE_CROPS ?? "").trim().toLowerCase()
+);
+// Interval for the recurring backfill tick. Default 5 minutes — gentle, drains
+// the un-cropped backlog batch by batch. Override for testing.
+const BACKFILL_FACE_CROPS_INTERVAL_MS = Math.max(
+  parseInt(
+    process.env.BACKFILL_FACE_CROPS_INTERVAL_MS ?? `${5 * 60 * 1000}`,
+    10
+  ),
+  1000
+);
+const BACKFILL_FACE_CROPS_BATCH_SIZE = Math.max(
+  parseInt(
+    process.env.BACKFILL_FACE_CROPS_BATCH_SIZE ??
+      `${DEFAULT_BACKFILL_BATCH_SIZE}`,
+    10
+  ),
+  1
 );
 
 const workers: Worker[] = [];
@@ -1114,12 +1147,31 @@ function startMaintenanceWorker(): Worker {
         log.info(result, "auto-stack tick complete");
         return result;
       }
+      if (job.name === JobNames.BackfillFaceCrops) {
+        // Phase 1 (faces/UX) — process one small batch of un-cropped faces.
+        // Idempotent + resumable (selects face_crop_key IS NULL only). The
+        // crop loop is sharp-heavy → leans on the heavy lock below.
+        const parsed = BackfillFaceCropsJobSchema.safeParse(job.data ?? {});
+        const batchSize = parsed.success
+          ? parsed.data.batchSize ?? BACKFILL_FACE_CROPS_BATCH_SIZE
+          : BACKFILL_FACE_CROPS_BATCH_SIZE;
+        log.info({ batchSize }, "face-crop backfill tick start");
+        const result = await backfillFaceCrops(batchSize);
+        log.info(result, "face-crop backfill tick complete");
+        return result;
+      }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");
       return null;
     },
     {
       connection: getRedisConnection(),
       concurrency: 1,
+      // The face-crop backfill is sharp-heavy and can briefly starve the event
+      // loop past BullMQ's 30s default lock; give the maintenance worker the
+      // same generous heavy lock the other CPU-bound workers use so a busy
+      // batch doesn't get marked stalled + re-run.
+      lockDuration: HEAVY_LOCK_DURATION_MS,
+      stalledInterval: HEAVY_STALLED_INTERVAL_MS,
     }
   );
 
@@ -1233,6 +1285,45 @@ async function ensureAutoStackSchedule(): Promise<void> {
   logger.info(
     { intervalMs: AUTO_STACK_INTERVAL_MS, jobName: JobNames.AutoStack },
     "auto-stack schedule registered"
+  );
+}
+
+/**
+ * Phase 1 (faces/UX) — register the recurring face-crop backfill on the
+ * maintenance queue. DEFAULT-OFF: only registered when BACKFILL_FACE_CROPS is
+ * truthy. When off we actively remove any scheduler a prior boot registered so
+ * flipping the flag off stops the tick (upsert alone can't undo it). One-off
+ * runs are always available via enqueueBackfillFaceCrops().
+ */
+async function ensureBackfillFaceCropsSchedule(): Promise<void> {
+  if (!BACKFILL_FACE_CROPS_ENABLED) {
+    await maintenanceQueue().removeJobScheduler(JobNames.BackfillFaceCrops);
+    logger.info(
+      { jobName: JobNames.BackfillFaceCrops },
+      "face-crop backfill disabled (schedule removed)"
+    );
+    return;
+  }
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.BackfillFaceCrops,
+    { every: BACKFILL_FACE_CROPS_INTERVAL_MS },
+    {
+      name: JobNames.BackfillFaceCrops,
+      // Maintenance queue is typed with an empty payload; the backfill carries
+      // a batchSize so cast through.
+      data: { batchSize: BACKFILL_FACE_CROPS_BATCH_SIZE } as unknown as Record<
+        string,
+        never
+      >,
+    }
+  );
+  logger.info(
+    {
+      intervalMs: BACKFILL_FACE_CROPS_INTERVAL_MS,
+      batchSize: BACKFILL_FACE_CROPS_BATCH_SIZE,
+      jobName: JobNames.BackfillFaceCrops,
+    },
+    "face-crop backfill schedule registered"
   );
 }
 
@@ -1358,6 +1449,14 @@ async function main(): Promise<void> {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
       "failed to register auto-stack schedule — auto-stacking disabled until next boot"
+    );
+  }
+  try {
+    await ensureBackfillFaceCropsSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register face-crop backfill schedule — backfill off until next boot"
     );
   }
 

@@ -51,6 +51,26 @@ export function assetDerivativeKey(
 }
 
 /**
+ * Phase 1 (faces/UX) — dedicated face-crop derivative key.
+ *
+ * One square webp crop per detected face (sharp `.extract` of the bbox +
+ * ~30% padding, EXIF-correct, ~256px), keyed by the face id so it's stable
+ * across re-clustering / person re-assignment:
+ *
+ *   fonto/{ws}/{asset}/derivatives/face/{faceId}.webp
+ *
+ * Stored on `face_instances.face_crop_key`. Lives under the owning asset's
+ * prefix so a workspace/asset delete sweeps the crops too.
+ */
+export function faceCropKey(
+  workspaceId: string,
+  assetId: string,
+  faceId: string
+): string {
+  return `fonto/${workspaceId}/${assetId}/derivatives/face/${faceId}.webp`;
+}
+
+/**
  * Phase 8b — HLS storage layout.
  *
  *   fonto/{ws}/{asset}/hls/master.m3u8

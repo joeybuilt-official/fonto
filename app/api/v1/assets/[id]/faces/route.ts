@@ -51,6 +51,7 @@ export async function GET(
       confidence: schema.faceInstances.confidence,
       personId: schema.faceInstances.personId,
       hidden: schema.faceInstances.hidden,
+      faceCropKey: schema.faceInstances.faceCropKey,
       personName: schema.persons.name,
     })
     .from(schema.faceInstances)
@@ -76,6 +77,13 @@ export async function GET(
       personId: f.personId,
       personName: f.personName,
       hidden: f.hidden,
+      // Phase 1 (faces/UX) — dedicated square crop key (NULL until cropped).
+      // The crop URL is served by /api/v1/assets/:id/url?variant=face&faceId=…
+      // (signed, workspace-scoped). Clients prefer the crop over CSS-zooming.
+      faceCropKey: f.faceCropKey,
+      faceCropUrl: f.faceCropKey
+        ? `/api/v1/assets/${id}/url?variant=face&faceId=${f.id}`
+        : null,
     })),
   });
 }
