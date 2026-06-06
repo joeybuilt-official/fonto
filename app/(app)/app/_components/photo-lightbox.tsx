@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
   Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star, Layers, MessageCircle,
@@ -43,6 +43,15 @@ interface TagItem {
   id: string;
   name: string;
   color: string;
+}
+
+// Phase 2 (faces/UX) — a detected face on the displayed asset, as returned by
+// GET /api/v1/assets/:id/faces. bbox is normalized 0..1 against the full image.
+interface LightboxFace {
+  id: string;
+  bbox: { x: number; y: number; w: number; h: number } | null;
+  personId: string | null;
+  personName: string | null;
 }
 
 interface Collection {
@@ -440,6 +449,17 @@ export function PhotoLightbox({
   // those actions are stack-level by design. Reset on prop asset change.
   const [viewMemberId, setViewMemberId] = useState<string | null>(null);
 
+  // Phase 2 (faces/UX) — name-tag overlay. Mirrors the Flutter `_showNames`
+  // pattern: fetch the asset's faces, render name chips positioned over each
+  // bbox, and tap the image to toggle the chips on/off. Faces are normalized
+  // 0..1 against the image; we map them onto the displayed (object-contain,
+  // letterboxed) <img> via its measured rect (see imgRef below).
+  const [faces, setFaces] = useState<LightboxFace[]>([]);
+  const [showNames, setShowNames] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+  // Bumped on load/resize so the overlay recomputes against the live rect.
+  const [imgRectTick, setImgRectTick] = useState(0);
+
   useEffect(() => {
     setIsFavorite(!!asset.isFavorite);
     setRating(asset.rating ?? 0);
@@ -509,6 +529,43 @@ export function PhotoLightbox({
       .catch(() => setTextContent(""))
       .finally(() => setTextLoading(false));
   }, [displayedAssetId, asset.mimeType]);
+
+  // Phase 2 (faces/UX) — fetch the displayed asset's faces for the name-tag
+  // overlay. Reset the toggle per asset so chips don't carry across nav. Only
+  // meaningful for images; skip text/video.
+  useEffect(() => {
+    setShowNames(false);
+    setFaces([]);
+    if (!asset.mimeType.startsWith("image/")) return;
+    let cancelled = false;
+    fetch(`/api/v1/assets/${displayedAssetId}/faces`)
+      .then((r) => (r.ok ? r.json() : { faces: [] }))
+      .then((d: { faces?: LightboxFace[] }) => {
+        if (!cancelled) setFaces(d.faces ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setFaces([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayedAssetId, asset.mimeType]);
+
+  // Recompute overlay positions when the image resizes (responsive layout,
+  // panel open/close changes the available width).
+  useEffect(() => {
+    function onResize() {
+      setImgRectTick((t) => t + 1);
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Recompute when the info / comments panels toggle (they shrink the image
+  // area, so the letterboxing changes).
+  useEffect(() => {
+    setImgRectTick((t) => t + 1);
+  }, [showPanel, showComments]);
 
   useEffect(() => {
     fetch(`/api/v1/assets/${asset.id}/tags`)
@@ -740,6 +797,43 @@ export function PhotoLightbox({
     setShareCopied(false);
   }
 
+  // Phase 2 (faces/UX) — map each normalized face bbox onto pixel coordinates
+  // over the displayed <img>. The image is rendered object-contain, so the
+  // actual picture is letterboxed inside the element rect: compute the content
+  // box from the natural aspect ratio, then translate normalized bbox → px.
+  // `imgRectTick` forces a recompute on load / resize / panel toggles.
+  const faceChips = useMemo(() => {
+    void imgRectTick; // dependency: recompute when the rect may have changed
+    const el = imgRef.current;
+    if (!el || faces.length === 0) return [];
+    const natW = el.naturalWidth;
+    const natH = el.naturalHeight;
+    const boxW = el.clientWidth;
+    const boxH = el.clientHeight;
+    if (!natW || !natH || !boxW || !boxH) return [];
+    // object-contain: scale to fit, centered.
+    const scale = Math.min(boxW / natW, boxH / natH);
+    const dispW = natW * scale;
+    const dispH = natH * scale;
+    const offX = (boxW - dispW) / 2;
+    const offY = (boxH - dispH) / 2;
+    return faces
+      .filter((f) => f.bbox)
+      .map((f) => {
+        const b = f.bbox!;
+        return {
+          id: f.id,
+          name: f.personName,
+          left: offX + b.x * dispW,
+          top: offY + b.y * dispH,
+          width: b.w * dispW,
+          height: b.h * dispH,
+        };
+      });
+  }, [faces, imgRectTick]);
+
+  const hasNamedFace = faces.some((f) => f.personName);
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/95">
       {/* Top bar */}
@@ -866,12 +960,49 @@ export function PhotoLightbox({
           ) : urlLoading ? (
             <Loader2 className="h-10 w-10 animate-spin text-white/40" />
           ) : url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt={asset.description ?? asset.filename}
-              className="max-h-full max-w-full object-contain p-8"
-            />
+            // Phase 2 (faces/UX) — the image is wrapped so name-tag chips can
+            // be absolutely positioned over each detected face. Tapping the
+            // image toggles the chips (mirrors the Flutter `_showNames`).
+            <div className="relative flex max-h-full max-w-full items-center justify-center p-8">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                ref={imgRef}
+                src={url}
+                alt={asset.description ?? asset.filename}
+                className={`max-h-full max-w-full object-contain ${
+                  faces.length > 0 ? "cursor-pointer" : ""
+                }`}
+                onLoad={() => setImgRectTick((t) => t + 1)}
+                onClick={() => {
+                  if (faces.length > 0) setShowNames((v) => !v);
+                }}
+              />
+              {showNames &&
+                faceChips.map((c) => (
+                  <div
+                    key={c.id}
+                    className="pointer-events-none absolute rounded-sm border border-white/70 ring-1 ring-black/40"
+                    style={{
+                      left: `${c.left}px`,
+                      top: `${c.top}px`,
+                      width: `${c.width}px`,
+                      height: `${c.height}px`,
+                    }}
+                  >
+                    {c.name && (
+                      <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/80 px-2 py-0.5 text-[11px] font-medium text-white shadow">
+                        {c.name}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              {/* Hint chip when faces exist but names are hidden. */}
+              {faces.length > 0 && !showNames && hasNamedFace && (
+                <span className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-[11px] text-white/80">
+                  Tap photo to show names
+                </span>
+              )}
+            </div>
           ) : (
             <div className="flex h-48 w-48 items-center justify-center rounded-xl bg-white/5">
               <Tag className="h-16 w-16 text-white/20" />

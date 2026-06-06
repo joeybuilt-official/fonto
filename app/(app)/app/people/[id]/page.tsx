@@ -13,7 +13,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Loader2, Check, EyeOff, Users } from "lucide-react";
+import { ChevronLeft, Loader2, Check, EyeOff, Users, X } from "lucide-react";
 
 interface Person {
   id: string;
@@ -37,6 +37,10 @@ interface FaceEntry {
   bbox: { x: number; y: number; w: number; h: number } | null;
   confidence: number;
   hidden: boolean;
+  // Phase 2 (faces/UX) — dedicated square crop URL (signed variant=face path).
+  // NULL until backfilled; falls back to the legacy preview CSS-zoom.
+  faceCropKey?: string | null;
+  faceCropUrl?: string | null;
   asset: FaceAssetMeta;
 }
 
@@ -55,26 +59,60 @@ function FaceCropBox({
   selected: boolean;
   onToggleSelect: (id: string) => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
+  // Phase 2 (faces/UX) — prefer the sharp dedicated crop. Resolve the signed
+  // face-crop URL when present; otherwise fall back to the preview CSS-zoom.
+  const [cropUrl, setCropUrl] = useState<string | null>(null);
+  const [cropFailed, setCropFailed] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
   useEffect(() => {
+    setCropUrl(null);
+    setCropFailed(false);
+    if (!face.faceCropUrl) return;
+    let cancelled = false;
+    fetch(face.faceCropUrl)
+      .then((r) => r.json())
+      .then((d: { url?: string }) => {
+        if (!cancelled) setCropUrl(d.url ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setCropFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [face.faceCropUrl]);
+
+  const needPreviewFallback = !face.faceCropUrl || cropFailed;
+  useEffect(() => {
+    if (!needPreviewFallback) return;
     let cancelled = false;
     fetch(face.asset.previewUrl)
       .then((r) => r.json())
       .then((d: { url?: string }) => {
-        if (!cancelled) setUrl(d.url ?? null);
+        if (!cancelled) setPreviewUrl(d.url ?? null);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [face.asset.previewUrl]);
+  }, [needPreviewFallback, face.asset.previewUrl]);
 
   let style: React.CSSProperties = {};
-  if (url && face.bbox) {
+  if (cropUrl) {
+    // Sharp dedicated crop — render object-cover (background-size cover) so the
+    // square already-centered face fills the tile.
+    style = {
+      backgroundImage: `url(${cropUrl})`,
+      backgroundRepeat: "no-repeat",
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+    };
+  } else if (previewUrl && face.bbox) {
     const { x, y, w, h } = face.bbox;
     const scale = 1 / Math.max(w, h);
     style = {
-      backgroundImage: `url(${url})`,
+      backgroundImage: `url(${previewUrl})`,
       backgroundRepeat: "no-repeat",
       backgroundSize: `${scale * 100}%`,
       backgroundPositionX: `${-(x * scale * 100)}%`,
@@ -176,6 +214,28 @@ export default function PersonDetailPage({
       setSavingName(false);
     }
   }, [person, name]);
+
+  // Phase 2 (faces/UX) — explicit Remove-name control. The PATCH route clears
+  // the name on null, so we send `name: null` and optimistically reflect the
+  // cleared state. Distinct from blurring an empty input so it's discoverable.
+  const removeName = useCallback(async () => {
+    if (!person) return;
+    setSavingName(true);
+    try {
+      const res = await fetch(`/api/v1/persons/${person.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: null }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { person: Person };
+        setPerson(data.person);
+        setName(data.person.name ?? "");
+      }
+    } finally {
+      setSavingName(false);
+    }
+  }, [person]);
 
   const toggleSelect = useCallback((faceId: string) => {
     setSelected((prev) => {
@@ -284,7 +344,23 @@ export default function PersonDetailPage({
   );
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    // Phase 2 (faces/UX) — skeleton instead of a bare "Loading…" line.
+    return (
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <div className="h-4 w-16 animate-pulse rounded bg-muted/40" />
+          <div className="h-9 w-56 animate-pulse rounded bg-muted/40" />
+        </div>
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9">
+          {Array.from({ length: 18 }).map((_, i) => (
+            <div
+              key={i}
+              className="aspect-square animate-pulse rounded-lg bg-muted/40"
+            />
+          ))}
+        </div>
+      </div>
+    );
   }
   if (error || !person) {
     return (
@@ -323,11 +399,25 @@ export default function PersonDetailPage({
                   (e.target as HTMLInputElement).blur();
                 }
               }}
-              placeholder="Unnamed person"
+              placeholder="Add a name…"
+              title="Click to rename — type a name and press Enter"
               className="rounded border border-transparent bg-transparent px-2 py-1 text-2xl font-semibold text-foreground hover:border-border focus:border-border focus:outline-none"
-              aria-label="Person name"
+              aria-label="Person name (click to rename)"
             />
             {savingName && <Loader2 className="h-4 w-4 animate-spin" />}
+            {/* Phase 2 (faces/UX) — explicit Remove-name control, shown only
+                when the person currently has a name. */}
+            {person.name && !savingName && (
+              <button
+                type="button"
+                onClick={removeName}
+                className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                aria-label="Remove name"
+              >
+                <X className="h-3.5 w-3.5" />
+                Remove name
+              </button>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">
             {person.instanceCount} {person.instanceCount === 1 ? "face" : "faces"}

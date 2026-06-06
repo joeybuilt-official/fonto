@@ -23,52 +23,115 @@ interface PersonGridEntry {
   hidden: boolean;
   coverAssetId: string | null;
   coverBbox: { x: number; y: number; w: number; h: number } | null;
+  // Phase 2 (faces/UX) — dedicated square crop for the cover face (sharp,
+  // centered). NULL until the crop is generated; we then fall back to the
+  // signed preview-CSS-zoom path so the grid is never blank.
+  coverFaceCropKey: string | null;
+  coverFaceCropUrl: string | null;
 }
 
+// Phase 2 (faces/UX) — uniform circular face tile. Prefers the dedicated
+// face-crop derivative (`coverFaceCropUrl`, served via the signed
+// variant=face path) rendered object-cover in a circle. Until the crop is
+// backfilled it falls back to the legacy preview + bbox CSS-zoom, then to a
+// neutral placeholder so the tile is always a clean circle.
 function FaceCrop({ entry }: { entry: PersonGridEntry }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [cropUrl, setCropUrl] = useState<string | null>(null);
+  const [cropFailed, setCropFailed] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
+  // Resolve the signed face-crop URL (the API returns a relative API path
+  // that itself redirects to / returns a signed object URL).
   useEffect(() => {
-    if (!entry.coverAssetId) return;
+    setCropUrl(null);
+    setCropFailed(false);
+    if (!entry.coverFaceCropUrl) return;
+    let cancelled = false;
+    fetch(entry.coverFaceCropUrl)
+      .then((r) => r.json())
+      .then((d: { url?: string }) => {
+        if (!cancelled) setCropUrl(d.url ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setCropFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [entry.coverFaceCropUrl]);
+
+  // Fallback: only fetch the preview (for the legacy CSS-zoom) when there's
+  // no crop derivative yet, or the crop URL failed to resolve.
+  const needPreviewFallback =
+    (!entry.coverFaceCropUrl || cropFailed) && !!entry.coverAssetId;
+  useEffect(() => {
+    if (!needPreviewFallback || !entry.coverAssetId) return;
     let cancelled = false;
     fetch(`/api/v1/assets/${entry.coverAssetId}/url?variant=preview`)
       .then((r) => r.json())
       .then((d: { url?: string }) => {
-        if (!cancelled) setUrl(d.url ?? null);
+        if (!cancelled) setPreviewUrl(d.url ?? null);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [entry.coverAssetId]);
+  }, [needPreviewFallback, entry.coverAssetId]);
 
-  if (!url || !entry.coverBbox) {
+  // Preferred: the sharp dedicated crop, object-cover in a circle.
+  if (cropUrl) {
     return (
-      <div className="aspect-square rounded-lg bg-muted/30 flex items-center justify-center">
-        <Users className="h-8 w-8 text-muted-foreground" />
-      </div>
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={cropUrl}
+        alt={entry.name ?? "Unnamed person"}
+        className="aspect-square w-full rounded-full bg-muted/30 object-cover"
+      />
     );
   }
 
-  const { x, y, w, h } = entry.coverBbox;
-  const scale = 1 / Math.max(w, h);
-  const bgSize = `${scale * 100}%`;
-  const bgPositionX = `${-(x * scale * 100)}%`;
-  const bgPositionY = `${-(y * scale * 100)}%`;
+  // Fallback: legacy preview + bbox CSS-zoom, still rendered as a circle.
+  if (previewUrl && entry.coverBbox) {
+    const { x, y, w, h } = entry.coverBbox;
+    const scale = 1 / Math.max(w, h);
+    return (
+      <div
+        className="aspect-square rounded-full bg-muted/30 overflow-hidden"
+        style={{
+          backgroundImage: `url(${previewUrl})`,
+          backgroundRepeat: "no-repeat",
+          backgroundSize: `${scale * 100}%`,
+          backgroundPositionX: `${-(x * scale * 100)}%`,
+          backgroundPositionY: `${-(y * scale * 100)}%`,
+        }}
+        role="img"
+        aria-label={entry.name ?? "Unnamed person"}
+      />
+    );
+  }
 
   return (
-    <div
-      className="aspect-square rounded-lg bg-muted/30 overflow-hidden"
-      style={{
-        backgroundImage: `url(${url})`,
-        backgroundRepeat: "no-repeat",
-        backgroundSize: bgSize,
-        backgroundPositionX: bgPositionX,
-        backgroundPositionY: bgPositionY,
-      }}
-      role="img"
-      aria-label={entry.name ?? "Unnamed person"}
-    />
+    <div className="aspect-square rounded-full bg-muted/30 flex items-center justify-center">
+      <Users className="h-8 w-8 text-muted-foreground" />
+    </div>
+  );
+}
+
+// Phase 2 (faces/UX) — skeleton grid (animate-pulse) shown while the people
+// list loads, replacing the bare "Loading…" full-page text.
+function PeopleSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+      {Array.from({ length: 12 }).map((_, i) => (
+        <div key={i} className="space-y-2">
+          <div className="aspect-square animate-pulse rounded-full bg-muted/40" />
+          <div className="px-1 space-y-1.5">
+            <div className="h-3 w-3/4 animate-pulse rounded bg-muted/40" />
+            <div className="h-2.5 w-1/2 animate-pulse rounded bg-muted/30" />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -183,9 +246,7 @@ function PeopleContent() {
           </div>
         )}
 
-        {loading && (
-          <p className="text-sm text-muted-foreground">Loading people…</p>
-        )}
+        {loading && <PeopleSkeleton />}
 
         {error && !loading && <p className="text-sm text-destructive">{error}</p>}
 
@@ -202,6 +263,7 @@ function PeopleContent() {
           <p className="text-sm text-muted-foreground">No matches.</p>
         )}
 
+        {!loading && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
           {visible.map((p) => (
             <Link
@@ -221,6 +283,7 @@ function PeopleContent() {
             </Link>
           ))}
         </div>
+        )}
       </div>
     </div>
   );
