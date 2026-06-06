@@ -217,10 +217,16 @@ export async function GET(request: NextRequest) {
   // round trip. Correlated subquery returns NULL for standalone assets
   // (cheap: indexed by `assets_workspace_stack_idx`). The serialized
   // shape carries it under `stackMemberCount`.
+  // NOTE: `${schema.assets.stackId}` renders as a BARE `"stack_id"` inside a
+  // raw sql fragment, so inside the aliased subquery (`assets a2`) it binds to
+  // a2 — making the correlation `a2.stack_id = a2.stack_id`, which counts EVERY
+  // stacked asset in the workspace instead of just this stack's members. The
+  // outer reference must be TABLE-QUALIFIED (`${schema.assets}.stack_id`) so it
+  // resolves to the outer row; the inner `a2` shadows the base name.
   const stackMemberCountSql = sql<number | null>`(
     CASE WHEN ${schema.assets.stackId} IS NULL THEN NULL
     ELSE (SELECT COUNT(*)::int FROM ${schema.assets} a2
-          WHERE a2.stack_id = ${schema.assets.stackId})
+          WHERE a2.stack_id = ${schema.assets}.stack_id)
     END
   )`.as("stack_member_count");
 
