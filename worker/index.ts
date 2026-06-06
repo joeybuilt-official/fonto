@@ -181,6 +181,13 @@ const AUTO_STACK_INTERVAL_MS = Math.max(
   1000
 );
 
+// Kill switch for the daily auto-stacking sweep. Default ON. Set
+// AUTO_STACK_ENABLED=0 (or false/no) to disable — boot then tears down any
+// previously-registered scheduler so the tick actually stops.
+const AUTO_STACK_ENABLED = !["0", "false", "no"].includes(
+  (process.env.AUTO_STACK_ENABLED ?? "true").trim().toLowerCase()
+);
+
 const workers: Worker[] = [];
 let metricsServer: ReturnType<typeof createServer> | null = null;
 
@@ -1190,6 +1197,13 @@ async function ensureStorageReconcileSchedule(): Promise<void> {
  * re-run on boot. Reversible by design (sets stack_id only).
  */
 async function ensureAutoStackSchedule(): Promise<void> {
+  if (!AUTO_STACK_ENABLED) {
+    // Disabled: actively remove any scheduler a prior boot registered, so
+    // flipping the flag off stops the daily tick (upsert alone can't undo it).
+    await maintenanceQueue().removeJobScheduler(JobNames.AutoStack);
+    logger.info({ jobName: JobNames.AutoStack }, "auto-stack disabled (schedule removed)");
+    return;
+  }
   await maintenanceQueue().upsertJobScheduler(
     JobNames.AutoStack,
     { every: AUTO_STACK_INTERVAL_MS },
