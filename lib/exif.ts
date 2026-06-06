@@ -115,11 +115,34 @@ function isExtractable(mimeType: string): boolean {
   return true;
 }
 
+// Postgres text/jsonb cannot store a NUL byte. Some IPTC/XMP fields (e.g.
+// ApplicationRecordVersion) carry embedded NULs that exifr's `sanitize` option
+// does NOT strip, which makes the assets INSERT throw 22P05 ("NUL cannot be
+// converted to text") — an uncaught 500 that silently drops the upload. Built
+// from charCode(0) to avoid embedding a literal NUL in this source file.
+const NUL_RE = new RegExp(String.fromCharCode(0), "g");
+
 function toStr(v: unknown): string | null {
   if (v == null) return null;
-  if (typeof v === "string") return v.trim() || null;
+  if (typeof v === "string") return v.replace(NUL_RE, "").trim() || null;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   return null;
+}
+
+// Strip NULs from every string key/value in the parsed EXIF blob before it is
+// stored. Dates and typed-array/binary leaves are preserved as-is.
+function stripNulBytesDeep(value: unknown): unknown {
+  if (typeof value === "string") return value.replace(NUL_RE, "");
+  if (value instanceof Date || ArrayBuffer.isView(value)) return value;
+  if (Array.isArray(value)) return value.map(stripNulBytesDeep);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k.replace(NUL_RE, "")] = stripNulBytesDeep(v);
+    }
+    return out;
+  }
+  return value;
 }
 
 function toNum(v: unknown): number | null {
@@ -214,6 +237,9 @@ export async function extractExif(
   }
 
   if (!parsed) return EMPTY;
+  // Defuse NUL bytes before this blob (and the extracted text columns) hit
+  // Postgres — an embedded NUL otherwise throws 22P05 on INSERT.
+  parsed = stripNulBytesDeep(parsed) as Record<string, unknown>;
 
   const capturedAt =
     toDate(parsed.DateTimeOriginal) ??
