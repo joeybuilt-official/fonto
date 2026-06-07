@@ -20,6 +20,10 @@ interface PlaceOut {
   name: string;
   count: number;
   coverAssetId: string | null;
+  // Mean GPS of the place's assets so the grid can render a map thumbnail
+  // (a random photo cover told the user nothing about the location).
+  lat: number | null;
+  lng: number | null;
 }
 
 export async function GET() {
@@ -37,6 +41,8 @@ export async function GET() {
       coverAssetId: sql<
         string | null
       >`(array_agg(${schema.assets.id} ORDER BY ${schema.assets.createdAt} DESC))[1]`,
+      lat: sql<number | null>`avg(${schema.assets.latitude})`,
+      lng: sql<number | null>`avg(${schema.assets.longitude})`,
     })
     .from(schema.assets)
     .where(
@@ -54,6 +60,8 @@ export async function GET() {
     name: r.name ?? "",
     count: r.count,
     coverAssetId: r.coverAssetId ?? null,
+    lat: r.lat != null ? Number(r.lat) : null,
+    lng: r.lng != null ? Number(r.lng) : null,
   }));
 
   return NextResponse.json({ places });

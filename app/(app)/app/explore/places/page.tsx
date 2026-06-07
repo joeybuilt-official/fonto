@@ -15,40 +15,42 @@ interface PlaceEntry {
   name: string;
   count: number;
   coverAssetId: string | null;
+  lat: number | null;
+  lng: number | null;
+}
+
+const MAP_ZOOM = 10;
+
+// Web-Mercator lat/lng → OSM raster tile (z/x/y). A single tile renders the
+// area around the place; keyless via the public OSM tile server. Swap in a
+// static-map provider (Mapbox/Google) here if higher fidelity is wanted.
+function tileUrl(lat: number, lng: number, z: number): string {
+  const n = 2 ** z;
+  const x = Math.floor(((lng + 180) / 360) * n);
+  const latRad = (lat * Math.PI) / 180;
+  const y = Math.floor(
+    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n
+  );
+  return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
 }
 
 function PlaceCover({ entry }: { entry: PlaceEntry }) {
-  const [url, setUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!entry.coverAssetId) return;
-    let cancelled = false;
-    fetch(`/api/v1/assets/${entry.coverAssetId}/url?variant=preview`)
-      .then((r) => r.json())
-      .then((d: { url?: string }) => {
-        if (!cancelled) setUrl(d.url ?? null);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [entry.coverAssetId]);
-
-  if (!url) {
+  if (entry.lat == null || entry.lng == null) {
     return (
       <div className="aspect-square rounded-lg bg-muted/30 flex items-center justify-center">
         <MapPin className="h-8 w-8 text-muted-foreground" />
       </div>
     );
   }
-
   return (
     <div
-      className="aspect-square rounded-lg bg-muted/30 overflow-hidden bg-cover bg-center"
-      style={{ backgroundImage: `url(${url})` }}
+      className="relative aspect-square rounded-lg bg-muted/30 overflow-hidden bg-cover bg-center"
+      style={{ backgroundImage: `url(${tileUrl(entry.lat, entry.lng, MAP_ZOOM)})` }}
       role="img"
-      aria-label={entry.name}
-    />
+      aria-label={`Map of ${entry.name}`}
+    >
+      <MapPin className="absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-full text-rose-600 drop-shadow" />
+    </div>
   );
 }
 

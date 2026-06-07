@@ -55,14 +55,12 @@ async function loadPersonsCount(): Promise<number | null> {
 }
 
 async function loadPlacesCount(): Promise<number | null> {
-  // Map endpoint is `/api/v1/assets?hasGeo=1` historically; if unavailable
-  // the tile just hides its count chip. Read-only probe.
+  // Count distinct PLACES (matches the Places grid), not geo-tagged assets.
   try {
-    const r = await fetch("/api/v1/assets?hasGeo=1&limit=1");
+    const r = await fetch("/api/v1/assets/places");
     if (!r.ok) return null;
-    const d = (await r.json()) as { total?: number; assets?: unknown[] };
-    if (typeof d.total === "number") return d.total;
-    return Array.isArray(d.assets) ? d.assets.length : null;
+    const d = (await r.json()) as { places?: unknown[] };
+    return Array.isArray(d.places) ? d.places.length : null;
   } catch {
     return null;
   }
