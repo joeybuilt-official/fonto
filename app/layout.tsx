@@ -33,7 +33,7 @@ try {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#6366f1",
+  themeColor: "#2AB0A5",
 };
 
 export const metadata: Metadata = {
