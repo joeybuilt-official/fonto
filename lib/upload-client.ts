@@ -4,9 +4,9 @@
 // Client-side helper for the direct-to-R2 upload flow (Phase 1.2).
 //
 //   await uploadDirect(file, { source: "drag-drop", onProgress })
-//     1. POST /api/v1/assets/init       → presigned PUT URL
-//     2. PUT  <presignedUrl>            → body goes straight to R2 (XHR for progress)
-//     3. POST /api/v1/assets/:id/complete → server finalizes the asset row
+//     1. POST /api/v1/uploads/presign            → presigned PUT URL
+//     2. PUT  <uploadUrl>                         → body goes straight to R2 (XHR for progress)
+//     3. POST /api/v1/uploads/{assetId}/complete  → server finalizes the asset row
 //
 // Returns the same shape the legacy multipart POST returns
 // (`{ asset, possibleDuplicate?, deduplicated? }`) so call-sites can swap
@@ -54,13 +54,13 @@ export interface UploadDirectOptions {
   signal?: AbortSignal;
 }
 
-interface InitResponse {
-  uploadId: string;
-  presignedUrl: string;
+interface PresignResponse {
+  assetId: string;
+  uploadUrl: string;
+  key: string;
   headers: Record<string, string>;
   expiresAt: string;
   expiresIn: number;
-  storageKey: string;
 }
 
 /**
@@ -139,34 +139,34 @@ export async function uploadDirect(
   // Step 1: ask the server for a presigned URL.
   // Client-side checksum is opt-in (cheap on small files, slow on huge ones)
   // — we just skip it if the file is over 100 MB.
-  const clientChecksum =
+  const sha256 =
     file.size < 100 * 1024 * 1024 ? await computeClientChecksum(file) : undefined;
 
-  const initRes = await fetch("/api/v1/assets/init", {
+  const presignRes = await fetch("/api/v1/uploads/presign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       filename: file.name,
       mimeType: file.type || "application/octet-stream",
       sizeBytes: file.size,
-      clientChecksum,
+      sha256,
     }),
     signal: opts.signal,
   });
-  if (!initRes.ok) {
-    const err = await initRes.json().catch(() => ({}));
-    throw new Error(err?.error ?? `Init failed: ${initRes.status}`);
+  if (!presignRes.ok) {
+    const err = await presignRes.json().catch(() => ({}));
+    throw new Error(err?.error ?? `Presign failed: ${presignRes.status}`);
   }
-  const init = (await initRes.json()) as InitResponse;
+  const presign = (await presignRes.json()) as PresignResponse;
 
   // Step 2: stream the body straight to R2 (no Next.js hop).
-  await putWithProgress(init.presignedUrl, file, init.headers, opts.onProgress, opts.signal);
+  await putWithProgress(presign.uploadUrl, file, presign.headers, opts.onProgress, opts.signal);
 
   // Step 3: tell the server to finalize.
-  const completeRes = await fetch(`/api/v1/assets/${init.uploadId}/complete`, {
+  const completeRes = await fetch(`/api/v1/uploads/${presign.assetId}/complete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ uploadId: init.uploadId, source: opts.source }),
+    body: JSON.stringify({ source: opts.source }),
     signal: opts.signal,
   });
   if (!completeRes.ok) {

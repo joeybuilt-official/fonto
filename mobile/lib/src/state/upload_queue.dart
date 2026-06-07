@@ -355,9 +355,16 @@ class UploadQueue {
           );
           await Future.wait(chunk.map((entry) async {
             try {
-              final asset = await client.uploadFile(
+              // Direct-to-R2: presign → PUT bytes straight to R2 → complete.
+              // The bytes never transit the Fonto server. We already computed
+              // entry.sha256 as the dedupe key, so pass it through for the
+              // server-side integrity check. uploadFileDirect transparently
+              // falls back to the legacy multipart route for files over the
+              // 5 GiB single-PUT ceiling.
+              final asset = await client.uploadFileDirect(
                 File(entry.filePath),
                 virtualPath: entry.virtualPath,
+                sha256Hex: entry.sha256,
               );
               await queue._markSuccess(entry.id, asset.id);
               ok++;

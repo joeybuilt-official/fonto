@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Phase 1.2 (parity): step 2 of the two-step direct-to-R2 upload (legacy).
+// Direct-to-R2 upload — step 2: finalize.
 //
-// Superseded by /api/v1/uploads/{assetId}/complete. Kept intact for the web
-// client (lib/upload-client.ts) which still posts here behind
-// NEXT_PUBLIC_DIRECT_UPLOAD. Both routes now share lib/uploads/finalizeUpload
-// so the HEAD-confirm + stream-hash + createAssetRow + enqueue path never
-// drifts between them.
+// The client has already PUT the bytes to R2 via the presigned URL from
+// /api/v1/uploads/presign. The `{assetId}` path segment is the UUID that
+// /presign issued (and embedded in the R2 key), NOT the final asset row id.
 //
-// The `[id]` route segment is the `uploadId` (UUID issued by /init), NOT the
-// final asset id — the final asset id lives on the row only after complete.
+//   POST /api/v1/uploads/{assetId}/complete   body { source? }
+//   201 { asset, possibleDuplicate? }          (200 + deduplicated on a hit)
+//
+// All the HEAD-confirm + stream-hash + createAssetRow + enqueue work lives in
+// lib/uploads/finalizeUpload so this route and the legacy
+// /api/v1/assets/{id}/complete stay in lockstep.
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -23,24 +25,20 @@ import { finalizeUpload } from "@/lib/uploads/finalizeUpload";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 const CompleteRequestSchema = z.object({
-  // Optional, but accepted for symmetry with /init's response. We mainly
-  // identify the upload via the `[id]` path segment.
-  uploadId: z.string().uuid().optional(),
   /** Optional client-recorded source label. */
   source: z.string().max(64).optional(),
 });
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ assetId: string }> }
 ): Promise<NextResponse> {
-  const { id: uploadIdParam } = await params;
+  const { assetId: uploadId } = await params;
 
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: z.infer<typeof CompleteRequestSchema> = {};
-  // Body is optional — /complete can be called with no JSON.
   try {
     const text = await request.text();
     if (text.trim().length > 0) {
@@ -53,15 +51,7 @@ export async function POST(
     );
   }
 
-  const uploadId = body.uploadId ?? uploadIdParam;
-  if (uploadId !== uploadIdParam) {
-    return NextResponse.json(
-      { error: "uploadId in body does not match URL" },
-      { status: 400 }
-    );
-  }
-
-  // Look up the upload row scoped to this user.
+  // Look up the reserved upload row scoped to this user.
   const [upload] = await db
     .select()
     .from(schema.assetUploads)
@@ -72,14 +62,12 @@ export async function POST(
       )
     )
     .limit(1);
-
   if (!upload) {
     return NextResponse.json({ error: "Upload not found" }, { status: 404 });
   }
 
-  // Phase 7b — relaxed editor → contributor. Completes the upload
-  // started by the same user; redundant w/ the userId filter above but
-  // defends against role-downgrade races mid-upload.
+  // Upload-only role; redundant w/ the userId filter but defends a
+  // role-downgrade race mid-upload.
   const gate = await requireWorkspaceAccessOrResponse(user.id, upload.workspaceId, "contributor");
   if (!gate.ok) return gate.response;
 

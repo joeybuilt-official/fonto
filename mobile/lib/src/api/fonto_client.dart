@@ -259,6 +259,124 @@ class FontoClient {
     return Asset.fromJson(j["asset"] as Map<String, dynamic>);
   }
 
+  /// Direct-to-R2 upload. Bytes go client → R2 via a presigned PUT and never
+  /// transit the Fonto server:
+  ///   1. POST /api/v1/uploads/presign           → { assetId, uploadUrl, key }
+  ///   2. PUT  <uploadUrl>  (raw bytes, no auth)  → object lands in R2
+  ///   3. POST /api/v1/uploads/{assetId}/complete → server finalizes the row
+  ///
+  /// `virtualPath` becomes the directory_path the server records. `sha256Hex`
+  /// is the lowercase-hex digest the upload queue already computed for its
+  /// dedupe key — passed through so the server can trust it (when
+  /// SKIP_SERVER_CHECKSUM is on) and reconcile integrity.
+  ///
+  /// Falls back to the legacy multipart [uploadFile] when the file exceeds the
+  /// 5 GiB single-PUT ceiling (presign returns 413 in that case) — multipart
+  /// presigned upload is not implemented yet.
+  Future<Asset> uploadFileDirect(
+    File file, {
+    String virtualPath = "/",
+    String? sha256Hex,
+    String source = "mobile",
+  }) async {
+    final len = await file.length();
+    final mimeType = _guessMimeType(file.path);
+
+    // Step 1: presign.
+    final presignRes = await _http.post(
+      _uri("/api/v1/uploads/presign"),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode({
+        "filename": p.basename(file.path),
+        "mimeType": mimeType,
+        "sizeBytes": len,
+        if (sha256Hex != null) "sha256": sha256Hex,
+        if (virtualPath.isNotEmpty) "path": virtualPath,
+      }),
+    );
+    // 413 = over the 5 GiB single-PUT ceiling → fall back to multipart.
+    if (presignRes.statusCode == 413) {
+      return uploadFile(file, virtualPath: virtualPath);
+    }
+    if (presignRes.statusCode < 200 || presignRes.statusCode >= 300) {
+      throw ApiException(presignRes.statusCode, _extractError(presignRes.body));
+    }
+    final presign = json.decode(presignRes.body) as Map<String, dynamic>;
+    final assetId = presign["assetId"] as String;
+    final uploadUrl = presign["uploadUrl"] as String;
+    final putHeaders =
+        (presign["headers"] as Map<String, dynamic>?)?.cast<String, String>() ??
+            {"Content-Type": mimeType};
+
+    // Step 2: PUT raw bytes straight to R2. NO auth header — the presigned URL
+    // carries its own signature; and the Content-Type MUST equal what was
+    // signed or R2 rejects the PUT. Streamed so we don't buffer the whole file.
+    const uploadTimeout = Duration(seconds: 120);
+    final putReq = http.StreamedRequest("PUT", Uri.parse(uploadUrl))
+      ..headers.addAll(putHeaders)
+      ..contentLength = len;
+    // Pump the file into the request sink.
+    final pump = file.openRead().listen(
+          putReq.sink.add,
+          onDone: putReq.sink.close,
+          onError: putReq.sink.addError,
+          cancelOnError: true,
+        );
+    final http.StreamedResponse putStreamed;
+    try {
+      putStreamed = await _http.send(putReq).timeout(uploadTimeout);
+    } finally {
+      await pump.cancel();
+    }
+    final putRes =
+        await http.Response.fromStream(putStreamed).timeout(uploadTimeout);
+    if (putRes.statusCode < 200 || putRes.statusCode >= 300) {
+      throw ApiException(putRes.statusCode, "R2 PUT failed: ${putRes.statusCode}");
+    }
+
+    // Step 3: finalize.
+    final completeRes = await _http.post(
+      _uri("/api/v1/uploads/$assetId/complete"),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode({"source": source}),
+    );
+    if (completeRes.statusCode < 200 || completeRes.statusCode >= 300) {
+      throw ApiException(completeRes.statusCode, _extractError(completeRes.body));
+    }
+    final j = json.decode(completeRes.body) as Map<String, dynamic>;
+    return Asset.fromJson(j["asset"] as Map<String, dynamic>);
+  }
+
+  /// Best-effort MIME from the file extension. The server re-sniffs the magic
+  /// bytes on /complete (detectMime), so this only needs to be close enough
+  /// for the presigned Content-Type — octet-stream is a safe default.
+  static String _guessMimeType(String path) {
+    final ext = p.extension(path).toLowerCase();
+    switch (ext) {
+      case ".jpg":
+      case ".jpeg":
+        return "image/jpeg";
+      case ".png":
+        return "image/png";
+      case ".gif":
+        return "image/gif";
+      case ".webp":
+        return "image/webp";
+      case ".heic":
+      case ".heif":
+        return "image/heic";
+      case ".mp4":
+      case ".m4v":
+        return "video/mp4";
+      case ".mov":
+        return "video/quicktime";
+      case ".pdf":
+        return "application/pdf";
+      default:
+        return "application/octet-stream";
+    }
+  }
+
   /// Phase 6.4 — register this device's FCM token (204 on success; the
   /// server upserts by (user, deviceId)). `platform` ∈ android|ios|web.
   /// Caller (the firebase_messaging wiring, pending the Firebase gate)
