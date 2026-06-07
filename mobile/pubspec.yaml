@@ -48,6 +48,9 @@ flutter:
 # Launcher icon config. Regenerate with: dart run flutter_launcher_icons
 # Mipmaps + adaptive resources in android/app/src/main/res were generated
 # manually (no Flutter SDK in the icon-authoring env); rerunning the tool is safe.
+# Icon is the "_fonto" wordmark. For the adaptive icon the wordmark is baked
+# into the BACKGROUND layer (icon-background) and the FOREGROUND is intentionally
+# empty, so the launcher mask + foreground zoom never clip the text.
 flutter_launcher_icons:
   android: "ic_launcher"
   ios: false
