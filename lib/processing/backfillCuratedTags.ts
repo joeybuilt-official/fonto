@@ -12,14 +12,10 @@
 // Resumable + idempotent: processes assets with auto_tagged_at IS NULL and
 // stamps it, so the wipe step resets auto_tagged_at = NULL to enqueue work.
 
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { classifyAsset } from "@/lib/classify/classify";
+import { relaxedTaxonomyTags } from "@/lib/classify/classify";
 import { isJunkLabel } from "@/lib/processing/labelStoplist";
-
-// CLIP-only: an empty fallback means uncertain assets simply get no Thing
-// tag (they drop out of Things) rather than paying for an LLM call.
-const NO_LLM = { classify: async () => ({ topLevel: "other", suggestedTags: [] as string[] }) };
 
 export interface CuratedTagBackfillResult {
   scanned: number;
@@ -61,13 +57,12 @@ export async function backfillCuratedTags(batchSize: number): Promise<CuratedTag
   let tagged = 0;
   for (const row of rows) {
     try {
-      const result = await classifyAsset(row.clipVec as number[] | null, NO_LLM);
+      const tags = await relaxedTaxonomyTags(row.clipVec as number[] | null, {
+        floor: 0.2,
+        maxTags: 2,
+      });
       const names = Array.from(
-        new Set(
-          (result.suggestedTags ?? [])
-            .map((n) => n.trim())
-            .filter((n) => n.length > 0 && !isJunkLabel(n))
-        )
+        new Set(tags.map((n) => n.trim()).filter((n) => n.length > 0 && !isJunkLabel(n)))
       );
       for (const name of names) {
         const tagId = await ensureTagId(row.workspaceId, name);

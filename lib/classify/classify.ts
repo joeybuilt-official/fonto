@@ -138,6 +138,48 @@ export async function classifyAsset(
   };
 }
 
+/**
+ * Relaxed taxonomy tagging for Explore > Things. classifyAsset() defers to the
+ * LLM whenever CLIP confidence is below the strict primary-classification
+ * threshold — which is ~always for real-world libraries (zero-shot cosine sits
+ * around 0.2–0.3). For a discovery surface that's too conservative: here we
+ * just take the closest curated sub-category tags by cosine, free of any LLM
+ * round-trip. Returns up to `maxTags` distinct names, or [] if nothing clears
+ * the floor.
+ */
+export async function relaxedTaxonomyTags(
+  clipVec: number[] | null | undefined,
+  opts: { floor?: number; maxTags?: number } = {},
+): Promise<string[]> {
+  const floor = opts.floor ?? 0.2;
+  const maxTags = opts.maxTags ?? 2;
+  if (!clipVec || clipVec.length === 0) return [];
+  const cache = await loadTaxonomyVectors();
+  if (!cache) return [];
+  const scored: { score: number; tags: string[] }[] = [];
+  for (const top of TAXONOMY) {
+    for (const sub of top.subs) {
+      const entry = cache.vectors.find((v) => v.id === `sub:${top.key}:${sub.key}`);
+      if (!entry) continue;
+      const score = cosine(clipVec, entry.vec);
+      if (score >= floor && sub.tags.length > 0) scored.push({ score, tags: sub.tags });
+    }
+  }
+  scored.sort((a, b) => b.score - a.score);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const s of scored) {
+    for (const t of s.tags) {
+      const k = t.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(t);
+      if (out.length >= maxTags) return out;
+    }
+  }
+  return out;
+}
+
 async function runFallback(llm: LlmFallback, observedConfidence: number): Promise<ClassifyResult> {
   if (observedConfidence > 0) {
     zeroShotConfidenceBuckets.observe(observedConfidence);
