@@ -20,6 +20,7 @@ import "../state/workmanager_dispatcher.dart";
 import "../widgets/sync_permission_sheet.dart";
 import "google_drive_import_screen.dart";
 import "nextcloud_import_screen.dart";
+import "google_photos_import_screen.dart";
 import "transfers_screen.dart";
 
 class SettingsScreen extends StatefulWidget {
@@ -466,21 +467,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 ListTile(
-                  leading: Icon(
-                    Icons.photo_library_outlined,
-                    color: Theme.of(context).disabledColor,
-                  ),
-                  title: Text(
-                    "Google Photos",
-                    style: TextStyle(color: Theme.of(context).disabledColor),
-                  ),
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: const Text("Google Photos"),
                   subtitle: const Text(
-                    "Temporarily unavailable. Google retired the read scope "
-                    "third-party apps used (Mar 2025); coming back via the "
-                    "new Picker API.",
+                    "Pick photos in Google's picker and import them into Fonto.",
                   ),
-                  enabled: false,
-                  onTap: null,
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          const GooglePhotosImportScreen(virtualPath: "/"),
+                    ),
+                  ),
                 ),
               ],
             ),
