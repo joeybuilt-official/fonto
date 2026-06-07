@@ -734,55 +734,29 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       );
       return;
     }
+    // Drop unnamed clusters — merge target must be a named person. Use the
+    // per-face tagging sheet to attach an unnamed face to someone.
     final candidateIds = candidates.map((c) => c.person.id).toSet();
-    final restOfList = others.where((p) => !candidateIds.contains(p.id)).toList();
+    final namedCandidates =
+        candidates.where((c) => (c.person.name ?? "").isNotEmpty).toList();
+    final namedRest = others
+        .where((p) => !candidateIds.contains(p.id))
+        .where((p) => (p.name ?? "").isNotEmpty)
+        .toList();
+    if (namedCandidates.isEmpty && namedRest.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text("No named people to merge into yet."),
+        ),
+      );
+      return;
+    }
     final target = await showModalBottomSheet<Person>(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text("Merge into…",
-                  style: TextStyle(fontWeight: FontWeight.w600)),
-            ),
-            if (candidates.isNotEmpty) ...[
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 6),
-                child: Text("LIKELY MATCHES",
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey)),
-              ),
-              for (final c in candidates)
-                ListTile(
-                  leading: const Icon(Icons.auto_awesome, color: Colors.amber),
-                  title: Text(c.person.name ?? "Unnamed"),
-                  subtitle: Text("${c.person.instanceCount} faces"),
-                  trailing: _LikelihoodBadge(distance: c.distance),
-                  onTap: () => Navigator.of(ctx).pop(c.person),
-                ),
-              const Divider(),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 6, 16, 6),
-                child: Text("ALL PEOPLE",
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey)),
-              ),
-            ],
-            for (final p in restOfList)
-              ListTile(
-                leading: const Icon(Icons.person_outline),
-                title: Text(p.name ?? "Unnamed"),
-                subtitle: Text("${p.instanceCount} faces"),
-                onTap: () => Navigator.of(ctx).pop(p),
-              ),
-          ],
-        ),
+      isScrollControlled: true,
+      builder: (ctx) => _MergePicker(
+        candidates: namedCandidates,
+        others: namedRest,
       ),
     );
     if (target == null || !mounted) return;
@@ -1029,6 +1003,142 @@ class _LikelihoodBadge extends StatelessWidget {
           fontSize: 10,
           fontWeight: FontWeight.w600,
           color: color.shade800,
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom-sheet picker for "Merge into…". A TextField at the top filters
+/// both the ranked likely-matches list and the named-people list as the
+/// user types. Unnamed clusters never appear here — the caller filters
+/// them out before constructing this widget.
+class _MergePicker extends StatefulWidget {
+  const _MergePicker({required this.candidates, required this.others});
+  final List<MergeCandidate> candidates;
+  final List<Person> others;
+
+  @override
+  State<_MergePicker> createState() => _MergePickerState();
+}
+
+class _MergePickerState extends State<_MergePicker> {
+  String _query = "";
+
+  @override
+  Widget build(BuildContext context) {
+    final q = _query.trim().toLowerCase();
+    final cand = q.isEmpty
+        ? widget.candidates
+        : widget.candidates
+            .where((c) => (c.person.name ?? "").toLowerCase().contains(q))
+            .toList();
+    final rest = q.isEmpty
+        ? widget.others
+        : widget.others
+            .where((p) => (p.name ?? "").toLowerCase().contains(q))
+            .toList();
+    final empty = cand.isEmpty && rest.isEmpty;
+
+    return SafeArea(
+      child: Padding(
+        // Lift content above the keyboard so the search field stays usable.
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  "Merge into…",
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                autofocus: true,
+                onChanged: (v) => setState(() => _query = v),
+                decoration: const InputDecoration(
+                  hintText: "Type a name…",
+                  prefixIcon: Icon(Icons.search),
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ),
+            Flexible(
+              child: empty
+                  ? Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        q.isEmpty
+                            ? "No named people to merge into yet."
+                            : "No matches for \"$_query\".",
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.grey),
+                      ),
+                    )
+                  : ListView(
+                      shrinkWrap: true,
+                      children: [
+                        if (cand.isNotEmpty) ...[
+                          const Padding(
+                            padding: EdgeInsets.fromLTRB(16, 0, 16, 6),
+                            child: Text(
+                              "LIKELY MATCHES",
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                          for (final c in cand)
+                            ListTile(
+                              leading: const Icon(
+                                Icons.auto_awesome,
+                                color: Colors.amber,
+                              ),
+                              title: Text(c.person.name!),
+                              subtitle: Text(
+                                "${c.person.instanceCount} faces",
+                              ),
+                              trailing:
+                                  _LikelihoodBadge(distance: c.distance),
+                              onTap: () =>
+                                  Navigator.of(context).pop(c.person),
+                            ),
+                          if (rest.isNotEmpty) const Divider(),
+                        ],
+                        if (rest.isNotEmpty)
+                          const Padding(
+                            padding: EdgeInsets.fromLTRB(16, 6, 16, 6),
+                            child: Text(
+                              "ALL PEOPLE",
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                        for (final p in rest)
+                          ListTile(
+                            leading: const Icon(Icons.person_outline),
+                            title: Text(p.name!),
+                            subtitle: Text("${p.instanceCount} faces"),
+                            onTap: () => Navigator.of(context).pop(p),
+                          ),
+                      ],
+                    ),
+            ),
+          ],
         ),
       ),
     );

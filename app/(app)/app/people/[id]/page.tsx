@@ -170,6 +170,9 @@ export default function PersonDetailPage({
     { id: string; name: string; instanceCount: number; distance: number }[]
   >([]);
   const [candidatesLoading, setCandidatesLoading] = useState(false);
+  // Type-to-filter input for the merge picker. Bound to the search box at
+  // the top of the modal — matches case-insensitive substring on `name`.
+  const [mergeQuery, setMergeQuery] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -312,6 +315,7 @@ export default function PersonDetailPage({
 
   const openMerge = useCallback(async () => {
     setShowMerge(true);
+    setMergeQuery("");
     setCandidatesLoading(true);
     try {
       const [personsRes, candidatesRes] = await Promise.all([
@@ -512,6 +516,15 @@ export default function PersonDetailPage({
                 Cancel
               </button>
             </div>
+            <input
+              type="text"
+              value={mergeQuery}
+              onChange={(e) => setMergeQuery(e.target.value)}
+              autoFocus
+              placeholder="Type a name…"
+              aria-label="Filter people by name"
+              className="mb-3 w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+            />
             <div className="max-h-80 space-y-1 overflow-y-auto">
               {allPersons.length === 0 && !candidatesLoading && (
                 <p className="text-sm text-muted-foreground">
@@ -523,12 +536,39 @@ export default function PersonDetailPage({
                   same scoring band as face-match suggestions. Distance ≤ 0.26
                   is auto-assign-grade; 0.32 is the manual-review threshold.
                   Below 0.55 = noise, filtered by the API. */}
-              {mergeCandidates.length > 0 && (
-                <>
-                  <p className="px-1 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Likely matches
-                  </p>
-                  {mergeCandidates.map((c) => {
+              {(() => {
+                const q = mergeQuery.trim().toLowerCase();
+                // Unnamed clusters are dropped — Merge Into is a named-person
+                // operation. If you've got an unnamed face you want to attach
+                // to someone, use the per-face tagging sheet.
+                const filteredCandidates = mergeCandidates.filter((c) =>
+                  c.name && (q === "" || c.name.toLowerCase().includes(q))
+                );
+                const filteredRest = allPersons
+                  .filter((p) => p.name)
+                  .filter((p) => !mergeCandidates.some((c) => c.id === p.id))
+                  .filter((p) => q === "" || p.name!.toLowerCase().includes(q));
+                if (
+                  filteredCandidates.length === 0 &&
+                  filteredRest.length === 0 &&
+                  !candidatesLoading
+                ) {
+                  return (
+                    <p className="text-sm text-muted-foreground">
+                      {q
+                        ? `No named people match "${mergeQuery}".`
+                        : "No named people to merge into yet."}
+                    </p>
+                  );
+                }
+                return (
+                  <>
+                  {filteredCandidates.length > 0 && (
+                    <>
+                      <p className="px-1 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Likely matches
+                      </p>
+                      {filteredCandidates.map((c) => {
                     const tier =
                       c.distance <= 0.26
                         ? { label: "Very likely", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" }
@@ -546,9 +586,7 @@ export default function PersonDetailPage({
                         className="flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm text-foreground hover:bg-sidebar-accent disabled:opacity-60"
                       >
                         <span className="flex items-center gap-2">
-                          <span className="font-medium">
-                            {c.name ?? "Unnamed person"}
-                          </span>
+                          <span className="font-medium">{c.name}</span>
                           <span className="text-xs text-muted-foreground">
                             ({c.instanceCount})
                           </span>
@@ -558,32 +596,35 @@ export default function PersonDetailPage({
                         </span>
                       </button>
                     );
-                  })}
-                  <div className="my-2 border-t border-border" />
-                  <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    All people
-                  </p>
-                </>
-              )}
+                      })}
+                      {filteredRest.length > 0 && (
+                        <>
+                          <div className="my-2 border-t border-border" />
+                          <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            All people
+                          </p>
+                        </>
+                      )}
+                    </>
+                  )}
 
-              {allPersons
-                .filter((p) => !mergeCandidates.some((c) => c.id === p.id))
-                .map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => doMerge(p.id)}
-                    disabled={acting}
-                    className="block w-full rounded px-3 py-2 text-left text-sm text-foreground hover:bg-sidebar-accent disabled:opacity-60"
-                  >
-                    <span className="font-medium">
-                      {p.name ?? "Unnamed person"}
-                    </span>
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      ({p.instanceCount})
-                    </span>
-                  </button>
-                ))}
+                  {filteredRest.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => doMerge(p.id)}
+                      disabled={acting}
+                      className="block w-full rounded px-3 py-2 text-left text-sm text-foreground hover:bg-sidebar-accent disabled:opacity-60"
+                    >
+                      <span className="font-medium">{p.name}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        ({p.instanceCount})
+                      </span>
+                    </button>
+                  ))}
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>
