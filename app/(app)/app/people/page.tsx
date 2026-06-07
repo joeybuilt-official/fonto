@@ -11,7 +11,8 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, Users, Play, EyeOff } from "lucide-react";
+import { Loader2, Users, Play, EyeOff, Settings, Pencil, Trash2 } from "lucide-react";
+import { Dialog } from "@base-ui/react/dialog";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
@@ -33,6 +34,206 @@ interface PersonGridEntry {
   coverFaceCropKey: string | null;
   coverFaceCropUrl: string | null;
   groupIds: string[];
+}
+
+const PRESET_COLORS = [
+  "#4f86c6", "#60c05c", "#e09b3d", "#c06060", "#9b6fc0", "#4ab8b8",
+];
+
+function ManageGroupsDialog({
+  groups,
+  onRefresh,
+}: {
+  groups: PersonGroup[];
+  onRefresh: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState(PRESET_COLORS[4]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const builtinGroups = groups.filter((g) => g.builtin);
+  const customGroups = groups.filter((g) => !g.builtin);
+
+  const startEdit = (g: PersonGroup) => {
+    setEditing(g.id);
+    setEditName(g.name);
+    setError(null);
+  };
+
+  const saveEdit = async (groupId: string) => {
+    if (!editName.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/v1/person-groups/${groupId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editName.trim() }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? `Failed (${res.status})`);
+        return;
+      }
+      setEditing(null);
+      onRefresh();
+    } catch {
+      setError("Network error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteGroup = async (groupId: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/v1/person-groups/${groupId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? `Failed (${res.status})`);
+        return;
+      }
+      onRefresh();
+    } catch {
+      setError("Network error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createGroup = async () => {
+    if (!newName.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/v1/person-groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName.trim(), color: newColor }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? `Failed (${res.status})`);
+        return;
+      }
+      setNewName("");
+      onRefresh();
+    } catch {
+      setError("Network error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      <Dialog.Trigger className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+        <Settings className="h-3.5 w-3.5" />
+        Manage groups
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 bg-black/40 z-40" />
+        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-lg bg-background p-5 shadow-lg ring-1 ring-foreground/10 outline-none">
+          <Dialog.Title className="mb-4 text-sm font-semibold">Manage Groups</Dialog.Title>
+
+          {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
+
+          {builtinGroups.length > 0 && (
+            <div className="mb-3 space-y-0.5">
+              {builtinGroups.map((g) => (
+                <div key={g.id} className="flex items-center gap-2 rounded px-2 py-1.5">
+                  <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: g.color }} />
+                  <span className="flex-1 text-sm text-foreground">{g.name}</span>
+                  <span className="text-xs text-muted-foreground">built-in</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {customGroups.length > 0 && (
+            <div className="mb-3 space-y-0.5">
+              {customGroups.map((g) => (
+                <div key={g.id} className="flex items-center gap-2 rounded px-2 py-1.5">
+                  <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: g.color }} />
+                  {editing === g.id ? (
+                    <>
+                      <input
+                        className="flex-1 rounded border border-input bg-background px-2 py-0.5 text-sm outline-none focus:ring-1 focus:ring-foreground/30"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void saveEdit(g.id);
+                          if (e.key === "Escape") setEditing(null);
+                        }}
+                        autoFocus
+                      />
+                      <button type="button" disabled={saving} onClick={() => void saveEdit(g.id)} className="text-xs text-primary hover:underline disabled:opacity-50">Save</button>
+                      <button type="button" onClick={() => setEditing(null)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex-1 text-sm text-foreground">{g.name}</span>
+                      <button type="button" onClick={() => startEdit(g)} className="text-muted-foreground hover:text-foreground" aria-label={`Rename ${g.name}`}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button type="button" disabled={saving} onClick={() => void deleteGroup(g.id)} className="text-muted-foreground hover:text-destructive disabled:opacity-50" aria-label={`Delete ${g.name}`}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="border-t border-border pt-4">
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Add custom group</p>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-1.5">
+                {PRESET_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setNewColor(c)}
+                    className={`h-5 w-5 rounded-full transition-transform ${newColor === c ? "scale-125 ring-2 ring-offset-1 ring-foreground/30" : ""}`}
+                    style={{ backgroundColor: c }}
+                    aria-label={`Color ${c}`}
+                  />
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  placeholder="Group name"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") void createGroup(); }}
+                  className="flex-1 rounded border border-input bg-background px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-foreground/30"
+                />
+                <button
+                  type="button"
+                  disabled={saving || !newName.trim()}
+                  onClick={() => void createGroup()}
+                  className="rounded border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 flex justify-end">
+            <Dialog.Close className="rounded border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted">
+              Done
+            </Dialog.Close>
+          </div>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
 }
 
 // Phase 2 (faces/UX) — uniform circular face tile. Prefers the dedicated
@@ -342,7 +543,8 @@ function PeopleContent() {
       )}
 
       <div className="px-4 space-y-4">
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between">
+          <ManageGroupsDialog groups={groups} onRefresh={load} />
           <Link
             href="/app/people/ignored"
             className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
