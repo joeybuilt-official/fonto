@@ -68,6 +68,7 @@ interface FaceRow {
   id: string;
   embedding: number[];
   personId: string | null;
+  confidence: number | null;
 }
 
 interface PersonRow {
@@ -159,6 +160,13 @@ export async function clusterWorkspaceFaces(
   // keeps recurring people while dropping spurious groups into noise (their
   // faces stay attached to assets + searchable — they just get no card).
   const minPts = opts.minPts ?? 5;
+  // Drop detector noise below this confidence floor before clustering.
+  // SCRFD will report borderline faces around 0.40-0.55 that turn out to be
+  // hair, brick walls, fabric folds, etc. — they used to cluster together
+  // (similar embeddings on similar non-faces) into bogus People cards. The
+  // named-clusters' confidence floor sits at ~0.75, so 0.55 leaves a generous
+  // margin while excising the false positives the user complained about.
+  const minConfidence = Number(process.env.FACE_CLUSTER_MIN_CONFIDENCE ?? "0.55");
 
   // Pull every non-hidden, embedded face for the workspace.
   const rows = (await db
@@ -166,13 +174,15 @@ export async function clusterWorkspaceFaces(
       id: schema.faceInstances.id,
       embedding: schema.faceInstances.embedding,
       personId: schema.faceInstances.personId,
+      confidence: schema.faceInstances.confidence,
     })
     .from(schema.faceInstances)
     .where(
       and(
         eq(schema.faceInstances.workspaceId, workspaceId),
         eq(schema.faceInstances.hidden, false),
-        isNotNull(schema.faceInstances.embedding)
+        isNotNull(schema.faceInstances.embedding),
+        sql`${schema.faceInstances.confidence} >= ${minConfidence}`
       )
     )) as FaceRow[];
 
