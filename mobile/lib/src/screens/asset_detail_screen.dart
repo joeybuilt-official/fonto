@@ -889,14 +889,13 @@ class _FaceImageOverlay extends StatelessWidget {
     final s = min(ww / dims.width, wh / dims.height);
     final rx = (ww - dims.width * s) / 2;
     final ry = (wh - dims.height * s) / 2;
-    return faces.map((face) {
+    return faces.expand<Widget>((face) {
       final b = face.bbox;
       final left = rx + b.x * dims.width * s;
       final top = ry + b.y * dims.height * s;
       final fw = b.w * dims.width * s;
       final fh = b.h * dims.height * s;
       final isActive = activeId != null && face.id == activeId;
-      // Active face gets a larger circle (+8px) and thicker border
       final d = max(fw, fh) + (isActive ? 20 : 12);
       final cx = left + fw / 2;
       final cy = top + fh / 2;
@@ -905,8 +904,8 @@ class _FaceImageOverlay extends StatelessWidget {
           : face.personId != null
               ? Colors.lightBlueAccent
               : Colors.white70;
-      final borderWidth = isActive ? 3.0 : 2.0;
-      return Positioned(
+      final borderWidth = isActive ? 1.5 : 1.0;
+      final circle = Positioned(
         left: cx - d / 2,
         top: cy - d / 2,
         width: d,
@@ -916,36 +915,33 @@ class _FaceImageOverlay extends StatelessWidget {
           child: Container(
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(
-                color: borderColor,
-                width: borderWidth,
-              ),
+              border: Border.all(color: borderColor, width: borderWidth),
             ),
-            child: showNames && face.personName != null
-                ? Align(
-                    alignment: Alignment.bottomCenter,
-                    child: FractionalTranslation(
-                      translation: const Offset(0, 1),
-                      child: Container(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          face.personName!,
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 10),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                  )
-                : null,
           ),
         ),
       );
+      if (!showNames || face.personName == null) return [circle];
+      final label = Positioned(
+        left: cx - 60,
+        top: cy + d / 2 + 2,
+        width: 120,
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(
+              face.personName!,
+              style: const TextStyle(color: Colors.white, fontSize: 9),
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      );
+      return [circle, label];
     }).toList();
   }
 }
@@ -1017,7 +1013,16 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
       _saveError = null;
     });
     try {
-      await widget.client.assignFace(widget.face.id, person.id);
+      final oldPersonId = widget.face.personId;
+      final isAnonymousCluster =
+          oldPersonId != null && widget.face.personName == null;
+      if (isAnonymousCluster) {
+        // Merge the whole anonymous cluster into the named person — this
+        // reassigns every face in the cluster at once and deletes the anon record.
+        await widget.client.mergePerson(oldPersonId, person.id);
+      } else {
+        await widget.client.assignFace(widget.face.id, person.id);
+      }
       if (!mounted) return;
       widget.onUpdated(AssetFace(
         id: widget.face.id,
