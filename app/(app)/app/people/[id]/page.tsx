@@ -224,7 +224,23 @@ export default function PersonDetailPage({
         // persons on the next navigation — otherwise the grid showed
         // the pre-rename "Unnamed" label until a hard reload.
         router.refresh();
+      } else {
+        // Non-OK was silently swallowed before — names "didn't save" with
+        // no signal. Surface the error so the user can act on it (re-auth,
+        // refresh, file a bug, etc).
+        const body = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setError(
+          `Rename failed (${res.status}): ${body?.error ?? "unknown error"}`
+        );
+        setName(person.name ?? "");
       }
+    } catch (err) {
+      setError(
+        `Rename failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+      setName(person.name ?? "");
     } finally {
       setSavingName(false);
     }
@@ -247,7 +263,18 @@ export default function PersonDetailPage({
         setPerson(data.person);
         setName(data.person.name ?? "");
         router.refresh();
+      } else {
+        const body = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setError(
+          `Remove-name failed (${res.status}): ${body?.error ?? "unknown error"}`
+        );
       }
+    } catch (err) {
+      setError(
+        `Remove-name failed: ${err instanceof Error ? err.message : String(err)}`
+      );
     } finally {
       setSavingName(false);
     }
