@@ -862,11 +862,15 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
   }
 
   Future<void> _assignTo(Person person) async {
+    // Capture before any await so we don't pass a stale context across
+    // the async gap (Flutter analyzer complains, and worse: the messenger
+    // would null out if the sheet popped before the error fired).
+    final messenger = ScaffoldMessenger.of(context);
+    final nav = Navigator.of(context);
     setState(() {
       _saving = true;
       _saveError = null;
     });
-    final nav = Navigator.of(context);
     try {
       await widget.client.assignFace(widget.face.id, person.id);
       if (!mounted) return;
@@ -879,18 +883,26 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
       ));
       nav.pop();
     } catch (e) {
-      if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
+      // SnackBar over inline text — inline could sit hidden behind the
+      // soft keyboard; a SnackBar is always rendered above everything.
+      messenger.showSnackBar(
+        SnackBar(content: Text("Couldn't assign to ${person.name ?? 'person'}: $e")),
+      );
+      if (mounted) setState(() => _saveError = e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _createAndAssign() async {
     final name = _ctrl.text.trim();
     if (name.isEmpty) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final nav = Navigator.of(context);
     setState(() {
       _saving = true;
       _saveError = null;
     });
-    final nav = Navigator.of(context);
     try {
       final Person person;
       if (widget.face.personId != null) {
@@ -915,13 +927,19 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
       ));
       nav.pop();
     } catch (e) {
-      if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
+      messenger.showSnackBar(
+        SnackBar(content: Text("Couldn't save \"$name\": $e")),
+      );
+      if (mounted) setState(() => _saveError = e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _clearAssignment() async {
-    setState(() { _saving = true; _saveError = null; });
+    final messenger = ScaffoldMessenger.of(context);
     final nav = Navigator.of(context);
+    setState(() { _saving = true; _saveError = null; });
     try {
       await widget.client.assignFace(widget.face.id, null);
       if (!mounted) return;
@@ -932,7 +950,10 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
       ));
       nav.pop();
     } catch (e) {
-      if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
+      messenger.showSnackBar(SnackBar(content: Text("Couldn't clear assignment: $e")));
+      if (mounted) setState(() => _saveError = e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -943,8 +964,9 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
   Future<void> _removeClusterName() async {
     final personId = widget.face.personId;
     if (personId == null) return;
-    setState(() { _saving = true; _saveError = null; });
+    final messenger = ScaffoldMessenger.of(context);
     final nav = Navigator.of(context);
+    setState(() { _saving = true; _saveError = null; });
     try {
       final person = await widget.client.updatePersonName(personId, null);
       if (!mounted) return;
@@ -958,7 +980,10 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
       ));
       nav.pop();
     } catch (e) {
-      if (mounted) setState(() { _saving = false; _saveError = e.toString(); });
+      messenger.showSnackBar(SnackBar(content: Text("Couldn't remove name: $e")));
+      if (mounted) setState(() => _saveError = e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
