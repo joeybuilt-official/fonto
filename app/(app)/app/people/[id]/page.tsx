@@ -164,6 +164,12 @@ export default function PersonDetailPage({
   // Merge picker
   const [showMerge, setShowMerge] = useState(false);
   const [allPersons, setAllPersons] = useState<PersonGridEntry[]>([]);
+  // Ranked likely-duplicate candidates from the embedding similarity API;
+  // surfaced above the flat list in the picker.
+  const [mergeCandidates, setMergeCandidates] = useState<
+    { id: string; name: string; instanceCount: number; distance: number }[]
+  >([]);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -306,14 +312,26 @@ export default function PersonDetailPage({
 
   const openMerge = useCallback(async () => {
     setShowMerge(true);
+    setCandidatesLoading(true);
     try {
-      const res = await fetch("/api/v1/persons");
-      if (res.ok) {
-        const data = (await res.json()) as { persons: PersonGridEntry[] };
+      const [personsRes, candidatesRes] = await Promise.all([
+        fetch("/api/v1/persons"),
+        fetch(`/api/v1/persons/${id}/merge-candidates`),
+      ]);
+      if (personsRes.ok) {
+        const data = (await personsRes.json()) as { persons: PersonGridEntry[] };
         setAllPersons((data.persons ?? []).filter((p) => p.id !== id));
       }
+      if (candidatesRes.ok) {
+        const data = (await candidatesRes.json()) as {
+          candidates: { id: string; name: string; instanceCount: number; distance: number }[];
+        };
+        setMergeCandidates(data.candidates ?? []);
+      }
     } catch {
-      // ignore
+      // ignore — picker still works on the flat list
+    } finally {
+      setCandidatesLoading(false);
     }
   }, [id]);
 
@@ -495,27 +513,77 @@ export default function PersonDetailPage({
               </button>
             </div>
             <div className="max-h-80 space-y-1 overflow-y-auto">
-              {allPersons.length === 0 && (
+              {allPersons.length === 0 && !candidatesLoading && (
                 <p className="text-sm text-muted-foreground">
                   No other people to merge into yet.
                 </p>
               )}
-              {allPersons.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => doMerge(p.id)}
-                  disabled={acting}
-                  className="block w-full rounded px-3 py-2 text-left text-sm text-foreground hover:bg-sidebar-accent disabled:opacity-60"
-                >
-                  <span className="font-medium">
-                    {p.name ?? "Unnamed person"}
-                  </span>
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    ({p.instanceCount})
-                  </span>
-                </button>
-              ))}
+
+              {/* Likely-duplicate candidates ranked by embedding similarity —
+                  same scoring band as face-match suggestions. Distance ≤ 0.26
+                  is auto-assign-grade; 0.32 is the manual-review threshold.
+                  Below 0.55 = noise, filtered by the API. */}
+              {mergeCandidates.length > 0 && (
+                <>
+                  <p className="px-1 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Likely matches
+                  </p>
+                  {mergeCandidates.map((c) => {
+                    const tier =
+                      c.distance <= 0.26
+                        ? { label: "Very likely", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" }
+                        : c.distance <= 0.32
+                        ? { label: "Likely",       cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300" }
+                        : c.distance <= 0.45
+                        ? { label: "Possible",     cls: "bg-sky-500/15 text-sky-700 dark:text-sky-300" }
+                        : { label: "Maybe",        cls: "bg-muted text-muted-foreground" };
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => doMerge(c.id)}
+                        disabled={acting}
+                        className="flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm text-foreground hover:bg-sidebar-accent disabled:opacity-60"
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="font-medium">
+                            {c.name ?? "Unnamed person"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            ({c.instanceCount})
+                          </span>
+                        </span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${tier.cls}`}>
+                          {tier.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  <div className="my-2 border-t border-border" />
+                  <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    All people
+                  </p>
+                </>
+              )}
+
+              {allPersons
+                .filter((p) => !mergeCandidates.some((c) => c.id === p.id))
+                .map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => doMerge(p.id)}
+                    disabled={acting}
+                    className="block w-full rounded px-3 py-2 text-left text-sm text-foreground hover:bg-sidebar-accent disabled:opacity-60"
+                  >
+                    <span className="font-medium">
+                      {p.name ?? "Unnamed person"}
+                    </span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      ({p.instanceCount})
+                    </span>
+                  </button>
+                ))}
             </div>
           </div>
         </div>

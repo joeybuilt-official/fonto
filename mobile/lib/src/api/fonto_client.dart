@@ -475,6 +475,15 @@ class FontoClient {
     await _postJson("/api/v1/persons/$sourceId/merge", {"into": intoId});
   }
 
+  /// Likely-duplicate persons for the merge picker, ranked by embedding
+  /// similarity (closest first). Empty list if no candidates within the
+  /// API's noise threshold. Mirrors `/api/v1/faces/:id/suggestions`.
+  Future<List<MergeCandidate>> mergeCandidates(String personId) async {
+    final j = await _getJson("/api/v1/persons/$personId/merge-candidates");
+    final raw = (j["candidates"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(MergeCandidate.fromJson).toList();
+  }
+
   /// Assets shared into the active workspace from other workspaces.
   /// Full list; the endpoint doesn't paginate.
   Future<List<SharedAsset>> sharedWithMe() async {

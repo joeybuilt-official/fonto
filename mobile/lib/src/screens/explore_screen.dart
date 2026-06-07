@@ -709,10 +709,20 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     List<Person> others;
+    List<MergeCandidate> candidates;
     try {
-      others = (await widget.client.listPersons())
+      // Fan out both calls in parallel — the picker rendering only blocks on
+      // the slower one and we surface candidates above the flat list.
+      final results = await Future.wait([
+        widget.client.listPersons(),
+        widget.client.mergeCandidates(widget.person.id).catchError(
+              (_) => <MergeCandidate>[],
+            ),
+      ]);
+      others = (results[0] as List<Person>)
           .where((p) => p.id != widget.person.id)
           .toList();
+      candidates = (results[1] as List<MergeCandidate>);
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text("Couldn't load people: $e")));
       return;
@@ -724,6 +734,8 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       );
       return;
     }
+    final candidateIds = candidates.map((c) => c.person.id).toSet();
+    final restOfList = others.where((p) => !candidateIds.contains(p.id)).toList();
     final target = await showModalBottomSheet<Person>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -735,7 +747,34 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
               child: Text("Merge into…",
                   style: TextStyle(fontWeight: FontWeight.w600)),
             ),
-            for (final p in others)
+            if (candidates.isNotEmpty) ...[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 6),
+                child: Text("LIKELY MATCHES",
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey)),
+              ),
+              for (final c in candidates)
+                ListTile(
+                  leading: const Icon(Icons.auto_awesome, color: Colors.amber),
+                  title: Text(c.person.name ?? "Unnamed"),
+                  subtitle: Text("${c.person.instanceCount} faces"),
+                  trailing: _LikelihoodBadge(distance: c.distance),
+                  onTap: () => Navigator.of(ctx).pop(c.person),
+                ),
+              const Divider(),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 6, 16, 6),
+                child: Text("ALL PEOPLE",
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey)),
+              ),
+            ],
+            for (final p in restOfList)
               ListTile(
                 leading: const Icon(Icons.person_outline),
                 title: Text(p.name ?? "Unnamed"),
@@ -956,6 +995,40 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                     ),
                   ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tiny pill that summarises an embedding-distance score for the Merge
+/// picker. Bands mirror the face-suggestion thresholds in
+/// `lib/faces/propagate.ts` so the language stays consistent across UI.
+class _LikelihoodBadge extends StatelessWidget {
+  const _LikelihoodBadge({required this.distance});
+  final double distance;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = distance <= 0.26
+        ? ("Very likely", Colors.green)
+        : distance <= 0.32
+            ? ("Likely", Colors.amber)
+            : distance <= 0.45
+                ? ("Possible", Colors.lightBlue)
+                : ("Maybe", Colors.grey);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color.shade800,
         ),
       ),
     );

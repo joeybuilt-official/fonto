@@ -428,6 +428,24 @@ class FaceSuggestion {
       );
 }
 
+/// A likely-duplicate person surfaced by the Merge picker. Distance is
+/// cosine distance between embeddings; smaller = more likely the same
+/// person. Tier labels in the UI mirror the face-suggestion bands.
+class MergeCandidate {
+  const MergeCandidate({required this.person, required this.distance});
+  final Person person;
+  final double distance;
+
+  static MergeCandidate fromJson(Map<String, dynamic> j) => MergeCandidate(
+        person: Person(
+          id: j["id"] as String,
+          instanceCount: (j["instanceCount"] as num?)?.toInt() ?? 0,
+          name: j["name"] as String?,
+        ),
+        distance: (j["distance"] as num).toDouble(),
+      );
+}
+
 /// One detected face on an asset. `bbox` is normalised (0..1). `personId` /
 /// `personName` are null when the face hasn't been assigned to a cluster yet.
 class AssetFace {
