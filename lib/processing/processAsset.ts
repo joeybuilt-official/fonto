@@ -33,6 +33,7 @@ import { deriveKind } from "@/lib/classify/kind";
 import { tryEnqueueFaceDetect } from "@/lib/assets/createAssetRow";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
 import { labelImageUrl, visionConfigured } from "@/lib/plexo-vision";
+import { isJunkLabel } from "@/lib/processing/labelStoplist";
 
 const DOCUMENT_CLASSIFICATIONS = new Set([
   "document",
@@ -115,10 +116,6 @@ async function processAssetInner(
   let clipSuggestedTags: string[] = [];
   let description: string | null = null;
   let plexoWorkspaceId: string | null = null;
-  // Vision labels are now collected pre-describe for image grounding; this
-  // carries them forward so the later tag-suggestion path doesn't make a
-  // second labelImageUrl round-trip for the same asset.
-  let visionLabelsCarried: string[] = [];
   // Phase 6.x — document text (PDF text layer / OCR / plain text), extracted
   // in the non-image branch below and persisted as ocr_text further down.
   let docText: string | null = null;
@@ -241,10 +238,6 @@ async function processAssetInner(
           ocrText: preDescribeOcrText,
         }
       );
-
-      // Stash for the tag-suggestion path below so we don't re-call the
-      // vision label endpoint a second time.
-      visionLabelsCarried = preDescribeLabels;
     } else if (mimeType.startsWith("video/")) {
       // Phase 8a — video classification is deterministic by mime, no
       // round-trip to Plexo. (A future revision could ask Plexo to
@@ -444,20 +437,23 @@ async function processAssetInner(
       .where(eq(schema.assets.id, assetId))
       .limit(1);
 
-    // Vision labels were collected pre-describe so the caption could
-    // ground in them; reuse the same list here for tag suggestion instead
-    // of paying for a second labelImageUrl round-trip per asset.
-    const visionLabels = visionLabelsCarried;
-
-    // Phase 4.6 — fold in zero-shot CLIP tag suggestions when CLIP was the
-    // chosen classifier. Dedupe case-insensitively but preserve the CLIP
-    // names' original casing (taxonomy curates these to be display-ready,
-    // e.g. "Portraits" not "portraits").
+    // Things = curated taxonomy (CLIP) + grounded LLM object tags only. The
+    // raw vision labeller (`visionLabelsCarried`) is deliberately NOT folded
+    // into tags: it emitted anatomy fragments + abstract noise ("Repetition",
+    // "Forehead", "Pattern") that flooded Explore > Things. It still grounds
+    // the caption above; it just no longer becomes a Thing.
+    //
+    // Dedupe case-insensitively but preserve the CLIP names' original casing
+    // (taxonomy curates these display-ready, e.g. "Portraits" not "portraits").
     const seen = new Set<string>();
     const suggestedNames: string[] = [];
-    for (const name of [...clipSuggestedTags, ...llmTags, ...visionLabels]) {
+    for (const name of [...clipSuggestedTags, ...llmTags]) {
       const key = name.toLowerCase().trim();
       if (!key || seen.has(key)) continue;
+      // Drop anatomy fragments / abstract visual-property / meta noise so
+      // Things stays a meaningful-noun surface (Explore > Things). See
+      // labelStoplist.ts.
+      if (isJunkLabel(name)) continue;
       seen.add(key);
       suggestedNames.push(name);
     }
