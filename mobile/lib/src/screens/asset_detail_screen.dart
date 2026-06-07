@@ -671,6 +671,28 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
           setState(() {
             final idx = _faces.indexWhere((f) => f.id == updated.id);
             if (idx >= 0) _faces[idx] = updated;
+            // When an anonymous cluster was merged into a named person, the
+            // old cluster ID is now gone. Propagate the new person to every
+            // other face on this image that still carries the stale cluster
+            // ID so subsequent tags don't try to merge a deleted cluster.
+            final oldPersonId = face.personId;
+            if (oldPersonId != null &&
+                face.personName == null &&
+                updated.personId != null &&
+                updated.personId != oldPersonId) {
+              for (var i = 0; i < _faces.length; i++) {
+                if (_faces[i].personId == oldPersonId &&
+                    _faces[i].id != updated.id) {
+                  _faces[i] = AssetFace(
+                    id: _faces[i].id,
+                    bbox: _faces[i].bbox,
+                    confidence: _faces[i].confidence,
+                    personId: updated.personId,
+                    personName: updated.personName,
+                  );
+                }
+              }
+            }
           });
         },
         onPersonCreated: (p) {
@@ -1014,8 +1036,12 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
     });
     try {
       final oldPersonId = widget.face.personId;
-      final isAnonymousCluster =
-          oldPersonId != null && widget.face.personName == null;
+      // Anonymous cluster = has a cluster but no name. Guard against self-merge
+      // (user tapping the same cluster they're already in would send
+      // mergePerson(X, X) → 400 from the server).
+      final isAnonymousCluster = oldPersonId != null &&
+          widget.face.personName == null &&
+          oldPersonId != person.id;
       if (isAnonymousCluster) {
         // Merge the whole anonymous cluster into the named person — this
         // reassigns every face in the cluster at once and deletes the anon record.
