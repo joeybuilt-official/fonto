@@ -16,6 +16,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
+import { propagateNamedPerson } from "@/lib/faces/propagate";
 
 interface PatchBody {
   hidden?: unknown;
@@ -58,6 +59,11 @@ export async function PATCH(
 
   const patch: { hidden?: boolean; personId?: string | null } = {};
   let touchedPersonIds: string[] = [];
+  // When a face is manually assigned to a NAMED person, we proactively
+  // propagate that match to other visually-similar unassigned faces
+  // (D2 hybrid: auto-assign tight matches, count the borderline band for
+  // review). Null name => unnamed cluster; skip to avoid over-sweeping.
+  let targetPersonName: string | null = null;
 
   if ("hidden" in body) {
     if (typeof body.hidden !== "boolean") {
@@ -73,7 +79,7 @@ export async function PATCH(
     } else if (typeof personRaw === "string") {
       // Validate the target person is in the same workspace.
       const [target] = await db
-        .select({ id: schema.persons.id })
+        .select({ id: schema.persons.id, name: schema.persons.name })
         .from(schema.persons)
         .where(
           and(
@@ -89,6 +95,7 @@ export async function PATCH(
         );
       }
       patch.personId = personRaw;
+      targetPersonName = target.name;
     } else {
       return NextResponse.json(
         { error: "person_id must be uuid or null" },
@@ -144,10 +151,18 @@ export async function PATCH(
     }
   }
 
+  // Proactive auto-tag: only when the face was just assigned to a NAMED
+  // person. propagate is idempotent + protects other named persons' faces.
+  let propagated: { assigned: number; suggested: number } | null = null;
+  if (typeof patch.personId === "string" && targetPersonName) {
+    propagated = await propagateNamedPerson(patch.personId, face.workspaceId);
+  }
+
   return NextResponse.json({
     face: {
       ...updated,
       createdAt: updated.createdAt.toISOString(),
     },
+    propagated,
   });
 }

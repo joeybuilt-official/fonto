@@ -19,6 +19,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { recomputeCoverFacesForWorkspace } from "@/lib/faces/cluster";
+import { propagateNamedPerson } from "@/lib/faces/propagate";
 import { db, schema } from "@/lib/db";
 
 interface MergeBody {
@@ -97,6 +98,14 @@ export async function POST(
   // shows the new best face after the merge.
   await recomputeCoverFacesForWorkspace(target.workspaceId);
 
+  // A merge is a strong manual signal that these faces are the target
+  // person. Proactively propagate to similar unassigned faces (hybrid:
+  // auto-assign tight, count borderline for review). Named target only.
+  let propagated: { assigned: number; suggested: number } | null = null;
+  if (target.name) {
+    propagated = await propagateNamedPerson(target.id, target.workspaceId);
+  }
+
   const [refreshed] = await db
     .select()
     .from(schema.persons)
@@ -112,5 +121,6 @@ export async function POST(
           updatedAt: refreshed.updatedAt.toISOString(),
         }
       : null,
+    propagated,
   });
 }
