@@ -1099,7 +1099,7 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                       label: Text(g.name),
                       selected: active,
                       onSelected: _savingGroups ? null : (_) => _toggleGroup(g.id),
-                      selectedColor: color.withOpacity(0.2),
+                      selectedColor: color.withValues(alpha: 0.2),
                       checkmarkColor: color,
                       side: BorderSide(
                         color: active ? color : Theme.of(context).dividerColor,
@@ -1189,7 +1189,7 @@ class _LikelihoodBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
