@@ -566,14 +566,25 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
   List<AssetFace> _faces = const [];
   List<Person> _persons = const [];
   String? _resolvedUrl;
-  // Actual pixel dimensions of the image — from asset or resolved from ImageInfo.
   Size? _imageDims;
   bool _showNames = true;
+
+  // Face navigation + zoom
+  int _activeFaceIndex = 0;
+  final TransformationController _transformController = TransformationController();
+  // Set by LayoutBuilder on every build — used for zoom calculation.
+  Size _containerSize = Size.zero;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _transformController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -600,6 +611,12 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
         }
         _loading = false;
       });
+      // Zoom to first face after the first frame renders the container.
+      if (faces.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _goToFace(0);
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -607,6 +624,39 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
         _loading = false;
       });
     }
+  }
+
+  void _goToFace(int index) {
+    final dims = _imageDims;
+    if (_faces.isEmpty || dims == null || _containerSize == Size.zero) return;
+    setState(() => _activeFaceIndex = index);
+    final b = _faces[index].bbox;
+    final cs = _containerSize;
+    final s = min(cs.width / dims.width, cs.height / dims.height);
+    final rx = (cs.width - dims.width * s) / 2;
+    final ry = (cs.height - dims.height * s) / 2;
+    // Face center in container coords (before any zoom)
+    final fcx = rx + b.cx * dims.width * s;
+    final fcy = ry + b.cy * dims.height * s;
+    // Circle diameter as rendered by _FaceImageOverlay (max side + 12px pad)
+    final faceDiam = max(b.w * dims.width, b.h * dims.height) * s + 12;
+    // Zoom to make the face occupy ~45% of screen width; clamp 2–6×
+    final zoom = (cs.width * 0.45 / faceDiam).clamp(2.0, 6.0);
+    final tx = cs.width / 2 - zoom * fcx;
+    final ty = cs.height / 2 - zoom * fcy;
+    _transformController.value = Matrix4.identity()
+      ..translate(tx, ty)
+      ..scale(zoom);
+  }
+
+  void _prevFace() {
+    if (_faces.isEmpty) return;
+    _goToFace((_activeFaceIndex - 1 + _faces.length) % _faces.length);
+  }
+
+  void _nextFace() {
+    if (_faces.isEmpty) return;
+    _goToFace((_activeFaceIndex + 1) % _faces.length);
   }
 
   void _onFaceTapped(AssetFace face) {
@@ -672,18 +722,104 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
                         style: TextStyle(color: Colors.white54),
                       ),
                     )
-                  : _FaceImageOverlay(
-                      imageUrl: _resolvedUrl!,
-                      faces: _faces,
-                      imageDims: _imageDims,
-                      onDimsResolved: (size) {
-                        if (_imageDims == null) {
-                          setState(() => _imageDims = size);
-                        }
-                      },
-                      onFaceTapped: _onFaceTapped,
-                      showNames: _showNames,
-                      onImageTapped: () => setState(() => _showNames = !_showNames),
+                  : Column(
+                      children: [
+                        Expanded(
+                          child: LayoutBuilder(
+                            builder: (ctx, constraints) {
+                              final sz = constraints.biggest;
+                              // Capture container size for zoom math.
+                              if (_containerSize != sz) {
+                                _containerSize = sz;
+                              }
+                              return InteractiveViewer(
+                                transformationController: _transformController,
+                                minScale: 0.5,
+                                maxScale: 8.0,
+                                child: _FaceImageOverlay(
+                                  imageUrl: _resolvedUrl!,
+                                  faces: _faces,
+                                  imageDims: _imageDims,
+                                  activeId: _faces.isNotEmpty
+                                      ? _faces[_activeFaceIndex].id
+                                      : null,
+                                  onDimsResolved: (size) {
+                                    if (_imageDims == null) {
+                                      setState(() => _imageDims = size);
+                                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                                        if (mounted && _faces.isNotEmpty) {
+                                          _goToFace(0);
+                                        }
+                                      });
+                                    }
+                                  },
+                                  onFaceTapped: (face) {
+                                    // Snap zoom to tapped face first, then open sheet.
+                                    final idx = _faces.indexWhere((f) => f.id == face.id);
+                                    if (idx >= 0 && idx != _activeFaceIndex) {
+                                      _goToFace(idx);
+                                    }
+                                    _onFaceTapped(face);
+                                  },
+                                  showNames: _showNames,
+                                  onImageTapped: () =>
+                                      setState(() => _showNames = !_showNames),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        // Face navigation bar — only shown when multiple faces detected.
+                        if (_faces.length > 1)
+                          Container(
+                            color: Colors.black,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 24, vertical: 10),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.chevron_left,
+                                      color: Colors.white, size: 32),
+                                  onPressed: _prevFace,
+                                  tooltip: "Previous face",
+                                ),
+                                GestureDetector(
+                                  onTap: () => _onFaceTapped(_faces[_activeFaceIndex]),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        "${_activeFaceIndex + 1} / ${_faces.length}",
+                                        style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        _faces[_activeFaceIndex].personName ??
+                                            "Tap to tag",
+                                        style: TextStyle(
+                                          color: _faces[_activeFaceIndex].personName != null
+                                              ? Colors.lightBlueAccent
+                                              : Colors.white54,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.chevron_right,
+                                      color: Colors.white, size: 32),
+                                  onPressed: _nextFace,
+                                  tooltip: "Next face",
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
     );
   }
@@ -698,6 +834,7 @@ class _FaceImageOverlay extends StatelessWidget {
     required this.onFaceTapped,
     required this.showNames,
     required this.onImageTapped,
+    this.activeId,
   });
 
   final String imageUrl;
@@ -707,6 +844,8 @@ class _FaceImageOverlay extends StatelessWidget {
   final void Function(AssetFace) onFaceTapped;
   final bool showNames;
   final VoidCallback onImageTapped;
+  // When set, this face circle renders larger + brighter (active in nav mode).
+  final String? activeId;
 
   @override
   Widget build(BuildContext context) {
@@ -756,9 +895,17 @@ class _FaceImageOverlay extends StatelessWidget {
       final top = ry + b.y * dims.height * s;
       final fw = b.w * dims.width * s;
       final fh = b.h * dims.height * s;
-      final d = max(fw, fh) + 12;
+      final isActive = activeId != null && face.id == activeId;
+      // Active face gets a larger circle (+8px) and thicker border
+      final d = max(fw, fh) + (isActive ? 20 : 12);
       final cx = left + fw / 2;
       final cy = top + fh / 2;
+      final borderColor = isActive
+          ? Colors.yellowAccent
+          : face.personId != null
+              ? Colors.lightBlueAccent
+              : Colors.white70;
+      final borderWidth = isActive ? 3.0 : 2.0;
       return Positioned(
         left: cx - d / 2,
         top: cy - d / 2,
@@ -770,10 +917,8 @@ class _FaceImageOverlay extends StatelessWidget {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               border: Border.all(
-                color: face.personId != null
-                    ? Colors.lightBlueAccent
-                    : Colors.white70,
-                width: 2,
+                color: borderColor,
+                width: borderWidth,
               ),
             ),
             child: showNames && face.personName != null
