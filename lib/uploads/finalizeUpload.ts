@@ -194,6 +194,10 @@ export async function finalizeUpload(
   // 4) Shared row build: dedup + EXIF + pHash + insert + processing enqueue.
   //    Object is already in R2, so createAssetRow's default syncState='synced'
   //    is correct.
+  // upload.id was used as the UUID segment in the storage key path at presign
+  // time, so pre-reserve it as the asset ID so workers can derive the key via
+  // assetStorageKey(workspaceId, asset.id, filename) without a separate lookup.
+  // On SHA-256 dedup the existing asset row wins and preReservedId is ignored.
   const result = await createAssetRow({
     workspaceId: upload.workspaceId,
     userId: opts.userId,
@@ -205,6 +209,7 @@ export async function finalizeUpload(
     buffer,
     source: opts.source ?? "direct-upload",
     directoryPath: upload.directoryPath ?? null,
+    preReservedId: upload.id,
   });
 
   // 5) Flip the upload row out of pending (even on dedup). The R2 object is

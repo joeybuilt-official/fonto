@@ -131,6 +131,12 @@ export interface CreateAssetInput {
    * what it receives.
    */
   directoryPath?: string | null;
+  /**
+   * Pre-reserved asset UUID. When supplied (presigned-PUT path), the INSERT
+   * uses this ID so the storage key — which embeds the same UUID — stays
+   * aligned with the asset row. Ignored on SHA-256 dedup (existing row wins).
+   */
+  preReservedId?: string;
 }
 
 export interface CreateAssetResult {
@@ -466,7 +472,7 @@ export async function enqueueAssetProcessing(args: {
  * `/api/v1/assets/:id/complete` (presigned PUT) funnel through here.
  */
 export async function createAssetRow(input: CreateAssetInput): Promise<CreateAssetResult> {
-  const { workspaceId, userId, userEmail, filename, mimeType, sizeBytes, buffer, source } = input;
+  const { workspaceId, userId, userEmail, filename, mimeType, sizeBytes, buffer, source, preReservedId } = input;
   const directoryPath = input.directoryPath ?? null;
   const sha256 = input.sha256 ?? createHash("sha256").update(buffer).digest("hex");
 
@@ -533,6 +539,7 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
   const [asset] = await db
     .insert(schema.assets)
     .values({
+      ...(preReservedId ? { id: preReservedId } : {}),
       workspaceId,
       filename,
       mimeType,
