@@ -49,7 +49,8 @@ export interface FilterState {
   ratingMin: number | null;     // 1..5
   personIds: string[];
   tagIds: string[];
-  // Phase 1 (UX consolidation) — replaces the dedicated Trash route.
+  groupId: string | null;   // person-group filter (Family / Friends / …)
+  // Phase 1 (UX consolidation) ��� replaces the dedicated Trash route.
   // 'active' (default), 'archived', 'trashed' map 1:1 to assets.lifecycle_state.
   lifecycle: Lifecycle;
   // Phase 1 (UX consolidation) — replaces the dedicated Folders route.
@@ -77,6 +78,7 @@ const DEFAULT_FILTERS: FilterState = {
   ratingMin: null,
   personIds: [],
   tagIds: [],
+  groupId: null,
   lifecycle: "active",
   directoryPath: null,
   directoryPathPrefix: null,
@@ -116,6 +118,7 @@ function readFilters(sp: URLSearchParams): FilterState {
         : null,
     personIds: list("person"),
     tagIds: list("tag"),
+    groupId: sp.get("groupId"),
     lifecycle,
     directoryPath: sp.get("path"),
     directoryPathPrefix: sp.get("pathPrefix"),
@@ -140,6 +143,7 @@ function writeFilters(base: URLSearchParams, f: FilterState): URLSearchParams {
   setOrDel("rating", f.ratingMin != null ? String(f.ratingMin) : null);
   setOrDel("person", f.personIds.length ? f.personIds.join(",") : null);
   setOrDel("tag", f.tagIds.length ? f.tagIds.join(",") : null);
+  setOrDel("groupId", f.groupId);
   setOrDel("lc", f.lifecycle === "active" ? null : f.lifecycle);
   setOrDel("path", f.directoryPath);
   setOrDel("pathPrefix", f.directoryPathPrefix);

@@ -23,7 +23,7 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
-import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download, Smartphone, LayoutGrid } from "lucide-react";
+import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download, Smartphone, LayoutGrid, Users } from "lucide-react";
 import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
@@ -108,6 +108,7 @@ function LibraryContent() {
       "directoryPathPrefix",
       "from",
       "to",
+      "groupId",
     ],
   });
 
@@ -166,6 +167,9 @@ function LibraryContent() {
     if (toolbar.filters.directoryPathPrefix != null) {
       sp.set("directoryPathPrefix", toolbar.filters.directoryPathPrefix);
     }
+    if (toolbar.filters.groupId) {
+      sp.set("group_id", toolbar.filters.groupId);
+    }
     return sp;
   }, [
     toolbar.filters.lifecycle,
@@ -176,6 +180,7 @@ function LibraryContent() {
     toolbar.filters.ratingMin,
     toolbar.filters.directoryPath,
     toolbar.filters.directoryPathPrefix,
+    toolbar.filters.groupId,
   ]);
 
   // Load exactly one month's assets (captured-date order). Pages within the
@@ -1102,7 +1107,90 @@ function LibraryChipStrip({
         to={filters.to}
         onChange={(patch) => setFilters(patch)}
       />
+
+      {/* People group chip — filter library to a person-relationship group. */}
+      <PeopleGroupChip
+        activeGroupId={filters.groupId ?? null}
+        onChange={(groupId) => setFilters({ groupId })}
+      />
     </div>
+  );
+}
+
+interface PersonGroupChipEntry { id: string; name: string; color: string; }
+
+function PeopleGroupChip({
+  activeGroupId,
+  onChange,
+}: {
+  activeGroupId: string | null;
+  onChange: (groupId: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [groups, setGroups] = useState<PersonGroupChipEntry[]>([]);
+
+  useEffect(() => {
+    fetch("/api/v1/person-groups")
+      .then((r) => r.json())
+      .then((d: { groups?: PersonGroupChipEntry[] }) => {
+        setGroups(d.groups ?? []);
+      })
+      .catch(() => {});
+  }, []);
+
+  const activeGroup = groups.find((g) => g.id === activeGroupId);
+  const isActive = activeGroupId !== null;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-sm transition-colors ${
+          isActive
+            ? "border-transparent text-white"
+            : "border-input bg-background text-muted-foreground hover:text-foreground"
+        }`}
+        style={isActive && activeGroup ? { backgroundColor: activeGroup.color } : undefined}
+      >
+        <Users className="h-3 w-3" />
+        {activeGroup ? activeGroup.name : "People"}
+        {isActive && (
+          <X
+            className="h-3 w-3 ml-0.5 opacity-70 hover:opacity-100"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChange(null);
+              setOpen(false);
+            }}
+          />
+        )}
+      </PopoverTrigger>
+      <PopoverContent className="w-52 p-2" align="start">
+        <div className="flex flex-col gap-1">
+          {groups.length === 0 && (
+            <p className="text-xs text-muted-foreground px-1">No groups yet.</p>
+          )}
+          {groups.map((g) => (
+            <button
+              key={g.id}
+              onClick={() => {
+                onChange(activeGroupId === g.id ? null : g.id);
+                setOpen(false);
+              }}
+              className={`flex items-center gap-2 rounded px-2 py-1.5 text-xs text-left transition-colors hover:bg-muted/50 ${
+                activeGroupId === g.id ? "font-medium" : ""
+              }`}
+            >
+              <span
+                className="h-2.5 w-2.5 rounded-full shrink-0"
+                style={{ backgroundColor: g.color }}
+              />
+              {g.name}
+              {activeGroupId === g.id && <span className="ml-auto text-muted-foreground">✓</span>}
+            </button>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

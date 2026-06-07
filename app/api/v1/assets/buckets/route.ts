@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { and, eq, gte, isNull, like, or, sql, SQL } from "drizzle-orm";
+import { and, eq, exists, gte, isNull, like, or, sql, SQL } from "drizzle-orm";
 import { isKind } from "@/lib/classify/kind";
 
 export async function GET(request: NextRequest) {
@@ -93,6 +93,27 @@ export async function GET(request: NextRequest) {
   } else if (directoryPathPrefix != null && directoryPathPrefix !== "") {
     const normalised = directoryPathPrefix.replace(/\/+$/, "");
     where.push(like(schema.assets.directoryPath, `${normalised}/%`));
+  }
+
+  const groupIdParam = searchParams.get("group_id");
+  if (groupIdParam) {
+    where.push(
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(schema.faceInstances)
+          .innerJoin(
+            schema.personGroupMembers,
+            eq(schema.personGroupMembers.personId, schema.faceInstances.personId)
+          )
+          .where(
+            and(
+              eq(schema.faceInstances.assetId, schema.assets.id),
+              eq(schema.personGroupMembers.groupId, groupIdParam)
+            )
+          )
+      )
+    );
   }
 
   // Phase 5.5 / Task 20 — collapse stacks the same way the list route does

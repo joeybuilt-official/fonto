@@ -5,7 +5,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, and, desc, gte, isNull, isNotNull, lt, or, sql, SQL, like } from "drizzle-orm";
+import { eq, and, desc, gte, isNull, isNotNull, lt, or, sql, SQL, like, exists } from "drizzle-orm";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
@@ -109,6 +109,29 @@ export async function GET(request: NextRequest) {
     where.push(isNotNull(schema.assets.capturedAt));
   } else if (capturedState === "undated") {
     where.push(isNull(schema.assets.capturedAt));
+  }
+
+  // Person-group filter: show only assets where at least one face belongs to
+  // a person in the requested group.
+  const groupIdParam = searchParams.get("group_id");
+  if (groupIdParam) {
+    where.push(
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(schema.faceInstances)
+          .innerJoin(
+            schema.personGroupMembers,
+            eq(schema.personGroupMembers.personId, schema.faceInstances.personId)
+          )
+          .where(
+            and(
+              eq(schema.faceInstances.assetId, schema.assets.id),
+              eq(schema.personGroupMembers.groupId, groupIdParam)
+            )
+          )
+      )
+    );
   }
 
   // Explore → Places: geo-tagged assets only. `?hasGeo=1` keeps rows where
