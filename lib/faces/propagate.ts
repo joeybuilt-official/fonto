@@ -37,16 +37,24 @@ export async function propagateNamedPerson(
   personId: string,
   workspaceId: string
 ): Promise<PropagateResult> {
-  // 1. Get all embeddings for this named person.
-  const anchors = await db
-    .select({ embedding: schema.faceInstances.embedding })
-    .from(schema.faceInstances)
-    .where(
-      and(
-        eq(schema.faceInstances.personId, personId),
-        eq(schema.faceInstances.workspaceId, workspaceId)
-      )
-    );
+  // 1. Get a SAMPLE of embeddings for this named person, not the whole roster.
+  //    Each anchor triggers one pgvector cosine query against every other face
+  //    in the workspace (~50ms each), so doing all 1,385 anchors for a person
+  //    like a family member who appears in hundreds of photos would hammer
+  //    the DB for ~70 seconds and queue every other tagging-sheet open behind
+  //    it. The named-cluster embeddings are densely correlated by construction
+  //    (DBSCAN + the user's hand label) — a randomly-sampled 30 covers the
+  //    distance space within a few percent of the full set in practice.
+  const ANCHOR_SAMPLE = 30;
+  const anchors = (await db.execute(sql`
+    SELECT embedding
+    FROM fonto.face_instances
+    WHERE person_id = ${personId}
+      AND workspace_id = ${workspaceId}
+      AND embedding IS NOT NULL
+    ORDER BY random()
+    LIMIT ${ANCHOR_SAMPLE}
+  `)) as unknown as { embedding: number[] | null }[];
   if (anchors.length === 0) return { assigned: 0, suggested: 0 };
 
   // 2. Find IDs of all other NAMED persons in this workspace (to protect their faces).
