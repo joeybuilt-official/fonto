@@ -6,7 +6,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
   Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star, Layers, MessageCircle,
-  ScanSearch
+  ScanSearch, EyeOff
 } from "lucide-react";
 import type { Asset } from "./photo-card";
 import { ConfirmButton } from "@/components/confirm-button";
@@ -797,6 +797,47 @@ export function PhotoLightbox({
     setShareCopied(false);
   }
 
+  // Phase 2 (faces/UX, #9) — ignore ("not a face") a single detected face.
+  // PATCH the face hidden:true, then drop its chip optimistically.
+  async function handleIgnoreFace(faceId: string) {
+    setFaces((prev) => prev.filter((f) => f.id !== faceId));
+    try {
+      const res = await fetch(`/api/v1/faces/${faceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hidden: true }),
+      });
+      if (!res.ok) throw new Error(`PATCH ${res.status}`);
+    } catch {
+      // Re-fetch to restore the chip set on failure.
+      fetch(`/api/v1/assets/${displayedAssetId}/faces`)
+        .then((r) => (r.ok ? r.json() : { faces: [] }))
+        .then((d: { faces?: LightboxFace[] }) => setFaces(d.faces ?? []))
+        .catch(() => {});
+    }
+  }
+
+  // #9 — ignore every face in this photo at once. PATCH the asset-level
+  // faces-ignored flag, then clear all chips optimistically.
+  async function handleIgnorePhotoFaces() {
+    const snapshot = faces;
+    setFaces([]);
+    setShowNames(false);
+    try {
+      const res = await fetch(
+        `/api/v1/assets/${displayedAssetId}/faces-ignored`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ignored: true }),
+        }
+      );
+      if (!res.ok) throw new Error(`PATCH ${res.status}`);
+    } catch {
+      setFaces(snapshot);
+    }
+  }
+
   // Phase 2 (faces/UX) — map each normalized face bbox onto pixel coordinates
   // over the displayed <img>. The image is rendered object-contain, so the
   // actual picture is letterboxed inside the element rect: compute the content
@@ -987,7 +1028,7 @@ export function PhotoLightbox({
                 faceChips.map((c) => (
                   <div
                     key={c.id}
-                    className="pointer-events-none absolute rounded-sm border border-white/70 ring-1 ring-black/40"
+                    className="absolute rounded-sm border border-white/70 ring-1 ring-black/40"
                     style={{
                       left: `${c.left}px`,
                       top: `${c.top}px`,
@@ -996,10 +1037,25 @@ export function PhotoLightbox({
                     }}
                   >
                     {c.name && (
-                      <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/80 px-2 py-0.5 text-[11px] font-medium text-white shadow">
+                      <span className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/80 px-2 py-0.5 text-[11px] font-medium text-white shadow">
                         {c.name}
                       </span>
                     )}
+                    {/* #9 — per-face "not a face" ignore. Small × in the
+                        bbox corner; stops propagation so it doesn't toggle
+                        the names overlay. */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleIgnoreFace(c.id);
+                      }}
+                      className="absolute -right-2 -top-2 rounded-full bg-black/80 p-1 text-white/90 hover:bg-black hover:text-white"
+                      title="Ignore this face (not a face)"
+                      aria-label="Ignore this face"
+                    >
+                      <EyeOff className="h-3 w-3" />
+                    </button>
                   </div>
                 ))}
               {/* Hint chip when faces exist but names are hidden. */}
@@ -1007,6 +1063,22 @@ export function PhotoLightbox({
                 <span className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-[11px] text-white/80">
                   Tap photo to show names
                 </span>
+              )}
+              {/* #9 — photo-level "ignore all faces here" control, shown
+                  while the names overlay is open. */}
+              {showNames && faces.length > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleIgnorePhotoFaces();
+                  }}
+                  className="absolute bottom-2 left-1/2 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/70 px-3 py-1 text-[11px] font-medium text-white hover:bg-black/85"
+                  title="Ignore every face in this photo"
+                >
+                  <EyeOff className="h-3.5 w-3.5" />
+                  Ignore faces in this photo
+                </button>
               )}
             </div>
           ) : (

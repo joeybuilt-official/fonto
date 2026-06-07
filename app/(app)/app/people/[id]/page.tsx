@@ -14,7 +14,7 @@
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Loader2, Check, EyeOff, Users, X } from "lucide-react";
+import { ChevronLeft, Loader2, Check, EyeOff, Users, X, XCircle } from "lucide-react";
 
 interface Person {
   id: string;
@@ -163,6 +163,23 @@ export default function PersonDetailPage({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [acting, setActing] = useState(false);
 
+  // Transient toasts — reuses the floating success/error pattern from
+  // uploads-section (no shared toast lib in this app). Used for the #8
+  // auto-tag propagation feedback after a merge.
+  const [toasts, setToasts] = useState<
+    { id: string; message: string; type: "success" | "error" }[]
+  >([]);
+  const showToast = useCallback(
+    (message: string, type: "success" | "error" = "success") => {
+      const tid = `${Date.now()}-${Math.random()}`;
+      setToasts((prev) => [...prev, { id: tid, message, type }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== tid));
+      }, 4000);
+    },
+    []
+  );
+
   // Merge picker
   const [showMerge, setShowMerge] = useState(false);
   const [allPersons, setAllPersons] = useState<PersonGridEntry[]>([]);
@@ -205,6 +222,19 @@ export default function PersonDetailPage({
   useEffect(() => {
     load();
   }, [load]);
+
+  // #8 — surface a propagation toast handed off via sessionStorage by the
+  // merge on the *source* person page (we navigate here after a merge).
+  useEffect(() => {
+    let stashed: string | null = null;
+    try {
+      stashed = sessionStorage.getItem("fonto.faceTagToast");
+      if (stashed) sessionStorage.removeItem("fonto.faceTagToast");
+    } catch {
+      /* sessionStorage unavailable */
+    }
+    if (stashed) showToast(stashed, "success");
+  }, [showToast]);
 
   const saveName = useCallback(async () => {
     if (!person) return;
@@ -277,6 +307,37 @@ export default function PersonDetailPage({
       );
     } finally {
       setSavingName(false);
+    }
+  }, [person, router]);
+
+  // #9 — ignore the whole person (junk cluster). Server cascades to its
+  // faces. On success, navigate back to the grid (the tile is now hidden).
+  const ignorePerson = useCallback(async () => {
+    if (!person) return;
+    setActing(true);
+    try {
+      const res = await fetch(`/api/v1/persons/${person.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hidden: true }),
+      });
+      if (res.ok) {
+        router.push("/app/people");
+        router.refresh();
+      } else {
+        const body = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setError(
+          `Ignore failed (${res.status}): ${body?.error ?? "unknown error"}`
+        );
+      }
+    } catch (err) {
+      setError(
+        `Ignore failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setActing(false);
     }
   }, [person, router]);
 
@@ -374,7 +435,7 @@ export default function PersonDetailPage({
   }, [id]);
 
   const doMerge = useCallback(
-    async (targetId: string) => {
+    async (targetId: string, targetName?: string | null) => {
       if (!person) return;
       setActing(true);
       try {
@@ -384,6 +445,30 @@ export default function PersonDetailPage({
           body: JSON.stringify({ into: targetId }),
         });
         if (res.ok) {
+          // #8 — auto-tag propagation feedback. The merge response now
+          // carries { propagated: { assigned, suggested } | null }. Stash a
+          // message in sessionStorage so the *target* person page (where we
+          // land) can surface it after navigation; the count is meaningless
+          // on a page we're about to leave.
+          const data = (await res.json().catch(() => null)) as {
+            propagated?: { assigned: number; suggested: number } | null;
+          } | null;
+          const prop = data?.propagated;
+          if (prop && (prop.assigned > 0 || prop.suggested > 0)) {
+            const who = targetName?.trim() || "this person";
+            const parts: string[] = [];
+            if (prop.assigned > 0) {
+              parts.push(`Added ${prop.assigned} more photo${prop.assigned === 1 ? "" : "s"} of ${who}.`);
+            }
+            if (prop.suggested > 0) {
+              parts.push(`${prop.suggested} more to review.`);
+            }
+            try {
+              sessionStorage.setItem("fonto.faceTagToast", parts.join(" "));
+            } catch {
+              /* sessionStorage unavailable — silently skip the toast */
+            }
+          }
           window.location.href = `/app/people/${targetId}`;
         }
       } finally {
@@ -518,6 +603,17 @@ export default function PersonDetailPage({
           <Users className="h-4 w-4" />
           Merge into…
         </button>
+        {/* #9 — ignore this whole person (junk cluster). Cascades to its
+            faces server-side; navigates back to the grid on success. */}
+        <button
+          type="button"
+          onClick={() => void ignorePerson()}
+          disabled={acting}
+          className="inline-flex items-center gap-1 rounded border border-border bg-background px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-foreground disabled:opacity-60"
+        >
+          <EyeOff className="h-4 w-4" />
+          Ignore this person
+        </button>
       </div>
 
       {faces.length === 0 ? (
@@ -615,7 +711,7 @@ export default function PersonDetailPage({
                       <button
                         key={c.id}
                         type="button"
-                        onClick={() => doMerge(c.id)}
+                        onClick={() => doMerge(c.id, c.name)}
                         disabled={acting}
                         className="flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm text-foreground hover:bg-sidebar-accent disabled:opacity-60"
                       >
@@ -646,7 +742,7 @@ export default function PersonDetailPage({
                     <button
                       key={p.id}
                       type="button"
-                      onClick={() => doMerge(p.id)}
+                      onClick={() => doMerge(p.id, p.name)}
                       disabled={acting}
                       className="block w-full rounded px-3 py-2 text-left text-sm text-foreground hover:bg-sidebar-accent disabled:opacity-60"
                     >
@@ -661,6 +757,30 @@ export default function PersonDetailPage({
               })()}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* #8 — floating propagation toasts (success/error). Mirrors the
+          uploads-section ToastContainer styling. */}
+      {toasts.length > 0 && (
+        <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none">
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm shadow-lg pointer-events-auto ${
+                t.type === "success"
+                  ? "border-green-500/30 bg-card text-foreground"
+                  : "border-destructive/30 bg-card text-destructive"
+              }`}
+            >
+              {t.type === "success" ? (
+                <Check className="h-4 w-4 text-green-500 shrink-0" />
+              ) : (
+                <XCircle className="h-4 w-4 text-destructive shrink-0" />
+              )}
+              {t.message}
+            </div>
+          ))}
         </div>
       )}
     </div>

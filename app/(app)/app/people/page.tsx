@@ -11,7 +11,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, Users, Play } from "lucide-react";
+import { Loader2, Users, Play, EyeOff } from "lucide-react";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
@@ -146,6 +146,8 @@ function PeopleContent() {
   const [clustering, setClustering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // Tiles currently mid-ignore — disabled + dimmed until the PATCH resolves.
+  const [ignoring, setIgnoring] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -209,6 +211,34 @@ function PeopleContent() {
     }
   }, [load]);
 
+  // #9 — ignore a person (junk cluster). Server cascades to its faces.
+  // Optimistically drop the tile; restore + surface an error on failure.
+  const ignorePerson = useCallback(async (personId: string) => {
+    setIgnoring((prev) => new Set(prev).add(personId));
+    const snapshot = persons;
+    setPersons((prev) => prev.filter((p) => p.id !== personId));
+    try {
+      const res = await fetch(`/api/v1/persons/${personId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hidden: true }),
+      });
+      if (!res.ok) {
+        setPersons(snapshot);
+        setToast(`Couldn't ignore person (${res.status}).`);
+      }
+    } catch {
+      setPersons(snapshot);
+      setToast("Network error ignoring person.");
+    } finally {
+      setIgnoring((prev) => {
+        const next = new Set(prev);
+        next.delete(personId);
+        return next;
+      });
+    }
+  }, [persons]);
+
   const visible = useMemo(() => {
     let list = persons;
     if (toolbar.filters.q) {
@@ -255,6 +285,16 @@ function PeopleContent() {
       />
 
       <div className="px-4 space-y-4">
+        <div className="flex justify-end">
+          <Link
+            href="/app/people/ignored"
+            className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+          >
+            <EyeOff className="h-3.5 w-3.5" />
+            Ignored
+          </Link>
+        </div>
+
         {toast && (
           <div className="rounded border border-border bg-muted/30 px-3 py-2 text-sm text-foreground">
             {toast}
@@ -281,21 +321,37 @@ function PeopleContent() {
         {!loading && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
           {visible.map((p) => (
-            <Link
-              key={p.id}
-              href={`/app/people/${p.id}`}
-              className="group block space-y-2"
-            >
-              <FaceCrop entry={p} />
-              <div className="px-1">
-                <div className="truncate text-sm font-medium text-foreground group-hover:underline">
-                  {p.name ?? "Unnamed person"}
+            <div key={p.id} className="group relative space-y-2">
+              <Link
+                href={`/app/people/${p.id}`}
+                className={`block space-y-2 transition-opacity ${
+                  ignoring.has(p.id) ? "pointer-events-none opacity-40" : ""
+                }`}
+              >
+                <FaceCrop entry={p} />
+                <div className="px-1">
+                  <div className="truncate text-sm font-medium text-foreground group-hover:underline">
+                    {p.name ?? "Unnamed person"}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {p.instanceCount} {p.instanceCount === 1 ? "face" : "faces"}
+                  </div>
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  {p.instanceCount} {p.instanceCount === 1 ? "face" : "faces"}
-                </div>
-              </div>
-            </Link>
+              </Link>
+              {/* #9 — hover overlay to ignore (hide) a junk cluster. Sits
+                  outside the Link so the click doesn't navigate. */}
+              <button
+                type="button"
+                onClick={() => void ignorePerson(p.id)}
+                disabled={ignoring.has(p.id)}
+                className="absolute right-1 top-1 inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[11px] font-medium text-white opacity-0 transition-opacity hover:bg-black/80 focus:opacity-100 group-hover:opacity-100 disabled:opacity-60"
+                title="Ignore this person"
+                aria-label={`Ignore ${p.name ?? "this person"}`}
+              >
+                <EyeOff className="h-3 w-3" />
+                Ignore
+              </button>
+            </div>
           ))}
         </div>
         )}
