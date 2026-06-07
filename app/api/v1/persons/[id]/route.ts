@@ -192,6 +192,16 @@ export async function PATCH(
     .where(eq(schema.persons.id, person.id))
     .returning();
 
+  // Ignoring a junk cluster must keep it gone: cascade hidden to the
+  // person's faces so re-clustering (which excludes hidden faces) can't
+  // resurrect them as a fresh visible cluster. Un-ignore restores them.
+  if (patch.hidden !== undefined) {
+    await db
+      .update(schema.faceInstances)
+      .set({ hidden: patch.hidden })
+      .where(eq(schema.faceInstances.personId, person.id));
+  }
+
   // When a name is freshly set, propagate to visually similar untagged faces.
   if (patch.name && !person.name) {
     propagateNamedPerson(updated.id, updated.workspaceId).catch(() => {});

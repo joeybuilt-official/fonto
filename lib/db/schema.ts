@@ -97,6 +97,9 @@ export const assets = fontoSchema.table(
     lifecycleState: text("lifecycle_state").notNull().default("active"),
     source: text("source"),
     classification: text("classification"),
+    // User marked this photo "no faces here" — skip detection + hide any
+    // existing faces from People (faces/UX ignore feature).
+    facesIgnored: boolean("faces_ignored").notNull().default(false),
     description: text("description"),
     extractedText: text("extracted_text"),
     correspondentId: uuid("correspondent_id"),

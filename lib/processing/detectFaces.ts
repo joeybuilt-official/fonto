@@ -154,6 +154,7 @@ export async function detectFacesForAsset(assetId: string): Promise<void> {
       filename: schema.assets.filename,
       mimeType: schema.assets.mimeType,
       classification: schema.assets.classification,
+      facesIgnored: schema.assets.facesIgnored,
       previewKey: schema.assets.previewKey,
     })
     .from(schema.assets)
@@ -162,6 +163,10 @@ export async function detectFacesForAsset(assetId: string): Promise<void> {
 
   if (!asset) {
     log.warn("asset row missing");
+    return;
+  }
+  if (asset.facesIgnored) {
+    log.info("faces ignored for this photo — skipping face detection");
     return;
   }
   if (!asset.mimeType.startsWith("image/")) {
