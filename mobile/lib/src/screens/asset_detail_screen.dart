@@ -645,8 +645,8 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
     final tx = cs.width / 2 - zoom * fcx;
     final ty = cs.height / 2 - zoom * fcy;
     _transformController.value = Matrix4.identity()
-      ..translate(tx, ty)
-      ..scale(zoom);
+      ..translateByDouble(tx, ty, 0)
+      ..scaleByDouble(zoom, zoom, 1);
   }
 
   void _prevFace() {
