@@ -115,6 +115,7 @@ function LibraryContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  const placeFilter = searchParams.get("place");
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -170,6 +171,9 @@ function LibraryContent() {
     if (toolbar.filters.groupId) {
       sp.set("group_id", toolbar.filters.groupId);
     }
+    if (placeFilter) {
+      sp.set("place", placeFilter);
+    }
     return sp;
   }, [
     toolbar.filters.lifecycle,
@@ -181,6 +185,7 @@ function LibraryContent() {
     toolbar.filters.directoryPath,
     toolbar.filters.directoryPathPrefix,
     toolbar.filters.groupId,
+    placeFilter,
   ]);
 
   // Load exactly one month's assets (captured-date order). Pages within the

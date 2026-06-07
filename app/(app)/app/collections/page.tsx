@@ -20,6 +20,9 @@ import { AlbumsTab } from "./_components/albums-tab";
 import { SmartTab } from "./_components/smart-tab";
 import { ProjectsTab } from "./_components/projects-tab";
 import { StacksTab } from "./_components/stacks-tab";
+import { UtilityTileGrid } from "./_components/utility-tile-grid";
+import { PlacesSection } from "./_components/places-section";
+import { PeopleCard } from "./_components/people-card";
 
 const TABS: TabDef[] = [
   { key: "albums", label: "Albums", icon: FolderOpen },
@@ -36,17 +39,22 @@ function CollectionsContent() {
   const active = TABS.some((t) => t.key === raw) ? (raw as string) : DEFAULT_TAB;
 
   return (
-    <div className="space-y-3">
-      <TabBar
-        tabs={TABS}
-        active={active}
-        defaultKey={DEFAULT_TAB}
-        label="Collections sections"
-      />
-      {active === "albums" && <AlbumsTab />}
-      {active === "smart" && <SmartTab />}
-      {active === "projects" && <ProjectsTab />}
-      {active === "stacks" && <StacksTab />}
+    <div className="space-y-6">
+      <UtilityTileGrid />
+      <PeopleCard />
+      <PlacesSection />
+      <div className="space-y-3">
+        <TabBar
+          tabs={TABS}
+          active={active}
+          defaultKey={DEFAULT_TAB}
+          label="Collections sections"
+        />
+        {active === "albums" && <AlbumsTab />}
+        {active === "smart" && <SmartTab />}
+        {active === "projects" && <ProjectsTab />}
+        {active === "stacks" && <StacksTab />}
+      </div>
     </div>
   );
 }
