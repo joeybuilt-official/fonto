@@ -10,8 +10,6 @@
 // + co-located `_components/`). Web/mobile parity is enforced so the user
 // has one mental model across surfaces.
 
-import "dart:ui" show FontFeature;
-
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
 
