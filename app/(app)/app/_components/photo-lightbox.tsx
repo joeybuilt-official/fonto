@@ -817,6 +817,12 @@ export function PhotoLightbox({
     const dispH = natH * scale;
     const offX = (boxW - dispW) / 2;
     const offY = (boxH - dispH) / 2;
+    // Chips are absolutely positioned against the `relative` wrapper, but the
+    // <img> sits centered inside that wrapper's padding (p-8) + flex centering.
+    // Add the img's offset within the wrapper so chips land on the face, not
+    // shifted down/right by the padding + letterbox gap.
+    const baseX = el.offsetLeft;
+    const baseY = el.offsetTop;
     return faces
       .filter((f) => f.bbox)
       .map((f) => {
@@ -824,8 +830,8 @@ export function PhotoLightbox({
         return {
           id: f.id,
           name: f.personName,
-          left: offX + b.x * dispW,
-          top: offY + b.y * dispH,
+          left: baseX + offX + b.x * dispW,
+          top: baseY + offY + b.y * dispH,
           width: b.w * dispW,
           height: b.h * dispH,
         };
