@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Collections tab. Four lazy sub-tabs — Albums / Smart / Projects /
-// Stacks — each its own StatefulWidget loading on first build. Mirrors
-// home_screen.dart's loading / error+retry / data state machine.
+// Collections tab. Google Photos-style landing surface — utility tiles
+// (Favorites / Trash / Screenshots / Archive / Documents), People & Pets
+// card, reverse-geocoded Places mosaic — sitting above four lazy sub-tabs
+// (Albums / Smart / Projects / Stacks) that each load on first build.
+//
+// Mirrors the web Collections screen (`app/(app)/app/collections/page.tsx`
+// + co-located `_components/`). Web/mobile parity is enforced so the user
+// has one mental model across surfaces.
+
+import "dart:ui" show FontFeature;
 
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
@@ -11,6 +18,7 @@ import "package:flutter/material.dart";
 import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "asset_detail_screen.dart";
+import "filtered_assets_screen.dart";
 
 class CollectionsScreen extends StatelessWidget {
   const CollectionsScreen({super.key, required this.client});
@@ -22,24 +30,52 @@ class CollectionsScreen extends StatelessWidget {
     return DefaultTabController(
       length: 4,
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text("Collections"),
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: "Albums"),
-              Tab(text: "Smart"),
-              Tab(text: "Projects"),
-              Tab(text: "Stacks"),
+        appBar: AppBar(title: const Text("Collections")),
+        body: NestedScrollView(
+          headerSliverBuilder: (context, _) => [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                child: _UtilityTileGrid(client: client),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                child: _PeopleCard(client: client),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: _PlacesSection(client: client),
+              ),
+            ),
+          ],
+          body: Column(
+            children: [
+              const TabBar(
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                tabs: [
+                  Tab(text: "Albums"),
+                  Tab(text: "Smart"),
+                  Tab(text: "Projects"),
+                  Tab(text: "Stacks"),
+                ],
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    _AlbumsTab(client: client),
+                    _SmartTab(client: client),
+                    _ProjectsTab(client: client),
+                    _StacksTab(client: client),
+                  ],
+                ),
+              ),
             ],
           ),
-        ),
-        body: TabBarView(
-          children: [
-            _AlbumsTab(client: client),
-            _SmartTab(client: client),
-            _ProjectsTab(client: client),
-            _StacksTab(client: client),
-          ],
         ),
       ),
     );
@@ -607,6 +643,522 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
                       child: Icon(Icons.broken_image),
                     ),
                   ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Google Photos-style header sections — utility tiles, People & Pets, Places
+// ---------------------------------------------------------------------------
+
+String _fmtCount(int n) =>
+    n >= 1000 ? "${(n / 1000).floor()}k" : n.toString();
+
+class _UtilityTile {
+  const _UtilityTile({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.openFilter,
+  });
+  final String label;
+  final IconData icon;
+  final Color color;
+  final FilteredAssetsScreen Function(FontoClient) openFilter;
+}
+
+class _UtilityTileGrid extends StatefulWidget {
+  const _UtilityTileGrid({required this.client});
+  final FontoClient client;
+
+  @override
+  State<_UtilityTileGrid> createState() => _UtilityTileGridState();
+}
+
+class _UtilityTileGridState extends State<_UtilityTileGrid> {
+  CollectionsStats? _stats;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final s = await widget.client.collectionsStats();
+      if (!mounted) return;
+      setState(() => _stats = s);
+    } catch (_) {
+      // Tile counts are non-critical — render labels without numbers.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tiles = <(_UtilityTile, int?)>[
+      (
+        _UtilityTile(
+          label: "Favorites",
+          icon: Icons.star,
+          color: Colors.amber,
+          openFilter: (c) =>
+              FilteredAssetsScreen(client: c, title: "Favorites", favorite: true),
+        ),
+        _stats?.favorites,
+      ),
+      (
+        _UtilityTile(
+          label: "Trash",
+          icon: Icons.delete_outline,
+          color: Colors.redAccent,
+          openFilter: (c) => FilteredAssetsScreen(
+            client: c,
+            title: "Trash",
+            lifecycle: "trashed",
+          ),
+        ),
+        _stats?.trash,
+      ),
+      (
+        _UtilityTile(
+          label: "Screenshots",
+          icon: Icons.smartphone,
+          color: Colors.blueAccent,
+          openFilter: (c) => FilteredAssetsScreen(
+            client: c,
+            title: "Screenshots",
+            kind: "screenshot",
+          ),
+        ),
+        _stats?.screenshots,
+      ),
+      (
+        _UtilityTile(
+          label: "Archive",
+          icon: Icons.archive_outlined,
+          color: Colors.grey,
+          openFilter: (c) => FilteredAssetsScreen(
+            client: c,
+            title: "Archive",
+            lifecycle: "archived",
+          ),
+        ),
+        _stats?.archived,
+      ),
+      (
+        _UtilityTile(
+          label: "Documents",
+          icon: Icons.description_outlined,
+          color: Colors.green,
+          openFilter: (c) => FilteredAssetsScreen(
+            client: c,
+            title: "Documents",
+            kind: "document",
+          ),
+        ),
+        _stats?.documents,
+      ),
+    ];
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: tiles.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        mainAxisExtent: 56,
+      ),
+      itemBuilder: (context, i) {
+        final (t, count) = tiles[i];
+        return _TileCard(
+          tile: t,
+          count: count,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => t.openFilter(widget.client)),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _TileCard extends StatelessWidget {
+  const _TileCard({
+    required this.tile,
+    required this.count,
+    required this.onTap,
+  });
+  final _UtilityTile tile;
+  final int? count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            children: [
+              Icon(tile.icon, color: tile.color, size: 22),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  tile.label,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (count != null)
+                Text(
+                  _fmtCount(count!),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PeopleCard extends StatefulWidget {
+  const _PeopleCard({required this.client});
+  final FontoClient client;
+
+  @override
+  State<_PeopleCard> createState() => _PeopleCardState();
+}
+
+class _PeopleCardState extends State<_PeopleCard> {
+  List<Person> _people = const [];
+  int? _total;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final all = await widget.client.listPersons();
+      if (!mounted) return;
+      setState(() {
+        _people = all.take(4).toList();
+        _total = all.length;
+      });
+    } catch (_) {
+      // Section is best-effort; stays hidden on failure.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_people.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+
+    return Material(
+      color: theme.colorScheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: theme.colorScheme.outlineVariant),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        // People tab isn't a Collections sub-tab — the existing Explore screen
+        // owns People. Tapping the card surfaces the same Explore destination.
+        // (Full deep-link wiring is a follow-up; for v1 this acts as a visual
+        // teaser matching the web People card.)
+        onTap: () {},
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 96,
+                height: 96,
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: 4,
+                  gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 4,
+                    crossAxisSpacing: 4,
+                  ),
+                  itemBuilder: (context, i) {
+                    final p = i < _people.length ? _people[i] : null;
+                    final url = p?.coverFaceCropUrl;
+                    return ClipOval(
+                      child: url == null
+                          ? Container(
+                              color: theme.colorScheme.surfaceContainerHighest,
+                              child: Icon(
+                                Icons.person_outline,
+                                size: 18,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            )
+                          : CachedNetworkImage(
+                              imageUrl: url,
+                              fit: BoxFit.cover,
+                              placeholder: (_, __) => Container(
+                                color:
+                                    theme.colorScheme.surfaceContainerHighest,
+                              ),
+                              errorWidget: (_, __, ___) => Container(
+                                color:
+                                    theme.colorScheme.surfaceContainerHighest,
+                              ),
+                            ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "People & Pets",
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (_total != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        "$_total ${_total == 1 ? "person" : "people"}",
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlacesSection extends StatefulWidget {
+  const _PlacesSection({required this.client});
+  final FontoClient client;
+
+  @override
+  State<_PlacesSection> createState() => _PlacesSectionState();
+}
+
+class _PlacesSectionState extends State<_PlacesSection> {
+  bool _loading = true;
+  List<PlaceGroup> _places = const [];
+  Map<String, String> _thumbs = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final places = await widget.client.places();
+      if (places.isEmpty) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+      final allIds = places.expand((p) => p.previewIds).toList();
+      Map<String, String> urls = const {};
+      if (allIds.isNotEmpty) {
+        try {
+          urls = await widget.client.assetUrls(allIds);
+        } catch (_) {
+          urls = const {};
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _places = places;
+        _thumbs = urls;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading || _places.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            children: [
+              Icon(
+                Icons.location_on_outlined,
+                size: 18,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                "Places",
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 160,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            itemCount: _places.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, i) {
+              final p = _places[i];
+              return _PlaceCard(
+                place: p,
+                thumbs: _thumbs,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => FilteredAssetsScreen(
+                      client: widget.client,
+                      title: p.placeName,
+                      place: p.placeName,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PlaceCard extends StatelessWidget {
+  const _PlaceCard({
+    required this.place,
+    required this.thumbs,
+    required this.onTap,
+  });
+  final PlaceGroup place;
+  final Map<String, String> thumbs;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final city = place.placeName.split(",").first.trim();
+
+    return SizedBox(
+      width: 132,
+      child: Material(
+        color: theme.colorScheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AspectRatio(
+                aspectRatio: 1,
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: 4,
+                  gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                  ),
+                  itemBuilder: (context, i) {
+                    final id =
+                        i < place.previewIds.length ? place.previewIds[i] : null;
+                    final url = id == null ? null : thumbs[id];
+                    if (url == null) {
+                      return Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                      );
+                    }
+                    return CachedNetworkImage(
+                      imageUrl: url,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 200,
+                      memCacheHeight: 200,
+                      placeholder: (_, __) => Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                      ),
+                      errorWidget: (_, __, ___) => Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                      ),
+                    );
+                  },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      city.isEmpty ? place.placeName : city,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      "${place.count} ${place.count == 1 ? "photo" : "photos"}",
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),

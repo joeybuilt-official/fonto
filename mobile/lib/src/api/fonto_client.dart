@@ -101,10 +101,18 @@ class FontoClient {
     AssetCursor? after,
     String? directoryPathPrefix,
     bool hasGeo = false,
+    bool favorite = false,
+    String? kind,
+    String? lifecycle,
+    String? place,
   }) async {
     final query = <String, String>{"limit": "$limit", "sort": "captured"};
     if (mime != null) query["mime"] = mime;
     if (hasGeo) query["hasGeo"] = "1";
+    if (favorite) query["favorite"] = "1";
+    if (kind != null && kind.isNotEmpty) query["kind"] = kind;
+    if (lifecycle != null && lifecycle.isNotEmpty) query["lifecycle"] = lifecycle;
+    if (place != null && place.isNotEmpty) query["place"] = place;
     if (after != null) {
       query["capturedBefore"] = after.before;
       query["idBefore"] = after.idBefore;
@@ -513,6 +521,22 @@ class FontoClient {
 
   /// Face clusters (Explore → People). Full list, ordered by instance
   /// count desc server-side; no pagination.
+  /// Counts behind the Collections screen's utility tiles. Indexed COUNTs
+  /// for { favorites, trash, screenshots, archived, documents }.
+  Future<CollectionsStats> collectionsStats() async {
+    final j = await _getJson("/api/v1/collections/stats");
+    return CollectionsStats.fromJson(j);
+  }
+
+  /// Reverse-geocoded place groups for the Collections screen's Places
+  /// section. Sorted by count desc; each group exposes up to 4 preview
+  /// asset IDs for a 2×2 thumbnail mosaic (URLs resolved via [assetUrls]).
+  Future<List<PlaceGroup>> places() async {
+    final j = await _getJson("/api/v1/places");
+    final raw = (j["places"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(PlaceGroup.fromJson).toList();
+  }
+
   Future<List<Person>> listPersons() async {
     final j = await _getJson("/api/v1/persons");
     final raw = (j["persons"] as List? ?? const []).cast<Map<String, dynamic>>();

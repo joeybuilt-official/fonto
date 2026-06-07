@@ -541,3 +541,51 @@ class HlsManifest {
         playlistUrl: j["playlistUrl"] as String?,
       );
 }
+
+/// Counts behind the Collections screen's utility tiles
+/// (Favorites / Trash / Screenshots / Archive / Documents). Backed by
+/// indexed COUNT queries on /api/v1/collections/stats.
+class CollectionsStats {
+  const CollectionsStats({
+    required this.favorites,
+    required this.trash,
+    required this.screenshots,
+    required this.archived,
+    required this.documents,
+  });
+
+  final int favorites;
+  final int trash;
+  final int screenshots;
+  final int archived;
+  final int documents;
+
+  static CollectionsStats fromJson(Map<String, dynamic> j) => CollectionsStats(
+        favorites: (j["favorites"] as num?)?.toInt() ?? 0,
+        trash: (j["trash"] as num?)?.toInt() ?? 0,
+        screenshots: (j["screenshots"] as num?)?.toInt() ?? 0,
+        archived: (j["archived"] as num?)?.toInt() ?? 0,
+        documents: (j["documents"] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// One reverse-geocoded place group on the Collections screen. `previewIds`
+/// are up to 4 asset IDs the UI resolves through `/api/v1/assets/urls` for
+/// the 2×2 thumbnail mosaic.
+class PlaceGroup {
+  const PlaceGroup({
+    required this.placeName,
+    required this.count,
+    required this.previewIds,
+  });
+
+  final String placeName;
+  final int count;
+  final List<String> previewIds;
+
+  static PlaceGroup fromJson(Map<String, dynamic> j) => PlaceGroup(
+        placeName: j["placeName"] as String,
+        count: (j["count"] as num?)?.toInt() ?? 0,
+        previewIds: (j["previewIds"] as List? ?? const []).cast<String>(),
+      );
+}
