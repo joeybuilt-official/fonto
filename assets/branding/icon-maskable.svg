@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <!-- Maskable PWA icon. Teal bg full-bleed, f padded into central safe zone (~62%). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#33C6B8"/>
+      <stop offset="1" stop-color="#1C857C"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <g transform="translate(512 512) scale(0.62) translate(-512 -512)">
+    <g fill="none" stroke="#FFFFFF" stroke-width="104" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M642 300 a132 132 0 0 0 -132 132 v332"/>
+      <path d="M396 470 h300"/>
+    </g>
+  </g>
+</svg>
