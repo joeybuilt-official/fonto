@@ -18,6 +18,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
+import { recomputeCoverFacesForWorkspace } from "@/lib/faces/cluster";
 import { db, schema } from "@/lib/db";
 
 interface MergeBody {
@@ -90,6 +91,11 @@ export async function POST(
     updated_at = now()
     WHERE id = ${target.id}
   `);
+
+  // Target absorbed source's faces — one of THOSE might be better than
+  // whatever target's old cover was. Re-rank covers so the People grid
+  // shows the new best face after the merge.
+  await recomputeCoverFacesForWorkspace(target.workspaceId);
 
   const [refreshed] = await db
     .select()

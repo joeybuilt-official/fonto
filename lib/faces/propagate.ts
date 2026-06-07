@@ -14,6 +14,7 @@
 
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
+import { recomputeCoverFacesForWorkspace } from "@/lib/faces/cluster";
 
 // Tight auto-assign threshold — env-tunable. Anything at/under this is
 // confidently the same person and gets assigned without asking.
@@ -126,6 +127,11 @@ export async function propagateNamedPerson(
     ) c
     WHERE p.workspace_id = ${workspaceId} AND p.id = c.person_id
   `);
+
+  // The newly-attached faces may include a higher-quality candidate than
+  // whatever was used as the cover before — re-rank so the user sees the
+  // best face for the freshly-named person.
+  await recomputeCoverFacesForWorkspace(workspaceId);
 
   return { assigned: toAssign.length, suggested };
 }

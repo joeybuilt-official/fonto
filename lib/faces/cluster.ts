@@ -373,10 +373,56 @@ export async function clusterWorkspaceFaces(
       )
   `);
 
+  // Pick a quality-ranked cover for every person, not the first face seen
+  // when the cluster was first assembled. Score = detector confidence ×
+  // bbox area in normalised coords — high-confidence + large-in-frame wins.
+  // Excludes hidden faces. Same SQL as the one-shot recompute backfill.
+  await recomputeCoverFacesForWorkspace(workspaceId);
+
   log.info(
     { created, updated, noise, clusters: clusters.size },
     "clustering complete"
   );
 
   return { created, updated, noise };
+}
+
+/**
+ * Recompute `persons.cover_face_id` for every person in the workspace whose
+ * face_instances exist. The chosen face is the highest-quality unhidden
+ * face: confidence × bbox area, tie-break newer-photo-wins. Idempotent —
+ * running it twice on identical data produces the same result.
+ *
+ * Called inline at the end of clusterWorkspaceFaces() so the People grid
+ * reflects current truth right after any cluster pass. Also safe to
+ * trigger as an admin re-cover sweep.
+ */
+export async function recomputeCoverFacesForWorkspace(
+  workspaceId: string
+): Promise<void> {
+  await db.execute(sql`
+    WITH best_face AS (
+      SELECT DISTINCT ON (fi.person_id)
+        fi.person_id,
+        fi.id AS face_id
+      FROM fonto.face_instances fi
+      WHERE fi.workspace_id = ${workspaceId}
+        AND fi.person_id IS NOT NULL
+        AND fi.hidden = false
+        AND fi.confidence IS NOT NULL
+        AND fi.bbox IS NOT NULL
+      ORDER BY
+        fi.person_id,
+        fi.confidence * COALESCE(
+          (fi.bbox->>'w')::real * (fi.bbox->>'h')::real, 0
+        ) DESC,
+        fi.created_at DESC
+    )
+    UPDATE fonto.persons p
+    SET cover_face_id = bf.face_id, updated_at = now()
+    FROM best_face bf
+    WHERE p.id = bf.person_id
+      AND p.workspace_id = ${workspaceId}
+      AND (p.cover_face_id IS DISTINCT FROM bf.face_id);
+  `);
 }
