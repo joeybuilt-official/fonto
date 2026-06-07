@@ -60,6 +60,21 @@ class FontoClient {
     return json.decode(res.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> _putJson(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final res = await _http.put(
+      _uri(path),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode(body),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+    return json.decode(res.body) as Map<String, dynamic>;
+  }
+
   String _extractError(String body) {
     try {
       final j = json.decode(body) as Map<String, dynamic>;
@@ -608,6 +623,18 @@ class FontoClient {
     final j = await _getJson("/api/v1/workspace/shared-with-me");
     final raw = (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
     return raw.map(SharedAsset.fromJson).toList();
+  }
+
+  /// Person groups (Family, Friends, Colleagues, …). Built-ins + workspace custom.
+  Future<List<PersonGroup>> listPersonGroups() async {
+    final j = await _getJson("/api/v1/person-groups");
+    final raw = (j["groups"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(PersonGroup.fromJson).toList();
+  }
+
+  /// Replace all group memberships for [personId] with [groupIds].
+  Future<void> setPersonGroups(String personId, List<String> groupIds) async {
+    await _putJson("/api/v1/persons/$personId/groups", {"groupIds": groupIds});
   }
 
   void close() => _http.close();

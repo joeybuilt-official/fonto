@@ -15,6 +15,13 @@ import { Loader2, Users, Play, EyeOff } from "lucide-react";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
+interface PersonGroup {
+  id: string;
+  name: string;
+  color: string;
+  builtin: boolean;
+}
+
 interface PersonGridEntry {
   id: string;
   name: string | null;
@@ -23,11 +30,9 @@ interface PersonGridEntry {
   hidden: boolean;
   coverAssetId: string | null;
   coverBbox: { x: number; y: number; w: number; h: number } | null;
-  // Phase 2 (faces/UX) — dedicated square crop for the cover face (sharp,
-  // centered). NULL until the crop is generated; we then fall back to the
-  // signed preview-CSS-zoom path so the grid is never blank.
   coverFaceCropKey: string | null;
   coverFaceCropUrl: string | null;
+  groupIds: string[];
 }
 
 // Phase 2 (faces/UX) — uniform circular face tile. Prefers the dedicated
@@ -142,6 +147,8 @@ function PeopleContent() {
   });
 
   const [persons, setPersons] = useState<PersonGridEntry[]>([]);
+  const [groups, setGroups] = useState<PersonGroup[]>([]);
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [clustering, setClustering] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -153,14 +160,21 @@ function PeopleContent() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/v1/persons");
-      if (!res.ok) {
-        setError(`Failed to load people (${res.status}).`);
+      const [personsRes, groupsRes] = await Promise.all([
+        fetch("/api/v1/persons"),
+        fetch("/api/v1/person-groups"),
+      ]);
+      if (!personsRes.ok) {
+        setError(`Failed to load people (${personsRes.status}).`);
         setPersons([]);
         return;
       }
-      const data = (await res.json()) as { persons: PersonGridEntry[] };
+      const data = (await personsRes.json()) as { persons: PersonGridEntry[] };
       setPersons(data.persons ?? []);
+      if (groupsRes.ok) {
+        const gdata = (await groupsRes.json()) as { groups: PersonGroup[] };
+        setGroups(gdata.groups ?? []);
+      }
     } catch {
       setError("Network error loading people.");
     } finally {
@@ -239,8 +253,14 @@ function PeopleContent() {
     }
   }, [persons]);
 
+  // Groups that have at least one visible person — used to suppress empty chips.
+  const activeGroupIds = useMemo(() => new Set(persons.flatMap((p) => p.groupIds)), [persons]);
+
   const visible = useMemo(() => {
     let list = persons;
+    if (activeGroupId) {
+      list = list.filter((p) => p.groupIds.includes(activeGroupId));
+    }
     if (toolbar.filters.q) {
       const needle = toolbar.filters.q.toLowerCase();
       list = list.filter((p) =>
@@ -252,15 +272,12 @@ function PeopleContent() {
         (a.name ?? "").localeCompare(b.name ?? "")
       );
     } else if (toolbar.filters.sort === "oldest") {
-      // "oldest" → fewest faces first (smallest cluster). Useful for
-      // finding outliers / clusters that may need merging.
       list = [...list].sort((a, b) => a.instanceCount - b.instanceCount);
     } else {
-      // Default newest = most-active = largest cluster.
       list = [...list].sort((a, b) => b.instanceCount - a.instanceCount);
     }
     return list;
-  }, [persons, toolbar.filters.q, toolbar.filters.sort]);
+  }, [persons, activeGroupId, toolbar.filters.q, toolbar.filters.sort]);
 
   return (
     <div className="space-y-3">
@@ -283,6 +300,46 @@ function PeopleContent() {
           onClick: () => void runCluster(),
         }}
       />
+
+      {/* Group filter chip strip — hidden while loading or when no groups have members */}
+      {!loading && groups.some((g) => activeGroupIds.has(g.id)) && (
+        <div className="px-4 overflow-x-auto">
+          <div className="flex items-center gap-2 pb-1 min-w-0">
+            <button
+              type="button"
+              onClick={() => setActiveGroupId(null)}
+              className={`shrink-0 inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                activeGroupId === null
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              All
+            </button>
+            {groups
+              .filter((g) => activeGroupIds.has(g.id))
+              .map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => setActiveGroupId(activeGroupId === g.id ? null : g.id)}
+                  className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                    activeGroupId === g.id
+                      ? "border-transparent text-white"
+                      : "border-border bg-background text-muted-foreground hover:text-foreground"
+                  }`}
+                  style={activeGroupId === g.id ? { backgroundColor: g.color } : undefined}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full shrink-0"
+                    style={{ backgroundColor: g.color }}
+                  />
+                  {g.name}
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
 
       <div className="px-4 space-y-4">
         <div className="flex justify-end">

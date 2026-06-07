@@ -104,9 +104,9 @@ class _PeopleTabState extends State<_PeopleTab> {
   String? _error;
   List<Person> _items = const [];
   final Map<String, String> _thumbs = {};
-  // Phase 3 (faces/UX) — resolved signed face-crop URLs, keyed by person id.
-  // Prefer these sharp, centered crops over zooming a 256px thumb.
   final Map<String, String> _faceCrops = {};
+  List<PersonGroup> _groups = const [];
+  String? _activeGroupId;
 
   @override
   void initState() {
@@ -122,7 +122,12 @@ class _PeopleTabState extends State<_PeopleTab> {
       _faceCrops.clear();
     });
     try {
-      final raw = await widget.client.listPersons();
+      final results = await Future.wait([
+        widget.client.listPersons(),
+        widget.client.listPersonGroups(),
+      ]);
+      final raw = results[0] as List<Person>;
+      final groups = results[1] as List<PersonGroup>;
       final seen = <String>{};
       final items = raw.where((p) => seen.add(p.id)).toList();
       final coverIds = items
@@ -132,9 +137,6 @@ class _PeopleTabState extends State<_PeopleTab> {
       final thumbs = coverIds.isEmpty
           ? <String, String>{}
           : await widget.client.assetUrls(coverIds, variant: "thumb");
-      // Phase 3 (faces/UX) — resolve the dedicated face-crop signed URL for any
-      // person that has one. Done in parallel; failures just leave the thumb
-      // fallback in place. NULL coverFaceCropUrl => not yet backfilled.
       final cropTargets =
           items.where((p) => p.coverFaceCropUrl != null).toList();
       final crops = <String, String>{};
@@ -147,6 +149,7 @@ class _PeopleTabState extends State<_PeopleTab> {
         _items = items;
         _thumbs.addAll(thumbs);
         _faceCrops.addAll(crops);
+        _groups = groups;
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -166,36 +169,130 @@ class _PeopleTabState extends State<_PeopleTab> {
 
   @override
   Widget build(BuildContext context) {
-    return _stateScaffold(
-      loading: _loading,
-      error: _error,
-      isEmpty: _items.isEmpty,
-      emptyText: "No people yet. Faces get grouped as your library grows.",
-      onRetry: _load,
-      builder: () => GridView.builder(
-        padding: const EdgeInsets.all(8),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
-          childAspectRatio: 0.8,
-        ),
-        itemCount: _items.length,
-        itemBuilder: (context, i) => _PersonTile(
-          person: _items[i],
-          url: _thumbs[_items[i].coverAssetId],
-          faceCropUrl: _faceCrops[_items[i].id],
-          onTap: () async {
-            final merged = await Navigator.of(context).push<bool>(
-              MaterialPageRoute(
-                builder: (_) => _PersonAssetsScreen(
-                  client: widget.client,
-                  person: _items[i],
+    // Groups that have at least one person in the current list.
+    final occupiedGroupIds =
+        _items.expand((p) => p.groupIds).toSet();
+    final visibleGroups =
+        _groups.where((g) => occupiedGroupIds.contains(g.id)).toList();
+    final filtered = _activeGroupId == null
+        ? _items
+        : _items.where((p) => p.groupIds.contains(_activeGroupId)).toList();
+
+    return Column(
+      children: [
+        if (visibleGroups.isNotEmpty && !_loading)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              children: [
+                _GroupChip(
+                  label: "All",
+                  color: const Color(0xFF6B7280),
+                  selected: _activeGroupId == null,
+                  onTap: () => setState(() => _activeGroupId = null),
                 ),
+                const SizedBox(width: 6),
+                ...visibleGroups.map((g) => Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: _GroupChip(
+                        label: g.name,
+                        color: _parseColor(g.color),
+                        selected: _activeGroupId == g.id,
+                        onTap: () => setState(() =>
+                            _activeGroupId =
+                                _activeGroupId == g.id ? null : g.id),
+                      ),
+                    )),
+              ],
+            ),
+          ),
+        Expanded(
+          child: _stateScaffold(
+            loading: _loading,
+            error: _error,
+            isEmpty: filtered.isEmpty,
+            emptyText: _activeGroupId != null
+                ? "No people in this group yet."
+                : "No people yet. Faces get grouped as your library grows.",
+            onRetry: _load,
+            builder: () => GridView.builder(
+              padding: const EdgeInsets.all(8),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+                childAspectRatio: 0.8,
               ),
-            );
-            if (merged == true) _load();
-          },
+              itemCount: filtered.length,
+              itemBuilder: (context, i) => _PersonTile(
+                person: filtered[i],
+                url: _thumbs[filtered[i].coverAssetId],
+                faceCropUrl: _faceCrops[filtered[i].id],
+                onTap: () async {
+                  final merged = await Navigator.of(context).push<bool>(
+                    MaterialPageRoute(
+                      builder: (_) => _PersonAssetsScreen(
+                        client: widget.client,
+                        person: filtered[i],
+                      ),
+                    ),
+                  );
+                  if (merged == true) _load();
+                },
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _GroupChip extends StatelessWidget {
+  const _GroupChip({
+    required this.label,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? color : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? color : Theme.of(context).dividerColor,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!selected)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: CircleAvatar(backgroundColor: color, radius: 4),
+              ),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : null,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -280,6 +377,17 @@ class _PersonTile extends StatelessWidget {
 }
 
 /// Zoom into the face described by [bbox] (normalised 0..1) within [url].
+/// Parse a hex color string (#rrggbb) to a Flutter Color.
+/// Falls back to grey on any parse error.
+Color _parseColor(String hex) {
+  try {
+    final clean = hex.replaceFirst("#", "");
+    return Color(int.parse("FF$clean", radix: 16));
+  } catch (_) {
+    return const Color(0xFF6B7280);
+  }
+}
+
 /// Translates + scales the image so the face center aligns with the widget
 /// center and the face fills ~65% of the circle diameter.
 Widget _buildFaceZoom(String url, PersonBbox bbox, double d) {
@@ -694,15 +802,18 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   final Map<String, String> _thumbs = {};
   bool _merging = false;
   late String? _name;
-  // Tracks whether anything the caller cares about has changed (rename,
-  // remove name, merge). Used as the back-pop result so the People grid
-  // refreshes the cluster list when the user navigates back.
   bool _changed = false;
+
+  // Groups
+  List<PersonGroup> _allGroups = const [];
+  List<String> _personGroupIds = const [];
+  bool _savingGroups = false;
 
   @override
   void initState() {
     super.initState();
     _name = widget.person.name;
+    _personGroupIds = List<String>.from(widget.person.groupIds);
     _load();
   }
 
@@ -849,7 +960,12 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       _error = null;
     });
     try {
-      final assets = await widget.client.assetsByPerson(widget.person.id);
+      final results = await Future.wait([
+        widget.client.assetsByPerson(widget.person.id),
+        widget.client.listPersonGroups(),
+      ]);
+      final assets = results[0] as List<Asset>;
+      final groups = results[1] as List<PersonGroup>;
       final thumbs = assets.isEmpty
           ? <String, String>{}
           : await widget.client
@@ -858,12 +974,32 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       setState(() {
         _assets = assets;
         _thumbs.addAll(thumbs);
+        _allGroups = groups;
         _loading = false;
       });
     } on ApiException catch (e) {
       _fail("${e.status}: ${e.message}");
     } catch (e) {
       _fail(e.toString());
+    }
+  }
+
+  Future<void> _toggleGroup(String groupId) async {
+    final next = _personGroupIds.contains(groupId)
+        ? _personGroupIds.where((g) => g != groupId).toList()
+        : [..._personGroupIds, groupId];
+    final prev = _personGroupIds;
+    setState(() {
+      _personGroupIds = next;
+      _savingGroups = true;
+    });
+    try {
+      await widget.client.setPersonGroups(widget.person.id, next);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _personGroupIds = prev);
+    } finally {
+      if (mounted) setState(() => _savingGroups = false);
     }
   }
 
@@ -944,7 +1080,42 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                 ),
         ],
       ),
-      body: _stateScaffold(
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Group assignment chip strip
+          if (_allGroups.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Opacity(
+                opacity: _savingGroups ? 0.6 : 1.0,
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: _allGroups.map((g) {
+                    final active = _personGroupIds.contains(g.id);
+                    final color = _parseColor(g.color);
+                    return FilterChip(
+                      label: Text(g.name),
+                      selected: active,
+                      onSelected: _savingGroups ? null : (_) => _toggleGroup(g.id),
+                      selectedColor: color.withValues(alpha: 0.2),
+                      checkmarkColor: color,
+                      side: BorderSide(
+                        color: active ? color : Theme.of(context).dividerColor,
+                      ),
+                      labelStyle: TextStyle(
+                        color: active ? color : null,
+                        fontSize: 12,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+          Expanded(
+            child: _stateScaffold(
         loading: _loading,
         error: _error,
         isEmpty: _assets.isEmpty,
@@ -991,6 +1162,9 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
           ),
         ),
       ),
+            ),
+          ),
+        ],
       ),
     );
   }

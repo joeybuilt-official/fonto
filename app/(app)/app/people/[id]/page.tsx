@@ -23,6 +23,14 @@ interface Person {
   coverFaceId: string | null;
   instanceCount: number;
   hidden: boolean;
+  groupIds?: string[];
+}
+
+interface PersonGroup {
+  id: string;
+  name: string;
+  color: string;
+  builtin: boolean;
 }
 
 interface FaceAssetMeta {
@@ -180,6 +188,11 @@ export default function PersonDetailPage({
     []
   );
 
+  // Groups
+  const [allGroups, setAllGroups] = useState<PersonGroup[]>([]);
+  const [personGroupIds, setPersonGroupIds] = useState<string[]>([]);
+  const [savingGroups, setSavingGroups] = useState(false);
+
   // Merge picker
   const [showMerge, setShowMerge] = useState(false);
   const [allPersons, setAllPersons] = useState<PersonGridEntry[]>([]);
@@ -197,9 +210,10 @@ export default function PersonDetailPage({
     setLoading(true);
     setError(null);
     try {
-      const [pRes, fRes] = await Promise.all([
+      const [pRes, fRes, gRes] = await Promise.all([
         fetch(`/api/v1/persons/${id}`),
         fetch(`/api/v1/persons/${id}/faces?limit=200`),
+        fetch("/api/v1/person-groups"),
       ]);
       if (!pRes.ok) {
         setError(`Failed to load person (${pRes.status}).`);
@@ -208,9 +222,14 @@ export default function PersonDetailPage({
       const pData = (await pRes.json()) as { person: Person };
       setPerson(pData.person);
       setName(pData.person.name ?? "");
+      setPersonGroupIds(pData.person.groupIds ?? []);
       if (fRes.ok) {
         const fData = (await fRes.json()) as { faces: FaceEntry[] };
         setFaces(fData.faces ?? []);
+      }
+      if (gRes.ok) {
+        const gData = (await gRes.json()) as { groups: PersonGroup[] };
+        setAllGroups(gData.groups ?? []);
       }
     } catch {
       setError("Network error loading person.");
@@ -235,6 +254,29 @@ export default function PersonDetailPage({
     }
     if (stashed) showToast(stashed, "success");
   }, [showToast]);
+
+  const toggleGroup = useCallback(
+    async (groupId: string) => {
+      if (!person) return;
+      const next = personGroupIds.includes(groupId)
+        ? personGroupIds.filter((g) => g !== groupId)
+        : [...personGroupIds, groupId];
+      setPersonGroupIds(next);
+      setSavingGroups(true);
+      try {
+        await fetch(`/api/v1/persons/${person.id}/groups`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groupIds: next }),
+        });
+      } catch {
+        setPersonGroupIds(personGroupIds); // revert on error
+      } finally {
+        setSavingGroups(false);
+      }
+    },
+    [person, personGroupIds]
+  );
 
   const saveName = useCallback(async () => {
     if (!person) return;
@@ -565,6 +607,34 @@ export default function PersonDetailPage({
             {person.hidden && <span className="ml-2 italic">(hidden)</span>}{" "}
             — {headline}
           </p>
+          {/* Group assignment chips */}
+          {allGroups.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              {allGroups.map((g) => {
+                const active = personGroupIds.includes(g.id);
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    disabled={savingGroups}
+                    onClick={() => void toggleGroup(g.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors disabled:opacity-60 ${
+                      active
+                        ? "border-transparent text-white"
+                        : "border-border bg-background text-muted-foreground hover:text-foreground"
+                    }`}
+                    style={active ? { backgroundColor: g.color } : undefined}
+                  >
+                    <span
+                      className="h-1.5 w-1.5 rounded-full shrink-0"
+                      style={{ backgroundColor: g.color }}
+                    />
+                    {g.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 

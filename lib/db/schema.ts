@@ -928,6 +928,46 @@ export const faceInstances = fontoSchema.table(
   ]
 );
 
+// Phase 6 (faces/UX) — person groups (Family, Friends, Colleagues, …).
+//
+// Two tables:
+//   person_groups       — label rows. workspace_id = NULL means built-in
+//                         (shared across all workspaces). Non-null = custom
+//                         group created by the workspace owner.
+//   person_group_members — many-to-many. A person can belong to 0..N groups.
+//                         Cascade-deletes when either the person or group row
+//                         is removed.
+export const personGroups = fontoSchema.table(
+  "person_groups",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id"), // NULL = built-in
+    name: text("name").notNull(),
+    color: text("color").notNull().default("#6b7280"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("person_groups_workspace_name_idx").on(
+      table.workspaceId,
+      table.name
+    ),
+    index("person_groups_workspace_idx").on(table.workspaceId),
+  ]
+);
+
+export const personGroupMembers = fontoSchema.table(
+  "person_group_members",
+  {
+    personId: uuid("person_id").notNull(),
+    groupId: uuid("group_id").notNull(),
+  },
+  (table) => [
+    index("pgm_group_id_idx").on(table.groupId),
+    index("pgm_person_id_idx").on(table.personId),
+  ]
+);
+
 // Phase 3.3 — workspace invitations.
 //
 // Email-keyed invitations that produce `workspace_memberships` rows on

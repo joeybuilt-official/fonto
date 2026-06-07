@@ -14,7 +14,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, sql, exists } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -30,15 +30,11 @@ interface PersonOut {
   hidden: boolean;
   createdAt: string;
   updatedAt: string;
-  // The asset the cover face is on (so the client can render a crop).
-  // NULL when the person has no faces yet, or coverFaceId is stale.
   coverAssetId: string | null;
   coverBbox: { x: number; y: number; w: number; h: number } | null;
-  // Phase 1 (faces/UX) — dedicated square crop for the cover face. NULL until
-  // the crop is generated (detect-time or backfill). When present the grid
-  // renders this sharp, centered crop instead of CSS-zooming `preview`.
   coverFaceCropKey: string | null;
   coverFaceCropUrl: string | null;
+  groupIds: string[];
 }
 
 export async function GET(request: NextRequest) {
@@ -50,18 +46,36 @@ export async function GET(request: NextRequest) {
   const workspaceIds = workspaces.map((w) => w.id);
 
   const includeHidden = request.nextUrl.searchParams.get("hidden") === "true";
+  const filterGroupId = request.nextUrl.searchParams.get("group_id");
 
   // Default grid excludes hidden persons AND empty clusters (instance_count
   // = 0). A re-cluster zeroes-out persons whose faces were all detached
   // (e.g. the junk-screenshot prune) but keeps the row to preserve any
   // name/hidden edits — those empty rows must never render as ghost cards.
-  const where = includeHidden
+  const baseWhere = includeHidden
     ? inArray(schema.persons.workspaceId, workspaceIds)
     : and(
         inArray(schema.persons.workspaceId, workspaceIds),
         eq(schema.persons.hidden, false),
         gt(schema.persons.instanceCount, 0)
       );
+
+  const where = filterGroupId
+    ? and(
+        baseWhere,
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(schema.personGroupMembers)
+            .where(
+              and(
+                eq(schema.personGroupMembers.personId, schema.persons.id),
+                eq(schema.personGroupMembers.groupId, filterGroupId)
+              )
+            )
+        )
+      )
+    : baseWhere;
 
   const rows = await db
     .select()
@@ -100,6 +114,24 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Batch-load group memberships for all returned persons.
+  const personIds = rows.map((r) => r.id);
+  const groupsByPerson = new Map<string, string[]>();
+  if (personIds.length > 0) {
+    const memberRows = await db
+      .select({
+        personId: schema.personGroupMembers.personId,
+        groupId: schema.personGroupMembers.groupId,
+      })
+      .from(schema.personGroupMembers)
+      .where(inArray(schema.personGroupMembers.personId, personIds));
+    for (const m of memberRows) {
+      const list = groupsByPerson.get(m.personId) ?? [];
+      list.push(m.groupId);
+      groupsByPerson.set(m.personId, list);
+    }
+  }
+
   const persons: PersonOut[] = rows.map((p) => {
     const cover = p.coverFaceId ? facesById.get(p.coverFaceId) : undefined;
     const bb = cover?.bbox as
@@ -129,6 +161,7 @@ export async function GET(request: NextRequest) {
         cover && cover.faceCropKey && p.coverFaceId
           ? `/api/v1/assets/${cover.assetId}/url?variant=face&faceId=${p.coverFaceId}`
           : null,
+      groupIds: groupsByPerson.get(p.id) ?? [],
     };
   });
 

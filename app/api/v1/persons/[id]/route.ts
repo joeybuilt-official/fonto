@@ -80,6 +80,13 @@ export async function GET(
     )
     .limit(limit);
 
+  // Load group memberships for this person.
+  const memberRows = await db
+    .select({ groupId: schema.personGroupMembers.groupId })
+    .from(schema.personGroupMembers)
+    .where(eq(schema.personGroupMembers.personId, person.id));
+  const groupIds = memberRows.map((m) => m.groupId);
+
   return NextResponse.json({
     person: {
       id: person.id,
@@ -90,6 +97,7 @@ export async function GET(
       hidden: person.hidden,
       createdAt: person.createdAt.toISOString(),
       updatedAt: person.updatedAt.toISOString(),
+      groupIds,
     },
     faces: faces.map((f) => ({
       ...f,

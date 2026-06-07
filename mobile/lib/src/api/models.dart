@@ -382,6 +382,27 @@ class PersonBbox {
 /// lives on. `coverBbox` is the normalised bbox of the cover face — used to
 /// zoom into the face in the People grid circle.
 /// `name` is null until the user labels the cluster.
+class PersonGroup {
+  const PersonGroup({
+    required this.id,
+    required this.name,
+    required this.color,
+    required this.builtin,
+  });
+
+  final String id;
+  final String name;
+  final String color;
+  final bool builtin;
+
+  static PersonGroup fromJson(Map<String, dynamic> j) => PersonGroup(
+        id: j["id"] as String,
+        name: j["name"] as String,
+        color: (j["color"] as String?) ?? "#6b7280",
+        builtin: (j["builtin"] as bool?) ?? false,
+      );
+}
+
 class Person {
   Person({
     required this.id,
@@ -390,6 +411,7 @@ class Person {
     this.coverAssetId,
     this.coverBbox,
     this.coverFaceCropUrl,
+    this.groupIds = const [],
   });
 
   final String id;
@@ -397,11 +419,8 @@ class Person {
   final String? name;
   final String? coverAssetId;
   final PersonBbox? coverBbox;
-
-  /// Phase 3 (faces/UX) — relative API path to the dedicated, sharp, centered
-  /// square crop of the cover face (`variant=face`). Null until the crop is
-  /// generated/backfilled; clients fall back to a zoomed thumb.
   final String? coverFaceCropUrl;
+  final List<String> groupIds;
 
   static Person fromJson(Map<String, dynamic> j) => Person(
         id: j["id"] as String,
@@ -410,6 +429,7 @@ class Person {
         coverAssetId: j["coverAssetId"] as String?,
         coverBbox: PersonBbox.fromJson(j["coverBbox"]),
         coverFaceCropUrl: j["coverFaceCropUrl"] as String?,
+        groupIds: (j["groupIds"] as List? ?? const []).cast<String>(),
       );
 }
 
