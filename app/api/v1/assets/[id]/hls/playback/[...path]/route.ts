@@ -22,13 +22,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { resolveAssetAccess } from "@/lib/assets/access";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getS3Client, hlsSegmentKeyPrefix } from "@/lib/r2";
 
 const ALLOWED_FILE = /^[a-zA-Z0-9._-]+$/;
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string; path: string[] }> }
 ) {
   const { id, path } = await params;
@@ -73,14 +72,38 @@ export async function GET(
     }
   }
 
-  // .ts segment: redirect to a short-lived presigned URL.
+  // .ts segment: stream the bytes through this proxy rather than 302ing
+  // to a presigned R2 URL. A redirect breaks native players (Android
+  // ExoPlayer / iOS) that carry the request's `Authorization: Bearer`
+  // header across the cross-origin hop — R2 rejects a presigned URL that
+  // also carries an Authorization header ("only one auth mechanism").
+  // Browsers strip auth on cross-origin redirects so they were fine, but
+  // the app was not. Streaming keeps a single auth model for both.
   if (file.endsWith(".ts")) {
-    const url = await getSignedUrl(
-      s3,
-      new GetObjectCommand({ Bucket: bucket, Key: key }),
-      { expiresIn: 300 } // 5 min — well past one segment's playback window
-    );
-    return NextResponse.redirect(url, 302);
+    const range = request.headers.get("range") ?? undefined;
+    try {
+      const obj = await s3.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key, Range: range })
+      );
+      if (!obj.Body) return NextResponse.json({ error: "Empty" }, { status: 502 });
+      const stream = (obj.Body as { transformToWebStream: () => ReadableStream }).transformToWebStream();
+      const headers: Record<string, string> = {
+        "Content-Type": "video/mp2t",
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=300, immutable",
+      };
+      if (obj.ContentLength != null) headers["Content-Length"] = String(obj.ContentLength);
+      if (obj.ContentRange) headers["Content-Range"] = obj.ContentRange;
+      return new NextResponse(stream, {
+        status: obj.ContentRange ? 206 : 200,
+        headers,
+      });
+    } catch (err) {
+      return NextResponse.json(
+        { error: "R2 fetch failed", detail: err instanceof Error ? err.message : String(err) },
+        { status: 502 }
+      );
+    }
   }
 
   return NextResponse.json({ error: "Unsupported file type" }, { status: 400 });
