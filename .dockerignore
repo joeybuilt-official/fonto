@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.env*.local
+.env
+coverage
+.nyc_output
+dist
+build
+__tests__
+*.test.ts
+*.spec.ts
+mobile
