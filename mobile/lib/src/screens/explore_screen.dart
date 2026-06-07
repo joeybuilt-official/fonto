@@ -694,6 +694,10 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   final Map<String, String> _thumbs = {};
   bool _merging = false;
   late String? _name;
+  // Tracks whether anything the caller cares about has changed (rename,
+  // remove name, merge). Used as the back-pop result so the People grid
+  // refreshes the cluster list when the user navigates back.
+  bool _changed = false;
 
   @override
   void initState() {
@@ -809,7 +813,10 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       final updated =
           await widget.client.updatePersonName(widget.person.id, trimmed);
       if (!mounted) return;
-      setState(() => _name = updated.name);
+      setState(() {
+        _name = updated.name;
+        _changed = true;
+      });
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(content: Text("Rename failed: $e")));
@@ -825,7 +832,10 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       final updated =
           await widget.client.updatePersonName(widget.person.id, null);
       if (!mounted) return;
-      setState(() => _name = updated.name);
+      setState(() {
+        _name = updated.name;
+        _changed = true;
+      });
       messenger.showSnackBar(const SnackBar(content: Text("Name removed")));
     } catch (e) {
       if (!mounted) return;
@@ -868,7 +878,17 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   @override
   Widget build(BuildContext context) {
     final title = _name ?? "Unnamed";
-    return Scaffold(
+    return PopScope<Object?>(
+      // Intercept the back gesture/button so we can hand the caller a
+      // `_changed` flag — the People grid uses it as the refresh signal.
+      // Without this, a rename here updated the local screen but the
+      // grid still showed "Unnamed" on back-navigation.
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        Navigator.of(context).pop(_changed);
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text(title),
         actions: [
@@ -970,6 +990,7 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                   ),
           ),
         ),
+      ),
       ),
     );
   }

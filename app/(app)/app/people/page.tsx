@@ -168,6 +168,21 @@ function PeopleContent() {
 
   useEffect(() => {
     void load();
+    // Re-fetch when the page becomes visible again — covers the case
+    // where the App Router cache served a stale snapshot after a person
+    // was renamed on the detail page. visibilitychange + pageshow between
+    // them cover tab-switch, in-app back-nav (Safari/iOS bfcache), and
+    // browser focus.
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    const handlePageShow = () => void load();
+    document.addEventListener("visibilitychange", handleVisible);
+    window.addEventListener("pageshow", handlePageShow);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisible);
+      window.removeEventListener("pageshow", handlePageShow);
+    };
   }, [load]);
 
   const runCluster = useCallback(async () => {

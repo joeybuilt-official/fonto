@@ -13,6 +13,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ChevronLeft, Loader2, Check, EyeOff, Users, X } from "lucide-react";
 
 interface Person {
@@ -151,6 +152,7 @@ export default function PersonDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const router = useRouter();
 
   const [person, setPerson] = useState<Person | null>(null);
   const [faces, setFaces] = useState<FaceEntry[]>([]);
@@ -218,11 +220,15 @@ export default function PersonDetailPage({
         const data = (await res.json()) as { person: Person };
         setPerson(data.person);
         setName(data.person.name ?? "");
+        // Invalidate the App Router cache so /app/people fetches fresh
+        // persons on the next navigation — otherwise the grid showed
+        // the pre-rename "Unnamed" label until a hard reload.
+        router.refresh();
       }
     } finally {
       setSavingName(false);
     }
-  }, [person, name]);
+  }, [person, name, router]);
 
   // Phase 2 (faces/UX) — explicit Remove-name control. The PATCH route clears
   // the name on null, so we send `name: null` and optimistically reflect the
@@ -240,11 +246,12 @@ export default function PersonDetailPage({
         const data = (await res.json()) as { person: Person };
         setPerson(data.person);
         setName(data.person.name ?? "");
+        router.refresh();
       }
     } finally {
       setSavingName(false);
     }
-  }, [person]);
+  }, [person, router]);
 
   const toggleSelect = useCallback((faceId: string) => {
     setSelected((prev) => {
