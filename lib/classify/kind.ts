@@ -48,13 +48,37 @@ function isDocumentMime(mimeType: string): boolean {
 export interface KindInput {
   mimeType: string;
   classification: string | null;
+  // Phase 7.1 — real-camera-capture signals. Any one of these being set
+  // positively identifies a photo (not a screenshot / logo / icon). cameraMake
+  // ALONE doesn't count: iOS + Android stamp the device make on screenshots
+  // too. exposureTime / fNumber / iso / focalLength / lensModel are only ever
+  // set by a real camera capture pipeline.
+  exposureTime?: string | null;
+  fNumber?: number | null;
+  iso?: number | null;
+  focalLength?: number | null;
+  lensModel?: string | null;
+}
+
+function hasRealCameraSignals(asset: KindInput): boolean {
+  return Boolean(
+    (asset.exposureTime !== null && asset.exposureTime !== undefined && asset.exposureTime !== "") ||
+      (asset.fNumber !== null && asset.fNumber !== undefined && asset.fNumber > 0) ||
+      (asset.iso !== null && asset.iso !== undefined && asset.iso > 0) ||
+      (asset.focalLength !== null && asset.focalLength !== undefined && asset.focalLength > 0) ||
+      (asset.lensModel !== null && asset.lensModel !== undefined && asset.lensModel !== ""),
+  );
 }
 
 /**
- * Pure KIND resolution. Null/unknown classification (e.g. the in-flight
- * `captured` backlog, or camera images the classifier hasn't reached)
- * defaults to `moment` — the pre-mortem fallback that keeps real photos in
- * the default lens; a later re-classify only moves edge cases.
+ * Pure KIND resolution. Phase 7.1 — Moments require POSITIVE evidence of a
+ * real camera capture (an exposure parameter or a lens). Images that lack
+ * that evidence (screenshots, logos, icons, mockups, app captures, debug
+ * snapshots) fall into `screenshot` rather than polluting the default lens.
+ *
+ * The override at processAsset.ts:172 used to flip phone screenshots back to
+ * "photo" because cameraMake is non-null — but iOS / Android stamp the device
+ * on screenshots too. This rule fixes the resulting Moment flood.
  */
 export function deriveKind(asset: KindInput): Kind {
   const { mimeType, classification } = asset;
@@ -62,5 +86,11 @@ export function deriveKind(asset: KindInput): Kind {
   if (classification === "screenshot") return "screenshot";
   if (isDocumentMime(mimeType)) return "document";
   if (classification && DOCUMENT_CLASSIFICATIONS.has(classification)) return "document";
+  // Image without a screenshot/document/video signal — Moment only if a
+  // real-camera-capture parameter is present. Otherwise treat as screenshot.
+  if (mimeType.startsWith("image/")) {
+    return hasRealCameraSignals(asset) ? "moment" : "screenshot";
+  }
+  // Unknown mime — pre-existing fallback.
   return "moment";
 }

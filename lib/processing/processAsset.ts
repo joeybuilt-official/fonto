@@ -50,7 +50,10 @@ const DOCUMENT_TRIGGER_MIME = ["application/pdf", "text/", "image/tiff"];
 // Detect them deterministically: a filename that mentions "screenshot", or a
 // PNG whose aspect ratio matches a phone-portrait (~9:16–9:21) or desktop 16:9
 // display. When matched we force classification to "screenshot".
-const SCREENSHOT_NAME_RE = /screenshot|screen.?shot/i;
+// Filename markers used by iOS / Android / Pixel / Samsung / 3rd-party tools.
+const SCREENSHOT_NAME_RE =
+  /screenshot|screen.?shot|^scrnli|^screen[_-]?recording/i;
+
 function isScreenshot(
   filename: string,
   mimeType: string,
@@ -58,13 +61,47 @@ function isScreenshot(
   heightPx: number | null,
 ): boolean {
   if (SCREENSHOT_NAME_RE.test(filename)) return true;
-  if (mimeType === "image/png" && widthPx && heightPx) {
+  // Aspect-ratio heuristic. Phone screenshots ARE saved as JPEG too (iOS
+  // "Save to Files", Drive re-encodes PNG → JPEG on import), so the PNG-only
+  // gate from the original heuristic was missing every Drive-imported phone
+  // capture. Apply to any image mime; the camera-EXIF gate below catches
+  // false positives on real photos that happen to be 9:16.
+  if (mimeType.startsWith("image/") && widthPx && heightPx) {
     const ar = widthPx / heightPx;
-    const portraitScreen = ar >= 0.42 && ar <= 0.66; // tall phone
-    const landscapeScreen = ar >= 1.7 && ar <= 1.85; // 16:9 desktop
-    return portraitScreen || landscapeScreen;
+    // Modern phone screens span 9:16 (~0.5625) through 9:21+ (~0.43). Drop
+    // the lower bound a hair to cover the Pixel 9 Pro Fold inner display
+    // and other foldables (1280×2856 ≈ 0.448).
+    const portraitScreen = ar >= 0.40 && ar <= 0.66;
+    // 16:9 / 16:10 desktop captures. Widening to 1.55 catches MacBook 16:10
+    // (2560×1600 = 1.6) and Surface (1.5).
+    const landscapeScreen = ar >= 1.55 && ar <= 1.85;
+    if (portraitScreen || landscapeScreen) return true;
   }
   return false;
+}
+
+// Real camera captures (any device — phone, DSLR, mirrorless, drone, action
+// cam) carry exposure metadata that screenshots NEVER have: shutter speed,
+// f-stop, ISO, focal length, or a lens model string. cameraMake alone is
+// not enough — iOS / Android stamp the device make on screenshots too. Use
+// this to decide whether the screenshot override should fire OR to confirm a
+// `kind='moment'` outside the documented screenshot/document/video buckets.
+interface CameraEvidence {
+  exposureTime?: string | null;
+  fNumber?: number | null;
+  iso?: number | null;
+  focalLength?: number | null;
+  lensModel?: string | null;
+}
+
+function hasRealCameraSignals(exif: CameraEvidence): boolean {
+  return Boolean(
+    (exif.exposureTime !== null && exif.exposureTime !== undefined && exif.exposureTime !== "") ||
+      (exif.fNumber !== null && exif.fNumber !== undefined && exif.fNumber > 0) ||
+      (exif.iso !== null && exif.iso !== undefined && exif.iso > 0) ||
+      (exif.focalLength !== null && exif.focalLength !== undefined && exif.focalLength > 0) ||
+      (exif.lensModel !== null && exif.lensModel !== undefined && exif.lensModel !== ""),
+  );
 }
 
 export interface ProcessAssetParams {
@@ -120,6 +157,10 @@ async function processAssetInner(
   // in the non-image branch below and persisted as ocr_text further down.
   let docText: string | null = null;
   let docOcrState: "ready" | "empty" | null = null;
+  // Phase 7.1 — real-camera-capture signals shared between the screenshot
+  // override (inside the image branch) and the deriveKind call below.
+  // Hoisted to function scope so we only read the row once.
+  let cameraEvidence: CameraEvidence = {};
 
   if (plexoAvailable()) {
     plexoWorkspaceId = await plexoEnsureWorkspace(userId, email);
@@ -156,21 +197,50 @@ async function processAssetInner(
           widthPx: schema.assets.widthPx,
           heightPx: schema.assets.heightPx,
           cameraMake: schema.assets.cameraMake,
+          cameraModel: schema.assets.cameraModel,
+          exposureTime: schema.assets.exposureTime,
+          fNumber: schema.assets.fNumber,
+          iso: schema.assets.iso,
+          focalLength: schema.assets.focalLength,
+          lensModel: schema.assets.lensModel,
         })
         .from(schema.assets)
         .where(eq(schema.assets.id, assetId))
         .limit(1);
+      cameraEvidence = {
+        exposureTime: dims?.exposureTime ?? null,
+        fNumber: dims?.fNumber ?? null,
+        iso: dims?.iso ?? null,
+        focalLength: dims?.focalLength ?? null,
+        lensModel: dims?.lensModel ?? null,
+      };
+      const looksLikeCameraCapture = hasRealCameraSignals(cameraEvidence);
+
       if (isScreenshot(filename, mimeType, dims?.widthPx ?? null, dims?.heightPx ?? null)) {
         classification = "screenshot";
         subClassification = null;
       }
-      // A genuine screenshot never carries camera make/model EXIF. If anything
-      // (the aspect-ratio heuristic above OR the CLIP/LLM classifier) tagged an
-      // asset "screenshot" but it has camera EXIF, it's a real photo — override.
-      // This is what flooded the Screenshots lens with phone PNGs + jpeg photos
-      // (and got their faces pruned from People).
-      if (classification === "screenshot" && dims?.cameraMake) {
+      // A genuine real-camera capture carries exposure / aperture / ISO / lens
+      // metadata. iOS + Android STAMP cameraMake on screenshots too ("Apple",
+      // "Google", "Samsung"), so cameraMake alone is not enough — the prior
+      // override on `dims?.cameraMake` flipped every phone screenshot back to
+      // "photo" and flooded Moments. Require a real shooting parameter.
+      if (classification === "screenshot" && looksLikeCameraCapture) {
         classification = "photo";
+        subClassification = null;
+      }
+      // Positive-evidence rule for Moments: if the classifier landed on
+      // "photo" but the asset has NO camera signals (no exposure/lens/iso/etc.
+      // — e.g. a downloaded logo / mockup / icon / app-icon-grid / debug
+      // capture that fell through the screenshot heuristic), reclassify as
+      // "screenshot". Better polluting Screenshots than Moments while D5
+      // (Saved KIND) is still parked.
+      if (
+        classification === "photo" &&
+        !looksLikeCameraCapture &&
+        mimeType.startsWith("image/")
+      ) {
+        classification = "screenshot";
         subClassification = null;
       }
 
@@ -305,9 +375,11 @@ async function processAssetInner(
         : "document";
   }
 
-  // Task 20 — resolve KIND from the final classification + mime, written in
-  // the same pass so it can never drift from classification.
-  const kind = deriveKind({ mimeType, classification });
+  // Task 20 + Phase 7.1 — resolve KIND from final classification + mime +
+  // real-camera-capture signals. cameraEvidence was populated by the image
+  // branch above; doc/video paths leave it empty (deriveKind short-circuits
+  // on those mimes before checking exposure params, so no read is wasted).
+  const kind = deriveKind({ mimeType, classification, ...cameraEvidence });
 
   await db
     .update(schema.assets)
