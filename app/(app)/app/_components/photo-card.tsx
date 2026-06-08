@@ -269,6 +269,9 @@ export function PhotoCard({
             alt={asset.description ?? asset.filename}
             className="h-full w-full object-cover"
             loading="lazy"
+            // Phase 3 perf — decode off-main-thread so a new month entering
+            // the viewport doesn't block the scroll frame on image decode.
+            decoding="async"
           />
         ) : (
           <ImageIcon className="h-8 w-8 text-muted-foreground" />
