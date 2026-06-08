@@ -63,14 +63,15 @@ export function UiV2ChangelogDialog() {
   // matches the client's first paint (open=false), avoiding a hydration
   // flicker of the dialog appearing-then-vanishing.
   //
-  // react-hooks/set-state-in-effect flags this as a cascading render —
-  // accepted intentionally here because the check requires window and
-  // therefore cannot run during render. Same pattern as folder-tree.tsx
-  // (pre-existing) and the explicit React docs example for "syncing
-  // with external systems".
+  // Phase 6: set the seen-at key on FIRST MOUNT (not on dismiss). This
+  // means a user who closes the tab without explicitly clicking "Got it"
+  // is not re-blocked on every subsequent visit — the modal is auto-
+  // dismissed on the second visit. Matches the "informational, not
+  // blocking" intent in the plan ("don't intercept first-tap").
   useEffect(() => {
     try {
       if (window.localStorage.getItem(STORAGE_KEY) == null) {
+        window.localStorage.setItem(STORAGE_KEY, new Date().toISOString());
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setOpen(true);
       }
@@ -81,11 +82,9 @@ export function UiV2ChangelogDialog() {
   }, []);
 
   function dismiss() {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, new Date().toISOString());
-    } catch {
-      // ignore — same rationale as above.
-    }
+    // Key is already set on mount; we just hide the dialog. Kept as a
+    // function so all the explicit dismiss buttons (X / Got it / Open
+    // links) close the panel without each duplicating setOpen(false).
     setOpen(false);
   }
 
@@ -110,10 +109,13 @@ export function UiV2ChangelogDialog() {
       aria-labelledby="ui-v2-dialog-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <button
-        type="button"
-        aria-label="Close changelog"
-        onClick={dismiss}
+      {/* Phase 6: backdrop is now a passive dim, NOT a click-to-close
+          target. The giant backdrop-button was swallowing the user's
+          first tap (e.g. reaching for a tab) and dismissing the modal
+          implicitly. Explicit dismiss buttons (X, Got it, Open links)
+          + Escape still close it. */}
+      <div
+        aria-hidden="true"
         className="absolute inset-0 bg-black/60"
       />
 
