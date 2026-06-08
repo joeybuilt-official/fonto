@@ -74,19 +74,37 @@ export function TimelineScrubber({
   }, [buckets]);
 
   // Sparse year labels along the track for orientation (first month of each
-  // distinct year, deduped, capped so a 20-year library doesn't crowd).
+  // distinct year, deduped, then thinned so labels don't overlap when one
+  // year dominates the cumulative count — eg. a library w/ 24 items in 2026
+  // but 8000 in 2014 would otherwise stack 2026/25/24/23/22/21/20 in the
+  // first ~3% of the track).
   const yearTicks = useMemo(() => {
-    const ticks: { year: string; frac: number }[] = [];
+    const raw: { year: string; frac: number }[] = [];
     let lastYear = "";
     buckets.forEach((b, i) => {
       if (b.month === "undated") return;
       const y = formatYear(b.month);
       if (y !== lastYear) {
-        ticks.push({ year: y, frac: total > 0 ? cumBefore[i] / total : 0 });
+        raw.push({ year: y, frac: total > 0 ? cumBefore[i] / total : 0 });
         lastYear = y;
       }
     });
-    return ticks;
+    // 9px font + tabular nums ~= 11px tall. 4% gap @ 600px track = 24px.
+    // Drops the cramped middle years, keeps endpoints (newest + oldest).
+    const MIN_GAP = 0.04;
+    const thinned: { year: string; frac: number }[] = [];
+    for (const t of raw) {
+      const prev = thinned[thinned.length - 1];
+      if (!prev || t.frac - prev.frac >= MIN_GAP) thinned.push(t);
+    }
+    // Always preserve the oldest-year tick — without this it can fall off
+    // the bottom of the track when its neighbour above is < MIN_GAP away.
+    const last = raw[raw.length - 1];
+    if (last && thinned[thinned.length - 1]?.year !== last.year) {
+      const prev = thinned[thinned.length - 1];
+      if (!prev || last.frac - prev.frac >= MIN_GAP / 2) thinned.push(last);
+    }
+    return thinned;
   }, [buckets, cumBefore, total]);
 
   const monthAtFraction = useCallback(

@@ -121,6 +121,7 @@ function LibraryContent() {
   const [loading, setLoading] = useState(true);
   const [buckets, setBuckets] = useState<TimelineMonth[]>([]);
   const [bucketsLoading, setBucketsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [directAsset, setDirectAsset] = useState<Asset | null>(null);
   const savedScrollRef = useRef(0);
   const prevLbIndexRef = useRef<number | null>(null);
@@ -563,12 +564,7 @@ function LibraryContent() {
             Loading…
           </div>
         ) : buckets.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <ImageIcon className="h-10 w-10 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              {LENS_EMPTY[activeLens] ?? "No assets match the current filters."}
-            </p>
-          </div>
+          <LibraryEmptyState toolbar={toolbar} activeLens={activeLens} />
         ) : (
           <div className="px-4">
             <VirtualizedTimeline
@@ -1005,6 +1001,59 @@ function LensSelector({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// Phase 5 — filter-aware empty state. The KIND-keyed LENS_EMPTY copy
+// is only correct when KIND is the ONLY thing filtering; if the user
+// also set favorite/rating/date/etc., "No documents yet." reads as
+// "there are no documents" when really "no documents match your filters."
+// Distinguish: at least one non-lens filter set → filter-clear CTA;
+// else → kind-keyed welcome copy.
+function LibraryEmptyState({
+  toolbar,
+  activeLens,
+}: {
+  toolbar: ReturnType<typeof useToolbarState>;
+  activeLens: string;
+}) {
+  const f = toolbar.filters;
+  const filterCount =
+    (f.lifecycle && f.lifecycle !== "active" ? 1 : 0) +
+    (f.mime ? 1 : 0) +
+    (f.favorite ? 1 : 0) +
+    (f.ratingMin != null ? 1 : 0) +
+    (f.type ? 1 : 0) +
+    (f.directoryPathPrefix || f.directoryPath ? 1 : 0) +
+    (f.from || f.to ? 1 : 0) +
+    (f.groupId ? 1 : 0) +
+    (f.q ? 1 : 0);
+
+  if (filterCount > 0) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16 text-center">
+        <ImageIcon className="h-10 w-10 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">
+          No {activeLens === "all" ? "assets" : activeLens === "moment" ? "moments" : activeLens + "s"}{" "}
+          match these filters.
+        </p>
+        <button
+          onClick={() => toolbar.resetFilters()}
+          className="rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent"
+        >
+          Clear filters
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-3 py-16 text-center">
+      <ImageIcon className="h-10 w-10 text-muted-foreground" />
+      <p className="text-sm text-muted-foreground">
+        {LENS_EMPTY[activeLens] ?? "No assets in your library yet."}
+      </p>
     </div>
   );
 }
