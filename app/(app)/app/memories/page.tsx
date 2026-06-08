@@ -15,6 +15,7 @@ import { type Asset } from "../_components/photo-card";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
 import { AssetAskPanel } from "../_components/asset-ask-panel";
+import { ListErrorState } from "../_components/list-states";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 interface MemoryYear {
@@ -58,6 +59,7 @@ function MemoriesContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [askOpen, setAskOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     void (async () => {
@@ -78,7 +80,7 @@ function MemoriesContent() {
         setLoading(false);
       }
     })();
-  }, [date]);
+  }, [date, refreshKey]);
 
   const headline = useMemo(() => formatMonthDay(date), [date]);
   const totalCount = years.reduce((sum, y) => sum + y.count, 0);
@@ -168,7 +170,12 @@ function MemoriesContent() {
           <p className="text-sm text-muted-foreground">Loading memories…</p>
         )}
 
-        {error && !loading && <p className="text-sm text-destructive">{error}</p>}
+        {error && !loading && (
+          <ListErrorState
+            message={error}
+            onRetry={() => setRefreshKey((k) => k + 1)}
+          />
+        )}
 
         {!loading && !error && totalCount === 0 && (
           <div className="rounded-lg border border-dashed border-border p-8 text-center">

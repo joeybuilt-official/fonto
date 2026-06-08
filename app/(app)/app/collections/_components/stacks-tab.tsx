@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Image as ImageIcon, Layers, Loader2, Check, X } from "lucide-react";
 import { AssetPageToolbar } from "../../_components/asset-page-toolbar";
+import { ListErrorState } from "../../_components/list-states";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 import { cn } from "@/lib/utils";
 
@@ -173,6 +174,7 @@ export function StacksTab() {
   const [coverUrls, setCoverUrls] = useState<Record<string, string>>({});
   const [suggestionThumbs, setSuggestionThumbs] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -182,6 +184,7 @@ export function StacksTab() {
 
   const loadStacks = useCallback(async () => {
     const r = await fetch("/api/v1/stacks");
+    if (!r.ok) throw new Error(`stacks ${r.status}`);
     const d = (await r.json()) as { stacks?: StackRow[] };
     const list = d.stacks ?? [];
     setStacks(list);
@@ -203,6 +206,7 @@ export function StacksTab() {
 
   const loadSuggestions = useCallback(async () => {
     const r = await fetch("/api/v1/stacks/suggestions");
+    if (!r.ok) throw new Error(`stacks-suggestions ${r.status}`);
     const d = (await r.json()) as { suggestions?: Suggestion[] };
     const list = d.suggestions ?? [];
     setSuggestions(list);
@@ -220,15 +224,23 @@ export function StacksTab() {
     setSuggestionThumbs(urlData.urls ?? {});
   }, []);
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        await Promise.all([loadStacks(), loadSuggestions()]);
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      await Promise.all([loadStacks(), loadSuggestions()]);
+    } catch {
+      setError(true);
+      setStacks([]);
+      setSuggestions([]);
+    } finally {
+      setLoading(false);
+    }
   }, [loadStacks, loadSuggestions]);
+
+  useEffect(() => {
+    void loadAll();
+  }, [loadAll]);
 
   async function acceptSuggestion(s: Suggestion) {
     const key = suggestionKey(s);
@@ -345,6 +357,11 @@ export function StacksTab() {
 
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : error ? (
+          <ListErrorState
+            message="Couldn't load stacks. Check your connection and retry."
+            onRetry={() => void loadAll()}
+          />
         ) : tab === "stacks" ? (
           visibleStacks.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border p-8 text-center">

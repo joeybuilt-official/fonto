@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FolderOpen, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { AssetPageToolbar } from "../../_components/asset-page-toolbar";
+import { ListErrorState } from "../../_components/list-states";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 interface Collection {
@@ -34,15 +35,20 @@ export function AlbumsTab() {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [coverUrls, setCoverUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    setLoading(true);
+    setError(false);
     void (async () => {
       try {
         const r = await fetch("/api/v1/collections");
-        const d = r.ok ? ((await r.json()) as { collections?: Collection[] }) : { collections: [] };
+        if (!r.ok) throw new Error(`collections ${r.status}`);
+        const d = (await r.json()) as { collections?: Collection[] };
         const list = d.collections ?? [];
         setCollections(list);
         if (list.length === 0) return;
@@ -76,11 +82,14 @@ export function AlbumsTab() {
           if (url) byCollection[m.collectionId] = url;
         }
         setCoverUrls(byCollection);
+      } catch {
+        setError(true);
+        setCollections([]);
       } finally {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [refreshKey]);
 
   const visible = useMemo(() => {
     let list = collections;
@@ -200,6 +209,11 @@ export function AlbumsTab() {
 
         {loading ? (
           <p className="text-sm text-muted-foreground py-4">Loading albums…</p>
+        ) : error ? (
+          <ListErrorState
+            message="Couldn't load albums. Check your connection and retry."
+            onRetry={() => setRefreshKey((k) => k + 1)}
+          />
         ) : visible.length === 0 && !toolbar.filters.q ? (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <FolderOpen className="h-10 w-10 text-muted-foreground" />

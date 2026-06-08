@@ -362,13 +362,20 @@ function LibraryContent() {
     if (!timelineMode) return;
     let cancelled = false;
     setBucketsLoading(true);
+    setLoadError(false);
     fetch(`/api/v1/assets/buckets?${baseParams().toString()}`)
-      .then((r) => r.json() as Promise<{ buckets?: TimelineMonth[] }>)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`buckets ${r.status}`);
+        return (await r.json()) as { buckets?: TimelineMonth[] };
+      })
       .then((d) => {
         if (!cancelled) setBuckets(d.buckets ?? []);
       })
       .catch(() => {
-        if (!cancelled) setBuckets([]);
+        if (!cancelled) {
+          setBuckets([]);
+          setLoadError(true);
+        }
       })
       .finally(() => {
         if (!cancelled) setBucketsLoading(false);
@@ -384,6 +391,7 @@ function LibraryContent() {
     if (timelineMode) return;
     void (async () => {
       setLoading(true);
+      setLoadError(false);
       const sp = new URLSearchParams();
       sp.set("lifecycle", toolbar.filters.lifecycle);
       const lensKind = toolbar.filters.kind ?? "moment";
@@ -402,6 +410,7 @@ function LibraryContent() {
       }
       try {
         const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        if (!r.ok) throw new Error(`assets ${r.status}`);
         const d = (await r.json()) as { assets?: Asset[] };
         let list = (d.assets ?? []) as Asset[];
 
@@ -443,6 +452,9 @@ function LibraryContent() {
         }
 
         setAssets(list);
+      } catch {
+        setAssets([]);
+        setLoadError(true);
       } finally {
         setLoading(false);
       }
@@ -563,8 +575,10 @@ function LibraryContent() {
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading…
           </div>
+        ) : loadError ? (
+          <LibraryErrorState onRetry={() => setRefreshKey((k) => k + 1)} />
         ) : buckets.length === 0 ? (
-          <LibraryEmptyState toolbar={toolbar} activeLens={activeLens} />
+          <LibraryEmptyState toolbar={toolbar} activeLens={activeLens} placeFilter={placeFilter} />
         ) : (
           <div className="px-4">
             <VirtualizedTimeline
@@ -586,6 +600,10 @@ function LibraryContent() {
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading…
         </div>
+      ) : loadError ? (
+        <LibraryErrorState onRetry={() => setRefreshKey((k) => k + 1)} />
+      ) : assets.length === 0 ? (
+        <LibraryEmptyState toolbar={toolbar} activeLens={activeLens} placeFilter={placeFilter} />
       ) : (
         <div className="px-4">
           <AssetGrid
@@ -1014,11 +1032,15 @@ function LensSelector({
 function LibraryEmptyState({
   toolbar,
   activeLens,
+  placeFilter,
 }: {
   toolbar: ReturnType<typeof useToolbarState>;
   activeLens: string;
+  placeFilter?: string | null;
 }) {
   const f = toolbar.filters;
+  const router = useRouter();
+  const pathname = usePathname();
   const filterCount =
     (f.lifecycle && f.lifecycle !== "active" ? 1 : 0) +
     (f.mime ? 1 : 0) +
@@ -1028,7 +1050,8 @@ function LibraryEmptyState({
     (f.directoryPathPrefix || f.directoryPath ? 1 : 0) +
     (f.from || f.to ? 1 : 0) +
     (f.groupId ? 1 : 0) +
-    (f.q ? 1 : 0);
+    (f.q ? 1 : 0) +
+    (placeFilter ? 1 : 0);
 
   if (filterCount > 0) {
     return (
@@ -1039,7 +1062,10 @@ function LibraryEmptyState({
           match these filters.
         </p>
         <button
-          onClick={() => toolbar.resetFilters()}
+          onClick={() => {
+            toolbar.resetFilters();
+            if (placeFilter) router.replace(pathname);
+          }}
           className="rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent"
         >
           Clear filters
@@ -1054,6 +1080,26 @@ function LibraryEmptyState({
       <p className="text-sm text-muted-foreground">
         {LENS_EMPTY[activeLens] ?? "No assets in your library yet."}
       </p>
+    </div>
+  );
+}
+
+// Phase 5 — error w/ retry. Used by both timeline and flat-grid fetch paths
+// when the buckets or assets fetch throws / returns non-2xx. Retry bumps
+// refreshKey, which is in the dependency list of both effects.
+function LibraryErrorState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-3 py-16 text-center">
+      <ImageIcon className="h-10 w-10 text-destructive/70" />
+      <p className="text-sm text-muted-foreground">
+        Couldn&apos;t load your library. Check your connection and retry.
+      </p>
+      <button
+        onClick={onRetry}
+        className="rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent"
+      >
+        Retry
+      </button>
     </div>
   );
 }

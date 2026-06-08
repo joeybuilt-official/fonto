@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { Plus, Zap, Loader2, Trash2, ChevronRight } from "lucide-react";
 import { AssetPageToolbar } from "../../_components/asset-page-toolbar";
+import { ListErrorState } from "../../_components/list-states";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 type SmartCollection = {
@@ -36,6 +37,7 @@ export function SmartTab() {
   });
   const [collections, setCollections] = useState<SmartCollection[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
@@ -82,12 +84,15 @@ export function SmartTab() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(false);
     try {
       const res = await fetch("/api/v1/smart-collections");
-      if (res.ok) {
-        const data = await res.json();
-        setCollections(data.smartCollections ?? []);
-      }
+      if (!res.ok) throw new Error(`smart-collections ${res.status}`);
+      const data = await res.json();
+      setCollections(data.smartCollections ?? []);
+    } catch {
+      setError(true);
+      setCollections([]);
     } finally {
       setLoading(false);
     }
@@ -330,6 +335,11 @@ export function SmartTab() {
         <div className="flex justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
+      ) : error ? (
+        <ListErrorState
+          message="Couldn't load smart collections. Check your connection and retry."
+          onRetry={() => void load()}
+        />
       ) : visible.length === 0 && !toolbar.filters.q ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16 text-center">
           <Zap className="h-10 w-10 text-muted-foreground mb-3" />

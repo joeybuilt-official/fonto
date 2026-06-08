@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
+import { ListErrorState } from "../../_components/list-states";
 
 /** Stable hue from the actor id so distinct actors read apart at a glance. */
 function actorHue(id: string): number {
@@ -138,6 +139,7 @@ export function ActivitySection() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const fetchPage = useCallback(async (createdBefore: string | null) => {
     const params = new URLSearchParams({ limit: "50" });
@@ -167,7 +169,7 @@ export function ActivitySection() {
     return () => {
       cancelled = true;
     };
-  }, [fetchPage]);
+  }, [fetchPage, refreshKey]);
 
   async function handleLoadMore() {
     if (!cursor || loadingMore) return;
@@ -198,7 +200,10 @@ export function ActivitySection() {
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : error ? (
-        <p className="text-sm text-destructive">{error}</p>
+        <ListErrorState
+          message={`Couldn't load activity (${error}). Retry to try again.`}
+          onRetry={() => setRefreshKey((k) => k + 1)}
+        />
       ) : events.length === 0 ? (
         <p className="text-sm text-muted-foreground italic">
           No activity yet. Comments, uploads, and shares will show up here.

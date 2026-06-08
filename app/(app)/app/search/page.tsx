@@ -27,6 +27,7 @@ import { DocumentViewer } from "@/components/document-viewer";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { ListErrorState } from "../_components/list-states";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 // Phase 4.2 — heuristic for "fire a CLIP search alongside the text search".
@@ -127,6 +128,7 @@ function SearchContent() {
 
   const [results, setResults] = useState<Asset[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
   const [ocrOnly, setOcrOnly] = useState(false);
   const [semantic, setSemantic] = useState(false);
   const [clipHits, setClipHits] = useState<ClipHit[] | null>(null);
@@ -148,12 +150,15 @@ function SearchContent() {
     // Smart-collection mode: ignore filters, fetch the preview.
     if (smartCollectionId) {
       setLoading(true);
+      setError(false);
       try {
         const res = await fetch(`/api/v1/smart-collections/${smartCollectionId}/assets`);
-        if (res.ok) {
-          const data = (await res.json()) as { assets?: Asset[] };
-          setResults(data.assets ?? []);
-        }
+        if (!res.ok) throw new Error(`smart-collection ${res.status}`);
+        const data = (await res.json()) as { assets?: Asset[] };
+        setResults(data.assets ?? []);
+      } catch {
+        setError(true);
+        setResults(null);
       } finally {
         setLoading(false);
       }
@@ -175,6 +180,7 @@ function SearchContent() {
     }
 
     setLoading(true);
+    setError(false);
     try {
       // Phase 4.2 — kick off the CLIP search in parallel for "natural"
       // queries. Skipping when other structured filters are active keeps
@@ -212,10 +218,12 @@ function SearchContent() {
       if (col) params.set("color", col);
 
       const res = await fetch(`/api/v1/search?${params.toString()}`);
-      if (res.ok) {
-        const data = (await res.json()) as { assets?: Asset[] };
-        setResults(data.assets ?? []);
-      }
+      if (!res.ok) throw new Error(`search ${res.status}`);
+      const data = (await res.json()) as { assets?: Asset[] };
+      setResults(data.assets ?? []);
+    } catch {
+      setError(true);
+      setResults(null);
     } finally {
       setLoading(false);
     }
@@ -282,8 +290,13 @@ function SearchContent() {
           </p>
         )}
 
-        {/* Empty / loading / no-results states */}
-        {results === null && !smartCollectionId && !loading ? (
+        {/* Empty / loading / no-results / error states */}
+        {error && !loading ? (
+          <ListErrorState
+            message="Couldn't run that search. Check your connection and retry."
+            onRetry={() => void doSearch()}
+          />
+        ) : results === null && !smartCollectionId && !loading ? (
           <p className="text-sm text-muted-foreground text-center py-8">
             Type to search your assets, or set a filter.
           </p>

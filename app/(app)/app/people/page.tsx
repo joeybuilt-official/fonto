@@ -14,6 +14,7 @@ import Link from "next/link";
 import { Loader2, Users, Play, EyeOff, Settings, Pencil, Trash2 } from "lucide-react";
 import { Dialog } from "@base-ui/react/dialog";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { ListErrorState } from "../_components/list-states";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 interface PersonGroup {
@@ -562,7 +563,9 @@ function PeopleContent() {
 
         {loading && <PeopleSkeleton />}
 
-        {error && !loading && <p className="text-sm text-destructive">{error}</p>}
+        {error && !loading && (
+          <ListErrorState message={error} onRetry={() => void load()} />
+        )}
 
         {!loading && !error && persons.length === 0 && (
           <div className="rounded-lg border border-dashed border-border p-8 text-center">

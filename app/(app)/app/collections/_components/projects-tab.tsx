@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { Plus, Folder, Loader2, Trash2 } from "lucide-react";
 import { AssetPageToolbar } from "../../_components/asset-page-toolbar";
+import { ListErrorState } from "../../_components/list-states";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 type Project = {
@@ -30,17 +31,21 @@ export function ProjectsTab() {
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(false);
     try {
       const res = await fetch("/api/v1/projects");
-      if (res.ok) {
-        const data = (await res.json()) as { projects?: Project[] };
-        setProjects(data.projects ?? []);
-      }
+      if (!res.ok) throw new Error(`projects ${res.status}`);
+      const data = (await res.json()) as { projects?: Project[] };
+      setProjects(data.projects ?? []);
+    } catch {
+      setError(true);
+      setProjects([]);
     } finally {
       setLoading(false);
     }
@@ -140,6 +145,11 @@ export function ProjectsTab() {
           <div className="flex justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
+        ) : error ? (
+          <ListErrorState
+            message="Couldn't load projects. Check your connection and retry."
+            onRetry={() => void load()}
+          />
         ) : visible.length === 0 && !toolbar.filters.q ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16 text-center">
             <Folder className="h-10 w-10 text-muted-foreground mb-3" />

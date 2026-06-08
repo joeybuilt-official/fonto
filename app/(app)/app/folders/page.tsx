@@ -38,6 +38,7 @@ import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
 import { FolderTree } from "../_components/folder-tree";
+import { ListErrorState } from "../_components/list-states";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 import { cn } from "@/lib/utils";
 
@@ -231,7 +232,8 @@ function FoldersContent() {
     listing: FolderListing | null;
     assets: Asset[];
   }>({ loadedPrefix: null, listing: null, assets: [] });
-  const loading = state.loadedPrefix !== prefix;
+  const [loadError, setLoadError] = useState(false);
+  const loading = state.loadedPrefix !== prefix && !loadError;
   const listing = state.loadedPrefix === prefix ? state.listing : null;
   const assets = state.loadedPrefix === prefix ? state.assets : [];
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -246,6 +248,7 @@ function FoldersContent() {
 
   useEffect(() => {
     let cancelled = false;
+    setLoadError(false);
 
     const folderUrl = prefix
       ? `/api/v1/folders?prefix=${encodeURIComponent(prefix)}`
@@ -263,10 +266,14 @@ function FoldersContent() {
       assetUrl.searchParams.set("ratingMin", String(toolbar.filters.ratingMin));
 
     Promise.all([
-      fetch(folderUrl).then((r) => r.json()) as Promise<FolderListing>,
-      fetch(assetUrl.toString())
-        .then((r) => r.json())
-        .then((d) => (d.assets ?? []) as Asset[]),
+      fetch(folderUrl).then((r) => {
+        if (!r.ok) throw new Error(`folders ${r.status}`);
+        return r.json() as Promise<FolderListing>;
+      }),
+      fetch(assetUrl.toString()).then((r) => {
+        if (!r.ok) throw new Error(`assets ${r.status}`);
+        return r.json().then((d) => (d.assets ?? []) as Asset[]);
+      }),
     ])
       .then(([folderData, assetData]) => {
         if (cancelled) return;
@@ -296,6 +303,7 @@ function FoldersContent() {
       })
       .catch(() => {
         if (cancelled) return;
+        setLoadError(true);
         setState({
           loadedPrefix: prefix,
           listing: { prefix, folders: [], assetsAtThisLevel: 0 },
@@ -450,6 +458,11 @@ function FoldersContent() {
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading folder…
           </div>
+        ) : loadError ? (
+          <ListErrorState
+            message="Couldn't load this folder. Check your connection and retry."
+            onRetry={() => setReloadKey((k) => k + 1)}
+          />
         ) : (
           <>
             {listing && listing.folders.length > 0 && (
