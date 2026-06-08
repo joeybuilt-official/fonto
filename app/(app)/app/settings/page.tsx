@@ -6,6 +6,14 @@ import { useEffect, useState } from "react";
 import { useSession } from "@/lib/auth/client";
 import Link from "next/link";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
+import { cn } from "@/lib/utils";
+
+type SettingsTab = "account" | "storage" | "integrations";
+const TABS: { id: SettingsTab; label: string }[] = [
+  { id: "account", label: "Account" },
+  { id: "storage", label: "Storage" },
+  { id: "integrations", label: "Integrations" },
+];
 
 interface StorageInfo {
   usageBytes: number;
@@ -28,6 +36,13 @@ export default function SettingsPage() {
   const [rescanScope, setRescanScope] = useState<"all" | "images" | "failed">("all");
   const [rescanBusy, setRescanBusy] = useState(false);
   const [rescanMsg, setRescanMsg] = useState<string | null>(null);
+  // At md+ the page renders as tabs (Account / Storage / Integrations).
+  // At mobile every section is always visible — `tabClass(tab)` only emits
+  // `md:hidden` for non-active sections, so the mobile flat layout is
+  // unaffected. Default = account (matches the order users expect).
+  const [activeTab, setActiveTab] = useState<SettingsTab>("account");
+  const tabClass = (tab: SettingsTab) =>
+    cn(activeTab !== tab && "md:hidden");
 
   useEffect(() => {
     fetch("/api/v1/workspace")
@@ -57,13 +72,32 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-xl">
+    <div className="space-y-6 max-w-xl md:max-w-3xl">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">Manage your account and workspace</p>
       </div>
 
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+      {/* Desktop tab strip (md+). At mobile everything stays single-column,
+          so the tab strip is hidden and tabClass() never collapses anything. */}
+      <div className="hidden md:flex items-center gap-1 border-b border-border">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              activeTab === t.id
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("account"))}>
         <h2 className="text-sm font-semibold text-foreground">Account</h2>
         <div className="space-y-3">
           <div>
@@ -77,7 +111,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("storage"))}>
         <h2 className="text-sm font-semibold text-foreground">Storage</h2>
         {storage ? (
           <div className="space-y-3">
@@ -125,7 +159,7 @@ export default function SettingsPage() {
         )}
       </div>
 
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("integrations"))}>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-foreground">Plexo AI</h2>
           <PlexoConnectionStatus />
@@ -152,7 +186,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("storage"))}>
         <h2 className="text-sm font-semibold text-foreground">Recognition</h2>
         <p className="text-xs text-muted-foreground">
           Re-run AI recognition (OCR, object/scene labels, descriptions, and
@@ -188,7 +222,7 @@ export default function SettingsPage() {
         {rescanMsg && <p className="text-xs text-muted-foreground">{rescanMsg}</p>}
       </div>
 
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("account"))}>
         <h2 className="text-sm font-semibold text-foreground">Members</h2>
         <div className="flex items-center justify-between">
           <div>
@@ -206,7 +240,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("account"))}>
         <h2 className="text-sm font-semibold text-foreground">API access</h2>
         <div className="flex items-center justify-between">
           <div>
@@ -224,7 +258,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("account"))}>
         <h2 className="text-sm font-semibold text-foreground">Data</h2>
         <div className="flex items-center justify-between">
           <div>
