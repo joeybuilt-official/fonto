@@ -126,6 +126,7 @@ export function FilterPopover({
   const showTag = available.includes("tagIds");
   const showPerson = available.includes("personIds");
   const showFolder = available.includes("directoryPathPrefix");
+  const showLifecycle = available.includes("lifecycle");
 
   const [tags, setTags] = useState<Tag[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -288,6 +289,22 @@ export function FilterPopover({
                   />
                 );
               })}
+            </div>
+          </Section>
+        )}
+
+        {showLifecycle && (
+          <Section label="Status">
+            <div className="flex flex-wrap items-center gap-2">
+              {(["active", "archived", "trashed"] as const).map((lc) => (
+                <button
+                  key={lc}
+                  onClick={() => onChange({ lifecycle: lc })}
+                  className={chipBase(state.lifecycle === lc)}
+                >
+                  {lc[0].toUpperCase() + lc.slice(1)}
+                </button>
+              ))}
             </div>
           </Section>
         )}

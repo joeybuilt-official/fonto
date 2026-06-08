@@ -529,7 +529,7 @@ function LibraryContent() {
         toolbar={toolbar}
         searchPlaceholder="Search library…"
         sortOptions={["newest", "oldest", "name", "rating", "largest"]}
-        filterKeys={["type", "mime", "from", "to", "directoryPathPrefix", "favorite", "ratingMin"]}
+        filterKeys={["type", "mime", "from", "to", "directoryPathPrefix", "favorite", "ratingMin", "lifecycle"]}
         showDensity
         showSelect
       />
@@ -541,7 +541,12 @@ function LibraryContent() {
             toolbar.setFilters({ kind: value === "moment" ? null : value })
           }
         />
-        <LibraryChipStrip toolbar={toolbar} />
+        <LibraryActivePills toolbar={toolbar} />
+        {/* Mobile uses the toolbar's Filter popover (lifecycle/mime/type/etc. all live there).
+            Desktop keeps the inline chip strip for one-tap toggles. */}
+        <div className="hidden md:block">
+          <LibraryChipStrip toolbar={toolbar} />
+        </div>
         {isTrash && (
           <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
             <Trash2 className="h-3.5 w-3.5" />
@@ -1000,6 +1005,116 @@ function LensSelector({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// Phase 2 redesign — active-filters pill row. Surfaces every set filter w/
+// an X to remove it. Renders at every viewport so the user always sees
+// what's filtering their grid (the mobile Filter popover otherwise hides
+// state behind a button). Empty when no filters are set → renders null.
+function LibraryActivePills({
+  toolbar,
+}: {
+  toolbar: ReturnType<typeof useToolbarState>;
+}) {
+  const { filters, setFilters } = toolbar;
+  const pills: { key: string; label: string; clear: () => void }[] = [];
+
+  if (filters.lifecycle && filters.lifecycle !== "active") {
+    pills.push({
+      key: "lifecycle",
+      label: filters.lifecycle[0].toUpperCase() + filters.lifecycle.slice(1),
+      clear: () => setFilters({ lifecycle: "active" }),
+    });
+  }
+  if (filters.mime) {
+    const m = filters.mime;
+    const label =
+      m === "image/" ? "Images" :
+      m === "video/" ? "Videos" :
+      m === "application/" ? "Documents" :
+      m === "application/pdf" ? "PDFs" :
+      m;
+    pills.push({ key: "mime", label, clear: () => setFilters({ mime: null }) });
+  }
+  if (filters.kind) {
+    pills.push({
+      key: "kind",
+      label: filters.kind[0].toUpperCase() + filters.kind.slice(1),
+      clear: () => setFilters({ kind: null }),
+    });
+  }
+  if (filters.favorite) {
+    pills.push({ key: "favorite", label: "Favorites", clear: () => setFilters({ favorite: false }) });
+  }
+  if (filters.ratingMin != null) {
+    pills.push({
+      key: "rating",
+      label: `${filters.ratingMin}+ stars`,
+      clear: () => setFilters({ ratingMin: null }),
+    });
+  }
+  if (filters.type) {
+    pills.push({
+      key: "type",
+      label: filters.type[0].toUpperCase() + filters.type.slice(1),
+      clear: () => setFilters({ type: null }),
+    });
+  }
+  if (filters.directoryPathPrefix || filters.directoryPath) {
+    const p = filters.directoryPathPrefix ?? filters.directoryPath ?? "";
+    const last = p.replace(/\/$/, "").split("/").filter(Boolean).pop();
+    pills.push({
+      key: "folder",
+      label: last ? `📁 ${last}` : "📁 All folders",
+      clear: () => setFilters({ directoryPathPrefix: null, directoryPath: null }),
+    });
+  }
+  if (filters.from || filters.to) {
+    const range =
+      filters.from && filters.to ? `${filters.from} → ${filters.to}` :
+      filters.from ? `From ${filters.from}` :
+      `Through ${filters.to}`;
+    pills.push({
+      key: "date",
+      label: range,
+      clear: () => setFilters({ from: null, to: null }),
+    });
+  }
+  if (filters.groupId) {
+    pills.push({
+      key: "group",
+      label: "Group",
+      clear: () => setFilters({ groupId: null }),
+    });
+  }
+  if (filters.q) {
+    pills.push({ key: "q", label: `“${filters.q}”`, clear: () => setFilters({ q: "" }) });
+  }
+
+  if (!pills.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+      {pills.map((p) => (
+        <button
+          key={p.key}
+          onClick={p.clear}
+          className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-primary hover:bg-primary/20 transition-colors"
+        >
+          <span>{p.label}</span>
+          <span aria-hidden className="text-base leading-none">×</span>
+          <span className="sr-only">Remove filter</span>
+        </button>
+      ))}
+      {pills.length > 1 && (
+        <button
+          onClick={() => toolbar.resetFilters()}
+          className="ml-1 rounded-full px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          Clear all
+        </button>
+      )}
     </div>
   );
 }
