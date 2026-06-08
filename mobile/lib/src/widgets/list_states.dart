@@ -132,6 +132,8 @@ String defaultEmptyForKind(String? kind) {
       return "No moments yet. Photos you take show up here.";
     case "screenshot":
       return "No screenshots.";
+    case "graphics":
+      return "No graphics yet. Logos, mockups, icons, and art show up here.";
     case "document":
       return "No documents.";
     case "video":
@@ -152,6 +154,8 @@ String filteredEmptyForKind(String? kind) {
       return "No moments match these filters.";
     case "screenshot":
       return "No screenshots match these filters.";
+    case "graphics":
+      return "No graphics match these filters.";
     case "document":
       return "No documents match these filters.";
     case "video":

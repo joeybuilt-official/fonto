@@ -23,7 +23,7 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
-import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download, Smartphone, LayoutGrid, Users } from "lucide-react";
+import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download, Smartphone, LayoutGrid, Users, Palette } from "lucide-react";
 import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
@@ -63,7 +63,7 @@ const MIMES: MimeOption[] = [
 // kind filter. Each lens maps to the server-side ?kind= preset that feeds both
 // the timeline and its scrubber buckets. ("Saved" is deferred — see ADR D5.)
 interface LensOption {
-  value: string; // "moment" | "screenshot" | "document" | "video" | "all"
+  value: string; // "moment" | "screenshot" | "graphics" | "document" | "video" | "all"
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }
@@ -71,6 +71,7 @@ interface LensOption {
 const LENSES: LensOption[] = [
   { value: "moment", label: "Moments", icon: ImageIcon },
   { value: "screenshot", label: "Screenshots", icon: Smartphone },
+  { value: "graphics", label: "Graphics", icon: Palette },
   { value: "document", label: "Documents", icon: FileText },
   { value: "video", label: "Videos", icon: Film },
   { value: "all", label: "All", icon: LayoutGrid },
@@ -79,6 +80,7 @@ const LENSES: LensOption[] = [
 const LENS_EMPTY: Record<string, string> = {
   moment: "No moments yet. Photos you take show up here.",
   screenshot: "No screenshots.",
+  graphics: "No graphics yet. Logos, mockups, icons, and art show up here.",
   document: "No documents.",
   video: "No videos.",
   all: "No assets match the current filters.",

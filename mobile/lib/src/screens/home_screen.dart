@@ -866,6 +866,7 @@ class _LensSelector extends StatelessWidget {
   static const _lenses = <(String, String, IconData)>[
     ("moment", "Moments", Icons.photo_outlined),
     ("screenshot", "Screenshots", Icons.smartphone_outlined),
+    ("graphics", "Graphics", Icons.palette_outlined),
     ("document", "Documents", Icons.description_outlined),
     ("video", "Videos", Icons.videocam_outlined),
     ("all", "All", Icons.grid_view_outlined),
