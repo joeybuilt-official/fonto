@@ -34,13 +34,22 @@ export async function GET() {
 
   // One query: group by place_name, aggregate count + array of up to 4 IDs.
   // Uses the assets_workspace_placename_idx partial index.
+  //
+  // Build the IN-list inline via sql.join so a single-element wsIds doesn't
+  // get unwrapped by the postgres driver into a scalar (which would fail
+  // against the WHERE column's uuid[] cast). drizzle's `${arr}::uuid[]`
+  // path passes through pg's array protocol unreliably on single elements.
+  const wsList = sql.join(
+    wsIds.map((id) => sql`${id}::uuid`),
+    sql`, `,
+  );
   const rows = (await db.execute(sql`
     SELECT
       place_name,
       COUNT(*) AS cnt,
       ARRAY_AGG(id ORDER BY created_at DESC) AS ids
     FROM fonto.assets
-    WHERE workspace_id = ANY(${wsIds}::uuid[])
+    WHERE workspace_id IN (${wsList})
       AND place_name IS NOT NULL
       AND lifecycle_state = 'active'
     GROUP BY place_name
