@@ -156,3 +156,104 @@ export function ocrLooksLikePaperDocument(ocr: string | null): boolean {
   if (moneyHits >= 2 && lines.length >= 6) return true;
   return false;
 }
+
+// ADR 0001 §6 — Whiteboard heuristic. False-positive risk = white-walled
+// rooms; mitigated by requiring real OCR token density. CLIP already gets
+// most flat-on whiteboards via the new prompt; this catches the angle-of-
+// repose cases (whiteboard photographed from a meeting seat) AND the
+// people-in-front cases the panel called out in §7 conflict #3.
+//
+// Two thresholds:
+//   - Bare-whiteboard (no people in frame): 3 distinct alphanumeric tokens
+//     is enough — matches the §6 dominant-white-BG gate spec.
+//   - People-in-front (classifier returned portrait/event): 5 distinct
+//     tokens, per panel acceptance for §7 conflict #3. People + low OCR
+//     means it's a meeting photo, not a whiteboard capture.
+//
+// The classifier returning classification="whiteboard" is an automatic pass
+// regardless of OCR (CLIP already grounded on the whiteboard prompt; OCR is
+// belt-and-suspenders for that path).
+const WHITEBOARD_FILENAME_RE = /whiteboard|white.?board|wb[_-]?\d+/i;
+const TOKEN_RE = /[a-z0-9][a-z0-9'$.,/-]*/gi;
+
+function distinctOcrTokens(ocr: string | null): number {
+  if (!ocr) return 0;
+  const matches = ocr.toLowerCase().match(TOKEN_RE) ?? [];
+  const distinct = new Set(matches.filter((t) => t.length >= 2));
+  return distinct.size;
+}
+
+export interface WhiteboardCaptureInput {
+  widthPx: number | null;
+  heightPx: number | null;
+  filename: string;
+  classification: string | null;
+  subClassification: string | null;
+  ocrText: string | null;
+}
+
+export function isWhiteboardCapture(args: WhiteboardCaptureInput): boolean {
+  const { widthPx, heightPx, filename, classification, subClassification, ocrText } = args;
+  // CLIP already said it's a whiteboard — trust that. The top-level "whiteboard"
+  // legacy key and the new document/whiteboard sub both qualify.
+  if (classification === "whiteboard") return true;
+  if (subClassification === "whiteboard") return true;
+
+  const tokens = distinctOcrTokens(ocrText);
+  // People-in-front override (panel §7 conflict #3 — ≥5 tokens).
+  // Portrait/event/selfie + dense OCR = whiteboard behind people.
+  if (
+    tokens >= 5 &&
+    (classification === "portrait" ||
+      classification === "photo" ||
+      classification === "event" ||
+      subClassification === "portrait" ||
+      subClassification === "event" ||
+      subClassification === "selfie")
+  ) {
+    return true;
+  }
+
+  // Bare-whiteboard heuristic (§6, ≥3 tokens): filename hint + reasonable
+  // aspect ratio. Whiteboards are 4:3 — 16:10ish, never tall portrait.
+  if (tokens < 3) return false;
+  if (!widthPx || !heightPx) return false;
+  const ar = widthPx / heightPx;
+  const whiteboardAspect = ar >= 1.0 && ar <= 1.9; // 1:1 through 16:8.4
+  if (!whiteboardAspect) return false;
+  // Require either filename hint OR doc-y context (the classifier landed
+  // somewhere text-adjacent but not on document yet — note/handwritten-note/
+  // form/report sub-classifications point here from a near miss).
+  const filenameHint = WHITEBOARD_FILENAME_RE.test(filename);
+  const docContext =
+    classification === "document" ||
+    classification === "note" ||
+    subClassification === "handwritten-note" ||
+    subClassification === "note-page" ||
+    subClassification === "form" ||
+    subClassification === "report";
+  return filenameHint || docContext;
+}
+
+// ADR 0001 §6 — Photo-of-art override. classification=art + EXIF + no OCR
+// tokens means "I stood in a museum and snapped this painting." Per §7
+// conflict #4, default-to-moment when classification=art + EXIF regardless
+// of OCR (placard text is fine to ignore — frame-coverage detection isn't
+// worth 200ms/asset).
+//
+// Simplification from spec: we ignore the "OCR finds 0 meaningful tokens"
+// gate entirely. The panel said "default to moment when classification=art
+// + EXIF, regardless of OCR (use isPhotoOfArt). Document the simplification."
+// — done. If a real placard-with-painting case slips through to moment, fine;
+// the operator's mental model is "I was there".
+export interface PhotoOfArtInput {
+  classification: string | null;
+  exif: CameraEvidence;
+  ocrText: string | null;
+}
+
+export function isPhotoOfArt(args: PhotoOfArtInput): boolean {
+  const { classification, exif } = args;
+  if (classification !== "art") return false;
+  return hasRealCameraSignals(exif);
+}

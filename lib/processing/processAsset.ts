@@ -372,11 +372,35 @@ async function processAssetInner(
     subClassification = null;
   }
 
-  // Task 20 + Phase 7.1 — resolve KIND from final classification + mime +
-  // real-camera-capture signals. cameraEvidence was populated by the image
+  // Task 20 + Phase 7.1 + ADR 0001 §4 — resolve KIND from final classification
+  // + mime + real-camera-capture signals + heuristic inputs (widthPx, heightPx,
+  // ocrText, subClassification). cameraEvidence was populated by the image
   // branch above; doc/video paths leave it empty (deriveKind short-circuits
   // on those mimes before checking exposure params, so no read is wasted).
-  const kind = deriveKind({ mimeType, classification, filename, ...cameraEvidence });
+  //
+  // Re-read dims once at this scope so the doc/video branches (where the image
+  // branch didn't run) still have width/height if available. Cheap one-row
+  // SELECT; no impact on hot-path.
+  const [kindDims] = mimeType.startsWith("image/")
+    ? await db
+        .select({
+          widthPx: schema.assets.widthPx,
+          heightPx: schema.assets.heightPx,
+        })
+        .from(schema.assets)
+        .where(eq(schema.assets.id, assetId))
+        .limit(1)
+    : [{ widthPx: null as number | null, heightPx: null as number | null }];
+  const kind = deriveKind({
+    mimeType,
+    classification,
+    filename,
+    ...cameraEvidence,
+    widthPx: kindDims?.widthPx ?? null,
+    heightPx: kindDims?.heightPx ?? null,
+    subClassification,
+    ocrText: imageOcrText,
+  });
 
   await db
     .update(schema.assets)

@@ -12,8 +12,23 @@
 // v1 ships five KINDs: moment / screenshot / graphics / document / video.
 // "Saved" (downloaded non-photos that aren't logos/icons/etc.) is deferred —
 // ADR D5: not cleanly derivable yet, operator explicitly rejected kind=saved.
+//
+// ADR 0001 (2026-06-08) — intent-driven 10-rule priority order. §4 of the
+// spec is the source of truth; key invariant per Sara:
+//
+//   "Document classifications IGNORE EXIF; graphics classifications REQUIRE
+//   no EXIF. That asymmetry is intentional and must be tested."
+//
+// Reflected in rules 3 (document beats EXIF) vs rule 6 (graphics requires
+// !looksLikeCameraPhoto).
 
-import { looksLikeCameraPhoto } from "../processing/classifyHelpers";
+import {
+  looksLikeCameraPhoto,
+  isScreenshot,
+  isWhiteboardCapture,
+  isPhotoOfArt,
+  ocrLooksLikePaperDocument,
+} from "../processing/classifyHelpers";
 
 export const KIND = ["moment", "screenshot", "graphics", "document", "video"] as const;
 export type Kind = (typeof KIND)[number];
@@ -40,6 +55,7 @@ const DOCUMENT_CLASSIFICATIONS = new Set([
 // Task 20 — graphics kind: logos / mockups / icons / stickers / clipart and
 // curated art/cover-art/meme classifications. These all land in their own
 // library lens instead of polluting Moments OR Screenshots.
+// ADR 0001 §3 — wallpaper + diagram added as new graphics top-keys.
 export const GRAPHICS_CLASSIFICATIONS = new Set([
   "logo",
   "mockup",
@@ -49,6 +65,8 @@ export const GRAPHICS_CLASSIFICATIONS = new Set([
   "art",
   "cover-art",
   "meme",
+  "wallpaper",
+  "diagram",
 ]);
 
 function isDocumentMime(mimeType: string): boolean {
@@ -76,34 +94,112 @@ export interface KindInput {
   iso?: number | null;
   focalLength?: number | null;
   lensModel?: string | null;
+  // ADR 0001 §4 — heuristic inputs. processAsset.ts already fetches these;
+  // pass them through so deriveKind can run isWhiteboardCapture,
+  // ocrLooksLikePaperDocument, isPhotoOfArt, and isScreenshot in-line.
+  widthPx?: number | null;
+  heightPx?: number | null;
+  subClassification?: string | null;
+  ocrText?: string | null;
 }
 
 /**
- * Pure KIND resolution. Task 20 priority:
+ * Pure KIND resolution. ADR 0001 §4 priority order (priority 1 wins):
+ *
  *   1. video/* mime → video
  *   2. document mime → document
- *   3. classification ∈ DOCUMENT_CLASSIFICATIONS → document
- *   4. classification ∈ GRAPHICS_CLASSIFICATIONS → graphics
- *   5. classification === "screenshot" → screenshot
- *   6. image/* + looksLikeCameraPhoto → moment
- *   7. image/* fallback → screenshot
- *   8. unknown mime → moment (existing fallback)
+ *   3. classification ∈ DOCUMENT_CLASSIFICATIONS → document (beats EXIF)
+ *   4. isWhiteboardCapture() → document
+ *   5. ocrLooksLikePaperDocument() → document
+ *   6. classification ∈ GRAPHICS_CLASSIFICATIONS AND !looksLikeCameraPhoto → graphics
+ *   7. classification === "screenshot" OR isScreenshot() → screenshot
+ *   8. image/* AND looksLikeCameraPhoto → moment
+ *   9. image/* fallback → screenshot
+ *  10. unknown mime → moment
  *
- * Moments require POSITIVE evidence of a real camera capture (EXIF exposure
- * param OR a camera-roll filename pattern OR a RAW/HEIC mime). Images that
- * lack that evidence and aren't otherwise classified fall into `screenshot`
- * rather than polluting the default lens.
+ * Asymmetry invariant: rule 3 IGNORES EXIF (operator's north star — phone
+ * photo of paper is a document), rule 6 REQUIRES no EXIF (museum painting
+ * photo stays a moment).
+ *
+ * Idempotency: pure function of inputs. Re-running on the same row with the
+ * same inputs always produces the same kind.
  */
 export function deriveKind(asset: KindInput): Kind {
-  const { mimeType, classification, filename } = asset;
+  const {
+    mimeType,
+    classification,
+    filename,
+    widthPx = null,
+    heightPx = null,
+    subClassification = null,
+    ocrText = null,
+  } = asset;
+  const exif = {
+    exposureTime: asset.exposureTime ?? null,
+    fNumber: asset.fNumber ?? null,
+    iso: asset.iso ?? null,
+    focalLength: asset.focalLength ?? null,
+    lensModel: asset.lensModel ?? null,
+  };
+
+  // Rule 1 — video mime.
   if (mimeType.startsWith("video/")) return "video";
+  // Rule 2 — document mime (PDF, docx, text/*).
   if (isDocumentMime(mimeType)) return "document";
+  // Rule 3 — document classification beats EXIF. Operator's north star:
+  // a phone photo of paper is a document.
   if (classification && DOCUMENT_CLASSIFICATIONS.has(classification)) return "document";
-  if (classification && GRAPHICS_CLASSIFICATIONS.has(classification)) return "graphics";
-  if (classification === "screenshot") return "screenshot";
-  if (mimeType.startsWith("image/")) {
-    return looksLikeCameraPhoto(filename, mimeType, asset) ? "moment" : "screenshot";
+  // Rule 4 — whiteboard capture heuristic (handles people-in-front case
+  // where classifier sees portrait/event but the intent is the whiteboard).
+  if (
+    isWhiteboardCapture({
+      widthPx,
+      heightPx,
+      filename,
+      classification,
+      subClassification,
+      ocrText,
+    })
+  ) {
+    return "document";
   }
-  // Unknown mime — pre-existing fallback.
+  // Rule 5 — OCR-based paper-document detection, promoted ahead of graphics.
+  // Catches receipts/invoices the classifier missed but OCR caught.
+  if (ocrLooksLikePaperDocument(ocrText)) return "document";
+  // Rule 6 — graphics classification requires no real-camera-capture
+  // evidence. Museum painting photo (classification=art + EXIF) falls
+  // through; downloaded artwork JPEG (classification=art + no EXIF) routes
+  // here.
+  if (classification && GRAPHICS_CLASSIFICATIONS.has(classification)) {
+    // ADR 0001 §6 — isPhotoOfArt forces moment for classification=art + EXIF
+    // even before we check looksLikeCameraPhoto. Equivalent to the EXIF gate
+    // for the art-specific case, but explicit so the intent is readable.
+    if (isPhotoOfArt({ classification, exif, ocrText })) {
+      return "moment";
+    }
+    if (!looksLikeCameraPhoto(filename, mimeType, exif)) {
+      return "graphics";
+    }
+    // Graphics classification + camera EXIF = photo-of-graphic-in-the-world
+    // (e.g. storefront logo). Fall through to the camera-photo path → moment.
+  }
+  // Rule 7 — explicit screenshot classification OR filename/aspect heuristic.
+  if (classification === "screenshot") return "screenshot";
+  if (isScreenshot(filename, mimeType, widthPx, heightPx)) {
+    // Screenshot heuristic only fires when the classifier hasn't already
+    // claimed this row for graphics/document above. EXIF is checked inside
+    // — real camera photos that happen to be 9:16 won't match here.
+    if (!looksLikeCameraPhoto(filename, mimeType, exif)) {
+      return "screenshot";
+    }
+  }
+  // Rule 8 — image with positive camera evidence → moment.
+  if (mimeType.startsWith("image/") && looksLikeCameraPhoto(filename, mimeType, exif)) {
+    return "moment";
+  }
+  // Rule 9 — image without camera evidence falls through to screenshot
+  // rather than polluting the default Moments lens with logos / icons / etc.
+  if (mimeType.startsWith("image/")) return "screenshot";
+  // Rule 10 — unknown mime fallback (pre-existing behaviour).
   return "moment";
 }

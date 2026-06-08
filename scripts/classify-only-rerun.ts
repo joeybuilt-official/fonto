@@ -125,6 +125,10 @@ async function decideForRow(
       classification: kept,
       filename: row.filename,
       ...exif,
+      widthPx: row.width_px,
+      heightPx: row.height_px,
+      ocrText: row.ocr_text,
+      subClassification: null,
     });
     return {
       classification: kept,
@@ -199,6 +203,10 @@ async function decideForRow(
     classification,
     filename: row.filename,
     ...exif,
+    widthPx: row.width_px,
+    heightPx: row.height_px,
+    ocrText: row.ocr_text,
+    subClassification,
   });
 
   return {
