@@ -174,6 +174,7 @@ async function decideForRow(
   const kind = deriveKind({
     mimeType: row.mime_type,
     classification,
+    filename: row.filename,
     ...exif,
   });
 

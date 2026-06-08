@@ -9,12 +9,13 @@
 // off. Resolved in the one place classification is written
 // (`lib/processing/processAsset.ts`) and cached into `assets.kind`.
 //
-// v1 ships four KINDs. "Saved" (memes / art / logos / downloaded non-photos)
-// is deferred: the classifier collapses meme/art/cover-art/whiteboard →
-// "photo" and the Drive import stripped EXIF, so Moment-vs-Saved isn't
-// cleanly derivable yet — those fall through to `moment` for now (ADR D5).
+// v1 ships five KINDs: moment / screenshot / graphics / document / video.
+// "Saved" (downloaded non-photos that aren't logos/icons/etc.) is deferred —
+// ADR D5: not cleanly derivable yet, operator explicitly rejected kind=saved.
 
-export const KIND = ["moment", "screenshot", "document", "video"] as const;
+import { looksLikeCameraPhoto } from "../processing/classifyHelpers";
+
+export const KIND = ["moment", "screenshot", "graphics", "document", "video"] as const;
 export type Kind = (typeof KIND)[number];
 
 export function isKind(value: string): value is Kind {
@@ -36,6 +37,20 @@ const DOCUMENT_CLASSIFICATIONS = new Set([
   "code",
 ]);
 
+// Task 20 — graphics kind: logos / mockups / icons / stickers / clipart and
+// curated art/cover-art/meme classifications. These all land in their own
+// library lens instead of polluting Moments OR Screenshots.
+export const GRAPHICS_CLASSIFICATIONS = new Set([
+  "logo",
+  "mockup",
+  "icon",
+  "sticker",
+  "clipart",
+  "art",
+  "cover-art",
+  "meme",
+]);
+
 function isDocumentMime(mimeType: string): boolean {
   return (
     mimeType === "application/pdf" ||
@@ -48,6 +63,9 @@ function isDocumentMime(mimeType: string): boolean {
 export interface KindInput {
   mimeType: string;
   classification: string | null;
+  // Task 20 — filename is required for the camera-roll positive-evidence test
+  // in deriveKind (looksLikeCameraPhoto). Pass the asset filename verbatim.
+  filename: string;
   // Phase 7.1 — real-camera-capture signals. Any one of these being set
   // positively identifies a photo (not a screenshot / logo / icon). cameraMake
   // ALONE doesn't count: iOS + Android stamp the device make on screenshots
@@ -60,36 +78,31 @@ export interface KindInput {
   lensModel?: string | null;
 }
 
-function hasRealCameraSignals(asset: KindInput): boolean {
-  return Boolean(
-    (asset.exposureTime !== null && asset.exposureTime !== undefined && asset.exposureTime !== "") ||
-      (asset.fNumber !== null && asset.fNumber !== undefined && asset.fNumber > 0) ||
-      (asset.iso !== null && asset.iso !== undefined && asset.iso > 0) ||
-      (asset.focalLength !== null && asset.focalLength !== undefined && asset.focalLength > 0) ||
-      (asset.lensModel !== null && asset.lensModel !== undefined && asset.lensModel !== ""),
-  );
-}
-
 /**
- * Pure KIND resolution. Phase 7.1 — Moments require POSITIVE evidence of a
- * real camera capture (an exposure parameter or a lens). Images that lack
- * that evidence (screenshots, logos, icons, mockups, app captures, debug
- * snapshots) fall into `screenshot` rather than polluting the default lens.
+ * Pure KIND resolution. Task 20 priority:
+ *   1. video/* mime → video
+ *   2. document mime → document
+ *   3. classification ∈ DOCUMENT_CLASSIFICATIONS → document
+ *   4. classification ∈ GRAPHICS_CLASSIFICATIONS → graphics
+ *   5. classification === "screenshot" → screenshot
+ *   6. image/* + looksLikeCameraPhoto → moment
+ *   7. image/* fallback → screenshot
+ *   8. unknown mime → moment (existing fallback)
  *
- * The override at processAsset.ts:172 used to flip phone screenshots back to
- * "photo" because cameraMake is non-null — but iOS / Android stamp the device
- * on screenshots too. This rule fixes the resulting Moment flood.
+ * Moments require POSITIVE evidence of a real camera capture (EXIF exposure
+ * param OR a camera-roll filename pattern OR a RAW/HEIC mime). Images that
+ * lack that evidence and aren't otherwise classified fall into `screenshot`
+ * rather than polluting the default lens.
  */
 export function deriveKind(asset: KindInput): Kind {
-  const { mimeType, classification } = asset;
+  const { mimeType, classification, filename } = asset;
   if (mimeType.startsWith("video/")) return "video";
-  if (classification === "screenshot") return "screenshot";
   if (isDocumentMime(mimeType)) return "document";
   if (classification && DOCUMENT_CLASSIFICATIONS.has(classification)) return "document";
-  // Image without a screenshot/document/video signal — Moment only if a
-  // real-camera-capture parameter is present. Otherwise treat as screenshot.
+  if (classification && GRAPHICS_CLASSIFICATIONS.has(classification)) return "graphics";
+  if (classification === "screenshot") return "screenshot";
   if (mimeType.startsWith("image/")) {
-    return hasRealCameraSignals(asset) ? "moment" : "screenshot";
+    return looksLikeCameraPhoto(filename, mimeType, asset) ? "moment" : "screenshot";
   }
   // Unknown mime — pre-existing fallback.
   return "moment";

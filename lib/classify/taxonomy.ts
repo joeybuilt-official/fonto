@@ -74,6 +74,19 @@ export const TAXONOMY: readonly TopCategory[] = [
       { key: "report", prompt: "a photograph or scan of a printed report or article", tags: ["Reports"] },
       { key: "handwritten-note", prompt: "a photograph of a handwritten note on paper", tags: ["Notes"] },
       { key: "packing-slip", prompt: "a photograph of a packing slip or shipping label with a barcode and addresses", tags: ["Shipping"] },
+      // Task 20 — moved-down doc subs (were top-level keys in v1). Keeping
+      // them as document subs collapses them to classification='document' via
+      // legacyClassificationFor, while still distinguishing them in CLIP and
+      // letting the sub_classification carry the specific kind for UI.
+      { key: "receipt", prompt: "a photograph or scan of a paper receipt showing itemized prices and a total amount", tags: ["Receipts"] },
+      { key: "invoice", prompt: "a photograph or scan of an invoice or bill", tags: ["Invoices"] },
+      { key: "statement", prompt: "a photograph or scan of a bank or utility statement", tags: ["Statements"] },
+      { key: "tax-form", prompt: "a photograph or scan of a tax form (W-2, 1099, 1040, etc.)", tags: ["Tax"] },
+      { key: "ticket", prompt: "a photograph or scan of a paper ticket, boarding pass, or event admission", tags: ["Tickets"] },
+      { key: "certificate", prompt: "a photograph or scan of a certificate, diploma, or membership card", tags: ["Certificates"] },
+      { key: "card", prompt: "a photograph or scan of a greeting card, postcard, or business card", tags: ["Cards"] },
+      { key: "menu", prompt: "a photograph of a restaurant or bar menu", tags: ["Menus"] },
+      { key: "id-card", prompt: "a photograph or scan of a driver's license, ID card, or passport page", tags: ["ID"] },
     ],
   },
   {
@@ -84,6 +97,34 @@ export const TAXONOMY: readonly TopCategory[] = [
       { key: "webpage", prompt: "a screenshot of a web page", tags: ["Web"] },
       { key: "app-ui", prompt: "a screenshot of a mobile or desktop app interface", tags: ["UI"] },
     ],
+  },
+  // Task 20 — graphics top-level keys. CLIP needs distinct prompts to tell
+  // logos / mockups / icons / stickers / clipart apart from photos and from
+  // each other; they all collapse to kind='graphics' via deriveKind.
+  {
+    key: "logo",
+    prompt: "a brand logo or wordmark on a plain background",
+    subs: [],
+  },
+  {
+    key: "mockup",
+    prompt: "a product mockup or UI design mockup rendered on a plain background",
+    subs: [],
+  },
+  {
+    key: "icon",
+    prompt: "a single app icon, favicon, or small UI glyph",
+    subs: [],
+  },
+  {
+    key: "sticker",
+    prompt: "a chat sticker or cartoon emoji-style image on a transparent or solid background",
+    subs: [],
+  },
+  {
+    key: "clipart",
+    prompt: "a piece of clip art or generic stock illustration",
+    subs: [],
   },
   {
     key: "meme",
@@ -98,22 +139,6 @@ export const TAXONOMY: readonly TopCategory[] = [
       { key: "illustration", prompt: "a digital illustration or drawing", tags: ["Illustrations"] },
       { key: "sculpture", prompt: "a photograph of a sculpture", tags: ["Sculpture"] },
     ],
-  },
-  // NOTE: kept as a top-level (rather than a `screenshot` sub) so the
-  // existing `classification === "receipt"` event-trigger code path
-  // doesn't need a special-case. Same logic for `id-card`.
-  {
-    key: "screenshot-receipt",
-    // Sharper prompt: explicit "paper receipt on a table or in a hand" so it
-    // beats `food` / `photo` on angled phone shots of itemized totals.
-    prompt:
-      "a photograph of a paper receipt on a table showing itemized prices and a total amount",
-    subs: [],
-  },
-  {
-    key: "id-card",
-    prompt: "a photograph of an identification card or driver's license",
-    subs: [],
   },
   {
     key: "cover-art",
@@ -135,17 +160,24 @@ export const TAXONOMY: readonly TopCategory[] = [
  */
 export function legacyClassificationFor(topKey: string): string {
   switch (topKey) {
+    // Legacy top-level keys removed in Task 20 — kept here as a safety net
+    // in case a stale CLIP vector cache resurrects them before the rebuild.
     case "screenshot-receipt":
       return "receipt";
     case "id-card":
       return "document";
-    case "cover-art":
-      return "photo";
-    case "whiteboard":
-      return "photo";
+    // Task 20 — graphics top-level keys keep their own classification value
+    // (identity); kind.ts collapses them all to kind='graphics'.
+    case "logo":
+    case "mockup":
+    case "icon":
+    case "sticker":
+    case "clipart":
     case "meme":
-      return "photo";
     case "art":
+    case "cover-art":
+      return topKey;
+    case "whiteboard":
       return "photo";
     default:
       return topKey;

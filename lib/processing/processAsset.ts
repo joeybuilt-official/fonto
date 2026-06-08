@@ -202,20 +202,13 @@ async function processAssetInner(
         classification = "photo";
         subClassification = null;
       }
-      // Positive-evidence rule for Moments: if the classifier landed on
-      // "photo" but the asset has NO camera signals (no exposure/lens/iso/etc.
-      // — e.g. a downloaded logo / mockup / icon / app-icon-grid / debug
-      // capture that fell through the screenshot heuristic), reclassify as
-      // "screenshot". Better polluting Screenshots than Moments while D5
-      // (Saved KIND) is still parked.
-      if (
-        classification === "photo" &&
-        !looksLikeCameraCapture &&
-        mimeType.startsWith("image/")
-      ) {
-        classification = "screenshot";
-        subClassification = null;
-      }
+      // Task 20 — the old `photo → screenshot` demote block lived here. It
+      // was a safety net for downloaded logos / icons / mockups that fell
+      // through the screenshot heuristic. With kind=graphics now a first-class
+      // bucket, that demote conflicts with the new graphics path. Drop it:
+      // deriveKind handles image/* without camera evidence by falling back to
+      // 'screenshot' on its own, so behaviour is preserved without tangling
+      // the classification field.
 
       // Image-grounded signals BEFORE description so the caption can quote
       // real OCR text and reference the objects/scene the vision model saw.
@@ -383,7 +376,7 @@ async function processAssetInner(
   // real-camera-capture signals. cameraEvidence was populated by the image
   // branch above; doc/video paths leave it empty (deriveKind short-circuits
   // on those mimes before checking exposure params, so no read is wasted).
-  const kind = deriveKind({ mimeType, classification, ...cameraEvidence });
+  const kind = deriveKind({ mimeType, classification, filename, ...cameraEvidence });
 
   await db
     .update(schema.assets)
