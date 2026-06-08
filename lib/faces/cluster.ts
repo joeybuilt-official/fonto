@@ -47,6 +47,14 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
+import { neighborsViaGPU } from "@/lib/plexo-vision";
+
+/**
+ * Threshold above which we delegate neighbour computation to the
+ * plexo-vision GPU endpoint. Below this, HTTP round-trip overhead
+ * dominates the O(N²) JS scan — the in-process path wins.
+ */
+const GPU_CLUSTER_MIN_N = 2000;
 
 export interface ClusterOpts {
   /** Cosine-distance threshold; 0 = identical, 2 = opposite. Default 0.32. */
@@ -143,6 +151,86 @@ function dbscan(
 }
 
 /**
+ * DBSCAN cluster assignment from a pre-computed neighbour graph. The
+ * plexo-vision GPU endpoint returns (edges, deg) over the same eps the
+ * caller would have used in-process; this function maps that to the
+ * familiar `labels[]` shape (`-1` = noise, `0..k-1` = cluster id) without
+ * ever touching the embedding vectors.
+ *
+ *   - Core points: `deg[i] >= minPts - 1` (consistent with the in-process
+ *     `dbscan` above, which counts the point itself toward minPts).
+ *   - Union-find over edges with BOTH endpoints core gives core clusters.
+ *   - Border points (non-core but with ≥1 core neighbour) attach to the
+ *     cluster of the FIRST core neighbour encountered when iterating
+ *     `edges` in the order the server returned them — deterministic given
+ *     a stable edge list.
+ *   - Noise = non-core with no core neighbour.
+ */
+export function dbscanFromEdges(
+  edges: ReadonlyArray<readonly [number, number]>,
+  deg: ReadonlyArray<number>,
+  n: number,
+  minPts: number
+): number[] {
+  const core = new Array<boolean>(n);
+  for (let i = 0; i < n; i++) {
+    core[i] = (deg[i] ?? 0) >= minPts - 1;
+  }
+
+  // Union-find over core points only.
+  const parent = new Array<number>(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
+  const find = (x: number): number => {
+    let r = x;
+    while (parent[r] !== r) r = parent[r];
+    // Path compression.
+    let cur = x;
+    while (parent[cur] !== r) {
+      const next = parent[cur];
+      parent[cur] = r;
+      cur = next;
+    }
+    return r;
+  };
+  const union = (a: number, b: number): void => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  };
+
+  for (const e of edges) {
+    const a = e[0];
+    const b = e[1];
+    if (core[a] && core[b]) union(a, b);
+  }
+
+  // Assign dense cluster ids to each core root.
+  const labels = new Array<number>(n).fill(-1);
+  const rootToCluster = new Map<number, number>();
+  let nextCluster = 0;
+  for (let i = 0; i < n; i++) {
+    if (!core[i]) continue;
+    const r = find(i);
+    let cid = rootToCluster.get(r);
+    if (cid === undefined) {
+      cid = nextCluster++;
+      rootToCluster.set(r, cid);
+    }
+    labels[i] = cid;
+  }
+
+  // Border points: walk edges in given order, first core neighbour wins.
+  for (const e of edges) {
+    const a = e[0];
+    const b = e[1];
+    if (core[a] && !core[b] && labels[b] === -1) labels[b] = labels[a];
+    else if (core[b] && !core[a] && labels[a] === -1) labels[a] = labels[b];
+  }
+
+  return labels;
+}
+
+/**
  * Cluster a workspace's face embeddings into `persons` rows.
  *
  * Returns counts of newly created persons, updated/reused persons, and
@@ -199,7 +287,28 @@ export async function clusterWorkspaceFaces(
   );
 
   const points = usable.map((r) => r.embedding);
-  const labels = dbscan(points, eps, minPts);
+  // GPU path when the library is big enough for HTTP overhead to pay off.
+  // Falls back to in-process JS on endpoint failure or when explicitly
+  // disabled via FACE_CLUSTER_GPU_DISABLED=1 (escape hatch for incidents).
+  let labels: number[];
+  if (
+    points.length >= GPU_CLUSTER_MIN_N &&
+    process.env.FACE_CLUSTER_GPU_DISABLED !== "1"
+  ) {
+    const gpu = await neighborsViaGPU(points, eps, minPts);
+    if (gpu) {
+      labels = dbscanFromEdges(gpu.edges, gpu.deg, points.length, minPts);
+      log.info({ count: points.length, ep: "cuda" }, "cluster via gpu");
+    } else {
+      labels = dbscan(points, eps, minPts);
+      log.info(
+        { count: points.length, ep: "cpu-fallback" },
+        "cluster via cpu"
+      );
+    }
+  } else {
+    labels = dbscan(points, eps, minPts);
+  }
 
   // Group face ids by cluster label.
   const clusters = new Map<number, string[]>();

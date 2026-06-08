@@ -19,6 +19,8 @@
 // AGPL note: OpenCLIP weights are MIT, PaddleOCR PP-OCRv5 is Apache 2.0 —
 // shipping them inside our own ONNX runtime is fine with an AGPL app.
 
+import { logger } from "@/lib/logger";
+
 const DEFAULT_TIMEOUT_MS = 15_000;
 // OCR can be backed by a CPU-only VLM (Ollama Qwen2.5-VL) which routinely
 // takes 10–30 s/image — earlier 30 s cap was tuned for PaddleOCR's <2 s
@@ -313,3 +315,133 @@ export async function labelImageUrl(imageUrl: string): Promise<LabelResult> {
 }
 
 export const visionServiceConfigured = visionConfigured;
+
+// --- Face cluster (Phase 5.x — GPU-accelerated neighbour query) ----------
+//
+// The plexo-vision sidecar exposes a CUDA cosine-neighbour endpoint at
+// `/v1/faces/cluster` that returns the edge list + per-point degree array
+// DBSCAN needs without ever pulling the full O(N²) distance matrix to the
+// Node side. At 20k faces this collapses minutes of single-threaded JS into
+// a few seconds of GPU work, freeing the worker event loop.
+//
+// This client returns `null` (not throws) on any failure — caller falls
+// back to the in-process DBSCAN in `lib/faces/cluster.ts`.
+
+const FACE_CLUSTER_TIMEOUT_MS = 30_000;
+
+interface FaceClusterResponseBody {
+  n?: unknown;
+  edges?: unknown;
+  deg?: unknown;
+  ep?: unknown;
+  chunks?: unknown;
+  tookMs?: unknown;
+}
+
+export interface FaceClusterNeighbours {
+  edges: [number, number][];
+  deg: number[];
+}
+
+/**
+ * Ask plexo-vision for the cosine-neighbour graph over `points`. Returns
+ * `null` on any error (network, HTTP 4xx/5xx, malformed body) so callers
+ * can degrade to the JS path. Single retry on 5xx; 30s timeout.
+ *
+ * `points` is interpreted as L2-normalised 512-dim ArcFace vectors (the
+ * embed pipeline guarantees unit norm). `eps` is the cosine *distance*
+ * threshold (1 - cosine similarity); `minPts` is forwarded for the
+ * sidecar's optional chunk-sizing heuristics but the JS side still owns
+ * cluster assignment.
+ */
+export async function neighborsViaGPU(
+  points: number[][],
+  eps: number,
+  minPts: number
+): Promise<FaceClusterNeighbours | null> {
+  const base = process.env.PLEXO_VISION_URL;
+  if (!base) return null;
+  const url = base.replace(/\/+$/, "") + "/v1/faces/cluster";
+
+  const faces = new Array<{ id: string; vec: number[] }>(points.length);
+  for (let i = 0; i < points.length; i++) {
+    // Server returns indices into the request array — id is just a
+    // sequence number to satisfy the schema.
+    faces[i] = { id: String(i), vec: points[i] };
+  }
+  const body = JSON.stringify({
+    faces,
+    eps,
+    minPts,
+    return: "edges",
+  });
+
+  const attempt = async (): Promise<{
+    ok: boolean;
+    retry: boolean;
+    data: FaceClusterResponseBody | null;
+  }> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FACE_CLUSTER_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          ...(serviceKey() ? { authorization: `Bearer ${serviceKey()}` } : {}),
+        },
+        body,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        return { ok: false, retry: res.status >= 500 && res.status < 600, data: null };
+      }
+      const json = (await res.json()) as FaceClusterResponseBody;
+      return { ok: true, retry: false, data: json };
+    } catch {
+      // Network / abort — treat like a 5xx for retry purposes.
+      return { ok: false, retry: true, data: null };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  let result = await attempt();
+  if (!result.ok && result.retry) {
+    result = await attempt();
+  }
+  if (!result.ok || !result.data) {
+    logger.warn(
+      { count: points.length, url },
+      "neighborsViaGPU failed; falling back to JS DBSCAN"
+    );
+    return null;
+  }
+
+  const data = result.data;
+  if (!Array.isArray(data.edges) || !Array.isArray(data.deg)) {
+    logger.warn(
+      { count: points.length },
+      "neighborsViaGPU malformed response; falling back to JS DBSCAN"
+    );
+    return null;
+  }
+  const edges: [number, number][] = [];
+  for (const e of data.edges) {
+    if (
+      Array.isArray(e) &&
+      e.length >= 2 &&
+      typeof e[0] === "number" &&
+      typeof e[1] === "number"
+    ) {
+      edges.push([e[0] as number, e[1] as number]);
+    }
+  }
+  const deg: number[] = new Array(points.length).fill(0);
+  for (let i = 0; i < data.deg.length && i < deg.length; i++) {
+    const d = (data.deg as unknown[])[i];
+    if (typeof d === "number") deg[i] = d;
+  }
+  return { edges, deg };
+}
