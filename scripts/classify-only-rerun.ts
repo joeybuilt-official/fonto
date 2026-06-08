@@ -22,18 +22,18 @@
 import postgres from "postgres";
 import { classifyAsset } from "@/lib/classify/classify";
 import { deriveKind } from "@/lib/classify/kind";
+// Helpers live in classifyHelpers.ts (NOT processAsset.ts) so this script
+// doesn't transitively load the Plexo SDK + sharp + S3 + webhook stack at
+// top-level. The Plexo SDK has an ESM-only subpath ("./connect") that tsx's
+// CJS loader trips on for scripts (worker entrypoint somehow skirts this);
+// we pull plexo.ts via dynamic import in main() when actually needed.
 import {
   isScreenshot,
   hasRealCameraSignals,
   ocrLooksLikePaperDocument,
   isDocumentByOcr,
   type CameraEvidence,
-} from "@/lib/processing/processAsset";
-import {
-  plexoAvailable,
-  plexoEnsureWorkspace,
-  plexoClassifyAsset,
-} from "@/lib/plexo";
+} from "@/lib/processing/classifyHelpers";
 
 function arg(name: string): string | true | null {
   const flag = process.argv.find(
@@ -72,9 +72,19 @@ interface DecisionResult {
   kind: ReturnType<typeof deriveKind>;
 }
 
+interface PlexoFns {
+  classify: (
+    workspaceId: string,
+    filename: string,
+    mimeType: string,
+    text?: string,
+  ) => Promise<string>;
+}
+
 async function decideForRow(
   row: Row,
   plexoWorkspaceId: string | null,
+  plexo: PlexoFns | null,
 ): Promise<DecisionResult> {
   const exif: CameraEvidence = {
     exposureTime: row.exposure_time,
@@ -87,11 +97,11 @@ async function decideForRow(
   // 1. CLIP classify (LLM fallback only if CLIP is uncertain — same as live).
   const result = await classifyAsset(row.clip_vec, {
     classify: async () => {
-      if (!plexoWorkspaceId) {
+      if (!plexoWorkspaceId || !plexo) {
         // No Plexo workspace resolution available — degrade gracefully.
         return { topLevel: "photo" as const };
       }
-      const topLevel = await plexoClassifyAsset(
+      const topLevel = await plexo.classify(
         plexoWorkspaceId,
         row.filename,
         row.mime_type,
@@ -195,12 +205,14 @@ async function main(): Promise<void> {
     `[classify-rerun] workspace=${workspaceId} scope=${scope} dryRun=${dryRun} limit=${limit === Number.POSITIVE_INFINITY ? "all" : limit}`,
   );
 
-  // Resolve a Plexo workspace id once for the LLM fallback. If Plexo is
-  // unavailable, classifyAsset's fallback will return "photo" by default —
-  // which is fine, we won't write anything that wasn't already there.
+  // Lazy-load plexo.ts via dynamic import. Top-level import fails under tsx
+  // CJS resolution for the SDK's ESM-only "./connect" subpath; dynamic import
+  // forces the ESM loader and works.
   let plexoWorkspaceId: string | null = null;
-  if (plexoAvailable()) {
-    try {
+  let plexo: PlexoFns | null = null;
+  try {
+    const plexoMod = (await import("@/lib/plexo")) as typeof import("@/lib/plexo");
+    if (plexoMod.plexoAvailable()) {
       const [wsRow] = (await sql`
         SELECT u.id AS user_id, u.email AS email
         FROM fonto.workspaces w
@@ -208,19 +220,23 @@ async function main(): Promise<void> {
         WHERE w.id = ${workspaceId}
       `) as Array<{ user_id: string; email: string | null }>;
       if (wsRow) {
-        plexoWorkspaceId = await plexoEnsureWorkspace(
+        plexoWorkspaceId = await plexoMod.plexoEnsureWorkspace(
           wsRow.user_id,
           wsRow.email ?? undefined,
         );
+        plexo = { classify: plexoMod.plexoClassifyAsset };
         console.log(
           `[classify-rerun] plexo workspace resolved: ${plexoWorkspaceId}`,
         );
       }
-    } catch (err) {
-      console.warn("[classify-rerun] plexo workspace resolve failed:", err);
+    } else {
+      console.log("[classify-rerun] plexo unavailable — CLIP-only path");
     }
-  } else {
-    console.log("[classify-rerun] plexo unavailable — CLIP-only path");
+  } catch (err) {
+    console.warn(
+      "[classify-rerun] plexo load failed — proceeding CLIP-only:",
+      err,
+    );
   }
 
   // Build the candidate query. clip_vec column is pgvector; postgres-js
@@ -329,7 +345,7 @@ async function main(): Promise<void> {
       // is still fast (no network per row when CLIP is decisive).
       for (const row of batch) {
         try {
-          const decision = await decideForRow(row, plexoWorkspaceId);
+          const decision = await decideForRow(row, plexoWorkspaceId, plexo);
           processed++;
           kindHist[decision.kind] = (kindHist[decision.kind] ?? 0) + 1;
           classHist[decision.classification] =
