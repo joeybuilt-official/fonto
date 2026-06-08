@@ -468,7 +468,9 @@ function parsePgVector(text: string): number[] | null {
   return out;
 }
 
-main().catch((err) => {
-  console.error("[classify-rerun] fatal:", err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("[classify-rerun] fatal:", err);
+    process.exit(1);
+  });
