@@ -8,6 +8,16 @@
 import { createPlexoClient, type AiMessage } from "@joeybuilt/plexo-sdk/connect"
 import { ocrImage, visionConfigured } from "@/lib/plexo-vision"
 
+// Re-export the unified analyze-image client so existing import sites stay
+// uniform with `lib/plexo`. The implementation lives separately so the
+// rollout can be flag-gated without touching the legacy helpers below.
+export {
+  analyzeImageUnified,
+  unifiedAnalyzeEnabled,
+  type AnalyzeImageResult,
+  type AnalyzeImageHints,
+} from "@/lib/plexo-analyze"
+
 const sdk = createPlexoClient({
   appId: "fonto",
   plexoUrl: process.env.PLEXO_URL ?? "",
