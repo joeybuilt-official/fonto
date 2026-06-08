@@ -61,12 +61,19 @@ export const TAXONOMY: readonly TopCategory[] = [
   },
   {
     key: "document",
-    prompt: "a scanned document or page of text",
+    // Phase 7.2 — phone shots of paper rarely look "scanned" (angled, on a
+    // table, with shadows and ambient color). Broaden the prompt to cover
+    // the phone-photo case so receipts / paper notes / packing slips don't
+    // beat the "photograph" prompt on cosine.
+    prompt:
+      "a photograph or scan of a paper document with printed or handwritten text",
     subs: [
-      { key: "letter", prompt: "a scanned letter or correspondence", tags: ["Letters"] },
-      { key: "contract", prompt: "a scanned legal contract", tags: ["Contracts"] },
-      { key: "form", prompt: "a scanned form to be filled out", tags: ["Forms"] },
-      { key: "report", prompt: "a scanned report or article", tags: ["Reports"] },
+      { key: "letter", prompt: "a photograph or scan of a letter or piece of correspondence", tags: ["Letters"] },
+      { key: "contract", prompt: "a photograph or scan of a legal contract", tags: ["Contracts"] },
+      { key: "form", prompt: "a photograph or scan of a form to be filled out", tags: ["Forms"] },
+      { key: "report", prompt: "a photograph or scan of a printed report or article", tags: ["Reports"] },
+      { key: "handwritten-note", prompt: "a photograph of a handwritten note on paper", tags: ["Notes"] },
+      { key: "packing-slip", prompt: "a photograph of a packing slip or shipping label with a barcode and addresses", tags: ["Shipping"] },
     ],
   },
   {
@@ -97,7 +104,10 @@ export const TAXONOMY: readonly TopCategory[] = [
   // doesn't need a special-case. Same logic for `id-card`.
   {
     key: "screenshot-receipt",
-    prompt: "a photograph or scan of a paper receipt",
+    // Sharper prompt: explicit "paper receipt on a table or in a hand" so it
+    // beats `food` / `photo` on angled phone shots of itemized totals.
+    prompt:
+      "a photograph of a paper receipt on a table showing itemized prices and a total amount",
     subs: [],
   },
   {
