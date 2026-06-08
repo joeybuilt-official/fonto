@@ -138,9 +138,9 @@ function SearchContent() {
     if (isDoc && (a.mimeType === "application/pdf" || a.extractedText)) {
       setViewerAsset(a);
     } else if (a.mimeType.startsWith("image/")) {
-      router.push("/app/library?mime=image%2F");
+      router.push("/app/library?kind=moment");
     } else {
-      router.push("/app/library?mime=application%2F");
+      router.push("/app/library?kind=document");
     }
   }
 

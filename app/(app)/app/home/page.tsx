@@ -47,13 +47,13 @@ const QUICK_JUMP: Array<{
   icon: React.ComponentType<{ className?: string }>;
   hint: string;
 }> = [
-  { href: "/app/library?mime=image%2F", label: "Photos", icon: ImageIcon, hint: "Browse the grid" },
+  { href: "/app/library?kind=moment", label: "Photos", icon: ImageIcon, hint: "Browse the grid" },
   { href: "/app/library", label: "Timeline", icon: Clock, hint: "Chronological" },
   { href: "/app/memories", label: "Memories", icon: Sparkles, hint: "On this day" },
   { href: "/app/map", label: "Map", icon: MapIcon, hint: "Geo-tagged photos" },
   { href: "/app/library?pathPrefix=/", label: "Folders", icon: FolderTree, hint: "Browse by folder" },
   { href: "/app/people", label: "People", icon: Users, hint: "Face clusters" },
-  { href: "/app/library?mime=application%2F", label: "Documents", icon: FileText, hint: "PDFs + text" },
+  { href: "/app/library?kind=document", label: "Documents", icon: FileText, hint: "PDFs + text" },
   { href: "/app/collections?tab=stacks", label: "Stacks", icon: Layers, hint: "Bursts + RAW pairs" },
   { href: "/app/search", label: "Search", icon: Search, hint: "Find anything" },
   { href: "/app/updates?section=uploads", label: "Inbox", icon: Inbox, hint: "Upload + recent" },
@@ -144,14 +144,14 @@ export default function HomePage() {
               label="Photos"
               value={stats.images}
               icon={ImageIcon}
-              href="/app/library?mime=image%2F"
+              href="/app/library?kind=moment"
               accent="bg-blue-500/10 text-blue-500"
             />
             <StatTile
               label="Documents"
               value={stats.documents}
               icon={FileText}
-              href="/app/library?mime=application%2F"
+              href="/app/library?kind=document"
               accent="bg-orange-500/10 text-orange-500"
             />
             <StatTile

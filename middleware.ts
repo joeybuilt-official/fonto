@@ -40,13 +40,13 @@ type RedirectRule = { to: string; params?: Record<string, string> };
 
 const REDIRECT_MAP: Record<string, RedirectRule> = {
   // Phase 1 — Library consolidation. 5 routes → 1 surface.
-  "/app/photos":            { to: "/app/library", params: { mime: "image/" } },
+  "/app/photos":            { to: "/app/library", params: { kind: "moment" } },
   "/app/timeline":          { to: "/app/library" },
   // /app/memories is a live route again: the unified library cannot express
   // its "on this day across prior years" query (captured_mmdd_utc functional
   // index, migration 0023), so the dedicated surface fills a real gap.
   "/app/folders":           { to: "/app/library", params: { pathPrefix: "/" } },
-  "/app/documents":         { to: "/app/library", params: { mime: "application/" } },
+  "/app/documents":         { to: "/app/library", params: { kind: "document" } },
   "/app/trash":             { to: "/app/library", params: { lc: "trashed" } },
 
   // Phase 2 — Collections fan-out. Detail routes (/app/<x>/[id]) stay
