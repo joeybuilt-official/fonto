@@ -13,6 +13,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 
 class ExploreScreen extends StatelessWidget {
@@ -47,7 +48,9 @@ class ExploreScreen extends StatelessWidget {
   }
 }
 
-/// Shared loading / error+retry / empty / data scaffold.
+/// Shared loading / error+retry / empty / data scaffold. Phase 7 — uses the
+/// shared `ListErrorState` + `ListEmptyState` widgets so copy + CTAs match
+/// every other list surface (Library, Collections, Search, Updates).
 Widget _stateScaffold({
   required bool loading,
   required String? error,
@@ -55,34 +58,16 @@ Widget _stateScaffold({
   required String emptyText,
   required VoidCallback onRetry,
   required Widget Function() builder,
+  IconData emptyIcon = Icons.explore_outlined,
 }) {
   if (loading) {
     return const Center(child: CircularProgressIndicator());
   }
   if (error != null) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 40),
-            const SizedBox(height: 12),
-            Text(error, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text("Retry")),
-          ],
-        ),
-      ),
-    );
+    return ListErrorState(onRetry: onRetry);
   }
   if (isEmpty) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(emptyText, textAlign: TextAlign.center),
-      ),
-    );
+    return ListEmptyState(icon: emptyIcon, message: emptyText);
   }
   return builder();
 }

@@ -13,6 +13,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 
 class FilteredAssetsScreen extends StatefulWidget {
@@ -145,32 +146,31 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
     );
   }
 
+  bool get _hasFilter =>
+      widget.favorite ||
+      widget.kind != null ||
+      (widget.lifecycle != null && widget.lifecycle != "active") ||
+      widget.place != null;
+
   Widget _buildBody() {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.error_outline, size: 40),
-              const SizedBox(height: 12),
-              Text(_error!, textAlign: TextAlign.center),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () => _load(reset: true),
-                child: const Text("Retry"),
-              ),
-            ],
-          ),
-        ),
-      );
+      return ListErrorState(onRetry: () => _load(reset: true));
     }
     if (_assets.isEmpty) {
-      return const Center(child: Text("Nothing here yet"));
+      // Mirrors the web filter-aware empty state. When a filter is pinned
+      // (this surface always opens w/ at least one) the copy points the
+      // user to clearing it via the back button — there's no in-page
+      // filter UI here, so the CTA pops to Collections.
+      return ListEmptyState(
+        message: _hasFilter
+            ? filteredEmptyForKind(widget.kind)
+            : defaultEmptyForKind(widget.kind),
+        filtered: _hasFilter,
+        onClearFilters: _hasFilter ? () => Navigator.of(context).pop() : null,
+      );
     }
 
     return RefreshIndicator(

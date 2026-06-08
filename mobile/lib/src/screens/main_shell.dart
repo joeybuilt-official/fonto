@@ -50,37 +50,67 @@ class _MainShellState extends State<MainShell> {
       SearchScreen(client: _client),
     ];
 
+    final theme = Theme.of(context);
+    // Phase 7 AA pass: inactive label uses onSurface @ 70% (passes WCAG AA
+    // against light + dark surfaces); active is full-weight onSurface +
+    // teal icon + the indicator highlight (NavigationBar's built-in pill).
+    // Mirrors the web AppMobileBottomBar tokens.
+    final inactiveText = theme.colorScheme.onSurface.withValues(alpha: 0.7);
+    final inactiveIcon = theme.colorScheme.onSurfaceVariant;
+    final activeText = theme.colorScheme.onSurface;
+    final activeIcon = theme.colorScheme.primary;
+
     return Scaffold(
       body: IndexedStack(index: _index, children: tabs),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.photo_library_outlined),
-            selectedIcon: Icon(Icons.photo_library),
-            label: "Library",
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.explore_outlined),
-            selectedIcon: Icon(Icons.explore),
-            label: "Explore",
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.collections_bookmark_outlined),
-            selectedIcon: Icon(Icons.collections_bookmark),
-            label: "Collections",
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.notifications_outlined),
-            selectedIcon: Icon(Icons.notifications),
-            label: "Updates",
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.search),
-            label: "Search",
-          ),
-        ],
+      bottomNavigationBar: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          indicatorColor: theme.colorScheme.primary.withValues(alpha: 0.12),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            final selected = states.contains(WidgetState.selected);
+            return TextStyle(
+              fontSize: 11,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+              color: selected ? activeText : inactiveText,
+            );
+          }),
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            final selected = states.contains(WidgetState.selected);
+            return IconThemeData(
+              size: 22,
+              color: selected ? activeIcon : inactiveIcon,
+            );
+          }),
+        ),
+        child: NavigationBar(
+          selectedIndex: _index,
+          onDestinationSelected: (i) => setState(() => _index = i),
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.photo_library_outlined),
+              selectedIcon: Icon(Icons.photo_library),
+              label: "Library",
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.explore_outlined),
+              selectedIcon: Icon(Icons.explore),
+              label: "Explore",
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.collections_bookmark_outlined),
+              selectedIcon: Icon(Icons.collections_bookmark),
+              label: "Collections",
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.notifications_outlined),
+              selectedIcon: Icon(Icons.notifications),
+              label: "Updates",
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.search),
+              label: "Search",
+            ),
+          ],
+        ),
       ),
     );
   }

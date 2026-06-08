@@ -15,6 +15,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 import "filtered_assets_screen.dart";
 
@@ -81,36 +82,26 @@ class CollectionsScreen extends StatelessWidget {
 }
 
 /// Shared loading / error+retry / empty / data scaffold so each sub-tab
-/// renders the same shape as home_screen.dart.
+/// renders the same shape as home_screen.dart. Phase 7 — uses the shared
+/// `ListErrorState` + `ListEmptyState` widgets and accepts tab-specific
+/// empty copy so each tab can say what's actually missing.
 Widget _stateScaffold({
   required bool loading,
   required String? error,
   required bool isEmpty,
   required VoidCallback onRetry,
   required Widget Function() builder,
+  String emptyText = "Nothing here yet.",
+  IconData emptyIcon = Icons.collections_bookmark_outlined,
 }) {
   if (loading) {
     return const Center(child: CircularProgressIndicator());
   }
   if (error != null) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 40),
-            const SizedBox(height: 12),
-            Text(error, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text("Retry")),
-          ],
-        ),
-      ),
-    );
+    return ListErrorState(onRetry: onRetry);
   }
   if (isEmpty) {
-    return const Center(child: Text("Nothing here yet"));
+    return ListEmptyState(icon: emptyIcon, message: emptyText);
   }
   return builder();
 }
@@ -168,6 +159,8 @@ class _AlbumsTabState extends State<_AlbumsTab> {
       error: _error,
       isEmpty: _items.isEmpty,
       onRetry: _load,
+      emptyText: "No albums yet. Create one to organize your assets.",
+      emptyIcon: Icons.folder_open_outlined,
       builder: () => ListView.builder(
         itemCount: _items.length,
         itemBuilder: (context, i) {
@@ -238,6 +231,8 @@ class _SmartTabState extends State<_SmartTab> {
       error: _error,
       isEmpty: _items.isEmpty,
       onRetry: _load,
+      emptyText: "No smart collections yet. Saved searches show up here.",
+      emptyIcon: Icons.auto_awesome_outlined,
       builder: () => ListView.builder(
         itemCount: _items.length,
         itemBuilder: (context, i) {
@@ -308,6 +303,9 @@ class _ProjectsTabState extends State<_ProjectsTab> {
       error: _error,
       isEmpty: _items.isEmpty,
       onRetry: _load,
+      emptyText:
+          "No projects yet. Create a project to organize albums and collections.",
+      emptyIcon: Icons.folder_special_outlined,
       builder: () => ListView.builder(
         itemCount: _items.length,
         itemBuilder: (context, i) {
@@ -394,6 +392,9 @@ class _StacksTabState extends State<_StacksTab> {
       error: _error,
       isEmpty: _items.isEmpty,
       onRetry: _load,
+      emptyText:
+          "No stacks yet. RAW+JPEG pairs and bursts will surface here.",
+      emptyIcon: Icons.layers_outlined,
       builder: () => GridView.builder(
         padding: const EdgeInsets.all(8),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -846,6 +847,12 @@ class _PeopleCard extends StatefulWidget {
 class _PeopleCardState extends State<_PeopleCard> {
   List<Person> _people = const [];
   int? _total;
+  // coverFaceCropUrl points at /api/v1/faces/<id>/crop-url which returns
+  // JSON {url: <signed>} — not a direct image. Resolve through the API
+  // client + cache the signed URL per person so CachedNetworkImage gets a
+  // real image URL. Mirrors the web people-card.tsx + people/page.tsx
+  // FaceCrop flow.
+  final Map<String, String> _resolvedFaceUrls = {};
 
   @override
   void initState() {
@@ -857,10 +864,20 @@ class _PeopleCardState extends State<_PeopleCard> {
     try {
       final all = await widget.client.listPersons();
       if (!mounted) return;
+      final preview = all.take(4).toList();
       setState(() {
-        _people = all.take(4).toList();
+        _people = preview;
         _total = all.length;
       });
+      // Resolve face-crop URLs in parallel. Failures stay null and the
+      // tile falls back to the person-icon placeholder.
+      await Future.wait(preview.map((p) async {
+        final ref = p.coverFaceCropUrl;
+        if (ref == null) return;
+        final signed = await widget.client.resolveSignedUrl(ref);
+        if (signed == null || !mounted) return;
+        setState(() => _resolvedFaceUrls[p.id] = signed);
+      }));
     } catch (_) {
       // Section is best-effort; stays hidden on failure.
     }
@@ -903,7 +920,7 @@ class _PeopleCardState extends State<_PeopleCard> {
                   ),
                   itemBuilder: (context, i) {
                     final p = i < _people.length ? _people[i] : null;
-                    final url = p?.coverFaceCropUrl;
+                    final url = p == null ? null : _resolvedFaceUrls[p.id];
                     return ClipOval(
                       child: url == null
                           ? Container(

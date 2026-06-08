@@ -10,6 +10,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 
 class SearchScreen extends StatefulWidget {
@@ -124,15 +125,19 @@ class _SearchScreenState extends State<SearchScreen> {
   Widget _buildBody() {
     if (_busy) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(_error!, textAlign: TextAlign.center),
-        ),
+      return ListErrorState(
+        message: "Couldn't run that search. Check your connection and retry.",
+        onRetry: _run,
       );
     }
     if (_results.isEmpty) {
-      return const Center(child: Text("Type a query and hit search."));
+      final hasQuery = _ctrl.text.trim().isNotEmpty;
+      return ListEmptyState(
+        icon: Icons.search,
+        message: hasQuery
+            ? "No assets found."
+            : "Type to search your assets, or set a filter.",
+      );
     }
     return GridView.builder(
       padding: const EdgeInsets.all(4),

@@ -20,6 +20,7 @@ import "../state/auth_store.dart";
 import "../state/drive_download_queue.dart";
 import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
+import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 import "settings_screen.dart";
 import "transfers_screen.dart";
@@ -61,6 +62,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// `null` → workspace root view (all assets, no filter).
   /// Otherwise filters via directoryPathPrefix.
   String? _folder;
+
+  /// Phase 7 — active lens (matches the web Library lens selector).
+  /// "moment" is the default; "all" clears the kind filter; the rest map
+  /// 1:1 to `?kind=` on /api/v1/assets.
+  String _lens = "moment";
 
   @override
   void initState() {
@@ -194,6 +200,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final page = await _client.listAssets(
         limit: _kPageSize,
         directoryPathPrefix: _folder,
+        kind: _lens == "all" ? null : _lens,
       );
       if (!mounted) return;
       final existingIds = {for (final a in _assets) a.id};
@@ -237,6 +244,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final page = await _client.listAssets(
         limit: _kPageSize,
         directoryPathPrefix: _folder,
+        kind: _lens == "all" ? null : _lens,
       );
       final thumbs = page.assets.isEmpty
           ? <String, String>{}
@@ -270,6 +278,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         limit: _kPageSize,
         after: _cursor,
         directoryPathPrefix: _folder,
+        kind: _lens == "all" ? null : _lens,
       );
       final newThumbs = page.assets.isEmpty
           ? <String, String>{}
@@ -708,25 +717,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  void _setLens(String lens) {
+    if (_lens == lens) return;
+    setState(() => _lens = lens);
+    _refresh();
+  }
+
+  bool get _hasNonLensFilter => _folder != null;
+
   Widget _buildBody() {
     if (_loadingFirst) {
-      return const Center(child: CircularProgressIndicator());
+      return Column(
+        children: [
+          _LensSelector(active: _lens, onChange: _setLens),
+          const Expanded(child: Center(child: CircularProgressIndicator())),
+        ],
+      );
     }
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.error_outline, size: 40),
-              const SizedBox(height: 12),
-              Text(_error!, textAlign: TextAlign.center),
-              const SizedBox(height: 16),
-              FilledButton(onPressed: _refresh, child: const Text("Retry")),
-            ],
-          ),
-        ),
+      return Column(
+        children: [
+          _LensSelector(active: _lens, onChange: _setLens),
+          Expanded(child: ListErrorState(onRetry: _refresh)),
+        ],
       );
     }
 
@@ -745,10 +758,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           if (_stats != null && _folder == null)
             SliverToBoxAdapter(child: _StatsBar(stats: _stats!)),
           if (_assets.isEmpty)
-            const SliverFillRemaining(
+            SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(
-                child: Text("No assets yet. Tap + to add."),
+              child: ListEmptyState(
+                message: _hasNonLensFilter
+                    ? filteredEmptyForKind(_lens)
+                    : defaultEmptyForKind(_lens),
+                filtered: _hasNonLensFilter,
+                onClearFilters:
+                    _hasNonLensFilter ? () => _selectFolder(null) : null,
               ),
             )
           else
@@ -806,24 +824,105 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // month in the workspace (not just the loaded pages). On release we hop
     // to the loaded-data offset of that month; if the month isn't loaded yet
     // we kick a few _loadMore() calls until it is.
-    if (_buckets.length <= 1 || _assets.isEmpty) return scroll;
-    return Stack(
+    final Widget timeline = (_buckets.length <= 1 || _assets.isEmpty)
+        ? scroll
+        : Stack(
+            children: [
+              scroll,
+              Positioned(
+                top: 4,
+                right: 0,
+                bottom: 4,
+                width: 28,
+                child: _TimelineScrubber(
+                  controller: _scroll,
+                  buckets: _buckets,
+                ),
+              ),
+            ],
+          );
+
+    // Phase 7 — lens selector pinned above the timeline. Matches the web
+    // Library lens (Moments / Screenshots / Documents / Videos / All). The
+    // active value drives ?kind= on refresh/loadMore.
+    return Column(
       children: [
-        scroll,
-        Positioned(
-          top: 4,
-          right: 0,
-          bottom: 4,
-          width: 28,
-          child: _TimelineScrubber(
-            controller: _scroll,
-            buckets: _buckets,
-          ),
-        ),
+        _LensSelector(active: _lens, onChange: _setLens),
+        Expanded(child: timeline),
       ],
     );
   }
 
+}
+
+/// Phase 7 — lens selector. Mirrors web's `LENSES` constant in library/page.tsx.
+/// "moment" is the default; "all" clears the ?kind= filter.
+class _LensSelector extends StatelessWidget {
+  const _LensSelector({required this.active, required this.onChange});
+
+  final String active;
+  final ValueChanged<String> onChange;
+
+  static const _lenses = <(String, String, IconData)>[
+    ("moment", "Moments", Icons.photo_outlined),
+    ("screenshot", "Screenshots", Icons.smartphone_outlined),
+    ("document", "Documents", Icons.description_outlined),
+    ("video", "Videos", Icons.videocam_outlined),
+    ("all", "All", Icons.grid_view_outlined),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        itemCount: _lenses.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final (value, label, icon) = _lenses[i];
+          final isActive = value == active;
+          return InkWell(
+            onTap: () => onChange(value),
+            borderRadius: const BorderRadius.all(Radius.circular(20)),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: isActive
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.surfaceContainerHighest,
+                borderRadius: const BorderRadius.all(Radius.circular(20)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    icon,
+                    size: 16,
+                    color: isActive
+                        ? theme.colorScheme.onPrimary
+                        : theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: isActive
+                          ? theme.colorScheme.onPrimary
+                          : theme.colorScheme.onSurface,
+                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 }
 
 const double _kMonthHeaderHeight = 36;
