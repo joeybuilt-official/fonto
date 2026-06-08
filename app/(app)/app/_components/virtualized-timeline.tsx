@@ -267,7 +267,11 @@ export function VirtualizedTimeline({
   const scrubBuckets: ScrubBucket[] = buckets;
 
   return (
-    <div className="relative flex gap-2" role="grid" aria-label="Asset timeline" aria-rowcount={buckets.length}>
+    // ARIA: not a strict role=grid (mixes a scroll container + scrubber as
+    // siblings; the real "rows" live three layers deeper). role=region with
+    // a name describes the surface honestly and avoids Lighthouse's
+    // aria-required-children fail.
+    <div className="relative flex gap-2" role="region" aria-label="Asset timeline">
       {/* Own scroll container — native scrollbar hidden so the custom scrubber
           is the only thing on the right edge. Height fills the viewport below
           the toolbar + chip strip. */}

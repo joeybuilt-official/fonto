@@ -124,7 +124,6 @@ function ExploreTile({ tile }: { tile: TileDef }) {
     <Link
       href={tile.href}
       className="group relative flex flex-col gap-3 rounded-xl border border-border bg-card p-5 hover:border-primary/40 hover:shadow-md transition-all"
-      aria-label={tile.label}
     >
       <div className="flex items-start justify-between gap-3">
         <div

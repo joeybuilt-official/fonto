@@ -103,7 +103,12 @@ export function AssetAskPanel({
           "fixed right-0 top-0 z-40 flex h-full w-full max-w-md flex-col border-l border-border bg-card shadow-xl transition-transform duration-200",
           open ? "translate-x-0" : "translate-x-full"
         )}
-        aria-hidden={!open}
+        // `inert` removes focusable descendants from the tab order AND
+        // makes the subtree inert to screen readers — semantically what
+        // we want when the panel is slid off-screen. aria-hidden alone
+        // is a Lighthouse a11y failure (focusable children inside an
+        // aria-hidden subtree); inert correctly handles both.
+        {...(!open && { inert: "" })}
       >
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">

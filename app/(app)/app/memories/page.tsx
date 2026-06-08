@@ -160,6 +160,7 @@ function MemoriesContent() {
       <input
         id="memories-date"
         type="date"
+        aria-label="Pick the day to view memories from"
         value={date}
         onChange={(e) => e.target.value && setDate(e.target.value)}
         className="sr-only"
