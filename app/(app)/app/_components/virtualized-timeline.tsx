@@ -302,7 +302,6 @@ export function VirtualizedTimeline({
                   key={b.month}
                   data-index={virtualRow.index}
                   ref={virtualizer.measureElement}
-                  role="row"
                   style={{
                     position: "absolute",
                     top: 0,
