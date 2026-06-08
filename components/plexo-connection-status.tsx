@@ -21,7 +21,8 @@ export function PlexoConnectionStatus() {
     return (
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" />
-        <span>Plexo…</span>
+        <span className="hidden sm:inline">Plexo…</span>
+        <span className="sr-only">Plexo loading</span>
       </div>
     );
   }
@@ -40,8 +41,11 @@ export function PlexoConnectionStatus() {
       ) : (
         <AlertCircle className="h-3 w-3" />
       )}
-      <span>
+      <span className="hidden sm:inline">
         {status === "connected" ? "Plexo connected" : "Plexo offline"}
+      </span>
+      <span className="sr-only">
+        Plexo {status === "connected" ? "connected" : "offline"}
       </span>
     </div>
   );
