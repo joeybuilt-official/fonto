@@ -18,7 +18,7 @@
 // pinned to 1.1.0 in this repo and bumping it is a separate ops step.
 // When/if the SDK is updated to 1.5.0+ we can switch this module over.
 
-const ANALYZE_TIMEOUT_MS = 120_000;
+const ANALYZE_TIMEOUT_MS = 180_000;
 
 export interface AnalyzeImageHints {
   topClipClass?: string;

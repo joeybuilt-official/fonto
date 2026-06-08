@@ -271,10 +271,12 @@ async function processAssetInner(
             );
           }
         } catch (err) {
-          // Hard-fail fallback path: log + drop into the legacy chain by
-          // unsetting `unifiedResult` and running the rest of the branch.
-          console.warn("[fonto] unified analyze-image failed; falling back to legacy chain for", assetId, err);
-          unifiedResult = null;
+          // Unified failure: re-throw so BullMQ retries the job later (when
+          // GPU/queue pressure has eased) instead of running the 5-call
+          // legacy chain, which doubles Ollama load and triggers a death
+          // spiral under contention.
+          console.warn("[fonto] unified analyze-image failed for", assetId, err);
+          throw err;
         }
       }
 
