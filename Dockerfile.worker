@@ -75,6 +75,9 @@ RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 worker
 COPY --from=builder --chown=worker:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=worker:nodejs /app/lib ./lib
 COPY --from=builder --chown=worker:nodejs /app/worker ./worker
+# scripts/ is needed so one-shot maintenance scripts (classify-only-rerun,
+# backfill-*, reprocess-*) can be invoked via `docker exec ... tsx scripts/...`.
+COPY --from=builder --chown=worker:nodejs /app/scripts ./scripts
 # data/geonames/cities500.tsv is read at runtime by lib/geocoder.ts; the
 # fonto image picks it up via Next's NFT tracer, but the worker image has
 # to COPY it explicitly. Populated by scripts/fetch-geonames.ts before

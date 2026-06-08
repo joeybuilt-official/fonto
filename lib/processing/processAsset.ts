@@ -54,7 +54,7 @@ const DOCUMENT_TRIGGER_MIME = ["application/pdf", "text/", "image/tiff"];
 const SCREENSHOT_NAME_RE =
   /screenshot|screen.?shot|^scrnli|^screen[_-]?recording/i;
 
-function isScreenshot(
+export function isScreenshot(
   filename: string,
   mimeType: string,
   widthPx: number | null,
@@ -86,7 +86,7 @@ function isScreenshot(
 // not enough — iOS / Android stamp the device make on screenshots too. Use
 // this to decide whether the screenshot override should fire OR to confirm a
 // `kind='moment'` outside the documented screenshot/document/video buckets.
-interface CameraEvidence {
+export interface CameraEvidence {
   exposureTime?: string | null;
   fNumber?: number | null;
   iso?: number | null;
@@ -101,7 +101,7 @@ interface CameraEvidence {
 // substantial AND diverse text. Guard against the repeat-loop garbage we
 // see in some Drive imports ("AdministratorAdministrator…" 600× chars) by
 // requiring at least 12 distinct alphanumeric words ≥ 2 chars.
-function isDocumentByOcr(ocrText: string | null): boolean {
+export function isDocumentByOcr(ocrText: string | null): boolean {
   if (!ocrText) return false;
   if (ocrText.length < 100) return false;
   const tokens = ocrText.toLowerCase().match(/[a-z0-9][a-z0-9'$.,/-]*/g) ?? [];
@@ -109,7 +109,7 @@ function isDocumentByOcr(ocrText: string | null): boolean {
   return distinct.size >= 12;
 }
 
-function hasRealCameraSignals(exif: CameraEvidence): boolean {
+export function hasRealCameraSignals(exif: CameraEvidence): boolean {
   return Boolean(
     (exif.exposureTime !== null && exif.exposureTime !== undefined && exif.exposureTime !== "") ||
       (exif.fNumber !== null && exif.fNumber !== undefined && exif.fNumber > 0) ||
@@ -129,7 +129,7 @@ function hasRealCameraSignals(exif: CameraEvidence): boolean {
 const DOC_KEYWORD_RE =
   /\b(receipt|invoice|order\s*#|order\s*number|sub\s?total|subtotal|tax|tip\s*amt?|amount\s+due|paid|cash|credit\s*card|debit|visa|mastercard|amex|tracking|tracking\s*#|packing\s*slip|ship\s*to|return\s*address|sold\s*to|bill\s*to|customer\s*#|account\s*#|sku|qty|quantity|due\s*date|po\s*#|p\.o\.|terms|signature|page\s+\d+\s+of\s+\d+|dear\s+sir|dear\s+madam|sincerely|to\s+whom\s+it\s+may\s+concern)\b/i;
 
-function ocrLooksLikePaperDocument(ocr: string | null): boolean {
+export function ocrLooksLikePaperDocument(ocr: string | null): boolean {
   if (!ocr) return false;
   const text = ocr.trim();
   if (text.length < 120) return false;

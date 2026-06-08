@@ -24,6 +24,7 @@
     "reprocess:stuck": "tsx scripts/reprocess-stuck-assets.ts",
     "reprocess:one": "tsx scripts/reprocess-one.ts",
     "backfill:classify-method": "tsx scripts/backfill-classify-method.ts",
+    "classify-rerun": "tsx scripts/classify-only-rerun.ts",
     "import:s3": "tsx scripts/import-from-s3.ts",
     "autoscaler:start": "tsx ops/autoscaler/index.ts",
     "autoscaler:enqueue": "tsx ops/autoscaler/test-enqueue.ts",
