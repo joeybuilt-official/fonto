@@ -161,15 +161,14 @@ async function decideForRow(
     classification = "photo";
     subClassification = null;
   }
-  // 4. Positive-evidence demote: photo w/ no camera signals → screenshot.
-  if (
-    classification === "photo" &&
-    !looksLikeCameraCapture &&
-    row.mime_type.startsWith("image/")
-  ) {
-    classification = "screenshot";
-    subClassification = null;
-  }
+  // 4. (Removed in 7.4 — mirrors processAsset.ts.) The blanket `photo →
+  //    screenshot` demote when EXIF was absent collided with the new
+  //    `kind=graphics` top-level keys (logo/mockup/icon/sticker/clipart).
+  //    deriveKind() now handles the fall-through: photo without camera
+  //    evidence falls into kind=screenshot via the image/* tail, while
+  //    explicit graphics classifications route to kind=graphics. Leaving
+  //    classification='photo' on the row when the classifier said photo
+  //    is the honest record.
   // 5. OCR-based document override (same as processAsset.ts post-OCR pass).
   if (
     row.mime_type.startsWith("image/") &&
