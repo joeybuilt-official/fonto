@@ -48,7 +48,7 @@ export function AcceptButton({ token, expectedEmail }: AcceptButtonProps) {
         setError(body.error ?? `Accept failed (status ${res.status})`);
         return;
       }
-      router.push("/app/dashboard");
+      router.push("/app/home");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
     } finally {

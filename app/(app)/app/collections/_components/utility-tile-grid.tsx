@@ -24,7 +24,7 @@ const TILES = [
     key: "trash" as const,
     label: "Trash",
     icon: Trash2,
-    href: "/app/trash",
+    href: "/app/library?lifecycle=trashed",
     iconClass: "text-red-500",
   },
   {

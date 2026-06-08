@@ -47,16 +47,16 @@ const QUICK_JUMP: Array<{
   icon: React.ComponentType<{ className?: string }>;
   hint: string;
 }> = [
-  { href: "/app/photos", label: "Photos", icon: ImageIcon, hint: "Browse the grid" },
-  { href: "/app/timeline", label: "Timeline", icon: Clock, hint: "Chronological" },
+  { href: "/app/library?mime=image%2F", label: "Photos", icon: ImageIcon, hint: "Browse the grid" },
+  { href: "/app/library", label: "Timeline", icon: Clock, hint: "Chronological" },
   { href: "/app/memories", label: "Memories", icon: Sparkles, hint: "On this day" },
   { href: "/app/map", label: "Map", icon: MapIcon, hint: "Geo-tagged photos" },
   { href: "/app/library?directoryPathPrefix=/", label: "Folders", icon: FolderTree, hint: "Browse by folder" },
   { href: "/app/people", label: "People", icon: Users, hint: "Face clusters" },
-  { href: "/app/documents", label: "Documents", icon: FileText, hint: "PDFs + text" },
-  { href: "/app/stacks", label: "Stacks", icon: Layers, hint: "Bursts + RAW pairs" },
+  { href: "/app/library?mime=application%2F", label: "Documents", icon: FileText, hint: "PDFs + text" },
+  { href: "/app/collections?tab=stacks", label: "Stacks", icon: Layers, hint: "Bursts + RAW pairs" },
   { href: "/app/search", label: "Search", icon: Search, hint: "Find anything" },
-  { href: "/app/dashboard", label: "Inbox", icon: Inbox, hint: "Upload + recent" },
+  { href: "/app/updates?section=uploads", label: "Inbox", icon: Inbox, hint: "Upload + recent" },
 ];
 
 function StatTile({
@@ -138,20 +138,20 @@ export default function HomePage() {
               label="Total"
               value={stats.total}
               icon={TrendingUp}
-              href="/app/timeline"
+              href="/app/library"
             />
             <StatTile
               label="Photos"
               value={stats.images}
               icon={ImageIcon}
-              href="/app/photos"
+              href="/app/library?mime=image%2F"
               accent="bg-blue-500/10 text-blue-500"
             />
             <StatTile
               label="Documents"
               value={stats.documents}
               icon={FileText}
-              href="/app/documents"
+              href="/app/library?mime=application%2F"
               accent="bg-orange-500/10 text-orange-500"
             />
             <StatTile

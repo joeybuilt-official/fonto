@@ -2,7 +2,7 @@
   "name": "Fonto",
   "short_name": "Fonto",
   "description": "Your personal digital asset archive",
-  "start_url": "/app/dashboard",
+  "start_url": "/app/home",
   "display": "standalone",
   "background_color": "#09090b",
   "theme_color": "#2AB0A5",
