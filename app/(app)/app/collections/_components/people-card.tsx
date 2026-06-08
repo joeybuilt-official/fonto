@@ -14,6 +14,7 @@ interface PersonPreview {
 export function PeopleCard() {
   const [persons, setPersons] = useState<PersonPreview[]>([]);
   const [total, setTotal] = useState<number | null>(null);
+  const [resolved, setResolved] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetch("/api/v1/persons")
@@ -26,30 +27,46 @@ export function PeopleCard() {
       .catch(() => {});
   }, []);
 
+  // `coverFaceCropUrl` is a relative API path that returns JSON
+  // `{ url: "<presigned R2 URL>" }` — not an image. Resolve each before
+  // setting <img src>. People page does the same in its FaceCrop.
+  useEffect(() => {
+    let cancelled = false;
+    for (const p of persons) {
+      if (!p.coverFaceCropUrl || resolved[p.id]) continue;
+      fetch(p.coverFaceCropUrl)
+        .then((r) => r.json())
+        .then((d: { url?: string }) => {
+          if (cancelled || !d.url) return;
+          setResolved((r) => ({ ...r, [p.id]: d.url! }));
+        })
+        .catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [persons, resolved]);
+
   if (!persons.length) return null;
 
   const label = total != null ? `People & Pets, ${total} people` : "People & Pets";
 
-  // Mobile: full-width card with 2×2 face mosaic above the label.
-  // Desktop: a tighter horizontal card so the People & Pets row doesn't
-  // balloon to 1000+px tall (each face circle would otherwise inflate to
-  // half the viewport width).
   return (
     <Link
       href="/app/people"
       aria-label={label}
       className="group block max-w-md overflow-hidden rounded-xl border border-border bg-card hover:border-primary/50 hover:shadow-md transition-all sm:flex sm:max-w-none sm:items-center sm:gap-4 sm:p-3"
     >
-      {/* Face mosaic — 2×2 on mobile, fixed 96px row on desktop */}
       <div className="grid grid-cols-2 gap-1.5 p-3 sm:size-24 sm:shrink-0 sm:p-0">
         {Array.from({ length: 4 }).map((_, i) => {
           const p = persons[i];
-          return p?.coverFaceCropUrl ? (
+          const url = p ? resolved[p.id] : null;
+          return url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              key={p.id}
-              src={p.coverFaceCropUrl}
-              alt={p.name ?? "Person"}
+              key={p!.id}
+              src={url}
+              alt=""
               loading="lazy"
               className="aspect-square w-full rounded-full object-cover"
             />
