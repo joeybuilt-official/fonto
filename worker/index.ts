@@ -857,8 +857,16 @@ function startClipDedupCheckWorker(): Worker<ClipDedupCheckJob> {
 // In-memory + best-effort — idempotent re-clustering means a missed run
 // (process restart) just waits for the next upload.
 const FACE_CLUSTER_DEBOUNCE_MS = 45_000;
+// Track A — operational escape hatch. When the workspace is being bulk-
+// reprocessed (or the long-term GPU-clustering port is in flight), every
+// face-detect completion otherwise re-arms a 20k-face DBSCAN that 100%-pegs
+// the worker's single-threaded event loop and starves asset-processing.
+// FACE_CLUSTER_DISABLED=1 short-circuits the schedule; a final cluster pass
+// can be triggered manually once the reprocess drains.
+const FACE_CLUSTER_DISABLED = process.env.FACE_CLUSTER_DISABLED === "1";
 const pendingClusterTimers = new Map<string, NodeJS.Timeout>();
 function scheduleFaceCluster(workspaceId: string): void {
+  if (FACE_CLUSTER_DISABLED) return;
   const existing = pendingClusterTimers.get(workspaceId);
   if (existing) clearTimeout(existing);
   const t = setTimeout(() => {
