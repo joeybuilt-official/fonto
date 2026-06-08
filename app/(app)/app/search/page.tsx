@@ -20,6 +20,7 @@ import {
   File,
   Image as ImageIcon,
   FileText,
+  Loader2,
   ScanText,
   Sparkles,
 } from "lucide-react";
@@ -290,17 +291,24 @@ function SearchContent() {
           </p>
         )}
 
-        {/* Empty / loading / no-results / error states */}
-        {error && !loading ? (
+        {/* Empty / loading / no-results / error states. Loading is the
+            outer guard — between setResults([]) and setLoading(false) the
+            old order let the truthy-results branch fire briefly with a
+            "0 results" pill, which read as a flash of stale state. */}
+        {loading ? (
+          <div className="flex justify-center py-8 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </div>
+        ) : error ? (
           <ListErrorState
             message="Couldn't run that search. Check your connection and retry."
             onRetry={() => void doSearch()}
           />
-        ) : results === null && !smartCollectionId && !loading ? (
+        ) : results === null && !smartCollectionId ? (
           <p className="text-sm text-muted-foreground text-center py-8">
             Type to search your assets, or set a filter.
           </p>
-        ) : results?.length === 0 && !loading ? (
+        ) : results?.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-8">
             No assets found.
           </p>
