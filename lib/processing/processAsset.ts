@@ -94,6 +94,21 @@ interface CameraEvidence {
   lensModel?: string | null;
 }
 
+// Phase 7.2 — OCR-driven document detection. CLIP/LLM often misses phone
+// photos of receipts/documents because the hand-holding-paper composition
+// pulls the classifier toward "photo". OCR is the deciding signal: real
+// documents (receipts, IDs, forms, signs, screenshotted text, etc.) yield
+// substantial AND diverse text. Guard against the repeat-loop garbage we
+// see in some Drive imports ("AdministratorAdministrator…" 600× chars) by
+// requiring at least 12 distinct alphanumeric words ≥ 2 chars.
+function isDocumentByOcr(ocrText: string | null): boolean {
+  if (!ocrText) return false;
+  if (ocrText.length < 100) return false;
+  const tokens = ocrText.toLowerCase().match(/[a-z0-9][a-z0-9'$.,/-]*/g) ?? [];
+  const distinct = new Set(tokens.filter((t) => t.length >= 2));
+  return distinct.size >= 12;
+}
+
 function hasRealCameraSignals(exif: CameraEvidence): boolean {
   return Boolean(
     (exif.exposureTime !== null && exif.exposureTime !== undefined && exif.exposureTime !== "") ||
@@ -102,6 +117,30 @@ function hasRealCameraSignals(exif: CameraEvidence): boolean {
       (exif.focalLength !== null && exif.focalLength !== undefined && exif.focalLength > 0) ||
       (exif.lensModel !== null && exif.lensModel !== undefined && exif.lensModel !== ""),
   );
+}
+
+// Phase 7.2 — OCR-based "this image is OF paper" detection. Phone shots of
+// receipts / packing slips / handwritten notes / invoices carry real camera
+// EXIF, so the positive-evidence rule would route them to Moments. But OCR
+// sees dense text that real moments never have. Cheap heuristic: enough
+// text + document keywords OR money-density. Only DEMOTES photo→document;
+// never promotes a moment that isn't already photo-classified (would over-
+// fire on photos of signs / packaging that aren't really docs).
+const DOC_KEYWORD_RE =
+  /\b(receipt|invoice|order\s*#|order\s*number|sub\s?total|subtotal|tax|tip\s*amt?|amount\s+due|paid|cash|credit\s*card|debit|visa|mastercard|amex|tracking|tracking\s*#|packing\s*slip|ship\s*to|return\s*address|sold\s*to|bill\s*to|customer\s*#|account\s*#|sku|qty|quantity|due\s*date|po\s*#|p\.o\.|terms|signature|page\s+\d+\s+of\s+\d+|dear\s+sir|dear\s+madam|sincerely|to\s+whom\s+it\s+may\s+concern)\b/i;
+
+function ocrLooksLikePaperDocument(ocr: string | null): boolean {
+  if (!ocr) return false;
+  const text = ocr.trim();
+  if (text.length < 120) return false;
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 4) return false;
+  if (DOC_KEYWORD_RE.test(text)) return true;
+  // Receipts have a stack of $nn.nn lines. Money density + line count is a
+  // second-tier signal when the keyword regex misses.
+  const moneyHits = (text.match(/[$€£¥]\s?\d+[.,]\d{2}\b/g) ?? []).length;
+  if (moneyHits >= 2 && lines.length >= 6) return true;
+  return false;
 }
 
 export interface ProcessAssetParams {
@@ -161,6 +200,11 @@ async function processAssetInner(
   // override (inside the image branch) and the deriveKind call below.
   // Hoisted to function scope so we only read the row once.
   let cameraEvidence: CameraEvidence = {};
+  // Phase 7.2 — OCR text from inside the image branch, hoisted so the
+  // document-via-OCR override can re-evaluate classification after OCR
+  // runs (CLIP/LLM often misses phone photos of receipts because the
+  // hand + table backdrop pulls the classifier toward "photo").
+  let imageOcrText: string | null = null;
 
   if (plexoAvailable()) {
     plexoWorkspaceId = await plexoEnsureWorkspace(userId, email);
@@ -297,6 +341,7 @@ async function processAssetInner(
         .where(eq(schema.assets.id, assetId))
         .limit(1);
       preDescribeOcrText = ocrRow?.ocrText ?? null;
+      imageOcrText = preDescribeOcrText;
 
       description = await plexoDescribeImage(
         plexoWorkspaceId,
@@ -373,6 +418,21 @@ async function processAssetInner(
       : mimeType.startsWith("video/")
         ? "video"
         : "document";
+  }
+
+  // Phase 7.2 — OCR-driven document override. Runs after the OCR pass so we
+  // have real text to inspect. A phone photo of a receipt has camera EXIF
+  // (Phase 7.1 routes it to Moments) AND OCR text — exactly the case the
+  // taxonomy classifier misses. Demote those to `document` BEFORE deriveKind
+  // reads `classification`. Skip when the classifier already landed on a
+  // document/scan/receipt label — that path is already correct.
+  if (
+    mimeType.startsWith("image/") &&
+    classification === "photo" &&
+    isDocumentByOcr(imageOcrText)
+  ) {
+    classification = "document";
+    subClassification = null;
   }
 
   // Task 20 + Phase 7.1 — resolve KIND from final classification + mime +
