@@ -343,6 +343,21 @@ async function processAssetInner(
       preDescribeOcrText = ocrRow?.ocrText ?? null;
       imageOcrText = preDescribeOcrText;
 
+      // Phase 7.2 — OCR-based document override. Phone-photographed
+      // receipts / packing slips / invoices / handwritten notes pass the
+      // camera-EXIF positive-evidence test and would otherwise land in
+      // Moments. If the OCR text reads like a paper document, demote the
+      // classification so it lands in the Documents lens. Only fires when
+      // CLIP/LLM landed on a generic photo bucket; explicit receipt/
+      // screenshot/document classifications are respected.
+      if (
+        (classification === "photo" || classification === null) &&
+        ocrLooksLikePaperDocument(preDescribeOcrText)
+      ) {
+        classification = "document";
+        subClassification = null;
+      }
+
       description = await plexoDescribeImage(
         plexoWorkspaceId,
         filename,
@@ -429,7 +444,7 @@ async function processAssetInner(
   if (
     mimeType.startsWith("image/") &&
     classification === "photo" &&
-    isDocumentByOcr(imageOcrText)
+    (ocrLooksLikePaperDocument(imageOcrText) || isDocumentByOcr(imageOcrText))
   ) {
     classification = "document";
     subClassification = null;
