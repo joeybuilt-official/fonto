@@ -29,7 +29,7 @@ import { deriveKind } from "@/lib/classify/kind";
 // we pull plexo.ts via dynamic import in main() when actually needed.
 import {
   isScreenshot,
-  hasRealCameraSignals,
+  looksLikeCameraPhoto,
   ocrLooksLikePaperDocument,
   isDocumentByOcr,
   type CameraEvidence,
@@ -123,7 +123,15 @@ async function decideForRow(
     classification = "screenshot";
     subClassification = null;
   }
-  const looksLikeCameraCapture = hasRealCameraSignals(exif);
+  // Phase 7.3 — positive-evidence test: EXIF OR camera-roll filename OR
+  // RAW/HEIC mime. Mirrors the override in processAsset.ts so Drive-imported
+  // photos (which lose EXIF on transfer but keep their IMG_yyyymmdd / PXL_*
+  // / DSC_ / GOPR / DJI_ filenames) are still recognised as moments.
+  const looksLikeCameraCapture = looksLikeCameraPhoto(
+    row.filename,
+    row.mime_type,
+    exif,
+  );
   // 3. Restore: real camera capture overrides the screenshot heuristic.
   if (classification === "screenshot" && looksLikeCameraCapture) {
     classification = "photo";
@@ -213,10 +221,12 @@ async function main(): Promise<void> {
   try {
     const plexoMod = (await import("@/lib/plexo")) as typeof import("@/lib/plexo");
     if (plexoMod.plexoAvailable()) {
+      // better-auth's user table lives in the `auth` schema (DATABASE_URL's
+      // search_path is fonto,public — auth is NOT on it). Reference explicitly.
       const [wsRow] = (await sql`
         SELECT u.id AS user_id, u.email AS email
         FROM fonto.workspaces w
-        JOIN public."user" u ON u.id = w.user_id
+        JOIN auth."user" u ON u.id = w.user_id
         WHERE w.id = ${workspaceId}
       `) as Array<{ user_id: string; email: string | null }>;
       if (wsRow) {
