@@ -417,20 +417,12 @@ export function VirtualizedTimeline({
 // asset ids; already-known ids are never refetched.
 function useBatchThumbUrls(ids: string[]): Record<string, string | null> {
   const [urls, setUrls] = useState<Record<string, string | null>>({});
-  // `known` covers IDs that have been resolved (URL or null) AND IDs that
-  // are currently being fetched. The ±1-month prefetch ring + multi-month
-  // mounts otherwise re-fire the same POST every time `ids` grew, since
-  // knownRef wasn't claimed until response time. Claim eagerly = de-dupe.
   const knownRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (ids.length === 0) return;
     const missing = ids.filter((id) => !knownRef.current.has(id));
     if (missing.length === 0) return;
-
-    // Mark missing IDs as claimed BEFORE the fetch so a re-render while
-    // the request is in flight doesn't requeue the same chunk.
-    for (const id of missing) knownRef.current.add(id);
 
     let cancelled = false;
     const chunks: string[][] = [];
@@ -446,17 +438,22 @@ function useBatchThumbUrls(ids: string[]): Record<string, string | null> {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ ids: chunk, variant: "thumb" }),
           });
-          if (!r.ok) continue;
+          if (!r.ok) {
+            for (const id of chunk) knownRef.current.add(id);
+            continue;
+          }
           const d = (await r.json()) as { urls?: Record<string, string> };
           if (cancelled) return;
           setUrls((prev) => {
             const next = { ...prev };
-            for (const id of chunk) next[id] = d.urls?.[id] ?? null;
+            for (const id of chunk) {
+              knownRef.current.add(id);
+              next[id] = d.urls?.[id] ?? null;
+            }
             return next;
           });
         } catch {
-          // ids stay claimed so we don't infinite-retry on a permanent
-          // network fault; PhotoCard renders a placeholder if url is missing
+          for (const id of chunk) knownRef.current.add(id);
         }
       }
     })();
