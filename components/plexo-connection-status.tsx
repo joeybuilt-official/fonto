@@ -17,36 +17,50 @@ export function PlexoConnectionStatus() {
       .catch(() => setStatus("disconnected"));
   }, []);
 
+  // Mobile: icon-only badge. Tailwind's `hidden sm:inline` on the label
+  // span doesn't honour the breakpoint cleanly here (computed display
+  // resolves to `block` at 390px — utility ordering or layer precedence
+  // bite). Splitting into two siblings — icon-only chip with `sm:hidden`,
+  // full chip with `hidden sm:flex` — avoids any cascade ambiguity.
   if (status === "loading") {
     return (
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        <span className="hidden sm:inline">Plexo…</span>
-        <span className="sr-only">Plexo loading</span>
-      </div>
+      <>
+        <div
+          aria-label="Plexo loading"
+          className="flex items-center text-xs text-muted-foreground sm:hidden"
+        >
+          <Loader2 className="h-3 w-3 animate-spin" />
+        </div>
+        <div className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span>Plexo…</span>
+        </div>
+      </>
     );
   }
 
+  const tone =
+    status === "connected"
+      ? "text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-950/30"
+      : "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950/30";
+  const Icon = status === "connected" ? CheckCircle2 : AlertCircle;
+  const fullText = status === "connected" ? "Plexo connected" : "Plexo offline";
+
   return (
-    <div
-      className={[
-        "flex items-center gap-1.5 text-xs rounded-md px-2 py-1",
-        status === "connected"
-          ? "text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-950/30"
-          : "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950/30",
-      ].join(" ")}
-    >
-      {status === "connected" ? (
-        <CheckCircle2 className="h-3 w-3" />
-      ) : (
-        <AlertCircle className="h-3 w-3" />
-      )}
-      <span className="hidden sm:inline">
-        {status === "connected" ? "Plexo connected" : "Plexo offline"}
-      </span>
-      <span className="sr-only">
-        Plexo {status === "connected" ? "connected" : "offline"}
-      </span>
-    </div>
+    <>
+      <div
+        aria-label={fullText}
+        title={fullText}
+        className={`flex items-center rounded-md px-1.5 py-1 text-xs ${tone} sm:hidden`}
+      >
+        <Icon className="h-3 w-3" />
+      </div>
+      <div
+        className={`hidden items-center gap-1.5 rounded-md px-2 py-1 text-xs sm:flex ${tone}`}
+      >
+        <Icon className="h-3 w-3" />
+        <span>{fullText}</span>
+      </div>
+    </>
   );
 }
