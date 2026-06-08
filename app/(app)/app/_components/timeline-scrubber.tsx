@@ -218,11 +218,13 @@ export function TimelineScrubber({
         }}
         className="relative h-full w-full cursor-pointer touch-none rounded-full outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
-        {/* Year tick labels */}
+        {/* Year tick labels. Sit left of the thumb track so the thumb doesn't
+            visually cover them when at fraction=0 or fraction=1 (right-1 +
+            thumb at right-0 collided at the year endpoints). */}
         {yearTicks.map((t) => (
           <span
             key={t.year}
-            className="pointer-events-none absolute right-1 -translate-y-1/2 text-[9px] font-medium tabular-nums text-muted-foreground/70"
+            className="pointer-events-none absolute right-3 -translate-y-1/2 text-[9px] font-medium tabular-nums text-muted-foreground/70"
             style={{ top: `${t.frac * 100}%` }}
           >
             {t.year}
