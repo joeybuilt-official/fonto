@@ -181,12 +181,20 @@ export function VirtualizedTimeline({
 
   const virtualItems = virtualizer.getVirtualItems();
 
-  // Lazy-load the months currently in view (skip while actively scrubbing so a
-  // fling doesn't fetch every passed month; the scrub-end handler backfills).
+  // Lazy-load the months currently in view + a ±1 prefetch ring so the
+  // assets arrive BEFORE the row scrolls into the viewport. Skip while
+  // actively scrubbing so a fling doesn't fetch every passed month; the
+  // scrub-end handler backfills via virtualizer.measure().
   useEffect(() => {
     if (scrubbingRef.current) return;
-    for (const vi of virtualItems) {
-      const b = buckets[vi.index];
+    if (!virtualItems.length) return;
+    const minIdx = Math.max(0, virtualItems[0].index - 1);
+    const maxIdx = Math.min(
+      buckets.length - 1,
+      virtualItems[virtualItems.length - 1].index + 1
+    );
+    for (let i = minIdx; i <= maxIdx; i++) {
+      const b = buckets[i];
       if (!b) continue;
       if (loaded.has(b.month) || inFlightRef.current.has(b.month)) continue;
       inFlightRef.current.add(b.month);
