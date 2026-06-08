@@ -70,7 +70,10 @@ function PlaceCard({ place }: { place: PlaceWithUrls }) {
   return (
     <Link
       href={href}
-      aria-label={`${place.placeName}, ${place.count} photos`}
+      // No aria-label override — inner heading + count text already
+      // provide the accessible name. An explicit label that doesn't
+      // verbatim-include the visible text trips
+      // label-content-name-mismatch (WCAG SC 2.5.3).
       className="group overflow-hidden rounded-xl border border-border bg-card hover:border-primary/50 hover:shadow-md transition-all"
     >
       {/* 2×2 photo mosaic */}

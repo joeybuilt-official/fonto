@@ -49,12 +49,13 @@ export function PeopleCard() {
 
   if (!persons.length) return null;
 
-  const label = total != null ? `People & Pets, ${total} people` : "People & Pets";
+  // Accessible name derives from the inner heading + count text. Explicit
+  // aria-label would override the visible label, which Lighthouse flags as
+  // label-content-name-mismatch (visible text not in accessible name).
 
   return (
     <Link
       href="/app/people"
-      aria-label={label}
       className="group block max-w-md overflow-hidden rounded-xl border border-border bg-card hover:border-primary/50 hover:shadow-md transition-all sm:flex sm:max-w-none sm:items-center sm:gap-4 sm:p-3"
     >
       <div className="grid grid-cols-2 gap-1.5 p-3 sm:size-24 sm:shrink-0 sm:p-0">
