@@ -85,6 +85,7 @@ async function decideForRow(
   row: Row,
   plexoWorkspaceId: string | null,
   plexo: PlexoFns | null,
+  enableLlmFallback: boolean,
 ): Promise<DecisionResult> {
   const exif: CameraEvidence = {
     exposureTime: row.exposure_time,
@@ -94,12 +95,17 @@ async function decideForRow(
     lensModel: row.lens_model,
   };
 
-  // 1. CLIP classify (LLM fallback only if CLIP is uncertain — same as live).
+  // 1. CLIP classify. LLM fallback is OFF by default for bulk reprocess —
+  // it triggers a Plexo HTTP per uncertain row, which a) blows the auth
+  // rate-limit (10/min) and b) makes 200 rows take 8 minutes instead of 8
+  // seconds. When CLIP is uncertain we keep the row's existing
+  // classification (we only act on confident CLIP signals).
+  const CLIP_UNCERTAIN_SENTINEL = "__clip_uncertain__";
   const result = await classifyAsset(row.clip_vec, {
     classify: async () => {
-      if (!plexoWorkspaceId || !plexo) {
-        // No Plexo workspace resolution available — degrade gracefully.
-        return { topLevel: "photo" as const };
+      if (!enableLlmFallback || !plexoWorkspaceId || !plexo) {
+        // Return a sentinel; caller falls back to "keep existing".
+        return { topLevel: CLIP_UNCERTAIN_SENTINEL };
       }
       const topLevel = await plexo.classify(
         plexoWorkspaceId,
@@ -110,6 +116,24 @@ async function decideForRow(
       return { topLevel };
     },
   });
+
+  // CLIP uncertain + LLM fallback disabled → keep existing classification.
+  if (result.topLevel === CLIP_UNCERTAIN_SENTINEL) {
+    const kept = row.classification ?? "photo";
+    const keptKind = deriveKind({
+      mimeType: row.mime_type,
+      classification: kept,
+      filename: row.filename,
+      ...exif,
+    });
+    return {
+      classification: kept,
+      subClassification: null,
+      classifyMethod: null,
+      classifyConfidence: result.confidence,
+      kind: keptKind,
+    };
+  }
 
   let classification: string = result.topLevel;
   let subClassification: string | null = result.subLevel;
@@ -201,6 +225,9 @@ async function main(): Promise<void> {
   const scope: "moments-only" | "all-images" =
     scopeRaw === "all-images" ? "all-images" : "moments-only";
   const dryRun = !!arg("dry-run");
+  // Default off — bulk reprocess is too rate-limit-hostile w/ HTTP per
+  // uncertain row. Pass --llm-fallback to opt in for diagnostic runs.
+  const enableLlmFallback = !!arg("llm-fallback");
   const limitArg = arg("limit");
   const limit =
     typeof limitArg === "string"
@@ -211,15 +238,16 @@ async function main(): Promise<void> {
   const sql = postgres(dbUrl, { prepare: false });
 
   console.log(
-    `[classify-rerun] workspace=${workspaceId} scope=${scope} dryRun=${dryRun} limit=${limit === Number.POSITIVE_INFINITY ? "all" : limit}`,
+    `[classify-rerun] workspace=${workspaceId} scope=${scope} dryRun=${dryRun} llmFallback=${enableLlmFallback} limit=${limit === Number.POSITIVE_INFINITY ? "all" : limit}`,
   );
 
   // Lazy-load plexo.ts via dynamic import. Top-level import fails under tsx
   // CJS resolution for the SDK's ESM-only "./connect" subpath; dynamic import
-  // forces the ESM loader and works.
+  // forces the ESM loader and works. Skipped entirely when LLM fallback is
+  // off — saves an HTTP round-trip to Plexo's auth-limited /workspaces.
   let plexoWorkspaceId: string | null = null;
   let plexo: PlexoFns | null = null;
-  try {
+  if (enableLlmFallback) try {
     const plexoMod = (await import("@/lib/plexo")) as typeof import("@/lib/plexo");
     if (plexoMod.plexoAvailable()) {
       // better-auth's user table lives in the `auth` schema (DATABASE_URL's
@@ -356,7 +384,12 @@ async function main(): Promise<void> {
       // is still fast (no network per row when CLIP is decisive).
       for (const row of batch) {
         try {
-          const decision = await decideForRow(row, plexoWorkspaceId, plexo);
+          const decision = await decideForRow(
+            row,
+            plexoWorkspaceId,
+            plexo,
+            enableLlmFallback,
+          );
           processed++;
           kindHist[decision.kind] = (kindHist[decision.kind] ?? 0) + 1;
           classHist[decision.classification] =
