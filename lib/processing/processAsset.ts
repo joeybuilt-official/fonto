@@ -56,13 +56,14 @@ export {
   hasRealCameraSignals,
   isDocumentByOcr,
   ocrLooksLikePaperDocument,
+  looksLikeCameraPhoto,
   type CameraEvidence,
 } from "./classifyHelpers";
 import {
   isScreenshot,
-  hasRealCameraSignals,
   isDocumentByOcr,
   ocrLooksLikePaperDocument,
+  looksLikeCameraPhoto,
   type CameraEvidence,
 } from "./classifyHelpers";
 
@@ -181,7 +182,12 @@ async function processAssetInner(
         focalLength: dims?.focalLength ?? null,
         lensModel: dims?.lensModel ?? null,
       };
-      const looksLikeCameraCapture = hasRealCameraSignals(cameraEvidence);
+      // Phase 7.3 — positive-evidence test for "real camera photo". Adds
+      // filename-pattern + RAW/HEIC-mime safety nets on top of EXIF so
+      // Drive-imported photos (which lose EXIF on transfer) but keep their
+      // IMG_yyyymmdd / PXL_* / DSC_ / GOPR / DJI_ filenames are still
+      // recognised as moments instead of getting demoted to screenshot.
+      const looksLikeCameraCapture = looksLikeCameraPhoto(filename, mimeType, cameraEvidence);
 
       if (isScreenshot(filename, mimeType, dims?.widthPx ?? null, dims?.heightPx ?? null)) {
         classification = "screenshot";

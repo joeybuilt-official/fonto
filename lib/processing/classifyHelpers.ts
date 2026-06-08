@@ -80,6 +80,59 @@ export function hasRealCameraSignals(exif: CameraEvidence): boolean {
   );
 }
 
+// Phase 7.3 — Drive imports systematically strip EXIF on transfer, so the
+// EXIF-only positive-evidence rule false-negatives real camera photos that
+// landed in the library via Google Drive. Filenames mostly survive, and
+// camera apps + DSLRs / drones / action cams use very predictable naming:
+//
+//   iOS         IMG_<4-7 digits>.{HEIC,JPG,MOV}
+//   Android     IMG_<yyyymmdd>_<hhmmss>{_HDR,_BURST*}.jpg
+//   Pixel       PXL_<yyyymmdd>_<hhmmssmmm>.jpg / MVIMG_*  / .MP.jpg
+//   Android pano PANO_<yyyymmdd>_<...>.jpg
+//   Samsung     YYYYMMDD_HHMMSS.jpg
+//   DSLR        DSC_<4-5 digits>.{JPG,NEF,CR2}, IMG_<4-5 digits>, _DSC<n>, _MG_<n>
+//   GoPro       GOPR<digits>.{JPG,MP4}, GP<*>
+//   DJI / drone DJI_<digits>_<n>.{JPG,DNG,MOV}
+//   Generic vid VID_<...>.{mp4,mov}
+//
+// Plus mimetypes that are inherently real-camera: HEIC / HEIF / raw formats.
+//
+// Drive's import wrapper prefixes "drive_<google_id>_" — strip it before
+// matching. Avoids false-positives on cached/proxy filenames like
+// "drive_..._p_<sha>_<sha>_v7.jpg" (Snapchat / messenger derivative caches)
+// + synthetic ids like "drive_..._<long_id>_account_id=1.jpg".
+const DRIVE_PREFIX_RE = /^drive_[A-Za-z0-9_-]+_/;
+const CAMERA_ROLL_NAME_RE =
+  /^(IMG_\d{3,}|MVIMG_\d{8}|PXL_\d{8}|PANO_\d{8}|VID_\d{8}|\d{8}_\d{6}|DSC[_-]?\d{3,}|_DSC\d{3,}|_MG_\d{3,}|GOPR\d{3,}|GP[FH]?\d{3,}|DJI_\d{3,}|MAH\d{5,}|HDR_\d{8})\b/i;
+
+function hasCameraRollFilename(filename: string): boolean {
+  const stripped = filename.replace(DRIVE_PREFIX_RE, "");
+  return CAMERA_ROLL_NAME_RE.test(stripped);
+}
+
+const RAW_OR_HEIC_MIME_RE =
+  /^image\/(heic|heif|x-canon-cr[23]|x-nikon-nef|x-sony-arw|x-adobe-dng|x-panasonic-rw2|x-olympus-orf|x-fuji-raf|x-pentax-pef|x-sigma-x3f)$/i;
+
+function isCameraOriginalMime(mimeType: string): boolean {
+  return RAW_OR_HEIC_MIME_RE.test(mimeType);
+}
+
+// Combined positive-evidence test. Use this instead of `hasRealCameraSignals`
+// when deciding whether to demote a `classification='photo'` to screenshot —
+// it adds two safety nets that recover Drive-stripped real photos (filename
+// pattern) and inherent-camera formats (HEIC/RAW) that EXIF alone misses.
+export function looksLikeCameraPhoto(
+  filename: string,
+  mimeType: string,
+  exif: CameraEvidence,
+): boolean {
+  return (
+    hasRealCameraSignals(exif) ||
+    hasCameraRollFilename(filename) ||
+    isCameraOriginalMime(mimeType)
+  );
+}
+
 // Phase 7.2 — OCR-based "this image is OF paper" detection. Phone shots of
 // receipts / packing slips / handwritten notes / invoices carry real camera
 // EXIF, so the positive-evidence rule would route them to Moments. But OCR
