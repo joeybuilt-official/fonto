@@ -77,14 +77,33 @@ export function AppMobileBottomBar() {
             key={t.href}
             href={t.href}
             aria-current={isActive ? "page" : undefined}
+            // Phase 6 AA pass:
+            //   - inactive label text-foreground/70 (≈6.2:1 vs bg, was
+            //     muted-foreground 4.2:1 — failed AA at 10px)
+            //   - active label text-foreground + semibold (≈15:1) +
+            //     teal icon as the brand-color signifier
+            //   - non-color active indicator: 2px teal top bar so
+            //     colour-blind / monochrome users see the selection
+            //   - focus-visible ring for keyboard a11y
             className={cn(
-              "flex min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-[10px] font-medium transition-colors",
+              "group relative flex min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-[10px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               isActive
-                ? "text-primary"
-                : "text-muted-foreground hover:text-foreground",
+                ? "text-foreground font-semibold"
+                : "text-foreground/70 hover:text-foreground",
             )}
           >
-            <Icon className={cn("h-5 w-5", isActive && "text-primary")} />
+            {isActive && (
+              <span
+                aria-hidden="true"
+                className="absolute inset-x-3 top-0 h-0.5 rounded-b-sm bg-primary"
+              />
+            )}
+            <Icon
+              className={cn(
+                "h-5 w-5",
+                isActive ? "text-primary" : "text-foreground/70 group-hover:text-foreground",
+              )}
+            />
             <span className="leading-tight">{t.label}</span>
           </Link>
         );
