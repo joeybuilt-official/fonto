@@ -45,9 +45,9 @@ const REDIRECT_MAP: Record<string, RedirectRule> = {
   // /app/memories is a live route again: the unified library cannot express
   // its "on this day across prior years" query (captured_mmdd_utc functional
   // index, migration 0023), so the dedicated surface fills a real gap.
-  "/app/folders":           { to: "/app/library", params: { directoryPathPrefix: "/" } },
+  "/app/folders":           { to: "/app/library", params: { pathPrefix: "/" } },
   "/app/documents":         { to: "/app/library", params: { mime: "application/" } },
-  "/app/trash":             { to: "/app/library", params: { lifecycle: "trashed" } },
+  "/app/trash":             { to: "/app/library", params: { lc: "trashed" } },
 
   // Phase 2 — Collections fan-out. Detail routes (/app/<x>/[id]) stay
   // as-is and are NOT redirected here.

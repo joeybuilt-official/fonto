@@ -17,14 +17,14 @@ const TILES = [
     key: "favorites" as const,
     label: "Favorites",
     icon: Star,
-    href: "/app/library?favorite=1",
+    href: "/app/library?fav=1",
     iconClass: "text-yellow-500",
   },
   {
     key: "trash" as const,
     label: "Trash",
     icon: Trash2,
-    href: "/app/library?lifecycle=trashed",
+    href: "/app/library?lc=trashed",
     iconClass: "text-red-500",
   },
   {
@@ -38,7 +38,7 @@ const TILES = [
     key: "archived" as const,
     label: "Archive",
     icon: Archive,
-    href: "/app/library?lifecycle=archived",
+    href: "/app/library?lc=archived",
     iconClass: "text-muted-foreground",
   },
   {
