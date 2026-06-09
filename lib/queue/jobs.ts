@@ -144,6 +144,20 @@ export const BackfillFaceCropsJobSchema = z
   .strict();
 export type BackfillFaceCropsJob = z.infer<typeof BackfillFaceCropsJobSchema>;
 
+// Phase 0 (media import) — long-running, app-managed import job. The payload
+// is just a pointer to the `import_jobs` row + the (workspace, user, provider)
+// it belongs to; the worker rehydrates counts/cursor from Postgres and updates
+// them in batches as it streams the archive. Resume is app-managed (the row's
+// `cursor`), so the BullMQ queue runs attempts:1 — a BullMQ retry would restart
+// the whole archive instead of resuming from the checkpoint.
+export const ImportJobSchema = z.object({
+  importJobId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  userId: z.string(),
+  provider: z.enum(["google-takeout", "amazon-photos"]),
+});
+export type ImportJob = z.infer<typeof ImportJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -185,6 +199,9 @@ export const JobNames = {
   // existing faces. Default-off recurring schedule (BACKFILL_FACE_CROPS=1) +
   // deliberate one-off enqueue.
   BackfillFaceCrops: "backfill-face-crops",
+  // Phase 0 (media import) — Google Takeout / Amazon Photos archive import.
+  // One job per import_jobs row; long-running + app-managed resume.
+  Import: "media-import",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

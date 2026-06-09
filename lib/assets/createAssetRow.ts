@@ -137,6 +137,20 @@ export interface CreateAssetInput {
    * aligned with the asset row. Ignored on SHA-256 dedup (existing row wins).
    */
   preReservedId?: string;
+  /**
+   * Phase 0 (media import) — explicit metadata that takes precedence over the
+   * EXIF-derived values. Google Takeout sidecar JSON carries authoritative
+   * `photoTakenTime` / `geoData` / `description` that should win over (often
+   * missing or stripped) embedded EXIF. Applied AFTER EXIF extraction so EXIF
+   * remains the fallback for any field left undefined. Omit entirely (the
+   * Amazon EXIF-only path) and this is a complete no-op.
+   */
+  metadataOverride?: {
+    capturedAt?: Date;
+    latitude?: number;
+    longitude?: number;
+    description?: string;
+  };
 }
 
 export interface CreateAssetResult {
@@ -501,14 +515,25 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
   const { phash, colors } = await computePerceptualMetadata(buffer, mimeType);
   const exifData = await extractExif(buffer, mimeType);
 
-  // Phase 5.2 — reverse-geocode the EXIF GPS pair to a human-readable place
-  // name ("Reykjavík, IS") for timeline + map UX. Skips when either coord is
+  // Phase 0 (media import) — resolve capturedAt/geo/description with the
+  // optional metadataOverride taking precedence over EXIF. EXIF is the
+  // fallback for any override field left undefined; when `metadataOverride`
+  // is absent these all collapse back to the EXIF values (a no-op).
+  const override = input.metadataOverride;
+  const resolvedLatitude = override?.latitude ?? exifData.latitude;
+  const resolvedLongitude = override?.longitude ?? exifData.longitude;
+  const resolvedCapturedAt: Date | null =
+    override?.capturedAt ?? exifData.capturedAt ?? dateFromFilename(filename);
+  const resolvedDescription: string | null = override?.description ?? null;
+
+  // Phase 5.2 — reverse-geocode the GPS pair to a human-readable place name
+  // ("Reykjavík, IS") for timeline + map UX. Skips when either coord is
   // missing; returns null on a polar / open-ocean photo. The lookup is
   // O(log n) over an in-memory KDBush so the upload latency hit is sub-ms.
   let placeName: string | null = null;
-  if (exifData.latitude != null && exifData.longitude != null) {
+  if (resolvedLatitude != null && resolvedLongitude != null) {
     try {
-      const hit = await nearestPlace(exifData.latitude, exifData.longitude);
+      const hit = await nearestPlace(resolvedLatitude, resolvedLongitude);
       if (hit) placeName = formatPlaceName(hit);
     } catch (err) {
       console.warn("[fonto] reverse-geocode failed:", err);
@@ -555,11 +580,12 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
       lifecycleState: "active",
       source,
       extractedText,
-      // EXIF date first; then a date parsed from the filename (screenshots /
-      // web / Drive images have no EXIF). NEVER fall back to "now" — a
-      // date-less asset stamped with the import time floods the current month
-      // and breaks the timeline + Memories. Null ⇒ treated as undated.
-      capturedAt: exifData.capturedAt ?? dateFromFilename(filename),
+      // Override (Takeout sidecar) wins; then EXIF date; then a date parsed
+      // from the filename (screenshots / web / Drive images have no EXIF).
+      // NEVER fall back to "now" — a date-less asset stamped with the import
+      // time floods the current month and breaks the timeline + Memories.
+      // Null ⇒ treated as undated.
+      capturedAt: resolvedCapturedAt,
       // Convert the unsigned 64-bit pHash to signed two's-complement before
       // handing it to Drizzle — Postgres BIGINT is signed int8 and overflows
       // when the high bit is set (~50% of natural images). phashFromDb()
@@ -568,9 +594,12 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
       phash: phash != null ? phashToDb(phash) : null,
       colors,
       exif: exifData.raw,
-      latitude: exifData.latitude,
-      longitude: exifData.longitude,
+      latitude: resolvedLatitude,
+      longitude: resolvedLongitude,
       placeName,
+      // Only set when a metadataOverride supplied one — leaves the column at
+      // its NULL default for every existing caller (no-op without override).
+      ...(resolvedDescription != null ? { description: resolvedDescription } : {}),
       cameraMake: exifData.cameraMake,
       cameraModel: exifData.cameraModel,
       lensModel: exifData.lensModel,
