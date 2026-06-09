@@ -37,6 +37,7 @@ dependencies:
   connectivity_plus: ^7.1.1
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
+  file_picker: ^8.1.2
 
 dev_dependencies:
   flutter_test:

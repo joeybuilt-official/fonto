@@ -111,6 +111,35 @@ export async function exchangeCode(code: string): Promise<{
 }
 
 /**
+ * Exchange a `serverAuthCode` minted by the mobile google_sign_in offline-access
+ * flow for tokens. Mobile can't use the web browser-redirect consent flow, so it
+ * requests offline access (serverClientId + drive.readonly) on-device; Google
+ * returns a one-time server auth code which the app POSTs to
+ * /api/v1/integrations/google/mobile-connect, and we redeem it here.
+ *
+ * Unlike `exchangeCode` (web redirect flow), the auth code from a native client
+ * is NOT tied to our web redirect URI, so we redeem it with redirect_uri unset.
+ * The result shape matches `exchangeCode` so the route can reuse the same
+ * encrypt-and-upsert path as the web callback.
+ */
+export async function exchangeServerAuthCode(code: string): Promise<{
+  refreshToken: string | null;
+  accessToken: string | null;
+  scope: string | null;
+}> {
+  const { clientId, clientSecret } = requireOAuthEnv();
+  // No redirect URI: a native serverAuthCode is redeemed against the OAuth
+  // client directly (the on-device flow already established user consent).
+  const client = new google.auth.OAuth2(clientId, clientSecret);
+  const { tokens } = await client.getToken(code);
+  return {
+    refreshToken: tokens.refresh_token ?? null,
+    accessToken: tokens.access_token ?? null,
+    scope: tokens.scope ?? null,
+  };
+}
+
+/**
  * Decrypt the stored refresh token, refresh it, and return a live access
  * token. On `invalid_grant`, flips the row to `needs_reconnect` and throws
  * `ReconnectRequiredError`.
