@@ -31,6 +31,7 @@ import { AssetGrid } from "../_components/asset-grid";
 import { VirtualizedTimeline, type TimelineMonth } from "../_components/virtualized-timeline";
 import { useToolbarState, type Lifecycle } from "@/lib/hooks/use-toolbar-state";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ProcessingNotice } from "../_components/processing-notice";
 
 interface LifecycleOption {
   value: Lifecycle;
@@ -538,6 +539,9 @@ function LibraryContent() {
 
   return (
     <div className="space-y-3">
+      <div className="px-4 pt-1">
+        <ProcessingNotice />
+      </div>
       <AssetPageToolbar
         title="Library"
         count={timelineTotal}
