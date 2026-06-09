@@ -35,6 +35,8 @@ dependencies:
   video_player: ^2.9.2
   flutter_foreground_task: ^9.2.2
   connectivity_plus: ^7.1.1
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
 
 dev_dependencies:
   flutter_test:
