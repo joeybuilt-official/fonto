@@ -699,3 +699,79 @@ class GeoPlace {
         lng: (j["lng"] as num?)?.toDouble(),
       );
 }
+
+/// Phase 5 (media import) — one `import_jobs` row, mirrors the web /app/imports
+/// list shape (GET /api/v1/imports). Drives the imports screen's progress list.
+class ImportJob {
+  const ImportJob({
+    required this.id,
+    required this.provider,
+    required this.status,
+    required this.itemsTotal,
+    required this.itemsProcessed,
+    required this.itemsDeduped,
+    required this.itemsFailed,
+    this.error,
+  });
+
+  final String id;
+
+  /// "google-takeout" | "amazon-photos".
+  final String provider;
+
+  /// "pending" | "running" | "completed" | "failed".
+  final String status;
+  final int itemsTotal;
+  final int itemsProcessed;
+  final int itemsDeduped;
+  final int itemsFailed;
+  final String? error;
+
+  bool get isTerminal => status == "completed" || status == "failed";
+
+  /// 0.0–1.0 progress fraction, or null when the total isn't known yet.
+  double? get fraction =>
+      itemsTotal > 0 ? (itemsProcessed / itemsTotal).clamp(0.0, 1.0) : null;
+
+  String get providerLabel {
+    switch (provider) {
+      case "google-takeout":
+        return "Google Takeout";
+      case "amazon-photos":
+        return "Amazon Photos";
+      default:
+        return provider;
+    }
+  }
+
+  static ImportJob fromJson(Map<String, dynamic> j) => ImportJob(
+        id: j["id"] as String,
+        provider: (j["provider"] as String?) ?? "",
+        status: (j["status"] as String?) ?? "pending",
+        itemsTotal: (j["itemsTotal"] as num?)?.toInt() ?? 0,
+        itemsProcessed: (j["itemsProcessed"] as num?)?.toInt() ?? 0,
+        itemsDeduped: (j["itemsDeduped"] as num?)?.toInt() ?? 0,
+        itemsFailed: (j["itemsFailed"] as num?)?.toInt() ?? 0,
+        error: j["error"] as String?,
+      );
+}
+
+/// Phase 5 (media import) — a third-party integration's connect state, mirrors
+/// GET /api/v1/integrations. Only `provider` + `status` are returned (never the
+/// encrypted token).
+class Integration {
+  const Integration({required this.provider, required this.status});
+
+  /// e.g. "google".
+  final String provider;
+
+  /// "active" | "needs_reconnect" | "revoked".
+  final String status;
+
+  bool get isActive => status == "active";
+
+  static Integration fromJson(Map<String, dynamic> j) => Integration(
+        provider: (j["provider"] as String?) ?? "",
+        status: (j["status"] as String?) ?? "revoked",
+      );
+}

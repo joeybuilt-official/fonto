@@ -1239,3 +1239,82 @@ export const digestCursors = fontoSchema.table(
     ),
   ]
 );
+
+// Phase 0 (media import) — third-party OAuth integrations. One row per
+// (workspace, user, provider) connection; currently only Google (Drive
+// readonly for Takeout archives). The refresh token is encrypted at rest
+// (the encryption is applied by the OAuth callback in Phase 1, never stored
+// plaintext). `status` tracks the connection health:
+//   - 'active'          — usable; refresh token mints access tokens
+//   - 'needs_reconnect' — refresh returned invalid_grant (revoked / 7-day
+//                         Testing-app expiry); surface a reconnect CTA
+//   - 'revoked'         — user disconnected; revokedAt set
+export const integrations = fontoSchema.table(
+  "integrations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // Matches Better Auth `user.id` (text). Cross-schema; FK enforced in SQL.
+    userId: text("user_id").notNull(),
+    // 'google' (only provider for now). Kept as text for forward extension.
+    provider: text("provider").notNull(),
+    // Encrypted refresh token (never plaintext). NULL until the OAuth
+    // callback completes a successful code exchange.
+    encryptedRefreshToken: text("encrypted_refresh_token"),
+    // Space- or comma-delimited list of scopes Google actually granted, as
+    // returned by the token response (may differ from what we requested).
+    grantedScopes: text("granted_scopes"),
+    // 'active' | 'needs_reconnect' | 'revoked' — CHECK constraint in SQL.
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    // Set when the user disconnects (status → 'revoked'); NULL while connected.
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    // "Which integration backs this user's Google import?" — the lookup the
+    // OAuth callback (upsert) and the import job (token refresh) both hit.
+    index("integrations_workspace_user_provider_idx").on(
+      table.workspaceId,
+      table.userId,
+      table.provider
+    ),
+  ]
+);
+
+// Phase 0 (media import) — per-import progress + resume state. One row per
+// kicked-off import; the BullMQ `media-import` job updates its counts in
+// batches (every ~25 items, per ADR C5) and the web UI polls it. `cursor` is
+// an opaque, provider-specific resume marker (e.g. the last-processed archive
+// member) so a worker restart resumes instead of re-ingesting from zero.
+export const importJobs = fontoSchema.table(
+  "import_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // Matches Better Auth `user.id` (text). Cross-schema; FK enforced in SQL.
+    userId: text("user_id").notNull(),
+    // 'google-takeout' | 'amazon-photos' — CHECK constraint in SQL.
+    provider: text("provider").notNull(),
+    // 'pending' | 'running' | 'completed' | 'failed' — CHECK in SQL.
+    status: text("status").notNull().default("pending"),
+    // Discovered total (0 until the worker has enumerated the archive).
+    itemsTotal: integer("items_total").notNull().default(0),
+    // Successfully ingested (new asset rows created).
+    itemsProcessed: integer("items_processed").notNull().default(0),
+    // Skipped because createAssetRow found an existing SHA-256 match.
+    itemsDeduped: integer("items_deduped").notNull().default(0),
+    // Members that errored (counted + logged; the job continues).
+    itemsFailed: integer("items_failed").notNull().default(0),
+    // Opaque provider-specific resume marker; NULL at start.
+    cursor: text("cursor"),
+    // Terminal error message when status='failed'; NULL otherwise.
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // "List this workspace's active/recent imports" — the progress page query.
+    index("import_jobs_workspace_status_idx").on(table.workspaceId, table.status),
+  ]
+);

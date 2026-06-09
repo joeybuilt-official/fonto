@@ -19,6 +19,7 @@ import "../state/upload_queue.dart";
 import "../state/workmanager_dispatcher.dart";
 import "../widgets/sync_permission_sheet.dart";
 import "google_drive_import_screen.dart";
+import "imports_screen.dart";
 import "nextcloud_import_screen.dart";
 import "google_photos_import_screen.dart";
 import "transfers_screen.dart";
@@ -321,6 +322,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _openImports() async {
+    final auth = await AuthStore.load();
+    if (!mounted) return;
+    if (!auth.isConfigured) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Sign in first to import.")),
+      );
+      return;
+    }
+    final client = FontoClient(auth);
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ImportsScreen(client: client),
+      ),
+    );
+    client.close();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -438,6 +457,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     "scan, gallery) live on the Home + button.",
                     style: TextStyle(fontSize: 12),
                   ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.cloud_download_outlined),
+                  title: const Text("Google Takeout & Amazon Photos"),
+                  subtitle: const Text(
+                    "Server-side import: a Google Takeout archive or an Amazon "
+                    "Photos .zip, with progress.",
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _openImports,
                 ),
                 ListTile(
                   leading: const Icon(Icons.folder_outlined),

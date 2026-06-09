@@ -17,6 +17,7 @@ import type {
   EmbedAssetJob,
   FaceDetectJob,
   VideoHlsTranscodeJob,
+  ImportJob,
 } from "./jobs";
 
 export const QueueNames = {
@@ -48,6 +49,10 @@ export const QueueNames = {
   // Phase 8b — HLS ladder transcode. Heavy CPU + I/O job; isolated so
   // a flood of new-video uploads doesn't drown asset-processing.
   VideoHlsTranscode: "video-hls-transcode",
+  // Phase 0 (media import) — Google Takeout / Amazon Photos archive import.
+  // Long-running, streaming, app-managed resume; isolated on its own queue so
+  // a multi-GB import never backlogs the asset-processing pipeline.
+  Import: "media-import",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -244,6 +249,38 @@ export async function addVideoHlsTranscodeJob(payload: VideoHlsTranscodeJob): Pr
   await videoHlsTranscodeQueue().add("video-hls-transcode", payload);
 }
 
+/**
+ * Phase 0 (media import) — Google Takeout / Amazon Photos archive import
+ * queue. Single attempt: imports are long-running and resume is app-managed
+ * via the `import_jobs.cursor` checkpoint, so a BullMQ retry would wastefully
+ * restart the whole archive instead of resuming. The worker (Phase 2/3) reads
+ * the import_jobs row + cursor from Postgres on start.
+ */
+export function importQueue(): Queue<ImportJob> {
+  const name = QueueNames.Import;
+  const existing = cache.get(name);
+  if (existing) return existing as Queue<ImportJob>;
+  const q = new Queue<ImportJob>(name, {
+    connection: getRedisConnection(),
+    defaultJobOptions: {
+      attempts: 1,
+      removeOnComplete: 200,
+      removeOnFail: 200,
+    },
+  });
+  cache.set(name, q);
+  return q;
+}
+
+/**
+ * Enqueue a media-import job. Thin wrapper mirroring the other producer
+ * helpers so API routes (Phase 1/3) stay decoupled from the queue handle.
+ * Job name = JobNames.Import ("media-import").
+ */
+export async function tryEnqueueImport(payload: ImportJob): Promise<void> {
+  await importQueue().add("media-import", payload);
+}
+
 export function maintenanceQueue(): Queue<Record<string, never>> {
   const name = QueueNames.Maintenance;
   const existing = cache.get(name);
@@ -269,6 +306,7 @@ export function allQueues(): Queue[] {
   clipDedupCheckQueue();
   faceDetectQueue();
   videoHlsTranscodeQueue();
+  importQueue();
   return Array.from(cache.values());
 }
 

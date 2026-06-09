@@ -719,5 +719,104 @@ class FontoClient {
     await _putJson("/api/v1/persons/$personId/groups", {"groupIds": groupIds});
   }
 
+  /// Phase 5 (media import) — the caller's primary workspace id. The mobile
+  /// client doesn't persist a workspace, so the Amazon ZIP upload (which takes
+  /// `?workspaceId=`) resolves it on demand. GET /api/v1/workspace returns
+  /// `{ workspace: { id, name, slug }, ... }`.
+  Future<String> workspaceId() async {
+    final j = await _getJson("/api/v1/workspace");
+    final ws = j["workspace"] as Map<String, dynamic>?;
+    final id = ws?["id"] as String?;
+    if (id == null) {
+      throw ApiException(404, "No workspace");
+    }
+    return id;
+  }
+
+  /// Phase 5 (media import) — third-party integrations + their connect state
+  /// (provider/status only). Mirrors GET /api/v1/integrations.
+  Future<List<Integration>> getIntegrations() async {
+    final j = await _getJson("/api/v1/integrations");
+    final raw =
+        (j["integrations"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(Integration.fromJson).toList();
+  }
+
+  /// Phase 5 (media import) — recent import jobs, newest first. Mirrors
+  /// GET /api/v1/imports; the imports screen polls this for progress.
+  Future<List<ImportJob>> listImports() async {
+    final j = await _getJson("/api/v1/imports");
+    final raw =
+        (j["imports"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(ImportJob.fromJson).toList();
+  }
+
+  /// Phase 5 (media import) — a single import job. Mirrors GET /api/v1/imports/:id.
+  Future<ImportJob> getImport(String id) async {
+    final j = await _getJson("/api/v1/imports/$id");
+    return ImportJob.fromJson(j);
+  }
+
+  /// Phase 5 (media import) — exchange a google_sign_in `serverAuthCode` for a
+  /// stored, encrypted refresh token on the server (POST
+  /// /api/v1/integrations/google/mobile-connect). The mobile bridge for the
+  /// web's browser-redirect Google connect.
+  Future<Integration> connectGoogle(String serverAuthCode) async {
+    final j = await _postJson(
+      "/api/v1/integrations/google/mobile-connect",
+      {"serverAuthCode": serverAuthCode},
+    );
+    return Integration.fromJson(j);
+  }
+
+  /// Phase 5 (media import) — kick a server-side Google Takeout import of the
+  /// Drive archive [driveFileId]. Returns the new import job id.
+  /// POST /api/v1/imports/google → { importJobId }.
+  Future<String> startGoogleTakeoutImport(String driveFileId) async {
+    final j = await _postJson(
+      "/api/v1/imports/google",
+      {"driveFileId": driveFileId},
+    );
+    return j["importJobId"] as String;
+  }
+
+  /// Phase 5 (media import) — upload an Amazon Photos export [zip] as the RAW
+  /// request body (Content-Type: application/zip, NOT multipart) to the
+  /// streaming endpoint POST /api/v1/imports/upload?workspaceId=…, which pipes
+  /// it to a temp file and enqueues an EXIF-only import. Returns the import job
+  /// id.
+  ///
+  /// The file is streamed off disk via a StreamedRequest so peak RAM is bounded
+  /// by one chunk regardless of archive size — the http package would otherwise
+  /// buffer the whole body in memory.
+  Future<String> uploadAmazonZip(File zip, String workspaceId) async {
+    final len = await zip.length();
+    final req = http.StreamedRequest(
+      "POST",
+      _uri("/api/v1/imports/upload", {"workspaceId": workspaceId}),
+    )
+      ..headers.addAll(_headers)
+      ..headers["Content-Type"] = "application/zip"
+      ..contentLength = len;
+    final pump = zip.openRead().listen(
+          req.sink.add,
+          onDone: req.sink.close,
+          onError: req.sink.addError,
+          cancelOnError: true,
+        );
+    final http.StreamedResponse streamed;
+    try {
+      streamed = await _http.send(req);
+    } finally {
+      await pump.cancel();
+    }
+    final res = await http.Response.fromStream(streamed);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+    final j = json.decode(res.body) as Map<String, dynamic>;
+    return j["importJobId"] as String;
+  }
+
   void close() => _http.close();
 }
