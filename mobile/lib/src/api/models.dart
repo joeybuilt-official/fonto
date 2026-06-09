@@ -670,3 +670,32 @@ class PlaceGroup {
         previewIds: (j["previewIds"] as List? ?? const []).cast<String>(),
       );
 }
+
+/// A place cluster WITH centroid coordinates, for the Places map + pins.
+/// `lat`/`lng` are the mean of the place's geo-tagged assets and may be null.
+/// Mirrors GET /api/v1/assets/places.
+class GeoPlace {
+  const GeoPlace({
+    required this.name,
+    required this.count,
+    this.coverAssetId,
+    this.lat,
+    this.lng,
+  });
+
+  final String name;
+  final int count;
+  final String? coverAssetId;
+  final double? lat;
+  final double? lng;
+
+  bool get hasCoords => lat != null && lng != null;
+
+  static GeoPlace fromJson(Map<String, dynamic> j) => GeoPlace(
+        name: j["name"] as String,
+        count: (j["count"] as num?)?.toInt() ?? 0,
+        coverAssetId: j["coverAssetId"] as String?,
+        lat: (j["lat"] as num?)?.toDouble(),
+        lng: (j["lng"] as num?)?.toDouble(),
+      );
+}

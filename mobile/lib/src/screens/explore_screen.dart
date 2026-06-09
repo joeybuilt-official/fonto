@@ -10,6 +10,8 @@
 
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
+import "package:flutter_map/flutter_map.dart";
+import "package:latlong2/latlong.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
@@ -432,6 +434,193 @@ class _PlacesTab extends StatefulWidget {
 class _PlacesTabState extends State<_PlacesTab> {
   bool _loading = true;
   String? _error;
+  List<GeoPlace> _places = const [];
+  final Map<String, String> _covers = {}; // coverAssetId -> thumb url
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _covers.clear();
+    });
+    try {
+      final places = await widget.client.geoPlaces();
+      final coverIds =
+          places.map((p) => p.coverAssetId).whereType<String>().toList();
+      final covers = coverIds.isEmpty
+          ? <String, String>{}
+          : await widget.client.assetUrls(coverIds, variant: "thumb");
+      if (!mounted) return;
+      setState(() {
+        _places = places;
+        _covers.addAll(covers);
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      _fail("${e.status}: ${e.message}");
+    } catch (e) {
+      _fail(e.toString());
+    }
+  }
+
+  void _fail(String msg) {
+    if (!mounted) return;
+    setState(() {
+      _error = msg;
+      _loading = false;
+    });
+  }
+
+  void _openPlace(GeoPlace place) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _PlaceAssetsScreen(client: widget.client, place: place),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _stateScaffold(
+      loading: _loading,
+      error: _error,
+      isEmpty: _places.isEmpty,
+      emptyText: "No geo-tagged photos yet.",
+      onRetry: _load,
+      builder: () {
+        final geo = _places.where((p) => p.hasCoords).toList();
+        return Column(
+          children: [
+            if (geo.isNotEmpty)
+              SizedBox(
+                height: 220,
+                child: _PlacesMap(places: geo, onTap: _openPlace),
+              ),
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemCount: _places.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, i) {
+                  final p = _places[i];
+                  final cover =
+                      p.coverAssetId == null ? null : _covers[p.coverAssetId];
+                  return ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: cover == null
+                            ? Container(
+                                color: Colors.black12,
+                                child: const Icon(Icons.place_outlined),
+                              )
+                            : CachedNetworkImage(
+                                imageUrl: cover,
+                                fit: BoxFit.cover,
+                                placeholder: (_, __) =>
+                                    Container(color: Colors.black12),
+                                errorWidget: (_, __, ___) =>
+                                    const Icon(Icons.broken_image),
+                              ),
+                      ),
+                    ),
+                    title: Text(
+                      p.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle:
+                        Text("${p.count} ${p.count == 1 ? "photo" : "photos"}"),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _openPlace(p),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// OpenStreetMap tiles (keyless) with a red pin per place centroid. Tapping a
+/// pin drills into that place's photos. Mirrors the web Places map.
+class _PlacesMap extends StatelessWidget {
+  const _PlacesMap({required this.places, required this.onTap});
+  final List<GeoPlace> places;
+  final void Function(GeoPlace) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final points = places.map((p) => LatLng(p.lat!, p.lng!)).toList();
+    return FlutterMap(
+      options: MapOptions(
+        initialCenter: points.first,
+        initialZoom: points.length == 1 ? 11 : 2,
+        initialCameraFit: points.length > 1
+            ? CameraFit.coordinates(
+                coordinates: points,
+                padding: const EdgeInsets.all(40),
+                maxZoom: 12,
+              )
+            : null,
+        interactionOptions: const InteractionOptions(
+          flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
+        ),
+      ),
+      children: [
+        TileLayer(
+          urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+          userAgentPackageName: "ai.fonto.mobile",
+        ),
+        MarkerLayer(
+          markers: [
+            for (final p in places)
+              Marker(
+                point: LatLng(p.lat!, p.lng!),
+                width: 40,
+                height: 40,
+                alignment: Alignment.topCenter,
+                child: GestureDetector(
+                  onTap: () => onTap(p),
+                  child: const Icon(Icons.location_pin,
+                      color: Colors.red, size: 36),
+                ),
+              ),
+          ],
+        ),
+        const RichAttributionWidget(
+          attributions: [
+            TextSourceAttribution("OpenStreetMap contributors"),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// A single place's photos as a grid → full-screen viewer.
+class _PlaceAssetsScreen extends StatefulWidget {
+  const _PlaceAssetsScreen({required this.client, required this.place});
+  final FontoClient client;
+  final GeoPlace place;
+
+  @override
+  State<_PlaceAssetsScreen> createState() => _PlaceAssetsScreenState();
+}
+
+class _PlaceAssetsScreenState extends State<_PlaceAssetsScreen> {
+  bool _loading = true;
+  String? _error;
   List<Asset> _assets = const [];
   final Map<String, String> _thumbs = {};
 
@@ -448,7 +637,8 @@ class _PlacesTabState extends State<_PlacesTab> {
       _thumbs.clear();
     });
     try {
-      final page = await widget.client.listAssets(limit: 60, hasGeo: true);
+      final page =
+          await widget.client.listAssets(place: widget.place.name, limit: 120);
       final thumbs = page.assets.isEmpty
           ? <String, String>{}
           : await widget.client.assetUrls(
@@ -478,28 +668,31 @@ class _PlacesTabState extends State<_PlacesTab> {
 
   @override
   Widget build(BuildContext context) {
-    return _stateScaffold(
-      loading: _loading,
-      error: _error,
-      isEmpty: _assets.isEmpty,
-      emptyText: "No geo-tagged photos yet.",
-      onRetry: _load,
-      builder: () => GridView.builder(
-        padding: const EdgeInsets.all(4),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          crossAxisSpacing: 4,
-          mainAxisSpacing: 4,
-        ),
-        itemCount: _assets.length,
-        itemBuilder: (context, i) => _PlaceThumb(
-          url: _thumbs[_assets[i].id],
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => AssetDetailScreen(
-                client: widget.client,
-                assets: _assets,
-                initialIndex: i,
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.place.name)),
+      body: _stateScaffold(
+        loading: _loading,
+        error: _error,
+        isEmpty: _assets.isEmpty,
+        emptyText: "No photos for this place.",
+        onRetry: _load,
+        builder: () => GridView.builder(
+          padding: const EdgeInsets.all(4),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 4,
+            mainAxisSpacing: 4,
+          ),
+          itemCount: _assets.length,
+          itemBuilder: (context, i) => _PlaceThumb(
+            url: _thumbs[_assets[i].id],
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => AssetDetailScreen(
+                  client: widget.client,
+                  assets: _assets,
+                  initialIndex: i,
+                ),
               ),
             ),
           ),

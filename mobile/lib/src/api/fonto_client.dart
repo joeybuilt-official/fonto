@@ -537,6 +537,16 @@ class FontoClient {
     return raw.map(PlaceGroup.fromJson).toList();
   }
 
+  /// Place clusters WITH centroid coordinates (lat/lng) + cover asset, for the
+  /// Places map and pins. Distinct from [places] (legacy, coords-less). Mirrors
+  /// GET /api/v1/assets/places. Drill into a place's photos with
+  /// `listAssets(place: name)`.
+  Future<List<GeoPlace>> geoPlaces() async {
+    final j = await _getJson("/api/v1/assets/places");
+    final raw = (j["places"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(GeoPlace.fromJson).toList();
+  }
+
   Future<List<Person>> listPersons() async {
     final j = await _getJson("/api/v1/persons");
     final raw = (j["persons"] as List? ?? const []).cast<Map<String, dynamic>>();
