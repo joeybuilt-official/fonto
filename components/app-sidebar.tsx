@@ -13,6 +13,7 @@ import {
   LogOut,
   Search,
   Settings,
+  Upload,
   X,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -46,6 +47,9 @@ const navItems = [
   { href: "/app/collections", label: "Collections", icon: FolderOpen },
   { href: "/app/updates",     label: "Updates",     icon: Bell },
   { href: "/app/search",      label: "Search",      icon: Search },
+  // Phase 4 (media import) — surface the Google Takeout / Amazon Photos
+  // import flow. Mobile parity (bottom bar / avatar menu) is Phase 5.
+  { href: "/app/imports",     label: "Imports",     icon: Upload },
   { href: "/app/settings",    label: "Settings",    icon: Settings },
 ];
 

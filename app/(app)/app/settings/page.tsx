@@ -2,11 +2,17 @@
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/lib/auth/client";
 import Link from "next/link";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 import { cn } from "@/lib/utils";
+
+type IntegrationStatus = "active" | "needs_reconnect" | "revoked";
+interface Integration {
+  provider: string;
+  status: IntegrationStatus;
+}
 
 type SettingsTab = "account" | "storage" | "integrations";
 const TABS: { id: SettingsTab; label: string }[] = [
@@ -36,6 +42,8 @@ export default function SettingsPage() {
   const [rescanScope, setRescanScope] = useState<"all" | "images" | "failed">("all");
   const [rescanBusy, setRescanBusy] = useState(false);
   const [rescanMsg, setRescanMsg] = useState<string | null>(null);
+  const [googleStatus, setGoogleStatus] = useState<IntegrationStatus | null>(null);
+  const [googleBusy, setGoogleBusy] = useState(false);
   // At md+ the page renders as tabs (Account / Storage / Integrations).
   // At mobile every section is always visible — `tabClass(tab)` only emits
   // `md:hidden` for non-active sections, so the mobile flat layout is
@@ -50,6 +58,34 @@ export default function SettingsPage() {
       .then((d) => setStorage(d.storage ?? null))
       .catch(() => null);
   }, []);
+
+  const refreshGoogleStatus = useCallback(() => {
+    fetch("/api/v1/integrations")
+      .then((r) => r.json())
+      .then((d: { integrations?: Integration[] }) => {
+        const google = (d.integrations ?? []).find((i) => i.provider === "google");
+        // No row (or already revoked) => offer a fresh Connect.
+        setGoogleStatus(google && google.status !== "revoked" ? google.status : null);
+      })
+      .catch(() => setGoogleStatus(null));
+  }, []);
+
+  useEffect(() => {
+    refreshGoogleStatus();
+  }, [refreshGoogleStatus]);
+
+  async function handleGoogleDisconnect() {
+    if (googleBusy) return;
+    setGoogleBusy(true);
+    try {
+      await fetch("/api/v1/integrations/google/revoke", { method: "POST" });
+    } catch {
+      // Ignore — re-fetch reflects the real state below.
+    } finally {
+      setGoogleBusy(false);
+      refreshGoogleStatus();
+    }
+  }
 
   async function handleRescanAll() {
     if (rescanBusy) return;
@@ -168,8 +204,59 @@ export default function SettingsPage() {
           Plexo powers AI classification, auto-tagging, and cross-app intelligence for your assets.
         </p>
         <div className="space-y-3 pt-1">
+          {/* Google Photos (Takeout) — real connect/reconnect flow (Phase 4). */}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm text-foreground">Google Photos (Takeout)</p>
+              <p className="text-xs text-muted-foreground">
+                {googleStatus === "active"
+                  ? "Connected — import a Takeout archive from the Imports page."
+                  : googleStatus === "needs_reconnect"
+                  ? "Reconnect required — your Google access expired."
+                  : "Connect to import a Google Takeout archive of your photos."}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {googleStatus === "active" ? (
+                <>
+                  <span className="text-xs font-medium text-green-600 dark:text-green-500">
+                    Connected
+                  </span>
+                  <button
+                    onClick={handleGoogleDisconnect}
+                    disabled={googleBusy}
+                    className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+                  >
+                    {googleBusy ? "Disconnecting…" : "Disconnect"}
+                  </button>
+                </>
+              ) : (
+                <a
+                  href="/api/v1/integrations/google/auth"
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                    googleStatus === "needs_reconnect"
+                      ? "border border-yellow-500 text-yellow-700 dark:text-yellow-500 hover:bg-yellow-500/10"
+                      : "bg-primary text-primary-foreground hover:bg-primary/90"
+                  )}
+                >
+                  {googleStatus === "needs_reconnect" ? "Reconnect" : "Connect"}
+                </a>
+              )}
+            </div>
+          </div>
+
+          {googleStatus === "active" && (
+            <Link
+              href="/app/imports"
+              className="block text-xs font-medium text-primary hover:underline"
+            >
+              Go to Imports →
+            </Link>
+          )}
+
+          {/* Not-yet-built providers stay as placeholders. */}
           {[
-            { id: "google-drive", label: "Google Drive", desc: "Import assets from Google Drive" },
             { id: "dropbox", label: "Dropbox", desc: "Sync assets from Dropbox" },
             { id: "icloud-drive", label: "iCloud Drive", desc: "Import from iCloud Drive" },
           ].map((conn) => (
