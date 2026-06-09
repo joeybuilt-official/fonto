@@ -15,6 +15,7 @@ import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
+import "ignored_people_screen.dart";
 
 class ExploreScreen extends StatelessWidget {
   const ExploreScreen({super.key, required this.client});
@@ -165,6 +166,21 @@ class _PeopleTabState extends State<_PeopleTab> {
 
     return Column(
       children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: () async {
+              final changed = await Navigator.of(context).push<bool>(
+                MaterialPageRoute(
+                  builder: (_) => IgnoredPeopleScreen(client: widget.client),
+                ),
+              );
+              if (changed == true) _load();
+            },
+            icon: const Icon(Icons.visibility_off_outlined, size: 18),
+            label: const Text("Ignored"),
+          ),
+        ),
         if (visibleGroups.isNotEmpty && !_loading)
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -862,11 +878,14 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
     if (target == null || !mounted) return;
     setState(() => _merging = true);
     try {
-      await widget.client.mergePerson(widget.person.id, target.id);
+      final result =
+          await widget.client.mergePerson(widget.person.id, target.id);
       if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text("Merged into ${target.name ?? "person"}")),
-      );
+      final base = "Merged into ${target.name ?? "person"}";
+      final msg = result.assigned > 0
+          ? "$base · auto-tagged ${result.assigned} ${result.assigned == 1 ? "photo" : "photos"}"
+          : base;
+      messenger.showSnackBar(SnackBar(content: Text(msg)));
       navigator.pop(true);
     } catch (e) {
       if (!mounted) return;
@@ -936,6 +955,25 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(content: Text("Couldn't remove name: $e")));
+    }
+  }
+
+  /// Ignore (hide) this person — removes the cluster from the People grid.
+  /// Mirrors the web EyeOff action; restorable from the Ignored screen. Pops
+  /// `true` so the grid reloads without the now-hidden cluster.
+  Future<void> _ignorePerson() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    try {
+      await widget.client.setPersonHidden(widget.person.id, true);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text("Person ignored — restore from Ignored")),
+      );
+      navigator.pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text("Couldn't ignore: $e")));
     }
   }
 
@@ -1036,6 +1074,9 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                       case "merge":
                         _pickAndMerge();
                         break;
+                      case "ignore":
+                        _ignorePerson();
+                        break;
                     }
                   },
                   itemBuilder: (_) => [
@@ -1059,6 +1100,13 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                       child: ListTile(
                         leading: Icon(Icons.merge_type),
                         title: Text("Merge into…"),
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: "ignore",
+                      child: ListTile(
+                        leading: Icon(Icons.visibility_off_outlined),
+                        title: Text("Ignore person"),
                       ),
                     ),
                   ],

@@ -598,6 +598,52 @@ class FontoClient {
     }
   }
 
+  /// Ignore (hide) or restore a person cluster. Mirrors web
+  /// PATCH /persons/:id { hidden }. The server cascades `hidden` to the
+  /// person's faces, so the cluster leaves (or re-enters) the People grid.
+  Future<void> setPersonHidden(String personId, bool hidden) async {
+    final res = await _http.patch(
+      _uri("/api/v1/persons/$personId"),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode({"hidden": hidden}),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+  }
+
+  /// Hide or restore a single face. PATCH /faces/:id { hidden }.
+  Future<void> setFaceHidden(String faceId, bool hidden) async {
+    final res = await _http.patch(
+      _uri("/api/v1/faces/$faceId"),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode({"hidden": hidden}),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+  }
+
+  /// Ignore or restore every face on a photo.
+  /// PATCH /assets/:id/faces-ignored { ignored }.
+  Future<void> setAssetFacesIgnored(String assetId, bool ignored) async {
+    final res = await _http.patch(
+      _uri("/api/v1/assets/$assetId/faces-ignored"),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode({"ignored": ignored}),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+  }
+
+  /// The Ignored review surface: hidden persons, ignored photos, and
+  /// individually-hidden faces. Mirrors GET /api/v1/faces/ignored.
+  Future<IgnoredData> listIgnored() async {
+    final j = await _getJson("/api/v1/faces/ignored");
+    return IgnoredData.fromJson(j);
+  }
+
   Future<Person> createPerson({required String name}) async {
     final j = await _postJson("/api/v1/persons", {"name": name});
     return Person.fromJson(j["person"] as Map<String, dynamic>);
@@ -628,8 +674,10 @@ class FontoClient {
 
   /// Merge [sourceId] into [intoId]: every face moves to the target person and
   /// the source person is deleted. Mirrors the web person-detail merge action.
-  Future<void> mergePerson(String sourceId, String intoId) async {
-    await _postJson("/api/v1/persons/$sourceId/merge", {"into": intoId});
+  /// Returns the auto-tag propagation counts so the caller can surface a toast.
+  Future<MergeResult> mergePerson(String sourceId, String intoId) async {
+    final j = await _postJson("/api/v1/persons/$sourceId/merge", {"into": intoId});
+    return MergeResult.fromJson(j);
   }
 
   /// Likely-duplicate persons for the merge picker, ranked by embedding

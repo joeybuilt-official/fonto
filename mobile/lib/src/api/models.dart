@@ -412,6 +412,7 @@ class Person {
     this.coverBbox,
     this.coverFaceCropUrl,
     this.groupIds = const [],
+    this.hidden = false,
   });
 
   final String id;
@@ -421,6 +422,9 @@ class Person {
   final PersonBbox? coverBbox;
   final String? coverFaceCropUrl;
   final List<String> groupIds;
+  // `true` when the cluster has been ignored (hidden from People). Mirrors the
+  // web `hidden` flag; restore via PATCH /persons/:id { hidden:false }.
+  final bool hidden;
 
   static Person fromJson(Map<String, dynamic> j) => Person(
         id: j["id"] as String,
@@ -430,6 +434,83 @@ class Person {
         coverBbox: PersonBbox.fromJson(j["coverBbox"]),
         coverFaceCropUrl: j["coverFaceCropUrl"] as String?,
         groupIds: (j["groupIds"] as List? ?? const []).cast<String>(),
+        hidden: j["hidden"] as bool? ?? false,
+      );
+}
+
+/// Result of a person merge. `assigned` is how many faces the server
+/// auto-tagged onto the (named) target by propagation; `suggested` is how
+/// many it surfaced as suggestions. Both are 0 when the target is unnamed
+/// (server returns `propagated: null`). Mirrors the web post-merge toast.
+class MergeResult {
+  const MergeResult({this.assigned = 0, this.suggested = 0});
+  final int assigned;
+  final int suggested;
+
+  static MergeResult fromJson(Map<String, dynamic> j) {
+    final p = j["propagated"];
+    if (p is! Map<String, dynamic>) return const MergeResult();
+    return MergeResult(
+      assigned: (p["assigned"] as num?)?.toInt() ?? 0,
+      suggested: (p["suggested"] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+/// Payload for the Ignored review screen — the three things a user can ignore,
+/// each restorable. Mirrors GET /api/v1/faces/ignored.
+class IgnoredData {
+  const IgnoredData({
+    this.persons = const [],
+    this.photos = const [],
+    this.faces = const [],
+  });
+  final List<Person> persons;
+  final List<IgnoredPhoto> photos;
+  final List<IgnoredFace> faces;
+
+  bool get isEmpty => persons.isEmpty && photos.isEmpty && faces.isEmpty;
+
+  static IgnoredData fromJson(Map<String, dynamic> j) => IgnoredData(
+        persons: (j["persons"] as List? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(Person.fromJson)
+            .toList(),
+        photos: (j["photos"] as List? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(IgnoredPhoto.fromJson)
+            .toList(),
+        faces: (j["faces"] as List? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(IgnoredFace.fromJson)
+            .toList(),
+      );
+}
+
+/// A photo whose faces are all ignored. Restore via
+/// PATCH /assets/:id/faces-ignored { ignored:false }.
+class IgnoredPhoto {
+  const IgnoredPhoto({required this.id, this.filename});
+  final String id;
+  final String? filename;
+
+  static IgnoredPhoto fromJson(Map<String, dynamic> j) => IgnoredPhoto(
+        id: j["id"] as String,
+        filename: j["filename"] as String?,
+      );
+}
+
+/// An individually-hidden face. Restore via PATCH /faces/:id { hidden:false }.
+class IgnoredFace {
+  const IgnoredFace({required this.id, required this.assetId, this.faceCropUrl});
+  final String id;
+  final String assetId;
+  final String? faceCropUrl;
+
+  static IgnoredFace fromJson(Map<String, dynamic> j) => IgnoredFace(
+        id: j["id"] as String,
+        assetId: j["assetId"] as String,
+        faceCropUrl: j["faceCropUrl"] as String?,
       );
 }
 
