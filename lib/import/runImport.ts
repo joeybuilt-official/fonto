@@ -227,10 +227,16 @@ export async function runImport(args: RunArgs): Promise<void> {
     log.error({ err: err instanceof Error ? err.message : String(err) }, "import failed");
     throw err;
   } finally {
-    // Eager temp cleanup. We never delete an uploadTmpPath's parent — Phase 3
-    // owns that lifecycle — but we do remove the file we streamed.
+    // Eager temp cleanup. For the Google Takeout path we own the whole temp dir
+    // the Drive archive was streamed into. For the Phase 3 Amazon path the
+    // upload endpoint streamed a single ZIP to a temp file and handed us its
+    // path; once the walk is done (success, failure, or reconnect) that file is
+    // no longer needed, so we unlink it here.
     if (tmpDirToClean) {
       await rm(tmpDirToClean, { recursive: true, force: true }).catch(() => undefined);
+    }
+    if (args.uploadTmpPath) {
+      await rm(args.uploadTmpPath, { force: true }).catch(() => undefined);
     }
   }
 }
