@@ -429,8 +429,11 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   Widget _buildFaceOverlay() {
     final a = _cur;
     if (!_isViewableImage(a)) return const SizedBox.shrink();
-    final faces = _facesByAsset[a.id];
-    if (faces == null || faces.isEmpty) return const SizedBox.shrink();
+    final all = _facesByAsset[a.id];
+    if (all == null) return const SizedBox.shrink();
+    // Ignored faces drop out of the overlay so the user sees them disappear.
+    final faces = all.where((f) => !f.hidden).toList();
+    if (faces.isEmpty) return const SizedBox.shrink();
     final wPx = a.widthPx;
     final hPx = a.heightPx;
     if (wPx == null || hPx == null) return const SizedBox.shrink();
@@ -710,6 +713,28 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
     );
   }
 
+  /// Ignore every face on this photo (PATCH /assets/:id/faces-ignored).
+  /// Restorable from People → Ignored. Pops back to the viewer afterwards.
+  Future<void> _ignoreAllFaces() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final nav = Navigator.of(context);
+    try {
+      await widget.client.setAssetFacesIgnored(widget.asset.id, true);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text("Faces ignored — restore from People → Ignored"),
+        ),
+      );
+      nav.pop();
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text("Couldn't ignore faces: $e")),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -718,6 +743,24 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         title: const Text("Tag people"),
+        actions: [
+          if (!_loading && _faces.any((f) => !f.hidden))
+            PopupMenuButton<String>(
+              tooltip: "Photo actions",
+              onSelected: (v) {
+                if (v == "ignore_all") _ignoreAllFaces();
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: "ignore_all",
+                  child: ListTile(
+                    leading: Icon(Icons.visibility_off_outlined),
+                    title: Text("Ignore all faces"),
+                  ),
+                ),
+              ],
+            ),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -1133,6 +1176,33 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
     }
   }
 
+  /// Ignore (hide) just this one face. PATCH /faces/:id { hidden:true }.
+  /// Restorable from People → Ignored. Marks the face hidden locally so it
+  /// drops out of the on-photo overlay, then closes the sheet.
+  Future<void> _ignoreFace() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final nav = Navigator.of(context);
+    setState(() { _saving = true; _saveError = null; });
+    try {
+      await widget.client.setFaceHidden(widget.face.id, true);
+      if (!mounted) return;
+      widget.onUpdated(AssetFace(
+        id: widget.face.id,
+        bbox: widget.face.bbox,
+        confidence: widget.face.confidence,
+        personId: widget.face.personId,
+        personName: widget.face.personName,
+        hidden: true,
+      ));
+      nav.pop();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text("Couldn't ignore face: $e")));
+      if (mounted) setState(() => _saveError = e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   /// Phase 3 (faces/UX) — clear the NAME of the cluster this face belongs to
   /// (keeps the face assigned to the cluster). Sends `null`, which the PATCH
   /// route treats as "unname". This is the in-flow fix for the reported
@@ -1289,6 +1359,11 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
                         title: const Text("Remove assignment"),
                         onTap: _saving ? null : _clearAssignment,
                       ),
+                    ListTile(
+                      leading: const Icon(Icons.visibility_off_outlined),
+                      title: const Text("Ignore this face"),
+                      onTap: _saving ? null : _ignoreFace,
+                    ),
                     ...filtered.map(
                       (p) => ListTile(
                         leading: const Icon(Icons.person_outline),
