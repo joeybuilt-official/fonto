@@ -39,6 +39,7 @@ import {
   FaceDetectJobSchema,
   VideoHlsTranscodeJobSchema,
   BackfillFaceCropsJobSchema,
+  ImportJobSchema,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
@@ -46,6 +47,7 @@ import {
   type ClipDedupCheckJob,
   type FaceDetectJob,
   type VideoHlsTranscodeJob,
+  type ImportJob,
 } from "@/lib/queue/jobs";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
@@ -64,6 +66,7 @@ import {
   DEFAULT_BACKFILL_BATCH_SIZE,
 } from "@/lib/processing/backfillFaceCrops";
 import { generateSpriteSheet } from "@/lib/processing/generateSpriteSheet";
+import { runImport } from "@/lib/import/runImport";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -233,6 +236,15 @@ const BACKFILL_FACE_CROPS_BATCH_SIZE = Math.max(
       `${DEFAULT_BACKFILL_BATCH_SIZE}`,
     10
   ),
+  1
+);
+
+// Phase 2 (media import) — Google Takeout / Amazon ZIP import. Long-running,
+// I/O-bound (multi-GB stream-to-disk + member-by-member unzip + per-photo
+// ingest). Capped low by default (1–2 per ADR pre-mortem #2: tens-of-GB
+// downloads + temp disk on the worker; NAS /tmp ENOSPC is a known foot-gun).
+const IMPORT_CONCURRENCY = Math.max(
+  parseInt(process.env.IMPORT_WORKER_CONCURRENCY ?? "1", 10),
   1
 );
 
@@ -1085,6 +1097,73 @@ function startVideoHlsTranscodeWorker(): Worker<VideoHlsTranscodeJob> {
 }
 
 /**
+ * Phase 2 (media import) — Google Takeout / Amazon Photos import worker.
+ * Drains the `media-import` queue: loads the import_jobs row, streams the
+ * archive (Drive download for Takeout, or a local upload path for Amazon),
+ * walks it member-by-member, and feeds each media file to createAssetRow with
+ * the Takeout sidecar metadata as an override. Progress + resume are tracked
+ * on the import_jobs row by runImport(); a ReconnectRequiredError flips the
+ * job to failed without crashing the worker. Heavy lock (long-running stream).
+ */
+function startImportWorker(): Worker<ImportJob> {
+  const w = new Worker<ImportJob>(
+    QueueNames.Import,
+    async (job: Job<ImportJob>) => {
+      const log = logger.child({
+        queue: QueueNames.Import,
+        jobId: job.id,
+        importJobId: job.data?.importJobId,
+        provider: job.data?.provider,
+      });
+
+      const parsed = ImportJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid import payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const data = parsed.data;
+
+      log.info("import job starting");
+      await runImport({
+        importJobId: data.importJobId,
+        workspaceId: data.workspaceId,
+        userId: data.userId,
+        provider: data.provider,
+        driveFileId: data.driveFileId,
+        uploadTmpPath: data.uploadTmpPath,
+      });
+      log.info("import job handler returned");
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: IMPORT_CONCURRENCY,
+      lockDuration: HEAVY_LOCK_DURATION_MS,
+      stalledInterval: HEAVY_STALLED_INTERVAL_MS,
+    }
+  );
+
+  w.on("completed", (job) =>
+    logger.info({ queue: QueueNames.Import, jobId: job.id }, "import job completed")
+  );
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.Import,
+        jobId: job?.id,
+        importJobId: job?.data?.importJobId,
+        err: err.message,
+      },
+      "import job failed"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.Import, err: err.message }, "import worker error")
+  );
+
+  return w;
+}
+
+/**
  * BullMQ marker class to opt out of retries. Re-implemented here to avoid
  * importing the named export by path — the type lives at the package root
  * but has historically shifted between versions.
@@ -1393,6 +1472,7 @@ async function main(): Promise<void> {
       clipEmbedConcurrency: CLIP_EMBED_CONCURRENCY,
       clipDedupConcurrency: CLIP_DEDUP_CONCURRENCY,
       faceDetectConcurrency: FACE_DETECT_CONCURRENCY,
+      importConcurrency: IMPORT_CONCURRENCY,
       metricsPort: METRICS_PORT,
       redisUrl: (process.env.REDIS_URL ?? "redis://valkey:6379").replace(/\/\/[^@]*@/, "//***@"),
     },
@@ -1419,6 +1499,8 @@ async function main(): Promise<void> {
   workers.push(startFaceDetectWorker());
   // Phase 8b — HLS ladder transcode + sprite (per-video, on demand).
   workers.push(startVideoHlsTranscodeWorker());
+  // Phase 2 (media import) — Google Takeout / Amazon Photos archive import.
+  workers.push(startImportWorker());
   try {
     await ensureReaperSchedule();
   } catch (err) {

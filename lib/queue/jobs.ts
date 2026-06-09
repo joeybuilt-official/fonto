@@ -155,6 +155,15 @@ export const ImportJobSchema = z.object({
   workspaceId: z.string().uuid(),
   userId: z.string(),
   provider: z.enum(["google-takeout", "amazon-photos"]),
+  // Phase 2 — the user-selected Google Drive Takeout archive to stream down.
+  // Present for provider='google-takeout'; the worker streams this fileId via
+  // Drive v3 (alt=media) to a temp file, then walks it member-by-member.
+  driveFileId: z.string().optional(),
+  // Phase 3 (Amazon) — a local temp ZIP path the upload endpoint already
+  // streamed to disk. When set, the worker skips the Drive download entirely
+  // and walks this file directly (EXIF-only, no Takeout sidecars). Lets the
+  // same worker serve both importers without a second code path.
+  uploadTmpPath: z.string().optional(),
 });
 export type ImportJob = z.infer<typeof ImportJobSchema>;
 
