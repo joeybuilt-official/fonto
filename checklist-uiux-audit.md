@@ -68,5 +68,12 @@ Plan: `plan-uiux-audit.md` · ADR: `adr/0008-uiux-audit-methodology.md` · Findi
 - [x] audit-findings.md de-duped + severity-ranked (P0→P3) in required format
 - [x] Findings presented + approved (fix everything); Phase 6 executed
 
-## Phase 6+ — Fix (post-approval, severity order)
-- [ ] (populated from approved findings)
+## Phase 6 — Fix (DONE — operator approved "fix everything")
+- [x] P0 share password GET→httpOnly cookie
+- [x] P1 ×8 (memories #418, people face-flood, stacks 400, login labels, document-viewer a11y, silent-fetch cluster ×9 screens, Flutter confirms, Flutter silent-catch)
+- [x] P2/P3 (admin overflow, unlabeled inputs, #1D9089→primary/90, missing H1s, Recognition tab, people empty-name, invite states, members ConfirmButton, Flutter dead affordance)
+- [x] Ship gate: tsc clean, next build green, zero new lint
+- [x] Deployed prod myfonto.com (b4bb93b); 4 live findings verified + 32-route regression clean
+- [x] Pushed origin/main (204a92a..f05bbdd)
+- [ ] OPTIONAL: P3 micro-polish (login aria-busy, docs CDN fallback, share Escape/attempts) — deferred
+- [ ] OPTIONAL: mobile Flutter live-verify on next APK (Codemagic git tag)

@@ -22,46 +22,46 @@ ADR: `adr/0008-uiux-audit-methodology.md`. Findings deliverable: `audit-findings
 - Deps: none
 - Subagents: none (main thread; small)
 - Exit: inventory checklist written; one verified authed app-screen screenshot captured proving the harness; role/permission states enumerated.
-- Status: pending
+- Status: done
 
 ## Phase 1 — Web authed audit, batch A (media-core surfaces)
 - Scope: 7-lens audit of home, library, photos, timeline, search, explore (+places, +places/[name], +things), map, memories. Capture at 360/768/1024/1440; record console errors + failed network requests; exercise primary actions (filter, select, open asset detail). Induce non-ideal states where cheap (throttle, empty filter). Append raw findings to `audit-findings.md`.
 - Deps: Phase 0
 - Subagents: per-screen capture batches (general-purpose) + Explore for source file:line backing each finding
 - Exit: every batch-A screen has a 7-lens pass recorded with screenshots + file refs in findings.
-- Status: pending
+- Status: done
 
 ## Phase 2 — Web authed audit, batch B (management/CRUD surfaces)
 - Scope: 7-lens audit of people (+[id], +ignored), collections (+[id]), folders, documents, stacks (+[id]), projects (+[id]), imports, trash, updates, settings (+members, +tokens, +webhooks, +audit), admin/jobs. Same lens + breakpoint + console/network protocol. Exercise CRUD round-trips (create/edit/delete collection, token, webhook) and confirm rollback on failure. Append to findings.
 - Deps: Phase 0 (independent of Phase 1)
 - Subagents: per-screen capture batches + Explore for source backing
 - Exit: every batch-B screen 7-lens pass recorded; CRUD round-trips + destructive-action confirms verified.
-- Status: pending
+- Status: done
 
 ## Phase 3 — Web public/edge + cross-cutting
 - Scope: `/` landing redirect, `(auth)/login` (validation, error copy, double-submit, CORS apex behavior), `share/[token]` public viewer (valid/expired/invalid token states), `invitations/[token]` accept flow, `docs/api`, the `(app)/layout` shell (sidebar/bottom-bar/avatar-menu across breakpoints), reusable components' five states, and a keyboard-only + focus-visible + contrast a11y sweep across primary flows. Append to findings.
 - Deps: Phase 0
 - Subagents: Explore for component source; capture batches for edge-state screenshots
 - Exit: auth + share + invite flows audited incl. error/empty states; component-state matrix + a11y sweep recorded.
-- Status: pending
+- Status: done
 
 ## Phase 4 — Native Flutter mobile audit
 - Scope: 15 Flutter screens via adapted lens set (Functionality, States, Interaction incl. ≥44px touch targets, Visual consistency, a11y semantics, web parity per parity memory; skip web-only console/network/responsive-breakpoint). Static review of each `*_screen.dart`; emulator screenshots if a build/device is reachable, else static-only with that limitation noted. Flag parity gaps where a web landing surface changed but mobile didn't. Append to findings.
 - Deps: Phase 0
 - Subagents: Explore for screen source + state/widget review
 - Exit: every Flutter screen reviewed; parity-gap list recorded; emulator availability noted.
-- Status: pending
+- Status: done
 
 ## Phase 5 — Consolidate findings + OPERATOR GATE ⚠
 - Scope: De-dupe, severity-rank (P0→P3), and finalize `audit-findings.md` in the operator's required entry format (title, screen/route, repro, expected, actual, files, fix approach). Present the findings doc to the operator and **STOP**.
 - Deps: Phases 1–4
 - Subagents: none
 - Exit: `audit-findings.md` complete and presented. ⚠ **One-way door / operator sign-off gate — HARD STOP. No fixes until operator types approval.**
-- Status: pending
+- Status: done
 
 ## Phase 6+ — Fix (post-approval)
 - Scope: Fix in strict severity order, one issue at a time, smallest change that resolves it. No drive-by refactors, no redesigns, no new deps without asking. Verify each fix in the running app + re-test adjacent screens for regressions. Update the issue's status in `audit-findings.md` immediately (not batched). Surface any A-breaks-B conflict instead of choosing silently. Ship gate (tests pass, types clean, build green) before any push; push is operator-authorized.
 - Deps: Phase 5 approval
 - Subagents: general-purpose for multi-file fixes; Explore for impact analysis
 - Exit: all approved findings resolved + verified; status updated throughout.
-- Status: pending (blocked on Phase 5 gate)
+- Status: DONE — shipped + deployed (b4bb93b) + pushed (f05bbdd) + live-verified
