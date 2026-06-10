@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Joeybuilt LLC
+//
+// /app/imports/google — Google Takeout import. Paste a Google Drive link (or a
+// bare file ID) of the Takeout archive; we extract the file ID and kick a
+// server-side import.
+"use client";
+
+import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
+import { parseDriveFileId } from "@/lib/import/driveLink";
+import { ImportsList } from "../_components/imports-list";
+
+interface Integration {
+  provider: string;
+  status: "active" | "needs_reconnect" | "revoked";
+}
+
+function GoogleImport() {
+  const searchParams = useSearchParams();
+  const justConnected = searchParams.get("connected") === "google";
+  const oauthError = searchParams.get("error");
+
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [linkInput, setLinkInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    fetch("/api/v1/integrations")
+      .then((r) => r.json())
+      .then((d: { integrations?: Integration[] }) => {
+        const g = (d.integrations ?? []).find((i) => i.provider === "google");
+        setGoogleConnected(g?.status === "active");
+      })
+      .catch(() => null);
+  }, []);
+
+  const parsedId = parseDriveFileId(linkInput);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    if (!parsedId) {
+      setMsg("That doesn't look like a Google Drive link or file ID. Paste the link to your Takeout archive in Drive.");
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/v1/imports/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ driveFileId: parsedId }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      setLinkInput("");
+      setMsg("Import started — watch its progress below.");
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      setMsg(err instanceof Error ? `Failed: ${err.message}` : "Failed to start import.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6 max-w-xl md:max-w-3xl">
+      <div>
+        <Link
+          href="/app/imports"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> Imports
+        </Link>
+        <h1 className="text-2xl font-semibold text-foreground mt-2">
+          Import from Google Takeout
+        </h1>
+      </div>
+
+      {justConnected && (
+        <div className="rounded-lg border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm text-green-700 dark:text-green-400">
+          Google connected. Paste your Takeout archive link below to start an import.
+        </div>
+      )}
+      {oauthError && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          Google connection failed: {oauthError}
+        </div>
+      )}
+
+      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+        {!googleConnected ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              Connect Google first so Fonto can read the archive from your Drive.
+            </p>
+            <Link
+              href="/app/settings"
+              className="inline-block text-xs font-medium text-primary hover:underline"
+            >
+              Go to Settings → Integrations
+            </Link>
+          </>
+        ) : (
+          <>
+            <ol className="list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
+              <li>
+                In Google Takeout, choose <span className="font-medium text-foreground">&ldquo;Add to Drive&rdquo;</span> as the export destination.
+              </li>
+              <li>
+                Open the archive in Google Drive, click <span className="font-medium text-foreground">Share → Copy link</span> (or copy the address bar URL).
+              </li>
+              <li>Paste that link below.</li>
+            </ol>
+            <form onSubmit={handleSubmit} className="flex flex-col gap-2">
+              <input
+                type="text"
+                value={linkInput}
+                onChange={(e) => setLinkInput(e.target.value)}
+                disabled={busy}
+                aria-label="Google Drive link to your Takeout archive"
+                placeholder="https://drive.google.com/file/d/…  (or a file ID)"
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground disabled:opacity-50"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {linkInput.trim() && !parsedId
+                    ? "Couldn't find a Drive file ID in that text."
+                    : parsedId
+                      ? `Detected file ID: ${parsedId}`
+                      : " "}
+                </span>
+                <button
+                  type="submit"
+                  disabled={busy || !parsedId}
+                  className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 shrink-0"
+                >
+                  {busy ? "Starting…" : "Start import"}
+                </button>
+              </div>
+            </form>
+            {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
+          </>
+        )}
+      </div>
+
+      <ImportsList reloadKey={reloadKey} />
+    </div>
+  );
+}
+
+export default function GoogleImportPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading…</div>}>
+      <GoogleImport />
+    </Suspense>
+  );
+}

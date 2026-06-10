@@ -8,7 +8,7 @@
 //   2. Validate the signed `state` (CSRF + carries user+workspace).
 //   3. Exchange the `code` for tokens.
 //   4. Encrypt the refresh token + UPSERT the `integrations` row (active).
-//   5. Redirect to /app/imports?connected=google.
+//   5. Redirect to /app/imports/google?connected=google.
 //
 // This route is reached via a browser redirect from Google, NOT an API client,
 // so it does not require a Fonto session/PAT — trust is established by the
@@ -34,20 +34,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (oauthError) {
     return appRedirect(
       request,
-      `/app/imports?error=${encodeURIComponent(oauthError)}`
+      `/app/imports/google?error=${encodeURIComponent(oauthError)}`
     );
   }
 
   // 2. Validate state (CSRF + identity).
   const payload = verifyState(searchParams.get("state"));
   if (!payload) {
-    return appRedirect(request, "/app/imports?error=invalid_state");
+    return appRedirect(request, "/app/imports/google?error=invalid_state");
   }
 
   // 3. Need a code to exchange.
   const code = searchParams.get("code");
   if (!code) {
-    return appRedirect(request, "/app/imports?error=missing_code");
+    return appRedirect(request, "/app/imports/google?error=missing_code");
   }
 
   // 4. Exchange + persist.
@@ -56,14 +56,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     ({ refreshToken, scope } = await exchangeCode(code));
   } catch {
-    return appRedirect(request, "/app/imports?error=exchange_failed");
+    return appRedirect(request, "/app/imports/google?error=exchange_failed");
   }
 
   // No refresh token means we can't mint future access tokens. This happens
   // when Google silently re-auths without re-consenting; `prompt=consent`
   // should prevent it, but fail loudly rather than store a dead integration.
   if (!refreshToken) {
-    return appRedirect(request, "/app/imports?error=no_refresh_token");
+    return appRedirect(request, "/app/imports/google?error=no_refresh_token");
   }
 
   const encryptedRefreshToken = encryptToken(refreshToken);
@@ -107,5 +107,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   // 5. Done.
-  return appRedirect(request, "/app/imports?connected=google");
+  return appRedirect(request, "/app/imports/google?connected=google");
 }

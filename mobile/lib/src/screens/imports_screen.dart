@@ -28,14 +28,14 @@
 // GoogleSignIn explicitly (the platform default is only used for ID tokens).
 
 import "dart:async";
-import "dart:io";
 
-import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
 import "package:google_sign_in/google_sign_in.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "amazon_import_screen.dart";
+import "takeout_import_screen.dart";
 
 /// OAuth 2.0 Web client ID (Google Cloud Console). MUST match
 /// android/app/src/main/res/values/strings.xml `default_web_client_id`.
@@ -72,13 +72,6 @@ class _ImportsScreenState extends State<ImportsScreen> {
   bool _connecting = false;
   String? _connectError;
 
-  final _driveFileIdController = TextEditingController();
-  bool _takeoutBusy = false;
-  String? _takeoutMsg;
-
-  bool _uploadBusy = false;
-  String? _uploadMsg;
-
   Timer? _pollTimer;
 
   Integration? get _googleIntegration {
@@ -99,8 +92,14 @@ class _ImportsScreenState extends State<ImportsScreen> {
   @override
   void dispose() {
     _pollTimer?.cancel();
-    _driveFileIdController.dispose();
     super.dispose();
+  }
+
+  Future<void> _openImporter(Widget screen) async {
+    final started = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => screen),
+    );
+    if (started == true && mounted) await _refresh();
   }
 
   Future<void> _refresh() async {
@@ -174,66 +173,6 @@ class _ImportsScreenState extends State<ImportsScreen> {
     }
   }
 
-  Future<void> _startTakeout() async {
-    if (_takeoutBusy) return;
-    final id = _driveFileIdController.text.trim();
-    if (id.isEmpty) return;
-    setState(() {
-      _takeoutBusy = true;
-      _takeoutMsg = null;
-    });
-    try {
-      await widget.client.startGoogleTakeoutImport(id);
-      if (!mounted) return;
-      _driveFileIdController.clear();
-      setState(() {
-        _takeoutBusy = false;
-        _takeoutMsg = "Import started — watch its progress below.";
-      });
-      await _refresh();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _takeoutBusy = false;
-        _takeoutMsg = "Failed: $e";
-      });
-    }
-  }
-
-  Future<void> _uploadAmazonZip() async {
-    if (_uploadBusy) return;
-    setState(() {
-      _uploadBusy = true;
-      _uploadMsg = null;
-    });
-    try {
-      final picked = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ["zip"],
-        withData: false,
-      );
-      final path = picked?.files.single.path;
-      if (path == null) {
-        if (mounted) setState(() => _uploadBusy = false);
-        return; // User cancelled the picker.
-      }
-      final workspaceId = await widget.client.workspaceId();
-      await widget.client.uploadAmazonZip(File(path), workspaceId);
-      if (!mounted) return;
-      setState(() {
-        _uploadBusy = false;
-        _uploadMsg = "Upload received — import started.";
-      });
-      await _refresh();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _uploadBusy = false;
-        _uploadMsg = "Upload failed: $e";
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -247,9 +186,33 @@ class _ImportsScreenState extends State<ImportsScreen> {
                 children: [
                   _buildGoogleTile(),
                   const SizedBox(height: 16),
-                  _buildTakeoutCard(),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.cloud_outlined),
+                      title: const Text("Import from Google Takeout"),
+                      subtitle: const Text(
+                          "Import a Takeout archive from your Drive."),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _openImporter(
+                        TakeoutImportScreen(
+                          client: widget.client,
+                          googleConnected: _googleConnected,
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 16),
-                  _buildAmazonCard(),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.photo_album_outlined),
+                      title: const Text("Import from Amazon Photos"),
+                      subtitle: const Text(
+                          "Upload a ZIP exported from Amazon Photos."),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () =>
+                          _openImporter(AmazonImportScreen(client: widget.client)),
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   _buildJobsCard(),
                 ],
@@ -318,89 +281,6 @@ class _ImportsScreenState extends State<ImportsScreen> {
                             : "Connect Google",
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTakeoutCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              "Import from Google Takeout",
-              style: TextStyle(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _googleConnected
-                  ? "Paste the Google Drive file ID of your Takeout archive."
-                  : "Connect Google above first.",
-              style: const TextStyle(fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _driveFileIdController,
-              enabled: _googleConnected && !_takeoutBusy,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: "Drive file ID",
-                hintText: "1aBcD…",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed:
-                  _googleConnected && !_takeoutBusy ? _startTakeout : null,
-              child: Text(_takeoutBusy ? "Starting…" : "Start import"),
-            ),
-            if (_takeoutMsg != null) ...[
-              const SizedBox(height: 8),
-              Text(_takeoutMsg!, style: const TextStyle(fontSize: 12)),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAmazonCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              "Import from Amazon Photos",
-              style: TextStyle(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              "Upload a .zip exported from Amazon Photos.",
-              style: TextStyle(fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _uploadBusy ? null : _uploadAmazonZip,
-              icon: _uploadBusy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.upload_file),
-              label: Text(_uploadBusy ? "Uploading…" : "Choose .zip & import"),
-            ),
-            if (_uploadMsg != null) ...[
-              const SizedBox(height: 8),
-              Text(_uploadMsg!, style: const TextStyle(fontSize: 12)),
-            ],
           ],
         ),
       ),

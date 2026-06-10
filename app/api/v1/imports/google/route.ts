@@ -17,6 +17,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { tryEnqueueImport } from "@/lib/queue/queues";
+import { parseDriveFileId } from "@/lib/import/driveLink";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const user = await getAuthUser();
@@ -34,10 +35,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  // Accept either a bare file ID or a pasted Google Drive link.
   const driveFileId =
-    typeof body.driveFileId === "string" ? body.driveFileId.trim() : "";
+    typeof body.driveFileId === "string" ? parseDriveFileId(body.driveFileId) : null;
   if (!driveFileId) {
-    return NextResponse.json({ error: "driveFileId is required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "A Google Drive link or file ID is required" },
+      { status: 400 }
+    );
   }
 
   const requestedWorkspaceId =
