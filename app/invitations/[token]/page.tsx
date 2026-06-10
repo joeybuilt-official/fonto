@@ -10,6 +10,7 @@
 // post-signup redirect lands back here.
 import Link from "next/link";
 import { headers } from "next/headers";
+import { Clock, Ban, CheckCircle2 } from "lucide-react";
 import { AcceptButton } from "./accept-button";
 
 interface InvitationView {
@@ -92,18 +93,33 @@ export default async function InvitationPage({
   const inviter = inv.inviterName || inv.inviterEmail || "Someone";
 
   if (inv.state !== "pending") {
-    const message =
+    const variant =
       inv.state === "expired"
-        ? "This invitation has expired. Ask the inviter to send a new one."
+        ? {
+            Icon: Clock,
+            color: "text-amber-500",
+            title: "Invitation expired",
+            message: "This invitation has expired. Ask the inviter to send a new one.",
+          }
         : inv.state === "revoked"
-          ? "This invitation has been revoked."
-          : "This invitation has already been accepted.";
+          ? {
+              Icon: Ban,
+              color: "text-destructive",
+              title: "Invitation revoked",
+              message: "This invitation has been revoked.",
+            }
+          : {
+              Icon: CheckCircle2,
+              color: "text-green-600",
+              title: "Already accepted",
+              message: "This invitation has already been accepted.",
+            };
+    const { Icon, color, title, message } = variant;
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="w-full max-w-md space-y-4 rounded-lg border border-border bg-card p-8 text-center">
-          <h1 className="text-xl font-semibold text-foreground">
-            Invitation unavailable
-          </h1>
+          <Icon className={`mx-auto h-10 w-10 ${color}`} aria-hidden="true" />
+          <h1 className="text-xl font-semibold text-foreground">{title}</h1>
           <p className="text-sm text-muted-foreground">{message}</p>
           <Link
             href="/"

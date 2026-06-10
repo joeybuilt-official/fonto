@@ -26,6 +26,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,13 +48,25 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
   async function handleSave() {
     if (!editName.trim()) return;
-    await fetch(`/api/v1/projects/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: editName.trim() }),
-    });
-    setEditing(false);
-    load();
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const res = await fetch(`/api/v1/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editName.trim() }),
+      });
+      if (!res.ok) {
+        setSaveError("Couldn't save. Try again.");
+        return;
+      }
+      setEditing(false);
+      load();
+    } catch {
+      setSaveError("Couldn't save. Check your connection.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (loading) {
@@ -74,16 +88,19 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           <ArrowLeft className="h-4 w-4" />
         </Link>
         {editing ? (
-          <div className="flex items-center gap-2 flex-1">
-            <input
-              type="text"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              autoFocus
-              className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            <button onClick={handleSave} className="rounded-lg bg-foreground px-3 py-1.5 text-sm text-background hover:bg-foreground/90">Save</button>
-            <button onClick={() => setEditing(false)} className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted/40">Cancel</button>
+          <div className="flex flex-1 flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                autoFocus
+                className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              <button onClick={handleSave} disabled={saving} className="rounded-lg bg-foreground px-3 py-1.5 text-sm text-background hover:bg-foreground/90 disabled:opacity-60">Save</button>
+              <button onClick={() => { setEditing(false); setSaveError(null); }} className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted/40">Cancel</button>
+            </div>
+            {saveError && <p className="text-sm text-destructive">{saveError}</p>}
           </div>
         ) : (
           <h1

@@ -18,6 +18,7 @@ export const metadata: Metadata = {
 export default function ApiReferencePage() {
   return (
     <>
+      <h1 className="sr-only">Fonto API Reference</h1>
       {/* The standalone Scalar element reads its config from the script body. */}
       <script
         id="api-reference"

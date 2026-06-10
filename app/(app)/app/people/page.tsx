@@ -172,7 +172,7 @@ function ManageGroupsDialog({
                         }}
                         autoFocus
                       />
-                      <button type="button" disabled={saving} onClick={() => void saveEdit(g.id)} className="text-xs text-primary hover:underline disabled:opacity-50">Save</button>
+                      <button type="button" disabled={saving || !editName.trim()} onClick={() => void saveEdit(g.id)} className="text-xs text-primary hover:underline disabled:opacity-50">Save</button>
                       <button type="button" onClick={() => setEditing(null)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
                     </>
                   ) : (
@@ -242,6 +242,25 @@ function ManageGroupsDialog({
 // variant=face path) rendered object-cover in a circle. Until the crop is
 // backfilled it falls back to the legacy preview + bbox CSS-zoom, then to a
 // neutral placeholder so the tile is always a clean circle.
+//
+// Face/preview URL resolution is gated through a small concurrency limiter:
+// a large people grid otherwise fires one fetch per card on mount, saturating
+// the browser connection pool (net::ERR_INSUFFICIENT_RESOURCES, broken avatars).
+let faceFetchActive = 0;
+const faceFetchQueue: Array<() => void> = [];
+async function limitedFetch(input: string): Promise<Response> {
+  if (faceFetchActive >= 6) {
+    await new Promise<void>((resolve) => faceFetchQueue.push(resolve));
+  }
+  faceFetchActive++;
+  try {
+    return await fetch(input);
+  } finally {
+    faceFetchActive--;
+    faceFetchQueue.shift()?.();
+  }
+}
+
 function FaceCrop({ entry }: { entry: PersonGridEntry }) {
   const [cropUrl, setCropUrl] = useState<string | null>(null);
   const [cropFailed, setCropFailed] = useState(false);
@@ -254,7 +273,7 @@ function FaceCrop({ entry }: { entry: PersonGridEntry }) {
     setCropFailed(false);
     if (!entry.coverFaceCropUrl) return;
     let cancelled = false;
-    fetch(entry.coverFaceCropUrl)
+    limitedFetch(entry.coverFaceCropUrl)
       .then((r) => r.json())
       .then((d: { url?: string }) => {
         if (!cancelled) setCropUrl(d.url ?? null);
@@ -274,7 +293,7 @@ function FaceCrop({ entry }: { entry: PersonGridEntry }) {
   useEffect(() => {
     if (!needPreviewFallback || !entry.coverAssetId) return;
     let cancelled = false;
-    fetch(`/api/v1/assets/${entry.coverAssetId}/url?variant=preview`)
+    limitedFetch(`/api/v1/assets/${entry.coverAssetId}/url?variant=preview`)
       .then((r) => r.json())
       .then((d: { url?: string }) => {
         if (!cancelled) setPreviewUrl(d.url ?? null);
@@ -292,6 +311,8 @@ function FaceCrop({ entry }: { entry: PersonGridEntry }) {
       <img
         src={cropUrl}
         alt={entry.name ?? "Unnamed person"}
+        loading="lazy"
+        decoding="async"
         className="aspect-square w-full rounded-full bg-muted/30 object-cover"
       />
     );

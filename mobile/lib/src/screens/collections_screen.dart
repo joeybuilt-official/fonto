@@ -894,14 +894,11 @@ class _PeopleCardState extends State<_PeopleCard> {
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(color: theme.colorScheme.outlineVariant),
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        // People tab isn't a Collections sub-tab — the existing Explore screen
-        // owns People. Tapping the card surfaces the same Explore destination.
-        // (Full deep-link wiring is a follow-up; for v1 this acts as a visual
-        // teaser matching the web People card.)
-        onTap: () {},
-        child: Padding(
+      // People isn't a Collections sub-tab — the Explore screen owns People,
+      // and there's no deep-link target yet. Render the card as a static
+      // teaser (no tap affordance / chevron) so we don't imply navigation
+      // that doesn't happen.
+      child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
@@ -970,10 +967,6 @@ class _PeopleCardState extends State<_PeopleCard> {
                     ],
                   ],
                 ),
-              ),
-              Icon(
-                Icons.chevron_right,
-                color: theme.colorScheme.onSurfaceVariant,
               ),
             ],
           ),

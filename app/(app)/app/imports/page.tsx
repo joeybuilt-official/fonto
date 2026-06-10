@@ -229,6 +229,7 @@ export default function ImportsPage() {
             value={driveFileId}
             onChange={(e) => setDriveFileId(e.target.value)}
             disabled={!googleConnected || takeoutBusy}
+            aria-label="Google Drive file ID of your Takeout archive"
             placeholder="Drive file ID, e.g. 1aBcD..."
             className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground disabled:opacity-50"
           />

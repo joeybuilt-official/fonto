@@ -134,6 +134,7 @@ export default async function JobsAdminPage(): Promise<React.ReactElement> {
         Snapshot from each queue. Use bull-board for live updates and
         actions.
       </p>
+      <div className="overflow-x-auto">
       <table className="w-full text-sm border-collapse">
         <thead>
           <tr className="border-b">
@@ -158,6 +159,7 @@ export default async function JobsAdminPage(): Promise<React.ReactElement> {
           ))}
         </tbody>
       </table>
+      </div>
     </main>
   );
 }

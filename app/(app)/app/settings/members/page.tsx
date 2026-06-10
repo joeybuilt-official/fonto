@@ -220,6 +220,7 @@ export default function MembersSettingsPage() {
             <input
               type="email"
               required
+              aria-label="Email address to invite"
               placeholder="email@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}

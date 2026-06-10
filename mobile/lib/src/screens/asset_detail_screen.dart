@@ -43,6 +43,9 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   late final List<Asset> _assets = List.of(widget.assets);
   late int _index = widget.initialIndex;
   final Map<String, String> _previews = {};
+  // Ids whose preview-url fetch failed; lets us render a retry affordance
+  // instead of an infinite spinner.
+  final Set<String> _previewFailed = {};
   // Phase 6.12 — extracted text layer for text/code assets, fetched lazily
   // from the per-asset detail endpoint as the user scrolls onto one.
   final Map<String, String> _texts = {};
@@ -87,9 +90,15 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     try {
       final batch = await widget.client.assetUrls(ids, variant: "preview");
       if (!mounted) return;
-      setState(() => _previews.addAll(batch));
+      setState(() {
+        _previews.addAll(batch);
+        _previewFailed.removeAll(ids);
+      });
     } catch (_) {
-      // Silent — placeholder will render. Asset is still usable via thumb.
+      if (!mounted) return;
+      // Mark these ids as failed so the view shows a retry affordance
+      // instead of an endless spinner. Asset is still usable via thumb.
+      setState(() => _previewFailed.addAll(ids));
     }
   }
 
@@ -101,8 +110,9 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   }
 
   /// Lazy-load the face list for asset `i`. Skips non-images and ids
-  /// already cached. Stores `const []` on failure or empty result so we
-  /// don't refetch on every tap.
+  /// already cached. Stores `const []` for an empty result (so we don't
+  /// refetch on every tap); on failure the marker is dropped so a later
+  /// visit re-fetches.
   Future<void> _ensureFaces(int i) async {
     final a = _assets[i];
     if (!a.mimeType.startsWith("image/")) return;
@@ -114,7 +124,10 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       setState(() => _facesByAsset[a.id] = faces);
     } catch (_) {
       if (!mounted) return;
-      setState(() => _facesByAsset[a.id] = const []);
+      // Don't cache empty-on-error: drop the in-flight marker so a later
+      // page-swipe back onto this asset re-fetches instead of showing
+      // a permanently faceless result.
+      setState(() => _facesByAsset.remove(a.id));
     }
   }
 
@@ -386,7 +399,29 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
               final url = _previews[a.id];
               return PhotoViewGalleryPageOptions.customChild(
                 child: url == null
-                    ? const Center(child: CircularProgressIndicator())
+                    ? (_previewFailed.contains(a.id)
+                        ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.broken_image,
+                                    color: Colors.white, size: 48),
+                                const SizedBox(height: 12),
+                                const Text("Couldn't load preview",
+                                    style: TextStyle(color: Colors.white)),
+                                const SizedBox(height: 8),
+                                TextButton(
+                                  onPressed: () {
+                                    setState(
+                                        () => _previewFailed.remove(a.id));
+                                    _ensurePreviews(_index);
+                                  },
+                                  child: const Text("Retry"),
+                                ),
+                              ],
+                            ),
+                          )
+                        : const Center(child: CircularProgressIndicator()))
                     : CachedNetworkImage(
                         imageUrl: url,
                         fit: BoxFit.contain,

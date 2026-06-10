@@ -273,7 +273,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("storage"))}>
+      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("integrations"))}>
         <h2 className="text-sm font-semibold text-foreground">Recognition</h2>
         <p className="text-xs text-muted-foreground">
           Re-run AI recognition (OCR, object/scene labels, descriptions, and

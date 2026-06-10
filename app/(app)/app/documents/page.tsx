@@ -39,6 +39,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { ListErrorState } from "../_components/list-states";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 import { cn } from "@/lib/utils";
 
@@ -333,14 +334,19 @@ function DocumentsContent() {
 
   const [docs, setDocs] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [subtype, setSubtype] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
+      setLoading(true);
+      setError(false);
       try {
         const sp = new URLSearchParams();
         if (subtype) sp.set("subtype", subtype);
         const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        if (!r.ok) throw new Error(`assets ${r.status}`);
         const d = (await r.json()) as { assets?: Asset[] };
         const list = (d.assets ?? []).filter((a) =>
           // Audit bug §UX-4 — even when a subtype filter is set we
@@ -349,11 +355,13 @@ function DocumentsContent() {
           isDocMime(a.mimeType)
         );
         setDocs(list);
+      } catch {
+        setError(true);
       } finally {
         setLoading(false);
       }
     })();
-  }, [subtype]);
+  }, [subtype, refreshKey]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -431,7 +439,12 @@ function DocumentsContent() {
 
         <section className="flex w-96 max-w-md shrink-0 flex-col border-r border-border">
           <div className="flex-1 overflow-auto px-2 py-2">
-            {loading ? (
+            {error ? (
+              <ListErrorState
+                message="Couldn't load your documents. Check your connection and retry."
+                onRetry={() => setRefreshKey((k) => k + 1)}
+              />
+            ) : loading ? (
               <p className="px-2 py-4 text-sm text-muted-foreground">
                 Loading documents…
               </p>

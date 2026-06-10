@@ -76,6 +76,7 @@ function TrashContent() {
 
   const [items, setItems] = useState<TrashedAsset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -113,30 +114,52 @@ function TrashContent() {
     })();
   }, [toolbar.filters.mime, toolbar.filters.favorite, toolbar.filters.sort, toolbar.filters.q]);
 
-  async function restoreOne(assetId: string) {
-    await fetch(`/api/v1/assets/${assetId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ restore: true }),
-    });
-    setItems((prev) => prev.filter((a) => a.id !== assetId));
+  async function restoreOne(assetId: string): Promise<boolean> {
+    try {
+      const r = await fetch(`/api/v1/assets/${assetId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restore: true }),
+      });
+      if (!r.ok) return false;
+      setItems((prev) => prev.filter((a) => a.id !== assetId));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  async function deleteOne(assetId: string) {
-    await fetch(`/api/v1/assets/${assetId}`, { method: "DELETE" });
-    setItems((prev) => prev.filter((a) => a.id !== assetId));
+  async function deleteOne(assetId: string): Promise<boolean> {
+    try {
+      const r = await fetch(`/api/v1/assets/${assetId}`, { method: "DELETE" });
+      if (!r.ok) return false;
+      setItems((prev) => prev.filter((a) => a.id !== assetId));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async function bulkRestore() {
+    setActionError(null);
     const ids = Array.from(toolbar.selectedIds);
-    await Promise.all(ids.map(restoreOne));
+    const results = await Promise.all(ids.map(restoreOne));
     toolbar.clearSelection();
+    const failed = results.filter((ok) => !ok).length;
+    if (failed > 0) {
+      setActionError(`Couldn't restore ${failed} item${failed === 1 ? "" : "s"}. Try again.`);
+    }
   }
 
   async function bulkDelete() {
+    setActionError(null);
     const ids = Array.from(toolbar.selectedIds);
-    await Promise.all(ids.map(deleteOne));
+    const results = await Promise.all(ids.map(deleteOne));
     toolbar.clearSelection();
+    const failed = results.filter((ok) => !ok).length;
+    if (failed > 0) {
+      setActionError(`Couldn't delete ${failed} item${failed === 1 ? "" : "s"}. Try again.`);
+    }
   }
 
   return (
@@ -152,6 +175,12 @@ function TrashContent() {
         showDensity
         showSelect
       />
+
+      {actionError && (
+        <p className="mx-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {actionError}
+        </p>
+      )}
 
       {loading ? (
         <p className="px-4 py-4 text-sm text-muted-foreground">Loading…</p>

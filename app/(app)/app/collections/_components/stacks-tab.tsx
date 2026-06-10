@@ -188,7 +188,10 @@ export function StacksTab() {
     const d = (await r.json()) as { stacks?: StackRow[] };
     const list = d.stacks ?? [];
     setStacks(list);
-    if (list.length === 0) {
+    const coverIds = list
+      .map((s) => s.primaryAssetId)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+    if (coverIds.length === 0) {
       setCoverUrls({});
       return;
     }
@@ -196,7 +199,7 @@ export function StacksTab() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ids: list.map((s) => s.primaryAssetId),
+        ids: coverIds,
         variant: "thumb",
       }),
     });

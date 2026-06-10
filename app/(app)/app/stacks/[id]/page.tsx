@@ -59,6 +59,7 @@ function StackDetailContent() {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -100,13 +101,20 @@ function StackDetailContent() {
   async function setPrimary(assetId: string) {
     if (!stack || assetId === stack.primaryAssetId) return;
     setBusy(true);
+    setActionError(null);
     try {
       const r = await fetch(`/api/v1/stacks/${stackId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ primaryAssetId: assetId }),
       });
-      if (r.ok) await load();
+      if (!r.ok) {
+        setActionError("Couldn't set the primary photo. Try again.");
+        return;
+      }
+      await load();
+    } catch {
+      setActionError("Couldn't set the primary photo. Check your connection.");
     } finally {
       setBusy(false);
     }
@@ -114,19 +122,24 @@ function StackDetailContent() {
 
   async function removeMember(assetId: string) {
     setBusy(true);
+    setActionError(null);
     try {
       const r = await fetch(`/api/v1/stacks/${stackId}/assets/${assetId}`, {
         method: "DELETE",
       });
-      if (r.ok) {
-        // If we removed the last member, the API also deleted the stack
-        // row; treat as dissolved and bounce back to the list.
-        if (members.length <= 1) {
-          router.push("/app/stacks");
-          return;
-        }
-        await load();
+      if (!r.ok) {
+        setActionError("Couldn't remove that photo. Try again.");
+        return;
       }
+      // If we removed the last member, the API also deleted the stack
+      // row; treat as dissolved and bounce back to the list.
+      if (members.length <= 1) {
+        router.push("/app/stacks");
+        return;
+      }
+      await load();
+    } catch {
+      setActionError("Couldn't remove that photo. Check your connection.");
     } finally {
       setBusy(false);
     }
@@ -150,16 +163,21 @@ function StackDetailContent() {
       return;
     }
     setBusy(true);
+    setActionError(null);
     try {
       const r = await fetch(`/api/v1/stacks/${stackId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: next }),
       });
-      if (r.ok) {
-        setEditingName(false);
-        await load();
+      if (!r.ok) {
+        setActionError("Couldn't save the name. Try again.");
+        return;
       }
+      setEditingName(false);
+      await load();
+    } catch {
+      setActionError("Couldn't save the name. Check your connection.");
     } finally {
       setBusy(false);
     }
@@ -197,6 +215,12 @@ function StackDetailContent() {
       >
         <ArrowLeft className="h-4 w-4" /> Back to Stacks
       </button>
+
+      {actionError && (
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {actionError}
+        </p>
+      )}
 
       <div className="flex flex-wrap items-start gap-4">
         <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">

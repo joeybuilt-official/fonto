@@ -8,6 +8,7 @@ import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
+import { ListErrorState } from "../_components/list-states";
 import { AssetAskPanel } from "../_components/asset-ask-panel";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
@@ -125,6 +126,8 @@ function PhotosContent() {
 
   const [photos, setPhotos] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
@@ -132,8 +135,16 @@ function PhotosContent() {
 
   useEffect(() => {
     fetch("/api/v1/collections")
-      .then((r) => r.json())
-      .then((d) => setCollections(d.collections ?? []));
+      .then((r) => {
+        if (!r.ok) throw new Error(`collections ${r.status}`);
+        return r.json();
+      })
+      .then((d) => setCollections(d.collections ?? []))
+      .catch(() => {
+        // Non-fatal — the collections list only powers the add-to-collection
+        // modal; leave it empty rather than blocking the page.
+        setCollections([]);
+      });
   }, []);
 
   // Fetch on every filter change. `type` is the classification subtype;
@@ -143,6 +154,8 @@ function PhotosContent() {
   // race conditions resolve last-wins, which is the right semantic here.
   useEffect(() => {
     void (async () => {
+      setLoading(true);
+      setError(false);
       const sp = new URLSearchParams();
       sp.set("mime", "image/");
       if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
@@ -150,6 +163,7 @@ function PhotosContent() {
       if (toolbar.filters.ratingMin != null) sp.set("ratingMin", String(toolbar.filters.ratingMin));
       try {
         const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        if (!r.ok) throw new Error(`assets ${r.status}`);
         const d = (await r.json()) as { assets?: Asset[] };
         let list = (d.assets ?? []) as Asset[];
         if (toolbar.filters.sort === "oldest") {
@@ -174,6 +188,8 @@ function PhotosContent() {
           );
         }
         setPhotos(list);
+      } catch {
+        setError(true);
       } finally {
         setLoading(false);
       }
@@ -184,6 +200,7 @@ function PhotosContent() {
     toolbar.filters.ratingMin,
     toolbar.filters.sort,
     toolbar.filters.q,
+    refreshKey,
   ]);
 
   const openLightbox = useCallback((_id: string, index: number) => {
@@ -277,7 +294,12 @@ function PhotosContent() {
         getAskContextIds={getAskContextIds}
       />
 
-      {loading ? (
+      {error ? (
+        <ListErrorState
+          message="Couldn't load your photos. Check your connection and retry."
+          onRetry={() => setRefreshKey((k) => k + 1)}
+        />
+      ) : loading ? (
         <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading photos...

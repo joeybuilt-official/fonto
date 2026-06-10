@@ -345,7 +345,31 @@ class _SectionCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
-                    onPressed: busy ? null : onClear,
+                    onPressed: (busy || onClear == null)
+                        ? null
+                        : () async {
+                            final ok = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text("Clear failed items?"),
+                                content: const Text(
+                                    "Failed transfers will be removed from this list. This can't be undone."),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(ctx).pop(false),
+                                    child: const Text("Cancel"),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () =>
+                                        Navigator.of(ctx).pop(true),
+                                    child: const Text("Clear"),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (ok == true) onClear!();
+                          },
                     child: const Text("Clear"),
                   ),
                   const SizedBox(width: 4),

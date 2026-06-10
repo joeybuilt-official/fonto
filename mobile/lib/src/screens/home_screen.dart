@@ -222,7 +222,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
       if (stats.processing > 0) _ensureProcessingPoll();
     } catch (_) {
-      // Non-fatal — leave the visible grid as-is.
+      // Non-fatal — leave the visible grid as-is, but surface that the
+      // refresh didn't land so the user knows the grid may be stale.
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Couldn't refresh — showing older items.")),
+      );
     }
   }
 
@@ -532,6 +537,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () async {
+                          final ok = await showDialog<bool>(
+                            context: sheetCtx,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text("Clear failed uploads?"),
+                              content: const Text(
+                                  "Failed uploads will be removed from the queue. This can't be undone."),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(ctx).pop(false),
+                                  child: const Text("Cancel"),
+                                ),
+                                FilledButton(
+                                  onPressed: () => Navigator.of(ctx).pop(true),
+                                  child: const Text("Clear"),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (ok != true) return;
                           final n = await q.clearFailed();
                           if (sheetCtx.mounted) Navigator.of(sheetCtx).pop();
                           await _refreshQueueBadge();

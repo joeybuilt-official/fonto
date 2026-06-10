@@ -10,8 +10,9 @@
 //   2. Lookup by slug, then token; reject revoked / expired / over-maxViews.
 //   3. Always record an access in `share_link_views` (incl. failed password
 //      attempts — that's the audit trail).
-//   4. If passwordHash set: require the right password via ?p= query or POST
-//      form. argon2id verify is timing-safe in the native binding.
+//   4. If passwordHash set: the unlock form POSTs to a server action that
+//      stores the password in an httpOnly, path-scoped cookie (never the URL);
+//      the page reads that cookie. argon2id verify is timing-safe.
 //   5. On success: atomically bump viewCount + lastAccessedAt.
 //   6. Resolve target:
 //      - asset:      presigned URL + inline preview (download gated by allowDownload).
@@ -21,7 +22,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { headers } from "next/headers";
+import { headers, cookies } from "next/headers";
 import { getAuthUser } from "@/lib/auth/server";
 import { db, schema } from "@/lib/db";
 import { and, asc, eq, or, sql } from "drizzle-orm";
@@ -43,7 +44,29 @@ import {
 
 interface SharePageProps {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ p?: string; password?: string }>;
+}
+
+/** Per-token cookie holding the submitted password — httpOnly so it never
+ *  appears in the URL, browser history, Referer, or access logs (unlike the
+ *  old ?p= query string). Scoped to the share path, short-lived. */
+function sharePwCookie(token: string): string {
+  return `share_pw_${encodeURIComponent(token)}`;
+}
+
+async function unlockShare(formData: FormData): Promise<void> {
+  "use server";
+  const token = String(formData.get("token") ?? "");
+  const password = String(formData.get("p") ?? "");
+  if (!token) return;
+  const jar = await cookies();
+  jar.set(sharePwCookie(token), password, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "strict",
+    path: `/share/${token}`,
+    maxAge: 3600,
+  });
+  redirect(`/share/${token}`);
 }
 
 function formatBytes(bytes: number): string {
@@ -189,10 +212,10 @@ function PasswordPrompt({ token, error }: { token: string; error?: string }) {
   return (
     <div className="min-h-screen bg-background grid place-items-center px-6">
       <form
-        method="GET"
-        action={`/share/${token}`}
+        action={unlockShare}
         className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-6"
       >
+        <input type="hidden" name="token" value={token} />
         <div className="flex items-center gap-2">
           <Lock className="h-4 w-4 text-muted-foreground" />
           <h1 className="text-base font-semibold">Password required</h1>
@@ -220,10 +243,10 @@ function PasswordPrompt({ token, error }: { token: string; error?: string }) {
   );
 }
 
-export default async function SharePage({ params, searchParams }: SharePageProps) {
+export default async function SharePage({ params }: SharePageProps) {
   const { token } = await params;
-  const sp = await searchParams;
-  const submittedPassword = sp.p ?? sp.password ?? null;
+  const jar = await cookies();
+  const submittedPassword = jar.get(sharePwCookie(token))?.value ?? null;
 
   const ip = await clientIpFromHeaders();
   const ipHash = ip ? hashIp(ip) : null;

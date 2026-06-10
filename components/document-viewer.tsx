@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, X, FileText, ZoomIn, ZoomOut } from "lucide-react";
 
 type Props = {
@@ -17,6 +17,21 @@ export function DocumentViewer({ assetId, filename, mimeType, extractedText, onC
   const [loadingUrl, setLoadingUrl] = useState(false);
   const [zoom, setZoom] = useState(100);
   const [activeTab, setActiveTab] = useState<"preview" | "text">("preview");
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  // Escape closes; move focus into the modal on open and restore it on close.
+  useEffect(() => {
+    const prevFocus = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      prevFocus?.focus?.();
+    };
+  }, [onClose]);
 
   async function loadUrl() {
     if (signedUrl || loadingUrl) return;
@@ -37,12 +52,17 @@ export function DocumentViewer({ assetId, filename, mimeType, extractedText, onC
   const hasText = Boolean(extractedText?.trim());
 
   return (
-    <div className="fixed inset-0 z-50 flex bg-black/80">
+    <div
+      className="fixed inset-0 z-50 flex bg-black/80"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Document viewer: ${filename}`}
+    >
       {/* Left panel — page/nav controls */}
       <div className="flex w-56 shrink-0 flex-col border-r border-border bg-background">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-border px-3">
           <span className="truncate text-xs font-medium text-foreground">{filename}</span>
-          <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:text-foreground">
+          <button ref={closeRef} onClick={onClose} aria-label="Close document viewer" className="rounded p-1 text-muted-foreground hover:text-foreground">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -70,6 +90,7 @@ export function DocumentViewer({ assetId, filename, mimeType, extractedText, onC
           <div className="flex items-center gap-1 border-b border-border px-3 py-2">
             <button
               onClick={() => setZoom((z) => Math.max(50, z - 10))}
+              aria-label="Zoom out"
               className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-muted/40"
             >
               <ZoomOut className="h-3.5 w-3.5" />
@@ -77,6 +98,7 @@ export function DocumentViewer({ assetId, filename, mimeType, extractedText, onC
             <span className="flex-1 text-center text-xs text-muted-foreground">{zoom}%</span>
             <button
               onClick={() => setZoom((z) => Math.min(200, z + 10))}
+              aria-label="Zoom in"
               className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-muted/40"
             >
               <ZoomIn className="h-3.5 w-3.5" />

@@ -1155,6 +1155,25 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   /// Mirrors the web EyeOff action; restorable from the Ignored screen. Pops
   /// `true` so the grid reloads without the now-hidden cluster.
   Future<void> _ignorePerson() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Ignore this person?"),
+        content: const Text(
+            "This cluster will be hidden from the People grid. You can restore it later from the Ignored screen."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text("Cancel"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text("Ignore"),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     try {

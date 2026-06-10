@@ -95,6 +95,7 @@ function LoginPageInner() {
           {isSignUp && (
             <input
               type="text"
+              aria-label="Name"
               placeholder="Name"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -103,6 +104,7 @@ function LoginPageInner() {
           )}
           <input
             type="email"
+            aria-label="Email"
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -111,6 +113,7 @@ function LoginPageInner() {
           />
           <input
             type="password"
+            aria-label="Password"
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}

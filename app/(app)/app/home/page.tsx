@@ -11,8 +11,9 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { ListErrorState } from "../_components/list-states";
 import {
   Calendar,
   Clock,
@@ -95,17 +96,25 @@ function StatTile({
 export default function HomePage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  const loadStats = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const r = await fetch("/api/v1/stats");
+      if (!r.ok) throw new Error(`stats ${r.status}`);
+      setStats((await r.json()) as Stats);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const r = await fetch("/api/v1/stats");
-        if (r.ok) setStats((await r.json()) as Stats);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+    void loadStats();
+  }, [loadStats]);
 
   return (
     <div className="space-y-6 px-4 py-4">
@@ -123,7 +132,12 @@ export default function HomePage() {
         <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
           Library
         </h2>
-        {loading || !stats ? (
+        {error ? (
+          <ListErrorState
+            message="Couldn't load your library stats. Check your connection and retry."
+            onRetry={() => void loadStats()}
+          />
+        ) : loading || !stats ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {Array.from({ length: 6 }).map((_, i) => (
               <div

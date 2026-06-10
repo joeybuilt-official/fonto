@@ -13,6 +13,7 @@ import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
+import { ListErrorState } from "../_components/list-states";
 import { AssetAskPanel } from "../_components/asset-ask-panel";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
@@ -24,11 +25,15 @@ function TimelineContent() {
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [askOpen, setAskOpen] = useState(false);
 
   useEffect(() => {
     void (async () => {
+      setLoading(true);
+      setError(false);
       const sp = new URLSearchParams();
       if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
       if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
@@ -36,6 +41,7 @@ function TimelineContent() {
       if (toolbar.filters.ratingMin != null) sp.set("ratingMin", String(toolbar.filters.ratingMin));
       try {
         const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        if (!r.ok) throw new Error(`assets ${r.status}`);
         const d = (await r.json()) as { assets?: Asset[] };
         let list = (d.assets ?? []) as Asset[];
         if (toolbar.filters.sort === "oldest") {
@@ -64,6 +70,8 @@ function TimelineContent() {
           );
         }
         setAssets(list);
+      } catch {
+        setError(true);
       } finally {
         setLoading(false);
       }
@@ -75,6 +83,7 @@ function TimelineContent() {
     toolbar.filters.ratingMin,
     toolbar.filters.sort,
     toolbar.filters.q,
+    refreshKey,
   ]);
 
   const openLightbox = useCallback((_id: string, index: number) => {
@@ -123,7 +132,12 @@ function TimelineContent() {
         getAskContextIds={askContextIds}
       />
 
-      {loading ? (
+      {error ? (
+        <ListErrorState
+          message="Couldn't load your timeline. Check your connection and retry."
+          onRetry={() => setRefreshKey((k) => k + 1)}
+        />
+      ) : loading ? (
         <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading timeline…

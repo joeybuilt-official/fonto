@@ -396,7 +396,7 @@ export default function PersonDetailPage({
     if (selected.size === 0) return;
     setActing(true);
     try {
-      await Promise.all(
+      const results = await Promise.all(
         Array.from(selected).map((fid) =>
           fetch(`/api/v1/faces/${fid}`, {
             method: "PATCH",
@@ -405,18 +405,24 @@ export default function PersonDetailPage({
           })
         )
       );
+      if (results.some((r) => !r.ok)) {
+        showToast("Couldn't hide some faces. Try again.", "error");
+        return;
+      }
       setSelected(new Set());
       await load();
+    } catch {
+      showToast("Couldn't hide faces. Check your connection.", "error");
     } finally {
       setActing(false);
     }
-  }, [selected, load]);
+  }, [selected, load, showToast]);
 
   const detachSelected = useCallback(async () => {
     if (selected.size === 0) return;
     setActing(true);
     try {
-      await Promise.all(
+      const results = await Promise.all(
         Array.from(selected).map((fid) =>
           fetch(`/api/v1/faces/${fid}`, {
             method: "PATCH",
@@ -425,12 +431,18 @@ export default function PersonDetailPage({
           })
         )
       );
+      if (results.some((r) => !r.ok)) {
+        showToast("Couldn't detach some faces. Try again.", "error");
+        return;
+      }
       setSelected(new Set());
       await load();
+    } catch {
+      showToast("Couldn't detach faces. Check your connection.", "error");
     } finally {
       setActing(false);
     }
-  }, [selected, load]);
+  }, [selected, load, showToast]);
 
   const splitSelected = useCallback(async () => {
     if (!person || selected.size === 0) return;
@@ -486,7 +498,11 @@ export default function PersonDetailPage({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ into: targetId }),
         });
-        if (res.ok) {
+        if (!res.ok) {
+          showToast("Merge failed. Try again.", "error");
+          return;
+        }
+        {
           // #8 — auto-tag propagation feedback. The merge response now
           // carries { propagated: { assigned, suggested } | null }. Stash a
           // message in sessionStorage so the *target* person page (where we
@@ -513,12 +529,14 @@ export default function PersonDetailPage({
           }
           window.location.href = `/app/people/${targetId}`;
         }
+      } catch {
+        showToast("Merge failed. Check your connection.", "error");
       } finally {
         setActing(false);
         setShowMerge(false);
       }
     },
-    [person]
+    [person, showToast]
   );
 
   const headline = useMemo(
@@ -562,6 +580,7 @@ export default function PersonDetailPage({
 
   return (
     <div className="space-y-6">
+      <h1 className="sr-only">{headline}</h1>
       <div className="space-y-2">
         <Link
           href="/app/people"

@@ -74,7 +74,7 @@ export function AcceptButton({ token, expectedEmail }: AcceptButtonProps) {
       <div className="space-y-2">
         <a
           href={loginHref}
-          className="block w-full rounded bg-primary px-3 py-2 text-center text-sm font-medium text-primary-foreground transition-colors hover:bg-[#1D9089]"
+          className="block w-full rounded bg-primary px-3 py-2 text-center text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
         >
           Sign in to accept
         </a>
@@ -111,7 +111,8 @@ export function AcceptButton({ token, expectedEmail }: AcceptButtonProps) {
         type="button"
         onClick={handleAccept}
         disabled={busy}
-        className="w-full rounded bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-[#1D9089] disabled:opacity-60"
+        aria-busy={busy}
+        className="w-full rounded bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
       >
         {busy ? "Joining…" : "Accept invitation"}
       </button>

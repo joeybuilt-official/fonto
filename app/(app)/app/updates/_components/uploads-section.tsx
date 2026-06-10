@@ -331,6 +331,7 @@ export function UploadsSection() {
           ref={fileInputRef}
           type="file"
           multiple
+          aria-label="Choose files to upload"
           className="hidden"
           onChange={(e) => e.target.files && handleFiles(e.target.files, "file-picker")}
         />

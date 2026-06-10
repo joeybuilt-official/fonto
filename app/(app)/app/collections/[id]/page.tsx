@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { PhotoCard, type Asset } from "../../_components/photo-card";
 import { PhotoLightbox } from "../../_components/photo-lightbox";
+import { ListErrorState } from "../../_components/list-states";
 
 interface CollectionDetail {
   id: string;
@@ -35,6 +36,7 @@ function AddPhotosModal({
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -64,19 +66,36 @@ function AddPhotosModal({
 
   async function handleAdd() {
     setAdding(true);
+    setAddError(null);
     const added: Asset[] = [];
+    let failed = 0;
     for (const assetId of selected) {
-      const res = await fetch(`/api/v1/collections/${collectionId}/assets`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assetId }),
-      });
-      if (res.ok) {
-        const asset = allPhotos.find((p) => p.id === assetId);
-        if (asset) added.push(asset);
+      try {
+        const res = await fetch(`/api/v1/collections/${collectionId}/assets`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assetId }),
+        });
+        if (res.ok) {
+          const asset = allPhotos.find((p) => p.id === assetId);
+          if (asset) added.push(asset);
+        } else {
+          failed++;
+        }
+      } catch {
+        failed++;
       }
     }
-    onAdded(added);
+    if (added.length > 0) onAdded(added);
+    setAdding(false);
+    if (failed > 0) {
+      // Keep the modal open and report the partial failure so the user can
+      // retry the ones that didn't land (the successes were already removed
+      // from the candidate list via onAdded → existingIds).
+      setSelected(new Set());
+      setAddError(`Couldn't add ${failed} photo${failed === 1 ? "" : "s"}. Try again.`);
+      return;
+    }
     onClose();
   }
 
@@ -158,6 +177,12 @@ function AddPhotosModal({
           )}
         </div>
 
+        {addError && (
+          <p className="border-t border-border px-4 py-2 text-sm text-destructive shrink-0">
+            {addError}
+          </p>
+        )}
+
         {selected.size > 0 && (
           <div className="border-t border-border px-4 py-3 shrink-0 flex justify-end gap-2">
             <button
@@ -191,20 +216,31 @@ export default function CollectionDetailPage({
   const [collection, setCollection] = useState<CollectionDetail | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
 
   useEffect(() => {
+    setLoading(true);
+    setError(false);
     Promise.all([
-      fetch(`/api/v1/collections/${collectionId}`).then((r) => r.json()),
-      fetch(`/api/v1/collections/${collectionId}/assets`).then((r) => r.json()),
+      fetch(`/api/v1/collections/${collectionId}`).then((r) => {
+        if (!r.ok) throw new Error(`collection ${r.status}`);
+        return r.json();
+      }),
+      fetch(`/api/v1/collections/${collectionId}/assets`).then((r) => {
+        if (!r.ok) throw new Error(`collection assets ${r.status}`);
+        return r.json();
+      }),
     ])
       .then(([colData, assetsData]) => {
         setCollection(colData.collection ?? null);
         setAssets(assetsData.assets ?? []);
       })
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [collectionId]);
+  }, [collectionId, refreshKey]);
 
   const openLightbox = useCallback((index: number) => {
     setLightboxIndex(index);
@@ -240,6 +276,15 @@ export default function CollectionDetailPage({
         <Loader2 className="h-4 w-4 animate-spin" />
         Loading collection...
       </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <ListErrorState
+        message="Couldn't load this collection. Check your connection and retry."
+        onRetry={() => setRefreshKey((k) => k + 1)}
+      />
     );
   }
 

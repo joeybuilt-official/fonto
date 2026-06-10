@@ -54,7 +54,10 @@ function MemoriesContent() {
     availableFilters: ["favorite", "ratingMin"],
   });
 
-  const [date, setDate] = useState<string>(todayISO());
+  // Initialised empty so the server and the first client render agree
+  // (todayISO() reads the local clock, which diverges across the SSR/CSR
+  // boundary and throws React #418). The real date is set after mount.
+  const [date, setDate] = useState<string>("");
   const [years, setYears] = useState<MemoryYear[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +65,11 @@ function MemoriesContent() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    setDate(todayISO());
+  }, []);
+
+  useEffect(() => {
+    if (!date) return;
     void (async () => {
       setLoading(true);
       setError(null);
@@ -82,7 +90,7 @@ function MemoriesContent() {
     })();
   }, [date, refreshKey]);
 
-  const headline = useMemo(() => formatMonthDay(date), [date]);
+  const headline = useMemo(() => (date ? formatMonthDay(date) : "today"), [date]);
   const totalCount = years.reduce((sum, y) => sum + y.count, 0);
 
   // Client-side q / sort filtering per year, since the memories endpoint
