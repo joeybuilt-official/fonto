@@ -974,8 +974,7 @@ class _PeopleCardState extends State<_PeopleCard> {
             ],
           ),
         ),
-      ),
-    );
+      ); // Material > Padding > Row
   }
 }
 
