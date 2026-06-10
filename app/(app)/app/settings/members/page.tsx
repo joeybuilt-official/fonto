@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { ConfirmButton } from "@/components/confirm-button";
 
 type Role = "owner" | "editor" | "viewer";
 
@@ -131,14 +132,14 @@ export default function MembersSettingsPage() {
   }
 
   async function handleRevoke(id: string) {
-    if (!confirm("Revoke this invitation? The link will stop working.")) return;
+    setError(null);
     const res = await fetch(
       `/api/v1/workspace/invitations/${encodeURIComponent(id)}`,
       { method: "DELETE" }
     );
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
-      alert(body.error ?? "Failed to revoke invitation");
+      setError(body.error ?? "Failed to revoke invitation");
       return;
     }
     await reloadInvitations();
@@ -150,7 +151,7 @@ export default function MembersSettingsPage() {
       setCopiedToken(url);
       setTimeout(() => setCopiedToken(null), 2000);
     } catch {
-      alert("Copy failed — your browser blocked clipboard access");
+      setError("Copy failed — your browser blocked clipboard access");
     }
   }
 
@@ -284,13 +285,13 @@ export default function MembersSettingsPage() {
                   >
                     {copiedToken === inv.url ? "Copied" : "Copy link"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleRevoke(inv.id)}
+                  <ConfirmButton
+                    onConfirm={() => handleRevoke(inv.id)}
+                    confirmLabel="Confirm revoke"
                     className="rounded-md border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/5"
                   >
                     Revoke
-                  </button>
+                  </ConfirmButton>
                 </div>
               </li>
             ))}
