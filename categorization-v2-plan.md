@@ -27,5 +27,16 @@ v1 reduced screenshots 5392→2062 and cleaned Documents. Remaining problem: scr
 - Thumbnail montage harness: `/tmp/montage.mjs` (fetch /api/v1/assets/urls variant=thumb → HTML grid → screenshot).
 - Verify distribution: `SELECT kind,count(*) ... GROUP BY kind`.
 
+## STATUS (2026-06-10) — PARKED, ready to run, blocked on Plexo deploy
+- ✅ Prompt tuned: plexo repo branch `fonto-vision-prompt-tune` (pushed) + patch `/tmp/fonto-audit/plexo-vision-prompt.patch`. Sharpens `photo` to real camera captures only + adds an explicit screenshot/graphic DISAMBIGUATION rule in `apps/api/src/routes/vision.ts` `ANALYZE_SYSTEM_PROMPT`.
+- ✅ Runner written: `scripts/reclassify-vision.ts` (committed Fonto main 0a5afbc). Forces `analyzeImageUnified` on the suspect bucket, re-derives kind, marks `classify_method='llm-vision-rerun'` (resumable). Run: `docker exec <fonto-worker> node_modules/.bin/tsx scripts/reclassify-vision.ts --workspace-id=00000000-0000-0000-0000-000000000000 [--dry-run] [--concurrency=4]`.
+- ⛔ BLOCKED: plexo-api deploy tree (`/data/appdata/appdata/source/plexo`) is being churned by a parallel automated lane-test/audit system (snapshot commits "Round-N Phase M lane gauge"; 323 uncommitted lines in vision.ts). Operator chose HOLD — do NOT deploy plexo-api or hammer the shared GPU until that work lands.
+
+### Resume when Plexo is clean
+1. Merge `fonto-vision-prompt-tune` into the plexo deploy (or apply the patch on a clean tree), build + recreate `plexo-api`.
+2. Validate the new prompt: call `/api/v1/vision/analyze-image` on a few known images (a screenshot-in-moments, a graphic/ad, a real photo) — confirm screenshot/graphic classify correctly AND real photos still classify `photo`.
+3. Dry-run `reclassify-vision.ts` → review transitions → real run (background, multi-hour, ~2,840 calls).
+4. Re-verify: kind distribution + thumbnail montages of Moments/Screenshots/Graphics.
+
 ## Cost/runtime note
 ~2,840 vision-LLM calls on the host GPU (Plexo). Multi-hour background job + inference cost. Vision models aren't perfect either (the 347 already-vision-judged "photo" prove a ceiling) — expect "much better," not literally 100%.
