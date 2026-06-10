@@ -6,7 +6,8 @@ All findings below addressed in code. Typecheck clean (only 2 pre-existing error
 - **P0** share password GET → **FIXED** (httpOnly cookie via server action)
 - **P1** memories #418 → FIXED · people face-flood → FIXED (concurrency limiter + lazy img) · stacks 400 → FIXED (filter null ids) · login labels → FIXED (aria-label) · document-viewer a11y → FIXED (aria-label + Escape + focus) · silent fetch/mutation cluster (9 files) → FIXED (response.ok checks + ListErrorState + rollback) · Flutter destructive-confirm → FIXED · Flutter silent catches → FIXED
 - **P2** admin/jobs overflow → FIXED (overflow-x-auto) · unlabeled inputs → FIXED (imports, members; updates had none) · hardcoded #1D9089 → FIXED (→ primary/90) · missing H1 (person-detail, docs/api) → FIXED (sr-only h1) · Recognition tab → FIXED (→ integrations) · people empty-name → FIXED (disabled guard) · invite identical states → FIXED (per-state icon/color/title) · updates unlabeled input → FIXED (aria-label on uploads file input) · members confirm()/alert() → FIXED (ConfirmButton two-step + inline error state) · Flutter dead affordance → FIXED
-- **P3** aria-busy (invite) → FIXED · others (login aria-busy, docs CDN fallback, share Escape/attempts, Flutter breadcrumb/count-fmt) → minor, deferred unless requested
+- **P3** aria-busy (invite) → FIXED · login aria-busy + token color → FIXED (0e085a7) · Flutter count format 5.2k → FIXED (0e085a7) · still deferred (low-value/design-touch): docs/api CDN fallback, share Escape/attempts-counter, Flutter folder breadcrumb (adds widgets — can't `flutter analyze` here, holding)
+- **Mobile APK:** tag `v2.0.342` cut + pushed → Codemagic builds APK for live Flutter verification. Flutter diff statically reviewed analyze-clean (all literals const, no new imports).
 
 ---
 
