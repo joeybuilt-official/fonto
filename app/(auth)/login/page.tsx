@@ -127,7 +127,8 @@ function LoginPageInner() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-[#1D9089] disabled:opacity-50"
+            aria-busy={loading}
+            className="w-full rounded bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
           >
             {loading ? "Loading..." : isSignUp ? "Create Account" : "Sign In"}
           </button>

@@ -653,8 +653,11 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
 // Google Photos-style header sections — utility tiles, People & Pets, Places
 // ---------------------------------------------------------------------------
 
-String _fmtCount(int n) =>
-    n >= 1000 ? "${(n / 1000).floor()}k" : n.toString();
+String _fmtCount(int n) {
+  if (n < 1000) return n.toString();
+  final k = n / 1000;
+  return k >= 10 ? "${k.floor()}k" : "${k.toStringAsFixed(1)}k";
+}
 
 class _UtilityTile {
   const _UtilityTile({
