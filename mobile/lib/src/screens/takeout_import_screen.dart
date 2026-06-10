@@ -5,6 +5,9 @@
 // Paste a Google Drive link (or bare file ID) of the Takeout archive; we
 // extract the ID and kick a server-side import.
 
+import "dart:io";
+
+import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
@@ -28,11 +31,44 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
   final _controller = TextEditingController();
   bool _busy = false;
   String? _msg;
+  bool _uploadBusy = false;
+  String? _uploadMsg;
 
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickAndUpload() async {
+    if (_uploadBusy) return;
+    setState(() {
+      _uploadBusy = true;
+      _uploadMsg = null;
+    });
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ["zip"],
+        withData: false,
+      );
+      final path = picked?.files.single.path;
+      if (path == null) {
+        if (mounted) setState(() => _uploadBusy = false);
+        return; // User cancelled the picker.
+      }
+      final workspaceId = await widget.client.workspaceId();
+      await widget.client
+          .uploadAmazonZip(File(path), workspaceId, provider: "google-takeout");
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _uploadBusy = false;
+        _uploadMsg = "Upload failed: $e";
+      });
+    }
   }
 
   Future<void> _start() async {
@@ -115,6 +151,33 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
             if (_msg != null) ...[
               const SizedBox(height: 8),
               Text(_msg!, style: const TextStyle(fontSize: 12)),
+            ],
+            const Divider(height: 32),
+            const Text(
+              "Or upload a downloaded archive",
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              "Exported with \"Send download link\" instead? Download the .zip in "
+              "your browser, then upload it here (dates, places and albums are kept).",
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _uploadBusy ? null : _pickAndUpload,
+              icon: _uploadBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.upload_file),
+              label: Text(_uploadBusy ? "Uploading…" : "Choose .zip & import"),
+            ),
+            if (_uploadMsg != null) ...[
+              const SizedBox(height: 8),
+              Text(_uploadMsg!, style: const TextStyle(fontSize: 12)),
             ],
           ],
         ],

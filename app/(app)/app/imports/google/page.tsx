@@ -6,7 +6,7 @@
 // server-side import.
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -24,10 +24,17 @@ function GoogleImport() {
   const oauthError = searchParams.get("error");
 
   const [googleConnected, setGoogleConnected] = useState(false);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [linkInput, setLinkInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  // Upload-a-downloaded-archive path.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/v1/integrations")
@@ -36,6 +43,10 @@ function GoogleImport() {
         const g = (d.integrations ?? []).find((i) => i.provider === "google");
         setGoogleConnected(g?.status === "active");
       })
+      .catch(() => null);
+    fetch("/api/v1/workspace")
+      .then((r) => r.json())
+      .then((d) => setWorkspaceId(d.workspace?.id ?? null))
       .catch(() => null);
   }, []);
 
@@ -67,6 +78,40 @@ function GoogleImport() {
       setMsg(err instanceof Error ? `Failed: ${err.message}` : "Failed to start import.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleUpload(e: React.FormEvent) {
+    e.preventDefault();
+    if (uploadBusy) return;
+    if (!zipFile) {
+      setUploadMsg("Choose a .zip archive first.");
+      return;
+    }
+    if (!workspaceId) {
+      setUploadMsg("Workspace not ready — try again in a moment.");
+      return;
+    }
+    setUploadBusy(true);
+    setUploadMsg(null);
+    try {
+      // provider=google-takeout so the worker applies Takeout sidecar metadata.
+      const res = await fetch(
+        `/api/v1/imports/upload?provider=google-takeout&workspaceId=${encodeURIComponent(workspaceId)}`,
+        { method: "POST", headers: { "Content-Type": "application/zip" }, body: zipFile }
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      setZipFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      setUploadMsg("Upload received — import started. Watch its progress below.");
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      setUploadMsg(err instanceof Error ? `Failed: ${err.message}` : "Upload failed.");
+    } finally {
+      setUploadBusy(false);
     }
   }
 
@@ -147,6 +192,41 @@ function GoogleImport() {
               </div>
             </form>
             {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
+
+            <div className="border-t border-border pt-4 space-y-2">
+              <p className="text-xs font-medium text-foreground">
+                Or upload an archive you already downloaded
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Exported with &ldquo;Send download link&rdquo; instead? Those links
+                can&apos;t be read by the server — download the <code>.zip</code> in
+                your browser, then upload it here (dates, places and albums are kept).
+              </p>
+              <form
+                onSubmit={handleUpload}
+                className="flex flex-col sm:flex-row gap-2"
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".zip,application/zip"
+                  onChange={(e) => setZipFile(e.target.files?.[0] ?? null)}
+                  disabled={uploadBusy}
+                  aria-label="Google Takeout ZIP archive"
+                  className="flex-1 text-sm text-foreground file:mr-3 file:rounded-md file:border file:border-border file:bg-muted file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground disabled:opacity-50"
+                />
+                <button
+                  type="submit"
+                  disabled={uploadBusy || !zipFile}
+                  className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 shrink-0"
+                >
+                  {uploadBusy ? "Uploading…" : "Upload & import"}
+                </button>
+              </form>
+              {uploadMsg && (
+                <p className="text-xs text-muted-foreground">{uploadMsg}</p>
+              )}
+            </div>
           </>
         )}
       </div>

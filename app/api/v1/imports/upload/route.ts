@@ -3,10 +3,11 @@
 //
 // Phase 3 (media import) — POST /api/v1/imports/upload
 //
-// Streaming upload endpoint for an Amazon Photos export ZIP. Amazon Photos has
-// no Takeout-style sidecar JSON, so this importer ingests EXIF-only: we hand
-// the worker a local ZIP path (uploadTmpPath) and runImport walks it with
-// sidecars disabled.
+// Streaming upload endpoint for an export ZIP the user downloaded. Default
+// provider is `amazon-photos` (EXIF-only); pass `?provider=google-takeout` for
+// a downloaded Takeout archive so the worker applies its sidecar JSON metadata
+// (dates/geo/albums). Either way we hand the worker a local ZIP path
+// (uploadTmpPath) and runImport walks it.
 //
 // Transport: a raw `application/zip` request body (NOT multipart/form-data).
 // Rationale — the body is piped straight to a temp file via a Node stream, so
@@ -100,6 +101,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
   }
 
+  // Optional ?provider= — a Google Takeout archive the user downloaded and
+  // uploaded gets tagged `google-takeout` so the worker applies its sidecar
+  // metadata (dates/geo/albums). Anything else falls back to Amazon (EXIF-only).
+  const provider =
+    request.nextUrl.searchParams.get("provider") === "google-takeout"
+      ? "google-takeout"
+      : "amazon-photos";
+
   if (!request.body) {
     return NextResponse.json({ error: "Empty request body" }, { status: 400 });
   }
@@ -158,7 +167,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .values({
         workspaceId: workspace.id,
         userId: user.id,
-        provider: "amazon-photos",
+        provider,
         status: "pending",
       })
       .returning({ id: schema.importJobs.id });
@@ -167,13 +176,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       importJobId: row.id,
       workspaceId: workspace.id,
       userId: user.id,
-      provider: "amazon-photos",
+      provider,
       uploadTmpPath: tmpPath,
     });
 
     log.info(
-      { importJobId: row.id, workspaceId: workspace.id, bytes },
-      "amazon-photos import enqueued",
+      { importJobId: row.id, workspaceId: workspace.id, bytes, provider },
+      "uploaded import enqueued",
     );
     return NextResponse.json({ importJobId: row.id }, { status: 202 });
   } catch (err) {

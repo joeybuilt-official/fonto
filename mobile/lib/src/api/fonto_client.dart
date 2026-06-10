@@ -789,11 +789,17 @@ class FontoClient {
   /// The file is streamed off disk via a StreamedRequest so peak RAM is bounded
   /// by one chunk regardless of archive size — the http package would otherwise
   /// buffer the whole body in memory.
-  Future<String> uploadAmazonZip(File zip, String workspaceId) async {
+  Future<String> uploadAmazonZip(
+    File zip,
+    String workspaceId, {
+    String? provider,
+  }) async {
     final len = await zip.length();
+    final query = {"workspaceId": workspaceId};
+    if (provider != null) query["provider"] = provider;
     final req = http.StreamedRequest(
       "POST",
-      _uri("/api/v1/imports/upload", {"workspaceId": workspaceId}),
+      _uri("/api/v1/imports/upload", query),
     )
       ..headers.addAll(_headers)
       ..headers["Content-Type"] = "application/zip"
