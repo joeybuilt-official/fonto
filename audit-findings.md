@@ -1,7 +1,7 @@
 # Fonto — UI/UX/Functionality Audit Findings
 
 ## Fix status (Phase 6 — operator approved "fix everything", 2026-06-09)
-All findings below addressed in code. Typecheck clean (only 2 pre-existing errors excluded), zero new lint problems introduced. Running-app re-verification of the live-captured items (people flood, stacks 400, memories #418, admin 360 overflow) is **pending a prod deploy** (authorization gate — not auto-triggered). Mobile changes are static-only (no emulator in env).
+All findings below addressed in code. Typecheck clean (only 2 pre-existing errors excluded), zero new lint problems introduced. **DEPLOYED to myfonto.com (commit 4d5d8c0) + live-verified 2026-06-09:** people face-flood reqfails 771→0, stacks /assets/urls 400→0, memories #418→0, admin/jobs 360px overflow true→false (harness `e2e/audit/verify-fixes.mjs`). Stacks + admin needed a 2nd pass (cap covers at 500; flex `min-w-0` on main) caught by live verify. P0 share-cookie change is structurally verified (build+types; GET form removed) — no test share link to exercise live. Mobile changes are static-only (no emulator in env).
 
 - **P0** share password GET → **FIXED** (httpOnly cookie via server action)
 - **P1** memories #418 → FIXED · people face-flood → FIXED (concurrency limiter + lazy img) · stacks 400 → FIXED (filter null ids) · login labels → FIXED (aria-label) · document-viewer a11y → FIXED (aria-label + Escape + focus) · silent fetch/mutation cluster (9 files) → FIXED (response.ok checks + ListErrorState + rollback) · Flutter destructive-confirm → FIXED · Flutter silent catches → FIXED
