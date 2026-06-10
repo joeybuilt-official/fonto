@@ -487,16 +487,16 @@ describe("deriveKind — rule precedence", () => {
     expect(androidForm).toBe("moment");
   });
 
-  it("rule 9: image/* without camera evidence → screenshot fallback", () => {
-    // No classification, no camera evidence, generic filename — falls through
-    // to screenshot rather than polluting moments.
+  it("rule 11: image/* without camera evidence → moment fallback", () => {
+    // Spec 2026-06-10: no classification, no camera evidence, generic
+    // filename — an unknown image is a photo → moment (was screenshot).
     const kind = deriveKind(
       input({
         classification: null,
         filename: "random.jpg",
       }),
     );
-    expect(kind).toBe("screenshot");
+    expect(kind).toBe("moment");
   });
 
   it("rule 10: unknown mime → moment fallback", () => {
@@ -508,6 +508,101 @@ describe("deriveKind — rule precedence", () => {
       }),
     );
     expect(kind).toBe("moment");
+  });
+});
+
+describe("deriveKind — remediation spec 2026-06-10", () => {
+  // (a) EXIF-stripped image, classification="photo" → moment.
+  it("EXIF-stripped photo (classification=photo, no EXIF) → moment", () => {
+    const kind = deriveKind(
+      input({
+        classification: "photo",
+        filename: "downloaded_beach.jpg",
+        mimeType: "image/jpeg",
+        widthPx: 1600,
+        heightPx: 1200,
+        // No EXIF, non-camera-roll filename.
+      }),
+    );
+    expect(kind).toBe("moment");
+  });
+
+  // (b) EXIF-stripped TALL image (AR 0.5), classification="photo", no
+  // screenshot filename → moment (NOT screenshot — shape ≠ content).
+  it("EXIF-stripped tall photo (AR 0.5, no screenshot name) → moment, not screenshot", () => {
+    const kind = deriveKind(
+      input({
+        classification: "photo",
+        filename: "saved_portrait.jpg",
+        mimeType: "image/jpeg",
+        widthPx: 1080,
+        heightPx: 2160, // AR 0.5 — matches the old aspect heuristic.
+        // No EXIF.
+      }),
+    );
+    expect(kind).toBe("moment");
+  });
+
+  // (c) classification="screenshot" with dense receipt-like OCR → screenshot
+  // (NOT document — trusted-vision screenshot beats OCR-doc).
+  it("screenshot classification + receipt-like OCR → screenshot, not document", () => {
+    const kind = deriveKind(
+      input({
+        classification: "screenshot",
+        filename: "saved_image_8821.png",
+        mimeType: "image/png",
+        widthPx: 1170,
+        heightPx: 2532,
+        ocrText: RECEIPT_OCR,
+      }),
+    );
+    expect(kind).toBe("screenshot");
+  });
+
+  // (d) filename "Screenshot_2024.png", no camera, with OCR text → screenshot
+  // (filename signal beats OCR-doc).
+  it("screenshot filename + receipt OCR + no camera → screenshot, not document", () => {
+    const kind = deriveKind(
+      input({
+        classification: "photo",
+        filename: "Screenshot_2024.png",
+        mimeType: "image/png",
+        widthPx: 1170,
+        heightPx: 2532,
+        ocrText: RECEIPT_OCR,
+        // No EXIF — !looksLikeCameraPhoto, so the filename branch fires.
+      }),
+    );
+    expect(kind).toBe("screenshot");
+  });
+
+  // (e) phone photo of receipt (IMG_1234.jpg + camera EXIF + receipt OCR) →
+  // document still (camera evidence skips the screenshot branches; rule 7 OCR
+  // -doc claims it). Preserved invariant.
+  it("phone photo of receipt (camera EXIF + receipt OCR) → document still", () => {
+    const kind = deriveKind(
+      input({
+        classification: "photo",
+        filename: "IMG_1234.jpg",
+        mimeType: "image/jpeg",
+        ocrText: RECEIPT_OCR,
+        ...REAL_CAMERA_EXIF,
+      }),
+    );
+    expect(kind).toBe("document");
+  });
+
+  // (f) downloaded logo (classification="logo", no EXIF) → graphics still.
+  it("downloaded logo (classification=logo, no EXIF) → graphics still", () => {
+    const kind = deriveKind(
+      input({
+        classification: "logo",
+        filename: "brand-logo.png",
+        mimeType: "image/png",
+        // No EXIF.
+      }),
+    );
+    expect(kind).toBe("graphics");
   });
 });
 

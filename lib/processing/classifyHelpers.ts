@@ -15,18 +15,23 @@
 const SCREENSHOT_NAME_RE =
   /screenshot|screen.?shot|^scrnli|^screen[_-]?recording/i;
 
-export function isScreenshot(
-  filename: string,
+// Filename signal ONLY (trusted: a "Screenshot..." name is intentional). Used
+// by deriveKind to force screenshot ahead of the OCR-document heuristic.
+export function isScreenshotByName(filename: string): boolean {
+  return SCREENSHOT_NAME_RE.test(filename);
+}
+
+// Aspect-ratio signal ONLY (shape, NOT content). Phone screenshots ARE saved
+// as JPEG too (iOS "Save to Files", Drive re-encodes PNG → JPEG on import),
+// so the PNG-only gate from the original heuristic was missing every
+// Drive-imported phone capture. Apply to any image mime. NOTE: shape ≠
+// content — an EXIF-stripped tall PHOTO matches this too, so deriveKind no
+// longer forces screenshot on this signal alone (operator policy 2026-06-10).
+export function isScreenshotByAspect(
   mimeType: string,
   widthPx: number | null,
   heightPx: number | null,
 ): boolean {
-  if (SCREENSHOT_NAME_RE.test(filename)) return true;
-  // Aspect-ratio heuristic. Phone screenshots ARE saved as JPEG too (iOS
-  // "Save to Files", Drive re-encodes PNG → JPEG on import), so the PNG-only
-  // gate from the original heuristic was missing every Drive-imported phone
-  // capture. Apply to any image mime; the camera-EXIF gate below catches
-  // false positives on real photos that happen to be 9:16.
   if (mimeType.startsWith("image/") && widthPx && heightPx) {
     const ar = widthPx / heightPx;
     // Modern phone screens span 9:16 (~0.5625) through 9:21+ (~0.43). Drop
@@ -39,6 +44,21 @@ export function isScreenshot(
     if (portraitScreen || landscapeScreen) return true;
   }
   return false;
+}
+
+// Back-compat union (name OR aspect). Kept for call sites that still want the
+// combined signal; deriveKind + the processAsset override use the split
+// helpers above so the aspect signal can't force screenshot on its own.
+export function isScreenshot(
+  filename: string,
+  mimeType: string,
+  widthPx: number | null,
+  heightPx: number | null,
+): boolean {
+  return (
+    isScreenshotByName(filename) ||
+    isScreenshotByAspect(mimeType, widthPx, heightPx)
+  );
 }
 
 // Real camera captures (any device — phone, DSLR, mirrorless, drone, action

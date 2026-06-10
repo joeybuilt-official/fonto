@@ -28,7 +28,8 @@ import { deriveKind } from "@/lib/classify/kind";
 // CJS loader trips on for scripts (worker entrypoint somehow skirts this);
 // we pull plexo.ts via dynamic import in main() when actually needed.
 import {
-  isScreenshot,
+  isScreenshotByName,
+  isScreenshotByAspect,
   looksLikeCameraPhoto,
   ocrLooksLikePaperDocument,
   isDocumentByOcr,
@@ -144,9 +145,15 @@ async function decideForRow(
   const classifyMethodLabel: "clip" | "llm-fallback" = result.method;
   const classifyConfidence: number | null = result.confidence;
 
-  // 2. Screenshot heuristic (filename + aspect).
-  if (
-    isScreenshot(row.filename, row.mime_type, row.width_px, row.height_px)
+  // 2. Screenshot heuristic. Spec 2026-06-10: filename signal always wins;
+  // aspect-ratio (shape ≠ content) only sets screenshot when the classifier
+  // produced no usable classification — it must not flip a real-scene photo.
+  if (isScreenshotByName(row.filename)) {
+    classification = "screenshot";
+    subClassification = null;
+  } else if (
+    (!classification || classification === "") &&
+    isScreenshotByAspect(row.mime_type, row.width_px, row.height_px)
   ) {
     classification = "screenshot";
     subClassification = null;

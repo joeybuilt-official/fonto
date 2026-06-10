@@ -65,7 +65,8 @@ export {
   type CameraEvidence,
 } from "./classifyHelpers";
 import {
-  isScreenshot,
+  isScreenshotByName,
+  isScreenshotByAspect,
   isDocumentByOcr,
   ocrLooksLikePaperDocument,
   looksLikeCameraPhoto,
@@ -389,7 +390,20 @@ async function processAssetInner(
       // Force screenshots — the classifier otherwise tends to file text-heavy
       // screenshots as documents/scans. Runs AFTER the LLM (legacy or
       // unified) so the heuristic always has the final word.
-      if (isScreenshot(filename, mimeType, dims?.widthPx ?? null, dims?.heightPx ?? null)) {
+      //
+      // Spec 2026-06-10: the FILENAME signal ("Screenshot...") is trusted and
+      // always wins. The aspect-ratio-only signal (shape ≠ content) must NOT
+      // override a real-scene classification the vision model already gave
+      // (photo/portrait/event/selfie/landscape/etc.) — an EXIF-stripped tall
+      // photo is still a photo. Only let AR set screenshot when the model
+      // produced no usable classification.
+      if (isScreenshotByName(filename)) {
+        classification = "screenshot";
+        subClassification = null;
+      } else if (
+        (!classification || classification === "") &&
+        isScreenshotByAspect(mimeType, dims?.widthPx ?? null, dims?.heightPx ?? null)
+      ) {
         classification = "screenshot";
         subClassification = null;
       }

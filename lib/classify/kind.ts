@@ -24,7 +24,7 @@
 
 import {
   looksLikeCameraPhoto,
-  isScreenshot,
+  isScreenshotByName,
   isWhiteboardCapture,
   isPhotoOfArt,
   ocrLooksLikePaperDocument,
@@ -104,21 +104,29 @@ export interface KindInput {
 }
 
 /**
- * Pure KIND resolution. ADR 0001 §4 priority order (priority 1 wins):
+ * Pure KIND resolution. Remediation spec 2026-06-10 precedence (priority 1 wins):
  *
  *   1. video/* mime → video
  *   2. document mime → document
- *   3. classification ∈ DOCUMENT_CLASSIFICATIONS → document (beats EXIF)
- *   4. isWhiteboardCapture() → document
- *   5. ocrLooksLikePaperDocument() → document
- *   6. classification ∈ GRAPHICS_CLASSIFICATIONS AND !looksLikeCameraPhoto → graphics
- *   7. classification === "screenshot" OR isScreenshot() → screenshot
- *   8. image/* AND looksLikeCameraPhoto → moment
- *   9. image/* fallback → screenshot
- *  10. unknown mime → moment
+ *   3. classification ∈ DOCUMENT_CLASSIFICATIONS → document (trusted vision; beats EXIF)
+ *   4. classification/sub === "whiteboard" → document (trusted vision)
+ *   5. classification === "screenshot" → screenshot (trusted vision)
+ *   6. screenshot-by-FILENAME AND !looksLikeCameraPhoto → screenshot
+ *   7. ocrLooksLikePaperDocument() → document
+ *   8. isWhiteboardCapture() OCR heuristic → document
+ *   9. classification ∈ GRAPHICS_CLASSIFICATIONS AND !looksLikeCameraPhoto → graphics
+ *  10. image/* AND looksLikeCameraPhoto → moment
+ *  11. image/* fallback → moment
+ *  12. unknown mime → moment
+ *
+ * Key change (2026-06-10): a CONTENT screenshot (trusted classification, or a
+ * Screenshot* filename with no camera evidence) beats the OCR-document
+ * heuristic, so text-heavy screenshots (code/web/chat) stop landing in
+ * Documents. The aspect-ratio-only signal no longer forces screenshot — an
+ * EXIF-stripped tall photo falls through to moment.
  *
  * Asymmetry invariant: rule 3 IGNORES EXIF (operator's north star — phone
- * photo of paper is a document), rule 6 REQUIRES no EXIF (museum painting
+ * photo of paper is a document), rule 9 REQUIRES no EXIF (museum painting
  * photo stays a moment).
  *
  * Idempotency: pure function of inputs. Re-running on the same row with the
@@ -149,7 +157,26 @@ export function deriveKind(asset: KindInput): Kind {
   // Rule 3 — document classification beats EXIF. Operator's north star:
   // a phone photo of paper is a document.
   if (classification && DOCUMENT_CLASSIFICATIONS.has(classification)) return "document";
-  // Rule 4 — whiteboard capture heuristic (handles people-in-front case
+  // Rule 4 — trusted-vision whiteboard. CLIP/LLM grounded on the whiteboard
+  // prompt; trust it ahead of the screenshot branches.
+  if (classification === "whiteboard" || subClassification === "whiteboard") {
+    return "document";
+  }
+  // Rule 5 — trusted-vision screenshot. The model already said this IS a
+  // screenshot; honor it ahead of the OCR-document heuristic so text-heavy
+  // screenshots (code/web/chat) stop landing in Documents.
+  if (classification === "screenshot") return "screenshot";
+  // Rule 6 — screenshot-by-FILENAME, gated by no camera evidence. A
+  // "Screenshot..." name is intentional. Moved ABOVE the OCR-document
+  // heuristic (spec 2026-06-10). The aspect-ratio-only signal is NOT used
+  // here — shape ≠ content, so an EXIF-stripped tall photo falls through.
+  if (isScreenshotByName(filename) && !looksLikeCameraPhoto(filename, mimeType, exif)) {
+    return "screenshot";
+  }
+  // Rule 7 — OCR-based paper-document detection. Now only sees non-screenshot
+  // text images. Catches receipts/invoices the classifier missed but OCR did.
+  if (ocrLooksLikePaperDocument(ocrText)) return "document";
+  // Rule 8 — whiteboard capture OCR heuristic (handles people-in-front case
   // where classifier sees portrait/event but the intent is the whiteboard).
   if (
     isWhiteboardCapture({
@@ -163,10 +190,7 @@ export function deriveKind(asset: KindInput): Kind {
   ) {
     return "document";
   }
-  // Rule 5 — OCR-based paper-document detection, promoted ahead of graphics.
-  // Catches receipts/invoices the classifier missed but OCR caught.
-  if (ocrLooksLikePaperDocument(ocrText)) return "document";
-  // Rule 6 — graphics classification requires no real-camera-capture
+  // Rule 9 — graphics classification requires no real-camera-capture
   // evidence. Museum painting photo (classification=art + EXIF) falls
   // through; downloaded artwork JPEG (classification=art + no EXIF) routes
   // here.
@@ -183,23 +207,15 @@ export function deriveKind(asset: KindInput): Kind {
     // Graphics classification + camera EXIF = photo-of-graphic-in-the-world
     // (e.g. storefront logo). Fall through to the camera-photo path → moment.
   }
-  // Rule 7 — explicit screenshot classification OR filename/aspect heuristic.
-  if (classification === "screenshot") return "screenshot";
-  if (isScreenshot(filename, mimeType, widthPx, heightPx)) {
-    // Screenshot heuristic only fires when the classifier hasn't already
-    // claimed this row for graphics/document above. EXIF is checked inside
-    // — real camera photos that happen to be 9:16 won't match here.
-    if (!looksLikeCameraPhoto(filename, mimeType, exif)) {
-      return "screenshot";
-    }
-  }
-  // Rule 8 — image with positive camera evidence → moment.
+  // Rule 10 — image with positive camera evidence → moment.
   if (mimeType.startsWith("image/") && looksLikeCameraPhoto(filename, mimeType, exif)) {
     return "moment";
   }
-  // Rule 9 — image without camera evidence falls through to screenshot
-  // rather than polluting the default Moments lens with logos / icons / etc.
-  if (mimeType.startsWith("image/")) return "screenshot";
-  // Rule 10 — unknown mime fallback (pre-existing behaviour).
+  // Rule 11 — operator policy (2026-06-10): an unknown image is a photo →
+  // moment. Logos/icons/etc. route to graphics via classification (rule 9);
+  // content/filename screenshots already routed above. The aspect-ratio-only
+  // signal no longer pushes EXIF-stripped photos into Screenshots.
+  if (mimeType.startsWith("image/")) return "moment";
+  // Rule 12 — unknown mime fallback (pre-existing behaviour).
   return "moment";
 }
