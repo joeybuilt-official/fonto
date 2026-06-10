@@ -93,7 +93,7 @@ export default async function JobsAdminPage(): Promise<React.ReactElement> {
   const rows = await snapshot();
 
   return (
-    <main className="p-8 max-w-3xl mx-auto">
+    <main className="p-4 sm:p-8 max-w-3xl mx-auto min-w-0 w-full">
       <h1 className="text-2xl font-semibold mb-2">Background Jobs</h1>
       <p className="text-sm text-muted-foreground mb-6">
         BullMQ queues for asset processing. Restart-safe; retries on failure.

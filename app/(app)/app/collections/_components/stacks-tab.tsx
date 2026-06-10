@@ -190,7 +190,8 @@ export function StacksTab() {
     setStacks(list);
     const coverIds = list
       .map((s) => s.primaryAssetId)
-      .filter((id): id is string => typeof id === "string" && id.length > 0);
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+      .slice(0, 500); // server caps /assets/urls at 500 ids per request
     if (coverIds.length === 0) {
       setCoverUrls({});
       return;
