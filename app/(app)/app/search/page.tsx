@@ -74,10 +74,10 @@ function formatBytes(bytes: number): string {
 
 function AssetIcon({ mimeType }: { mimeType: string }) {
   if (mimeType.startsWith("image/"))
-    return <ImageIcon className="h-5 w-5 text-blue-400" />;
+    return <ImageIcon className="h-5 w-5 text-[var(--ft-color-tertiary)]" />;
   if (mimeType === "application/pdf" || mimeType.startsWith("text/"))
-    return <FileText className="h-5 w-5 text-orange-400" />;
-  return <File className="h-5 w-5 text-muted-foreground" />;
+    return <FileText className="h-5 w-5 text-[var(--ft-color-secondary)]" />;
+  return <File className="h-5 w-5 text-[var(--ft-color-on-surface-variant)]" />;
 }
 
 function ResultRow({
@@ -92,24 +92,24 @@ function ResultRow({
   return (
     <button
       onClick={onOpen}
-      className="flex w-full items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted/40 transition-colors"
+      className="flex w-full items-center gap-3 rounded-[var(--ft-shape-medium)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface)] px-4 py-3 text-left hover:bg-[var(--ft-color-surface-container-low)] transition-colors"
     >
       <AssetIcon mimeType={asset.mimeType} />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{asset.filename}</p>
+        <p className="truncate text-sm font-medium text-[var(--ft-color-on-surface)]">{asset.filename}</p>
         {asset.description && (
-          <p className="truncate text-xs text-muted-foreground">{asset.description}</p>
+          <p className="truncate text-xs text-[var(--ft-color-on-surface-variant)]">{asset.description}</p>
         )}
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-[var(--ft-color-on-surface-variant)]">
           {asset.classification ?? asset.mimeType} · {formatBytes(asset.sizeBytes)}
         </p>
       </div>
       {similarity != null ? (
-        <span className="text-xs text-amber-400/80 whitespace-nowrap font-mono">
+        <span className="text-xs text-[var(--ft-color-tertiary)] whitespace-nowrap font-mono">
           {(similarity * 100).toFixed(0)}%
         </span>
       ) : (
-        <span className="text-xs text-muted-foreground whitespace-nowrap">
+        <span className="text-xs text-[var(--ft-color-on-surface-variant)] whitespace-nowrap">
           {new Date(asset.capturedAt ?? asset.createdAt).toLocaleDateString()}
         </span>
       )}
@@ -264,7 +264,7 @@ function SearchContent() {
                 other pages so they live next to the toolbar instead of
                 inside FilterPopover. */}
             <Button
-              variant={ocrOnly ? "default" : "outline"}
+              variant={ocrOnly ? "filled" : "outlined"}
               size="sm"
               onClick={() => setOcrOnly((v) => !v)}
               title="Search OCR text only — matches words extracted from image content"
@@ -273,11 +273,11 @@ function SearchContent() {
               OCR only
             </Button>
             <Button
-              variant={semantic ? "default" : "outline"}
+              variant={semantic ? "filled" : "outlined"}
               size="sm"
               onClick={() => setSemantic((v) => !v)}
               title="Semantic search via Plexo AI"
-              className={cn(semantic && "bg-amber-500 text-white hover:bg-amber-500/90")}
+              className={cn(semantic && "bg-[var(--ft-color-tertiary)] text-[var(--ft-color-on-tertiary)] hover:brightness-95")}
             >
               <Sparkles className="h-3.5 w-3.5" />
               Semantic
@@ -328,8 +328,8 @@ function SearchContent() {
             with 0 hits) so the user knows semantic matching contributed. */}
         {clipHits !== null && (
           <div className="space-y-2 pt-2">
-            <div className="flex items-center gap-2 border-t border-border pt-4">
-              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+            <div className="flex items-center gap-2 border-t border-[var(--ft-color-outline-variant)] pt-4">
+              <Sparkles className="h-3.5 w-3.5 text-[var(--ft-color-tertiary)]" />
               <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                 Visually similar
               </p>
@@ -374,7 +374,7 @@ function SearchContent() {
 
 export default function SearchPage() {
   return (
-    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+    <Suspense fallback={<div className="text-sm text-[var(--ft-color-on-surface-variant)] py-4">Loading…</div>}>
       <SearchContent />
     </Suspense>
   );
