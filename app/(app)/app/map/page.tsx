@@ -267,7 +267,7 @@ export default function MapPage() {
         const count = c.properties.point_count;
         const clusterId = c.properties.cluster_id;
         el.className =
-          "flex items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold shadow-md cursor-pointer ring-2 ring-background";
+          "flex items-center justify-center rounded-full bg-[var(--ft-color-primary)] text-[var(--ft-color-on-primary)] text-xs font-semibold shadow-[var(--ft-elev-2)] cursor-pointer ring-2 ring-[var(--ft-color-surface)]";
         const size = 28 + Math.min(count, 100) * 0.35;
         el.style.width = `${size}px`;
         el.style.height = `${size}px`;
@@ -279,7 +279,7 @@ export default function MapPage() {
       } else {
         const p = c.properties;
         el.className =
-          "h-10 w-10 overflow-hidden rounded-full ring-2 ring-background shadow-md cursor-pointer bg-muted";
+          "h-10 w-10 overflow-hidden rounded-full ring-2 ring-[var(--ft-color-surface)] shadow-[var(--ft-elev-2)] cursor-pointer bg-[var(--ft-color-surface-container)]";
         if (p.thumbnailUrl) {
           const img = document.createElement("img");
           img.src = p.thumbnailUrl;
@@ -339,29 +339,29 @@ export default function MapPage() {
       <div className="relative flex-1">
         <div ref={containerRef} className="absolute inset-0" />
 
-        <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-2 rounded-lg bg-background/85 px-3 py-1.5 text-sm shadow-md backdrop-blur">
-          <h1 className="font-heading text-base font-semibold text-foreground">Map</h1>
-          <span className="text-xs text-muted-foreground">·</span>
-          {loading && <span className="text-xs text-muted-foreground">Loading…</span>}
+        <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-2 rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface)]/85 px-3 py-1.5 text-sm shadow-[var(--ft-elev-2)] backdrop-blur">
+          <h1 className="font-heading text-base font-semibold text-[var(--ft-color-on-surface)]">Map</h1>
+          <span className="text-xs text-[var(--ft-color-on-surface-variant)]">·</span>
+          {loading && <span className="text-xs text-[var(--ft-color-on-surface-variant)]">Loading…</span>}
           {!loading && capped && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-[var(--ft-color-on-surface-variant)]">
               {MAX_LIMIT.toLocaleString()} max — zoom in for more
             </span>
           )}
           {!loading && !capped && assets.length > 0 && (
-            <span className="text-xs tabular-nums text-muted-foreground">
+            <span className="text-xs tabular-nums text-[var(--ft-color-on-surface-variant)]">
               {assets.length.toLocaleString()} in view
             </span>
           )}
           {!loading && assets.length === 0 && !error && (
-            <span className="text-xs text-muted-foreground">No geo-tagged photos here</span>
+            <span className="text-xs text-[var(--ft-color-on-surface-variant)]">No geo-tagged photos here</span>
           )}
-          {error && <span className="text-xs text-destructive">{error}</span>}
+          {error && <span className="text-xs text-[var(--ft-color-error)]">{error}</span>}
         </div>
 
         {assets.length === 0 && !loading && !error && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="flex items-center gap-2 rounded-md bg-background/80 px-3 py-2 text-sm text-muted-foreground shadow">
+            <div className="flex items-center gap-2 rounded-[var(--ft-shape-small)] bg-[var(--ft-color-surface)]/80 px-3 py-2 text-sm text-[var(--ft-color-on-surface-variant)] shadow-[var(--ft-elev-1)]">
               <ImageIcon className="h-4 w-4" />
               No geo-tagged photos in this view yet.
             </div>
@@ -373,7 +373,7 @@ export default function MapPage() {
           renders an in-canvas attribution control, but a static footer is the
           policy-compliant fallback for screenshots / PDFs. */}
       <div
-        className="border-t border-border bg-muted/40 px-4 py-2 text-[11px] text-muted-foreground"
+        className="border-t border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container)]/40 px-4 py-2 text-[11px] text-[var(--ft-color-on-surface-variant)]"
         dangerouslySetInnerHTML={{ __html: `Map data ${TILE_ATTRIBUTION}` }}
       />
 
