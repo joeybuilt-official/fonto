@@ -121,6 +121,159 @@
   --sidebar-ring: #2AB0A5;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Material Design 3 token namespace.
+ * --------------------------------------------------------------------------
+ * Additive layer alongside the existing shadcn vars above. Existing
+ * components keep using `--primary`, `--background`, etc.; new MD3
+ * components reach for the `--ft-*` namespace. ADR 0009 documents the
+ * token taxonomy. Mirror lives at lib/design-tokens.ts and at
+ * mobile/lib/src/theme/tokens.dart (the Flutter half).
+ *
+ * Tonal palette is hand-picked around brand seed #2AB0A5. The light-mode
+ * primary is pinned to the brand itself (deviation from strict MD3
+ * algorithmic tone-40 generation, which would have shifted to #006B61);
+ * dark-mode primary uses tone-80 lift per spec.
+ * ────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Color — primary (brand) */
+  --ft-color-primary: #2AB0A5;
+  --ft-color-on-primary: #FFFFFF;
+  --ft-color-primary-container: #A6E9DC;
+  --ft-color-on-primary-container: #002020;
+  /* Color — secondary (muted teal) */
+  --ft-color-secondary: #4A6360;
+  --ft-color-on-secondary: #FFFFFF;
+  --ft-color-secondary-container: #CCE8E4;
+  --ft-color-on-secondary-container: #06201E;
+  /* Color — tertiary (cool blue) */
+  --ft-color-tertiary: #436278;
+  --ft-color-on-tertiary: #FFFFFF;
+  --ft-color-tertiary-container: #C9E6FF;
+  --ft-color-on-tertiary-container: #001E30;
+  /* Color — error */
+  --ft-color-error: #BA1A1A;
+  --ft-color-on-error: #FFFFFF;
+  --ft-color-error-container: #FFDAD6;
+  --ft-color-on-error-container: #410002;
+  /* Color — surface scale */
+  --ft-color-surface: #FAFDFB;
+  --ft-color-on-surface: #191C1B;
+  --ft-color-surface-container-lowest: #FFFFFF;
+  --ft-color-surface-container-low: #F4F7F5;
+  --ft-color-surface-container: #EEF2EF;
+  --ft-color-surface-container-high: #E8ECEA;
+  --ft-color-surface-container-highest: #E2E6E4;
+  --ft-color-on-surface-variant: #3F4947;
+  --ft-color-outline: #6F7977;
+  --ft-color-outline-variant: #BFC9C7;
+  --ft-color-inverse-surface: #2D3231;
+  --ft-color-on-inverse-surface: #EFF1EF;
+  --ft-color-inverse-primary: #6FCFC2;
+  --ft-color-scrim: #000000;
+  --ft-color-shadow: #000000;
+
+  /* Shape (radii) — MD3 scale */
+  --ft-shape-extra-small: 4px;
+  --ft-shape-small: 8px;
+  --ft-shape-medium: 12px;
+  --ft-shape-large: 16px;
+  --ft-shape-extra-large: 28px;
+  --ft-shape-full: 9999px;
+
+  /* Spacing — 4 px base, matches mobile/lib/src/theme/tokens.dart */
+  --ft-space-1: 4px;
+  --ft-space-2: 8px;
+  --ft-space-3: 12px;
+  --ft-space-4: 16px;
+  --ft-space-5: 20px;
+  --ft-space-6: 24px;
+  --ft-space-8: 32px;
+  --ft-space-10: 40px;
+  --ft-space-12: 48px;
+  --ft-space-16: 64px;
+
+  /* Elevation — MD3 levels 0..5, expressed as box-shadow strings the
+   * component layer can drop in. Use as `box-shadow: var(--ft-elev-2)`. */
+  --ft-elev-0: none;
+  --ft-elev-1: 0 1px 2px 0 rgba(0,0,0,0.06), 0 1px 3px 1px rgba(0,0,0,0.04);
+  --ft-elev-2: 0 1px 2px 0 rgba(0,0,0,0.08), 0 2px 6px 2px rgba(0,0,0,0.06);
+  --ft-elev-3: 0 4px 8px 3px rgba(0,0,0,0.08), 0 1px 3px 0 rgba(0,0,0,0.10);
+  --ft-elev-4: 0 6px 10px 4px rgba(0,0,0,0.10), 0 2px 3px 0 rgba(0,0,0,0.12);
+  --ft-elev-5: 0 8px 12px 6px rgba(0,0,0,0.12), 0 4px 4px 0 rgba(0,0,0,0.14);
+
+  /* State-layer opacity — MD3 interaction states. Apply over the foreground
+   * role color via color-mix or a child overlay. */
+  --ft-state-hover: 0.08;
+  --ft-state-focus: 0.10;
+  --ft-state-pressed: 0.10;
+  --ft-state-dragged: 0.16;
+  --ft-state-disabled-container: 0.12;
+  --ft-state-disabled-content: 0.38;
+
+  /* Motion — durations + easings per MD3 spec */
+  --ft-motion-short: 100ms;
+  --ft-motion-medium: 250ms;
+  --ft-motion-long: 400ms;
+  --ft-motion-extra-long: 700ms;
+  --ft-motion-emphasized: cubic-bezier(0.2, 0.0, 0, 1.0);
+  --ft-motion-standard: cubic-bezier(0.2, 0.0, 0, 1.0);
+  --ft-motion-decel: cubic-bezier(0.0, 0.0, 0, 1.0);
+  --ft-motion-accel: cubic-bezier(0.3, 0.0, 1, 1);
+
+  /* Type — sizes + line-heights + tracking. Family lives on the html
+   * element via --font-body / --font-heading already defined above. */
+  --ft-type-display-large-size: 57px;     --ft-type-display-large-line: 64px;     --ft-type-display-large-tracking: -0.25px;  --ft-type-display-large-weight: 400;
+  --ft-type-display-medium-size: 45px;    --ft-type-display-medium-line: 52px;    --ft-type-display-medium-tracking: 0;       --ft-type-display-medium-weight: 400;
+  --ft-type-display-small-size: 36px;     --ft-type-display-small-line: 44px;     --ft-type-display-small-tracking: 0;        --ft-type-display-small-weight: 400;
+  --ft-type-headline-large-size: 32px;    --ft-type-headline-large-line: 40px;    --ft-type-headline-large-tracking: 0;       --ft-type-headline-large-weight: 400;
+  --ft-type-headline-medium-size: 28px;   --ft-type-headline-medium-line: 36px;   --ft-type-headline-medium-tracking: 0;      --ft-type-headline-medium-weight: 400;
+  --ft-type-headline-small-size: 24px;    --ft-type-headline-small-line: 32px;    --ft-type-headline-small-tracking: 0;       --ft-type-headline-small-weight: 400;
+  --ft-type-title-large-size: 22px;       --ft-type-title-large-line: 28px;       --ft-type-title-large-tracking: 0;          --ft-type-title-large-weight: 500;
+  --ft-type-title-medium-size: 16px;      --ft-type-title-medium-line: 24px;      --ft-type-title-medium-tracking: 0.15px;    --ft-type-title-medium-weight: 500;
+  --ft-type-title-small-size: 14px;       --ft-type-title-small-line: 20px;       --ft-type-title-small-tracking: 0.1px;      --ft-type-title-small-weight: 500;
+  --ft-type-body-large-size: 16px;        --ft-type-body-large-line: 24px;        --ft-type-body-large-tracking: 0.5px;       --ft-type-body-large-weight: 400;
+  --ft-type-body-medium-size: 14px;       --ft-type-body-medium-line: 20px;       --ft-type-body-medium-tracking: 0.25px;     --ft-type-body-medium-weight: 400;
+  --ft-type-body-small-size: 12px;        --ft-type-body-small-line: 16px;        --ft-type-body-small-tracking: 0.4px;       --ft-type-body-small-weight: 400;
+  --ft-type-label-large-size: 14px;       --ft-type-label-large-line: 20px;       --ft-type-label-large-tracking: 0.1px;      --ft-type-label-large-weight: 500;
+  --ft-type-label-medium-size: 12px;      --ft-type-label-medium-line: 16px;      --ft-type-label-medium-tracking: 0.5px;     --ft-type-label-medium-weight: 500;
+  --ft-type-label-small-size: 11px;       --ft-type-label-small-line: 16px;       --ft-type-label-small-tracking: 0.5px;      --ft-type-label-small-weight: 500;
+}
+
+/* Dark-mode overrides — only color roles flip; shape/space/motion/type
+ * stay constant across light/dark per MD3 spec. */
+.dark {
+  --ft-color-primary: #6FCFC2;
+  --ft-color-on-primary: #003731;
+  --ft-color-primary-container: #005049;
+  --ft-color-on-primary-container: #A6E9DC;
+  --ft-color-secondary: #B1CCC8;
+  --ft-color-on-secondary: #1C3532;
+  --ft-color-secondary-container: #324B48;
+  --ft-color-on-secondary-container: #CCE8E4;
+  --ft-color-tertiary: #A8CAE3;
+  --ft-color-on-tertiary: #103248;
+  --ft-color-tertiary-container: #2A495F;
+  --ft-color-on-tertiary-container: #C9E6FF;
+  --ft-color-error: #FFB4AB;
+  --ft-color-on-error: #690005;
+  --ft-color-error-container: #93000A;
+  --ft-color-on-error-container: #FFDAD6;
+  --ft-color-surface: #101413;
+  --ft-color-on-surface: #E0E3E1;
+  --ft-color-surface-container-lowest: #0B0F0E;
+  --ft-color-surface-container-low: #191D1C;
+  --ft-color-surface-container: #1D2120;
+  --ft-color-surface-container-high: #272B2A;
+  --ft-color-surface-container-highest: #323635;
+  --ft-color-on-surface-variant: #BFC9C7;
+  --ft-color-outline: #899391;
+  --ft-color-outline-variant: #3F4947;
+  --ft-color-inverse-surface: #E0E3E1;
+  --ft-color-on-inverse-surface: #2D3231;
+  --ft-color-inverse-primary: #006B61;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

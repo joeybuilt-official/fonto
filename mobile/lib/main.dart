@@ -27,6 +27,7 @@ import "src/screens/asset_detail_screen.dart";
 import "src/screens/login_screen.dart";
 import "src/screens/main_shell.dart";
 import "src/state/auth_store.dart";
+import "src/theme/app_theme.dart";
 import "src/state/drive_download_queue.dart";
 import "src/state/push_notifications.dart";
 import "src/state/settings_store.dart";
@@ -221,13 +222,11 @@ class _FontoAppState extends State<FontoApp> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6750A4)),
-      useMaterial3: true,
-    );
     return MaterialApp(
       title: "Fonto",
-      theme: theme,
+      theme: FontoTheme.light(),
+      darkTheme: FontoTheme.dark(),
+      themeMode: ThemeMode.system,
       navigatorKey: _navigatorKey,
       home: _auth.isConfigured
           ? MainShell(auth: _auth, onSignOut: _handleSignOut)
