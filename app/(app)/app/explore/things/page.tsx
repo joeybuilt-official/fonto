@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Sparkles, ArrowLeft, Loader2, Tag as TagIcon } from "lucide-react";
+import { Card } from "@/components/ui/card";
 
 interface TopTag {
   id: string;
@@ -39,7 +40,7 @@ function ThingTile({ tag }: { tag: TopTag }) {
   return (
     <Link
       href={`/app/search?tagId=${tag.id}`}
-      className="group relative aspect-square overflow-hidden rounded-xl border border-border bg-muted/30"
+      className="group relative aspect-square overflow-hidden rounded-[var(--ft-shape-large)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container)]"
     >
       {thumb ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -50,12 +51,12 @@ function ThingTile({ tag }: { tag: TopTag }) {
         />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center">
-          <TagIcon className="h-8 w-8 text-muted-foreground/40" />
+          <TagIcon className="h-8 w-8 text-[var(--ft-color-on-surface-variant)] opacity-40" />
         </div>
       )}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2">
-        <p className="truncate text-sm font-medium capitalize text-white">{tag.name}</p>
-        <p className="text-[11px] text-white/70">{tag.count}</p>
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[var(--ft-color-scrim)]/70 to-transparent p-2">
+        <p className="truncate text-sm font-medium capitalize text-[var(--ft-color-on-inverse-surface)]">{tag.name}</p>
+        <p className="text-[11px] text-[var(--ft-color-on-inverse-surface)]/70">{tag.count}</p>
       </div>
     </Link>
   );
@@ -82,7 +83,7 @@ export default function ExploreThingsPage() {
       </Link>
 
       <div className="flex items-start gap-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]">
           <Sparkles className="h-6 w-6" />
         </div>
         <div className="space-y-1">
@@ -99,12 +100,12 @@ export default function ExploreThingsPage() {
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : tags.length === 0 ? (
-        <div className="rounded-xl border border-border bg-card p-6 text-center">
-          <p className="text-sm text-muted-foreground">
+        <Card variant="outlined" className="p-6 text-center">
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">
             No labels yet. As your photos are processed, detected objects and
             scenes show up here automatically.
           </p>
-        </div>
+        </Card>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
           {tags.map((t) => (
