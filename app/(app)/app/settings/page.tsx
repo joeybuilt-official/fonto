@@ -141,7 +141,7 @@ export default function SettingsPage() {
             className={cn(
               "px-[var(--ft-space-4)] py-[var(--ft-space-2)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] tracking-[var(--ft-type-label-large-tracking)] font-medium border-b-2 -mb-px transition-colors",
               activeTab === t.id
-                ? "border-[var(--ft-color-primary)] text-[var(--ft-color-on-surface)]"
+                ? "border-[var(--ft-color-primary-text)] text-[var(--ft-color-on-surface)]"
                 : "border-transparent text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
             )}
           >
@@ -308,7 +308,7 @@ export default function SettingsPage() {
           {googleStatus === "active" && (
             <Link
               href="/app/imports"
-              className="block text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] tracking-[var(--ft-type-label-large-tracking)] font-medium text-[var(--ft-color-primary)] hover:underline"
+              className="block text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] tracking-[var(--ft-type-label-large-tracking)] font-medium text-[var(--ft-color-primary-text)] hover:underline"
             >
               Go to Imports →
             </Link>

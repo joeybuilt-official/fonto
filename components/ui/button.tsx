@@ -43,10 +43,10 @@ const buttonVariants = cva(
         tonal:
           "rounded-[var(--ft-shape-full)] bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)] hover:brightness-95 active:brightness-90",
         outlined:
-          "rounded-[var(--ft-shape-full)] border-[var(--ft-color-outline)] bg-transparent text-[var(--ft-color-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]",
-        text: "rounded-[var(--ft-shape-full)] bg-transparent text-[var(--ft-color-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]",
+          "rounded-[var(--ft-shape-full)] border-[var(--ft-color-outline)] bg-transparent text-[var(--ft-color-primary-text)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]",
+        text: "rounded-[var(--ft-shape-full)] bg-transparent text-[var(--ft-color-primary-text)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]",
         elevated:
-          "rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-low)] text-[var(--ft-color-primary)] shadow-[var(--ft-elev-1)] hover:shadow-[var(--ft-elev-2)]",
+          "rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-low)] text-[var(--ft-color-primary-text)] shadow-[var(--ft-elev-1)] hover:shadow-[var(--ft-elev-2)]",
       },
       size: {
         default:

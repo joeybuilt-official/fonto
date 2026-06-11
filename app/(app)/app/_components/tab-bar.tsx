@@ -76,7 +76,7 @@ export function TabBar({
             className={cn(
               "-mb-px flex items-center gap-[var(--ft-space-2)] whitespace-nowrap border-b-2 px-[var(--ft-space-3)] py-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium tracking-[var(--ft-type-label-large-tracking)] transition-colors",
               isActive
-                ? "border-[var(--ft-color-primary)] text-[var(--ft-color-primary)]"
+                ? "border-[var(--ft-color-primary-text)] text-[var(--ft-color-primary-text)]"
                 : "border-transparent text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]",
             )}
           >
