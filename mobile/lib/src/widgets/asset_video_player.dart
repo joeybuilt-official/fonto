@@ -144,7 +144,11 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
             Text(
               _error!,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white70),
+              // Video chrome is always on a black backdrop — text needs to be
+              // white regardless of theme.
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.white70,
+                  ),
             ),
           ],
         ),
@@ -153,14 +157,16 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
 
     if (_transcoding) {
       return _centered(
-        const Column(
+        Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
             Text(
               "Preparing video…",
-              style: TextStyle(color: Colors.white70),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.white70,
+                  ),
             ),
           ],
         ),
