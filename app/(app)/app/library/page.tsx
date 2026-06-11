@@ -31,6 +31,7 @@ import { AssetGrid } from "../_components/asset-grid";
 import { VirtualizedTimeline, type TimelineMonth } from "../_components/virtualized-timeline";
 import { useToolbarState, type Lifecycle } from "@/lib/hooks/use-toolbar-state";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Chip } from "@/components/ui/chip";
 import { ProcessingNotice } from "../_components/processing-notice";
 
 interface LifecycleOption {
@@ -1009,20 +1010,17 @@ function LensSelector({
         const isActive = active === lens.value;
         const Icon = lens.icon;
         return (
-          <button
+          <Chip
             key={lens.value}
+            variant="filter"
+            selected={isActive}
             role="tab"
             aria-selected={isActive}
             onClick={() => onChange(lens.value)}
-            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
-              isActive
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
-            }`}
           >
             <Icon className="h-4 w-4" />
             {lens.label}
-          </button>
+          </Chip>
         );
       })}
     </div>
