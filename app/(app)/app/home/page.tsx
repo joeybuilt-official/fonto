@@ -77,7 +77,7 @@ function StatTile({
     <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-4 hover:bg-muted/30 transition-colors">
       <div
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${
-          accent ?? "bg-primary/10 text-primary"
+          accent ?? "bg-primary/10 text-primary-text"
         }`}
       >
         <Icon className="h-5 w-5" />

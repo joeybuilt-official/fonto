@@ -112,7 +112,7 @@ export function AssetAskPanel({
       >
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" />
+            <Sparkles className="h-4 w-4 text-primary-text" />
             <div className="flex flex-col">
               <p className="text-sm font-semibold text-foreground">Ask</p>
               <p className="text-[11px] text-muted-foreground">

@@ -683,7 +683,7 @@ function BatchActionBar({
       </span>
       <button
         onClick={onAddToCollection}
-        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-primary/10 hover:text-primary-text"
       >
         <FolderPlus className="h-3.5 w-3.5" />
         Add to collection
@@ -1201,7 +1201,7 @@ function LibraryActivePills({
         <button
           key={p.key}
           onClick={p.clear}
-          className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-primary hover:bg-primary/20 transition-colors"
+          className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-primary-text hover:bg-primary/20 transition-colors"
         >
           <span>{p.label}</span>
           <span aria-hidden className="text-base leading-none">×</span>

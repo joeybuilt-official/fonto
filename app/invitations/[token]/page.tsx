@@ -81,7 +81,7 @@ export default async function InvitationPage({
           </p>
           <Link
             href="/"
-            className="inline-block text-sm font-medium text-primary hover:underline"
+            className="inline-block text-sm font-medium text-primary-text hover:underline"
           >
             Back to Fonto
           </Link>
@@ -123,7 +123,7 @@ export default async function InvitationPage({
           <p className="text-sm text-muted-foreground">{message}</p>
           <Link
             href="/"
-            className="inline-block text-sm font-medium text-primary hover:underline"
+            className="inline-block text-sm font-medium text-primary-text hover:underline"
           >
             Back to Fonto
           </Link>
@@ -146,7 +146,7 @@ export default async function InvitationPage({
         <div className="space-y-2 text-center">
           <h1 className="text-lg font-semibold text-foreground">
             {inviter} invited you to{" "}
-            <span className="text-primary">{inv.workspace.name}</span>
+            <span className="text-primary-text">{inv.workspace.name}</span>
           </h1>
           <p className="text-sm text-muted-foreground">
             as <span className="font-medium">{inv.role}</span>. The invitation

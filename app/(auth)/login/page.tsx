@@ -142,7 +142,7 @@ function LoginPageInner() {
               setIsSignUp(!isSignUp);
               setError("");
             }}
-            className="font-medium text-primary hover:underline"
+            className="font-medium text-primary-text hover:underline"
           >
             {isSignUp ? "Sign in" : "Sign up"}
           </button>

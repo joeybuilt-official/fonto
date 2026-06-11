@@ -108,12 +108,12 @@ export function MemoryCard() {
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-primary" />
+          <Sparkles className="h-4 w-4 text-primary-text" />
           <h2 className="text-sm font-semibold text-foreground">On this day</h2>
         </div>
         <Link
           href="/app/memories"
-          className="text-xs text-primary hover:underline"
+          className="text-xs text-primary-text hover:underline"
         >
           View all
         </Link>

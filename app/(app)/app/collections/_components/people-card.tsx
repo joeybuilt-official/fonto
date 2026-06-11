@@ -82,7 +82,7 @@ export function PeopleCard() {
         })}
       </div>
       <div className="px-3 pb-3 sm:flex-1 sm:p-0">
-        <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
+        <p className="text-sm font-semibold text-foreground group-hover:text-primary-text transition-colors">
           People &amp; Pets
         </p>
         {total != null && (

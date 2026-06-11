@@ -247,7 +247,7 @@ export function AlbumsTab() {
                   </div>
                 )}
                 <div className="p-3">
-                  <p className="truncate text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
+                  <p className="truncate text-sm font-semibold text-foreground group-hover:text-primary-text transition-colors">
                     {col.name}
                   </p>
                   {col.description && (

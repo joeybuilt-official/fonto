@@ -95,7 +95,7 @@ function PlaceCard({ place }: { place: PlaceWithUrls }) {
         })}
       </div>
       <div className="p-2.5">
-        <p className="truncate text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
+        <p className="truncate text-sm font-semibold text-foreground group-hover:text-primary-text transition-colors">
           {city?.trim() ?? place.placeName}
         </p>
         <p className="mt-0.5 text-xs text-muted-foreground">

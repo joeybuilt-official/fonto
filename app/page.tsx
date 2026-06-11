@@ -128,7 +128,7 @@ export default function MarketingPage() {
           <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
             {features.map((f) => (
               <div key={f.title} className="space-y-2">
-                <f.icon className="h-5 w-5 text-primary" />
+                <f.icon className="h-5 w-5 text-primary-text" />
                 <h3 className="text-sm font-semibold text-foreground">
                   {f.title}
                 </h3>
@@ -150,7 +150,7 @@ export default function MarketingPage() {
           <div className="mt-10 grid gap-8 sm:grid-cols-3">
             {trustPoints.map((t) => (
               <div key={t.title} className="space-y-2">
-                <t.icon className="h-5 w-5 text-primary" />
+                <t.icon className="h-5 w-5 text-primary-text" />
                 <h3 className="text-sm font-semibold text-foreground">
                   {t.title}
                 </h3>

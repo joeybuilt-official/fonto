@@ -145,13 +145,13 @@ function ExploreTile({ tile }: { tile: TileDef }) {
       </div>
 
       <div className="space-y-1">
-        <p className="text-base font-semibold text-foreground group-hover:text-primary transition-colors">
+        <p className="text-base font-semibold text-foreground group-hover:text-primary-text transition-colors">
           {tile.label}
         </p>
         <p className="text-sm text-muted-foreground">{tile.subtitle}</p>
       </div>
 
-      <div className="mt-1 flex items-center gap-1 text-xs font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="mt-1 flex items-center gap-1 text-xs font-medium text-primary-text opacity-0 group-hover:opacity-100 transition-opacity">
         Open
         <ArrowRight className="h-3 w-3" />
       </div>

@@ -157,7 +157,7 @@ function FolderCard({
       }}
     >
       <Link href={folderHref(folder.path)} className="flex flex-1 items-center gap-3 min-w-0">
-        <FolderIcon className="h-8 w-8 shrink-0 text-primary" />
+        <FolderIcon className="h-8 w-8 shrink-0 text-primary-text" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-foreground">
             {folder.name}

@@ -172,7 +172,7 @@ function ManageGroupsDialog({
                         }}
                         autoFocus
                       />
-                      <button type="button" disabled={saving || !editName.trim()} onClick={() => void saveEdit(g.id)} className="text-xs text-primary hover:underline disabled:opacity-50">Save</button>
+                      <button type="button" disabled={saving || !editName.trim()} onClick={() => void saveEdit(g.id)} className="text-xs text-primary-text hover:underline disabled:opacity-50">Save</button>
                       <button type="button" onClick={() => setEditing(null)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
                     </>
                   ) : (

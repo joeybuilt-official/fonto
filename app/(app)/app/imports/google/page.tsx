@@ -157,7 +157,7 @@ function GoogleImport() {
             </p>
             <Link
               href="/app/settings"
-              className="inline-block text-xs font-medium text-primary hover:underline"
+              className="inline-block text-xs font-medium text-primary-text hover:underline"
             >
               Go to Settings → Integrations
             </Link>

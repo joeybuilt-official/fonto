@@ -249,7 +249,7 @@ export default function SettingsPage() {
           {googleStatus === "active" && (
             <Link
               href="/app/imports"
-              className="block text-xs font-medium text-primary hover:underline"
+              className="block text-xs font-medium text-primary-text hover:underline"
             >
               Go to Imports →
             </Link>

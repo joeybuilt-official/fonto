@@ -122,7 +122,7 @@ export function UiV2ChangelogDialog() {
       <div className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-border bg-card shadow-xl">
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-primary">
+            <p className="text-xs font-medium uppercase tracking-wide text-primary-text">
               What&apos;s new
             </p>
             <h2
@@ -153,7 +153,7 @@ export function UiV2ChangelogDialog() {
                 key={m.destination}
                 className="flex items-start gap-3 px-5 py-4"
               >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary-text">
                   <Icon className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -167,7 +167,7 @@ export function UiV2ChangelogDialog() {
                 <a
                   href={m.destinationHref}
                   onClick={dismiss}
-                  className="flex shrink-0 items-center gap-1 rounded-md border border-primary/30 bg-background px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 transition-colors"
+                  className="flex shrink-0 items-center gap-1 rounded-md border border-primary/30 bg-background px-2 py-1 text-xs font-medium text-primary-text hover:bg-primary/10 transition-colors"
                 >
                   Open
                   <ArrowRight className="h-3 w-3" />

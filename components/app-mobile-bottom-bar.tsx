@@ -101,7 +101,7 @@ export function AppMobileBottomBar() {
             <Icon
               className={cn(
                 "h-5 w-5",
-                isActive ? "text-primary" : "text-foreground/70 group-hover:text-foreground",
+                isActive ? "text-primary-text" : "text-foreground/70 group-hover:text-foreground",
               )}
             />
             <span className="leading-tight">{t.label}</span>

@@ -292,7 +292,7 @@ export default function CollectionDetailPage({
     return (
       <div className="py-8 text-center">
         <p className="text-sm text-muted-foreground">Collection not found.</p>
-        <Link href="/app/collections" className="mt-2 inline-block text-sm text-primary hover:underline">
+        <Link href="/app/collections" className="mt-2 inline-block text-sm text-primary-text hover:underline">
           Back to Collections
         </Link>
       </div>
@@ -315,7 +315,7 @@ export default function CollectionDetailPage({
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-            <FolderOpen className="h-5 w-5 text-primary" />
+            <FolderOpen className="h-5 w-5 text-primary-text" />
           </div>
           <div>
             <h1 className="text-xl font-semibold text-foreground">{collection.name}</h1>
@@ -341,7 +341,7 @@ export default function CollectionDetailPage({
           <p className="text-sm text-muted-foreground">No photos in this collection yet.</p>
           <button
             onClick={() => setShowAddModal(true)}
-            className="text-sm text-primary hover:underline"
+            className="text-sm text-primary-text hover:underline"
           >
             Add photos
           </button>

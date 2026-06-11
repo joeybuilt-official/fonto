@@ -28,7 +28,7 @@ export default function ApiReferencePage() {
         <p className="font-medium text-foreground">Loading the API reference…</p>
         <p className="mt-2">
           If it doesn&apos;t appear, view the raw spec:{" "}
-          <a href="/api/v1/openapi.json" className="text-primary hover:underline">
+          <a href="/api/v1/openapi.json" className="text-primary-text hover:underline">
             /api/v1/openapi.json
           </a>{" "}
           (OpenAPI 3.1 JSON).

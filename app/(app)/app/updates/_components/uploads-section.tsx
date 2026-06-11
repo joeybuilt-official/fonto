@@ -318,7 +318,7 @@ export function UploadsSection() {
             : "border-border hover:border-primary/50 hover:bg-muted/40"
         }`}
       >
-        <Upload className={`h-8 w-8 mb-3 ${dragOver ? "text-primary" : "text-muted-foreground"}`} />
+        <Upload className={`h-8 w-8 mb-3 ${dragOver ? "text-primary-text" : "text-muted-foreground"}`} />
         <p className="text-sm font-medium text-foreground">
           {activeUploads.length > 0
             ? `Uploading ${activeUploads.length} file${activeUploads.length > 1 ? "s" : ""}…`
@@ -364,7 +364,7 @@ export function UploadsSection() {
         <div>
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Recent Uploads</p>
-            <Link href="/app/library" className="text-xs text-primary hover:underline">
+            <Link href="/app/library" className="text-xs text-primary-text hover:underline">
               View all
             </Link>
           </div>
@@ -393,7 +393,7 @@ export function UploadsSection() {
               { step: "3", title: "Find anything", body: "Search by name, description, or extracted text." },
             ].map((s) => (
               <div key={s.step} className="rounded-lg border border-border bg-card p-4">
-                <div className="text-xs font-bold text-primary mb-1">Step {s.step}</div>
+                <div className="text-xs font-bold text-primary-text mb-1">Step {s.step}</div>
                 <p className="text-sm font-medium text-foreground">{s.title}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">{s.body}</p>
               </div>

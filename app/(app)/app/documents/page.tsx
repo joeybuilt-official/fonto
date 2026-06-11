@@ -125,7 +125,7 @@ function TypeRail({
         className={cn(
           "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors",
           selected === null
-            ? "bg-primary/10 text-primary"
+            ? "bg-primary/10 text-primary-text"
             : "text-foreground hover:bg-muted"
         )}
       >
@@ -144,7 +144,7 @@ function TypeRail({
             className={cn(
               "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors",
               active
-                ? "bg-primary/10 text-primary"
+                ? "bg-primary/10 text-primary-text"
                 : `${SUBTYPE_COLORS[s]} hover:bg-muted`
             )}
           >
@@ -197,7 +197,7 @@ function DocRow({
         )}
       </div>
       {active && (
-        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-primary-text" />
       )}
     </button>
   );

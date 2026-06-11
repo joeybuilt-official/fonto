@@ -38,7 +38,7 @@ function statusBadgeClass(status: ImportJob["status"]): string {
     case "failed":
       return "text-destructive";
     case "running":
-      return "text-primary";
+      return "text-primary-text";
     default:
       return "text-muted-foreground";
   }

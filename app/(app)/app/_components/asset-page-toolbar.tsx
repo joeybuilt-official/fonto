@@ -198,7 +198,7 @@ export function AssetPageToolbar({
               }
               aria-label="Ask AI about this view"
             >
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <Sparkles className="h-3.5 w-3.5 text-primary-text" />
               <span>Ask</span>
             </Button>
           )}

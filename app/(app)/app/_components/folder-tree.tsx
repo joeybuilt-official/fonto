@@ -314,9 +314,9 @@ function TreeNodeRow({
           name={node.name}
           icon={
             isOpen ? (
-              <FolderOpen className="h-3.5 w-3.5 text-primary" />
+              <FolderOpen className="h-3.5 w-3.5 text-primary-text" />
             ) : (
-              <FolderIcon className="h-3.5 w-3.5 text-primary" />
+              <FolderIcon className="h-3.5 w-3.5 text-primary-text" />
             )
           }
           depth={0 /* indent handled by the wrapper above */}

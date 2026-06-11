@@ -247,7 +247,7 @@ function MetadataPanel({
                       <button
                         key={t.id}
                         onClick={() => { onAddTag(t.id); setAddingTag(false); setTagInput(""); }}
-                        className="rounded-full px-2 py-0.5 text-[10px] bg-muted text-foreground hover:bg-primary/10 hover:text-primary transition-colors"
+                        className="rounded-full px-2 py-0.5 text-[10px] bg-muted text-foreground hover:bg-primary/10 hover:text-primary-text transition-colors"
                       >
                         {t.name}
                       </button>

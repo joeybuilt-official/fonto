@@ -38,7 +38,7 @@ function BatchActionBar({
       </span>
       <button
         onClick={onAddToCollection}
-        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-primary/10 hover:text-primary transition-colors"
+        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-primary/10 hover:text-primary-text transition-colors"
       >
         <FolderPlus className="h-3.5 w-3.5" />
         Add to collection
