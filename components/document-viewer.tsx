@@ -145,7 +145,7 @@ export function DocumentViewer({ assetId, filename, mimeType, extractedText, onC
               <div className="flex flex-col items-center gap-[var(--ft-space-3)] text-[var(--ft-color-on-surface-variant)]">
                 <FileText className="h-16 w-16" />
                 <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)]">Preview not available for this file type.</p>
-                <Button asChild={false} variant="default" onClick={() => { window.open(signedUrl, "_blank"); }}>
+                <Button variant="default" onClick={() => { window.open(signedUrl, "_blank"); }}>
                   Download
                 </Button>
               </div>
