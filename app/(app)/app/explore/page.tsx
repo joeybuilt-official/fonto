@@ -23,12 +23,17 @@
 // endpoint provides one cheaply; either tile gracefully renders
 // without a count if the fetch fails. No N+1 — one fetch per tile,
 // fired in parallel on mount.
+//
+// MD3 migration (ADR 0009, Phase 2): tile cards adopt the MD3 Card
+// (outlined). Accent chips reuse tonal containers (tertiary/secondary
+// /primary) so we don't introduce new hex literals.
 
 "use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Users, Map as MapIcon, Sparkles, Compass, ArrowRight } from "lucide-react";
+import { Card } from "@/components/ui/card";
 
 interface TileDef {
   href: string;
@@ -83,7 +88,7 @@ const TILES: TileDef[] = [
     label: "People",
     subtitle: "Faces grouped into clusters across your library.",
     icon: Users,
-    accent: "bg-blue-500/10 text-blue-500",
+    accent: "bg-[var(--ft-color-tertiary-container)] text-[var(--ft-color-on-tertiary-container)]",
     countLoader: loadPersonsCount,
   },
   {
@@ -91,7 +96,7 @@ const TILES: TileDef[] = [
     label: "Places",
     subtitle: "Photos grouped by where they were taken.",
     icon: MapIcon,
-    accent: "bg-emerald-500/10 text-emerald-500",
+    accent: "bg-[var(--ft-color-success-container)] text-[var(--ft-color-on-success-container)]",
     countLoader: loadPlacesCount,
   },
   {
@@ -99,7 +104,7 @@ const TILES: TileDef[] = [
     label: "Things",
     subtitle: "Browse by what's in your photos — auto-detected objects & scenes.",
     icon: Sparkles,
-    accent: "bg-amber-500/10 text-amber-500",
+    accent: "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]",
     countLoader: loadThingsCount,
   },
 ];
@@ -121,40 +126,42 @@ function ExploreTile({ tile }: { tile: TileDef }) {
   }, [tile]);
 
   return (
-    <Link
-      href={tile.href}
-      className="group relative flex flex-col gap-3 rounded-xl border border-border bg-card p-5 hover:border-primary/40 hover:shadow-md transition-all"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${tile.accent}`}
-        >
-          <Icon className="h-5 w-5" />
-        </div>
-        {tile.placeholder ? (
-          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-500">
-            Coming soon
-          </span>
-        ) : (
-          count != null && (
-            <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
-              {count.toLocaleString()}
+    <Link href={tile.href} className="group block">
+      <Card
+        variant="outlined"
+        className="flex flex-col gap-3 p-5 transition-all hover:border-[var(--ft-color-primary)] hover:shadow-[var(--ft-elev-2)]"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--ft-shape-medium)] ${tile.accent}`}
+          >
+            <Icon className="h-5 w-5" />
+          </div>
+          {tile.placeholder ? (
+            <span className="rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-secondary-container)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--ft-color-on-secondary-container)]">
+              Coming soon
             </span>
-          )
-        )}
-      </div>
+          ) : (
+            count != null && (
+              <span className="rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface)] px-2 py-0.5 text-xs text-[var(--ft-color-on-surface-variant)]">
+                {count.toLocaleString()}
+              </span>
+            )
+          )}
+        </div>
 
-      <div className="space-y-1">
-        <p className="text-base font-semibold text-foreground group-hover:text-primary-text transition-colors">
-          {tile.label}
-        </p>
-        <p className="text-sm text-muted-foreground">{tile.subtitle}</p>
-      </div>
+        <div className="space-y-1">
+          <p className="text-base font-semibold text-[var(--ft-color-on-surface)] transition-colors group-hover:text-[var(--ft-color-primary)]">
+            {tile.label}
+          </p>
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">{tile.subtitle}</p>
+        </div>
 
-      <div className="mt-1 flex items-center gap-1 text-xs font-medium text-primary-text opacity-0 group-hover:opacity-100 transition-opacity">
-        Open
-        <ArrowRight className="h-3 w-3" />
-      </div>
+        <div className="mt-1 flex items-center gap-1 text-xs font-medium text-[var(--ft-color-primary)] opacity-0 transition-opacity group-hover:opacity-100">
+          Open
+          <ArrowRight className="h-3 w-3" />
+        </div>
+      </Card>
     </Link>
   );
 }
