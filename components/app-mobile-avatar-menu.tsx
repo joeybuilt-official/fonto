@@ -17,18 +17,26 @@
 //     `<button>` so Tab + Enter both work.
 //   - Closing on Escape is wired up.
 //
-// Click-outside closes the menu via a backdrop layer instead of a
-// document listener — simpler, and matches the modal idiom we already
-// use elsewhere (UiV2ChangelogDialog).
+// MD3 migration (ADR 0009, Phase 2 — app chrome): the menu now rides on
+// the shared `Popover` primitive (replaces the bespoke backdrop button
+// + absolutely-positioned div). Items use MD3 list-item geometry — 56 px
+// row, `label-large` typography, 8 % state-layer on hover/focus over
+// the on-surface foreground role.
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LogOut, Settings, User as UserIcon, Home } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { signOut } from "@/lib/auth/client";
 import type { User } from "@/lib/auth/types";
+import { cn } from "@/lib/utils";
 
 function initialsFor(email: string): string {
   const local = email.split("@")[0] ?? "";
@@ -38,100 +46,93 @@ function initialsFor(email: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
+// MD3 list-item: 56 px row, label-large type, 8 % state layer over the
+// foreground role on hover/focus. Shared across menuitem links + the
+// sign-out button so visual rhythm stays consistent.
+const menuItemBase =
+  "flex h-14 w-full items-center gap-[var(--ft-space-3)] px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium tracking-[var(--ft-type-label-large-tracking)] outline-none transition-colors";
+
 export function AppMobileAvatarMenu({ user }: { user: User }) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
-  const triggerRef = useRef<HTMLButtonElement>(null);
   // `user.email` is optional on the auth type — coerce to a stable
   // fallback so the label / initials never blank out.
   const email = user.email ?? "account";
 
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
-
   async function handleSignOut() {
+    setOpen(false);
     await signOut();
     router.push("/login");
   }
 
   return (
-    <div className="relative">
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`Account menu for ${email}`}
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-sidebar-accent text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-      >
-        {initialsFor(email)}
-      </button>
-
-      {open && (
-        <>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
           <button
             type="button"
-            aria-label="Close menu"
-            onClick={() => setOpen(false)}
-            className="fixed inset-0 z-40 cursor-default bg-transparent"
-          />
-          <div
-            role="menu"
-            aria-label="Account menu"
-            className="absolute right-0 top-11 z-50 w-56 rounded-lg border border-border bg-card shadow-lg"
+            aria-haspopup="menu"
+            aria-label={`Account menu for ${email}`}
+            className="flex h-9 w-9 items-center justify-center rounded-[var(--ft-shape-full)] bg-[var(--ft-color-secondary-container)] text-xs font-semibold text-[var(--ft-color-on-secondary-container)] transition-colors hover:brightness-95"
           >
-            <div className="border-b border-border px-3 py-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <UserIcon className="h-3.5 w-3.5" />
-                <span className="truncate">{email}</span>
-              </div>
-            </div>
+            {initialsFor(email)}
+          </button>
+        }
+      />
+      <PopoverContent
+        role="menu"
+        aria-label="Account menu"
+        align="end"
+        sideOffset={8}
+        className="w-64 gap-0 rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container)] p-0 text-[var(--ft-color-on-surface)] shadow-[var(--ft-elev-2)] ring-0"
+      >
+        <div className="flex items-center gap-[var(--ft-space-2)] border-b border-[var(--ft-color-outline-variant)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+          <UserIcon className="h-3.5 w-3.5" />
+          <span className="truncate">{email}</span>
+        </div>
 
-            <div className="py-1">
-              <Link
-                role="menuitem"
-                href="/app/home"
-                onClick={() => setOpen(false)}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                <Home className="h-4 w-4 text-muted-foreground" />
-                Home
-              </Link>
-              <Link
-                role="menuitem"
-                href="/app/settings"
-                onClick={() => setOpen(false)}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                <Settings className="h-4 w-4 text-muted-foreground" />
-                Settings
-              </Link>
-            </div>
+        <div className="py-[var(--ft-space-1)]">
+          <Link
+            role="menuitem"
+            href="/app/home"
+            onClick={() => setOpen(false)}
+            className={cn(
+              menuItemBase,
+              "text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] focus-visible:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_10%,transparent)]",
+            )}
+          >
+            <Home className="h-4 w-4 text-[var(--ft-color-on-surface-variant)]" />
+            Home
+          </Link>
+          <Link
+            role="menuitem"
+            href="/app/settings"
+            onClick={() => setOpen(false)}
+            className={cn(
+              menuItemBase,
+              "text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] focus-visible:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_10%,transparent)]",
+            )}
+          >
+            <Settings className="h-4 w-4 text-[var(--ft-color-on-surface-variant)]" />
+            Settings
+          </Link>
+        </div>
 
-            <div className="border-t border-border py-1">
-              <button
-                role="menuitem"
-                type="button"
-                onClick={handleSignOut}
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
-              >
-                <LogOut className="h-4 w-4" />
-                Sign out
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
+        <div className="border-t border-[var(--ft-color-outline-variant)] py-[var(--ft-space-1)]">
+          <button
+            role="menuitem"
+            type="button"
+            onClick={handleSignOut}
+            className={cn(
+              menuItemBase,
+              "text-[var(--ft-color-error)] hover:bg-[color-mix(in_srgb,var(--ft-color-error)_8%,transparent)] focus-visible:bg-[color-mix(in_srgb,var(--ft-color-error)_10%,transparent)]",
+            )}
+          >
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
