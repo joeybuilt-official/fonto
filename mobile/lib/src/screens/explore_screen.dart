@@ -289,11 +289,12 @@ class _GroupChip extends StatelessWidget {
               ),
             Text(
               label,
-              style: TextStyle(
-                color: selected ? Colors.white : null,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
+              // When selected, the chip is filled with the group's own colour
+              // and the label sits on top of it — keep white for max contrast
+              // on any group hue regardless of theme.
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: selected ? Colors.white : null,
+                  ),
             ),
           ],
         ),
@@ -336,12 +337,12 @@ class _PersonTile extends StatelessWidget {
                   inner = CachedNetworkImage(
                     imageUrl: faceCropUrl!,
                     fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(color: Colors.black12),
+                    placeholder: (ctx, _) => _imageSkeleton(ctx),
                     errorWidget: (_, __, ___) => const Icon(Icons.person),
                   );
                 } else if (url == null) {
-                  inner = Container(
-                    color: Colors.black12,
+                  inner = ColoredBox(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
                     child: const Icon(Icons.person, size: 36),
                   );
                 } else if (bbox != null) {
@@ -351,7 +352,7 @@ class _PersonTile extends StatelessWidget {
                   inner = CachedNetworkImage(
                     imageUrl: url!,
                     fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(color: Colors.black12),
+                    placeholder: (ctx, _) => _imageSkeleton(ctx),
                     errorWidget: (_, __, ___) => const Icon(Icons.person),
                   );
                 }
@@ -411,7 +412,7 @@ Widget _buildFaceZoom(String url, PersonBbox bbox, double d) {
         child: CachedNetworkImage(
           imageUrl: url,
           fit: BoxFit.cover,
-          placeholder: (_, __) => Container(color: Colors.black12),
+          placeholder: (ctx, _) => _imageSkeleton(ctx),
           errorWidget: (_, __, ___) => const Icon(Icons.person),
         ),
       ),
@@ -518,15 +519,14 @@ class _PlacesTabState extends State<_PlacesTab> {
                         width: 48,
                         height: 48,
                         child: cover == null
-                            ? Container(
-                                color: Colors.black12,
+                            ? ColoredBox(
+                                color: Theme.of(context).colorScheme.surfaceContainerHighest,
                                 child: const Icon(Icons.place_outlined),
                               )
                             : CachedNetworkImage(
                                 imageUrl: cover,
                                 fit: BoxFit.cover,
-                                placeholder: (_, __) =>
-                                    Container(color: Colors.black12),
+                                placeholder: (ctx, _) => _imageSkeleton(ctx),
                                 errorWidget: (_, __, ___) =>
                                     const Icon(Icons.broken_image),
                               ),
@@ -592,6 +592,7 @@ class _PlacesMap extends StatelessWidget {
                 alignment: Alignment.topCenter,
                 child: GestureDetector(
                   onTap: () => onTap(p),
+                  // TODO: tokenise once a map-pin / category palette exists.
                   child: const Icon(Icons.location_pin,
                       color: Colors.red, size: 36),
                 ),
@@ -713,11 +714,11 @@ class _PlaceThumb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final inner = url == null
-        ? Container(color: Colors.black12)
+        ? _imageSkeleton(context)
         : CachedNetworkImage(
             imageUrl: url!,
             fit: BoxFit.cover,
-            placeholder: (_, __) => Container(color: Colors.black12),
+            placeholder: (ctx, _) => _imageSkeleton(ctx),
             errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
           );
     return GestureDetector(onTap: onTap, child: inner);
@@ -823,6 +824,9 @@ class _ThingTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final placeholderColor = theme.colorScheme.surfaceContainerHighest;
+    final scrim = theme.colorScheme.scrim;
     return GestureDetector(
       onTap: onTap,
       child: ClipRRect(
@@ -834,22 +838,29 @@ class _ThingTile extends StatelessWidget {
               CachedNetworkImage(
                 imageUrl: url!,
                 fit: BoxFit.cover,
-                placeholder: (_, __) => Container(color: Colors.black12),
-                errorWidget: (_, __, ___) => Container(color: Colors.black12),
+                placeholder: (_, __) => Container(color: placeholderColor),
+                errorWidget: (_, __, ___) => Container(color: placeholderColor),
               )
             else
-              Container(color: Colors.black12, child: const Icon(Icons.label_outline)),
+              Container(
+                color: placeholderColor,
+                child: const Icon(Icons.label_outline),
+              ),
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
               child: Container(
                 padding: const EdgeInsets.fromLTRB(8, 12, 8, 6),
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
+                  // Image-scrim gradient — must read dark regardless of theme.
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black87],
+                    colors: [
+                      Colors.transparent,
+                      scrim.withValues(alpha: 0.85),
+                    ],
                   ),
                 ),
                 child: Column(
@@ -860,15 +871,16 @@ class _ThingTile extends StatelessWidget {
                       tag.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: theme.textTheme.titleSmall?.copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
-                        fontSize: 13,
                       ),
                     ),
                     Text(
                       "${tag.count}",
-                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: Colors.white70,
+                      ),
                     ),
                   ],
                 ),
@@ -964,13 +976,16 @@ class _TagAssetsScreenState extends State<_TagAssetsScreen> {
               ),
             ),
             child: _thumbs[_assets[i].id] == null
-                ? Container(color: Colors.black12)
+                ? _imageSkeleton(context)
                 : CachedNetworkImage(
                     imageUrl: _thumbs[_assets[i].id]!,
                     fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(color: Colors.black12),
-                    errorWidget: (_, __, ___) =>
-                        const ColoredBox(color: Colors.black12, child: Icon(Icons.broken_image)),
+                    placeholder: (ctx, _) => _imageSkeleton(ctx),
+                    errorWidget: (ctx, _, __) => ColoredBox(
+                      color:
+                          Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                      child: const Icon(Icons.broken_image),
+                    ),
                   ),
           ),
         ),
@@ -1349,10 +1364,10 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                       side: BorderSide(
                         color: active ? color : Theme.of(context).dividerColor,
                       ),
-                      labelStyle: TextStyle(
-                        color: active ? color : null,
-                        fontSize: 12,
-                      ),
+                      labelStyle: Theme.of(context)
+                          .textTheme
+                          .labelMedium
+                          ?.copyWith(color: active ? color : null),
                       padding: const EdgeInsets.symmetric(horizontal: 4),
                     );
                   }).toList(),
@@ -1394,14 +1409,15 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
               ),
             ),
             child: _thumbs[_assets[i].id] == null
-                ? Container(color: Colors.black12)
+                ? _imageSkeleton(context)
                 : CachedNetworkImage(
                     imageUrl: _thumbs[_assets[i].id]!,
                     fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(color: Colors.black12),
-                    errorWidget: (_, __, ___) => const ColoredBox(
-                      color: Colors.black12,
-                      child: Icon(Icons.broken_image),
+                    placeholder: (ctx, _) => _imageSkeleton(ctx),
+                    errorWidget: (ctx, _, __) => ColoredBox(
+                      color:
+                          Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                      child: const Icon(Icons.broken_image),
                     ),
                   ),
           ),
@@ -1439,11 +1455,15 @@ class _LikelihoodBadge extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-          color: color.shade800,
-        ),
+        // `color` is a MaterialColor band — kept intentionally as a
+        // traffic-light cue (green/amber/blue/grey) outside the MD3
+        // ColorScheme. The text uses the darkest band for AA contrast
+        // against the 15%-tinted background.
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: color.shade800,
+            ),
       ),
     );
   }
@@ -1489,13 +1509,13 @@ class _MergePickerState extends State<_MergePicker> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
                   "Merge into…",
-                  style: TextStyle(fontWeight: FontWeight.w600),
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
             ),
@@ -1521,26 +1541,36 @@ class _MergePickerState extends State<_MergePicker> {
                             ? "No named people to merge into yet."
                             : "No matches for \"$_query\".",
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.grey),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
                       ),
                     )
                   : ListView(
                       shrinkWrap: true,
                       children: [
                         if (cand.isNotEmpty) ...[
-                          const Padding(
-                            padding: EdgeInsets.fromLTRB(16, 0, 16, 6),
+                          Padding(
+                            padding:
+                                const EdgeInsets.fromLTRB(16, 0, 16, 6),
                             child: Text(
                               "LIKELY MATCHES",
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey,
-                              ),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                             ),
                           ),
                           for (final c in cand)
                             ListTile(
+                              // "Likely match" sparkle — amber is the
+                              // intentional "this is the AI suggesting"
+                              // signal across the app, kept as-is.
                               leading: const Icon(
                                 Icons.auto_awesome,
                                 color: Colors.amber,
@@ -1557,15 +1587,20 @@ class _MergePickerState extends State<_MergePicker> {
                           if (rest.isNotEmpty) const Divider(),
                         ],
                         if (rest.isNotEmpty)
-                          const Padding(
-                            padding: EdgeInsets.fromLTRB(16, 6, 16, 6),
+                          Padding(
+                            padding:
+                                const EdgeInsets.fromLTRB(16, 6, 16, 6),
                             child: Text(
                               "ALL PEOPLE",
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey,
-                              ),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                             ),
                           ),
                         for (final p in rest)
@@ -1584,3 +1619,9 @@ class _MergePickerState extends State<_MergePicker> {
     );
   }
 }
+
+/// Themed placeholder for image loading / errors — picks up the MD3 surface
+/// scale so dark mode renders a sensible neutral instead of a hard black tint.
+Widget _imageSkeleton(BuildContext context) => Container(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    );

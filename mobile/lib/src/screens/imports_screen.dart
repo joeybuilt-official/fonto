@@ -269,23 +269,29 @@ class _ImportsScreenState extends State<ImportsScreen> {
               children: [
                 const Icon(Icons.photo_library_outlined),
                 const SizedBox(width: 12),
-                const Expanded(
+                Expanded(
                   child: Text(
                     "Connect Google Photos",
-                    style: TextStyle(fontWeight: FontWeight.w600),
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
                 if (_googleConnected)
-                  const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                  Icon(
+                    Icons.check_circle,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 20,
+                  ),
               ],
             ),
             const SizedBox(height: 6),
-            Text(subtitle, style: const TextStyle(fontSize: 13)),
+            Text(subtitle, style: Theme.of(context).textTheme.bodyMedium),
             if (_connectError != null) ...[
               const SizedBox(height: 8),
               Text(
                 _connectError!,
-                style: const TextStyle(color: Colors.red, fontSize: 12),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
               ),
             ],
             const SizedBox(height: 12),
@@ -321,15 +327,15 @@ class _ImportsScreenState extends State<ImportsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               "Imports",
-              style: TextStyle(fontWeight: FontWeight.w600),
+              style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 12),
             if (_visibleJobs.isEmpty)
-              const Text(
+              Text(
                 "No imports yet.",
-                style: TextStyle(fontSize: 13),
+                style: Theme.of(context).textTheme.bodyMedium,
               )
             else
               ..._visibleJobs.map(_buildJobRow),
@@ -340,6 +346,7 @@ class _ImportsScreenState extends State<ImportsScreen> {
   }
 
   Widget _buildJobRow(ImportJob job) {
+    final theme = Theme.of(context);
     final fraction = job.fraction;
     final processedLabel = job.itemsTotal > 0
         ? "${job.itemsProcessed} / ${job.itemsTotal} processed"
@@ -354,15 +361,13 @@ class _ImportsScreenState extends State<ImportsScreen> {
               Expanded(
                 child: Text(
                   job.providerLabel,
-                  style: const TextStyle(fontWeight: FontWeight.w500),
+                  style: theme.textTheme.titleSmall,
                 ),
               ),
               Text(
                 job.status,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: _statusColor(job.status),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: _statusColor(context, job.status),
                 ),
               ),
             ],
@@ -373,7 +378,7 @@ class _ImportsScreenState extends State<ImportsScreen> {
             child: LinearProgressIndicator(
               value: job.status == "completed" ? 1.0 : fraction,
               minHeight: 6,
-              color: job.status == "failed" ? Colors.red : null,
+              color: job.status == "failed" ? theme.colorScheme.error : null,
             ),
           ),
           const SizedBox(height: 4),
@@ -383,13 +388,15 @@ class _ImportsScreenState extends State<ImportsScreen> {
               if (job.itemsDeduped > 0) "${job.itemsDeduped} deduped",
               if (job.itemsFailed > 0) "${job.itemsFailed} failed",
             ].join("  •  "),
-            style: const TextStyle(fontSize: 12),
+            style: theme.textTheme.bodySmall,
           ),
           if (job.status == "failed" && job.error != null) ...[
             const SizedBox(height: 4),
             Text(
               job.error!,
-              style: const TextStyle(fontSize: 12, color: Colors.red),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
             ),
           ],
         ],
@@ -397,12 +404,18 @@ class _ImportsScreenState extends State<ImportsScreen> {
     );
   }
 
-  Color? _statusColor(String status) {
+  /// `completed` (green) has no direct MD3 ColorScheme role — Material's
+  /// guidance is to use a custom success token, which we don't have yet.
+  /// `tertiary` is the closest non-error accent in the seeded palette so
+  /// "completed" reads positive against the rest of the surface. Failures
+  /// map to `error` so they share the destructive vocabulary.
+  Color? _statusColor(BuildContext ctx, String status) {
+    final scheme = Theme.of(ctx).colorScheme;
     switch (status) {
       case "completed":
-        return Colors.green;
+        return scheme.tertiary;
       case "failed":
-        return Colors.red;
+        return scheme.error;
       default:
         return null;
     }

@@ -424,6 +424,7 @@ class _StackTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final placeholderColor = theme.colorScheme.surfaceContainerHighest;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -431,12 +432,12 @@ class _StackTile extends StatelessWidget {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: url == null
-                ? Container(color: Colors.black12)
+                ? Container(color: placeholderColor)
                 : CachedNetworkImage(
                     imageUrl: url!,
                     fit: BoxFit.cover,
                     width: double.infinity,
-                    placeholder: (_, __) => Container(color: Colors.black12),
+                    placeholder: (_, __) => Container(color: placeholderColor),
                     errorWidget: (_, __, ___) =>
                         const Icon(Icons.broken_image),
                   ),
@@ -621,28 +622,33 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
             mainAxisSpacing: 4,
           ),
           itemCount: _assets.length,
-          itemBuilder: (context, i) => GestureDetector(
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => AssetDetailScreen(
-                  client: widget.client,
-                  assets: _assets,
-                  initialIndex: i,
+          itemBuilder: (context, i) {
+            final placeholderColor =
+                Theme.of(context).colorScheme.surfaceContainerHighest;
+            return GestureDetector(
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AssetDetailScreen(
+                    client: widget.client,
+                    assets: _assets,
+                    initialIndex: i,
+                  ),
                 ),
               ),
-            ),
-            child: _thumbs[_assets[i].id] == null
-                ? Container(color: Colors.black12)
-                : CachedNetworkImage(
-                    imageUrl: _thumbs[_assets[i].id]!,
-                    fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(color: Colors.black12),
-                    errorWidget: (_, __, ___) => const ColoredBox(
-                      color: Colors.black12,
-                      child: Icon(Icons.broken_image),
+              child: _thumbs[_assets[i].id] == null
+                  ? Container(color: placeholderColor)
+                  : CachedNetworkImage(
+                      imageUrl: _thumbs[_assets[i].id]!,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) =>
+                          Container(color: placeholderColor),
+                      errorWidget: (_, __, ___) => ColoredBox(
+                        color: placeholderColor,
+                        child: const Icon(Icons.broken_image),
+                      ),
                     ),
-                  ),
-          ),
+            );
+          },
         ),
       ),
     );
