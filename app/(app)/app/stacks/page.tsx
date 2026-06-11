@@ -13,7 +13,7 @@ import { DeprecationBanner } from "../_components/deprecation-banner";
 
 export default function StacksPage() {
   return (
-    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+    <Suspense fallback={<div className="text-sm text-[var(--ft-color-on-surface-variant)] py-4">Loading…</div>}>
       <DeprecationBanner
         label="Stacks"
         newHref="/app/collections?tab=stacks"
