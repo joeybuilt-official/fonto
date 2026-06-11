@@ -17,7 +17,10 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { tryEnqueueImport } from "@/lib/queue/queues";
-import { parseDriveFileId } from "@/lib/import/driveLink";
+import { classifyDriveInput } from "@/lib/import/driveLink";
+
+const TAKEOUT_DOWNLOAD_MESSAGE =
+  "That looks like a Takeout download link, which the server can't read (it's a temporary, signed link). In Google Takeout choose “Add to Drive” as the destination and paste the Drive share link, or download the .zip and use “Upload an archive” below.";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const user = await getAuthUser();
@@ -36,14 +39,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // Accept either a bare file ID or a pasted Google Drive link.
-  const driveFileId =
-    typeof body.driveFileId === "string" ? parseDriveFileId(body.driveFileId) : null;
-  if (!driveFileId) {
+  const classified =
+    typeof body.driveFileId === "string"
+      ? classifyDriveInput(body.driveFileId)
+      : ({ kind: "none" } as const);
+  if (classified.kind === "takeout-download") {
+    return NextResponse.json({ error: TAKEOUT_DOWNLOAD_MESSAGE }, { status: 400 });
+  }
+  if (classified.kind !== "id") {
     return NextResponse.json(
       { error: "A Google Drive link or file ID is required" },
       { status: 400 }
     );
   }
+  const driveFileId = classified.fileId;
 
   const requestedWorkspaceId =
     typeof body.workspaceId === "string" ? body.workspaceId : null;

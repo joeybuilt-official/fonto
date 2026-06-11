@@ -10,8 +10,11 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import { parseDriveFileId } from "@/lib/import/driveLink";
+import { classifyDriveInput } from "@/lib/import/driveLink";
 import { ImportsList } from "../_components/imports-list";
+
+const TAKEOUT_DOWNLOAD_HINT =
+  "That's a Takeout download link — the server can't read it. Re-export with “Add to Drive” and paste the Drive link, or download the .zip and upload it below.";
 
 interface Integration {
   provider: string;
@@ -50,11 +53,17 @@ function GoogleImport() {
       .catch(() => null);
   }, []);
 
-  const parsedId = parseDriveFileId(linkInput);
+  const classified = classifyDriveInput(linkInput);
+  const parsedId = classified.kind === "id" ? classified.fileId : null;
+  const isTakeoutDownload = classified.kind === "takeout-download";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (busy) return;
+    if (isTakeoutDownload) {
+      setMsg(TAKEOUT_DOWNLOAD_HINT);
+      return;
+    }
     if (!parsedId) {
       setMsg("That doesn't look like a Google Drive link or file ID. Paste the link to your Takeout archive in Drive.");
       return;
@@ -176,7 +185,9 @@ function GoogleImport() {
               />
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted-foreground">
-                  {linkInput.trim() && !parsedId
+                  {isTakeoutDownload
+                    ? TAKEOUT_DOWNLOAD_HINT
+                    : linkInput.trim() && !parsedId
                     ? "Couldn't find a Drive file ID in that text."
                     : parsedId
                       ? `Detected file ID: ${parsedId}`

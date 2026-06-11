@@ -117,9 +117,22 @@ export async function runImport(args: RunArgs): Promise<void> {
       }
       const meta = await getDriveFileMeta(args.driveFileId, accessToken);
       log.info({ driveFileName: meta.name, sizeBytes: meta.size }, "downloading Drive archive");
-      const dl = await downloadDriveFileToTemp(args.driveFileId, accessToken);
-      zipPath = dl.tmpPath;
-      tmpDirToClean = dl.tmpDir;
+      try {
+        const dl = await downloadDriveFileToTemp(args.driveFileId, accessToken);
+        zipPath = dl.tmpPath;
+        tmpDirToClean = dl.tmpDir;
+      } catch (err) {
+        const status = httpStatusOf(err);
+        const friendly =
+          status === 404
+            ? "Couldn't find that file in your Google Drive. If you pasted a Takeout “download link”, the server can't read it — in Google Takeout choose “Add to Drive” and paste the Drive link, or download the .zip and use “Upload an archive”."
+            : status === 403
+              ? "Google denied access to that Drive file. Make sure it lives in the Google account you connected to Fonto, then try again."
+              : `Couldn't download the archive from Google Drive (${err instanceof Error ? err.message : String(err)}).`;
+        await markFailed(args.importJobId, friendly, counters);
+        log.warn({ status }, "drive download failed");
+        return;
+      }
     }
 
     // Reject tarballs early (Phase 2 supports ZIP only).
@@ -287,6 +300,21 @@ const MEDIA_EXT_HINT = new Set<string>([
   "raw", "orf", "raf", "pef", "srw", "x3f", "mp4", "mov", "m4v", "3gp", "avi",
   "mkv", "webm", "mpg", "mpeg", "mts", "m2ts",
 ]);
+
+/** Pull an HTTP status off a googleapis/Gaxios error (it surfaces the code in
+ *  a few different shapes depending on stream vs. JSON path). */
+function httpStatusOf(err: unknown): number | undefined {
+  const e = err as {
+    code?: unknown;
+    status?: unknown;
+    response?: { status?: unknown };
+  };
+  for (const c of [e?.response?.status, e?.status, e?.code]) {
+    if (typeof c === "number") return c;
+    if (typeof c === "string" && /^\d+$/.test(c)) return Number(c);
+  }
+  return undefined;
+}
 
 /** Flush the running counters (and cursor) to the import_jobs row. */
 async function flush(importJobId: string, c: Counters): Promise<void> {
