@@ -6,6 +6,7 @@
 "use client";
 
 import { AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export function ListErrorState({
   message = "Couldn't load this. Check your connection and retry.",
@@ -15,15 +16,14 @@ export function ListErrorState({
   onRetry: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center gap-3 py-12 text-center">
-      <AlertCircle className="h-10 w-10 text-destructive/70" />
-      <p className="text-sm text-muted-foreground">{message}</p>
-      <button
-        onClick={onRetry}
-        className="rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent"
-      >
+    <div className="flex flex-col items-center gap-[var(--ft-space-3)] py-12 text-center">
+      <AlertCircle className="h-10 w-10 text-[var(--ft-color-error)]/70" />
+      <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+        {message}
+      </p>
+      <Button variant="outlined" size="sm" onClick={onRetry}>
         Retry
-      </button>
+      </Button>
     </div>
   );
 }
