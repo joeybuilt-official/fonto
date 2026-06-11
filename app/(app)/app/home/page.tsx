@@ -8,6 +8,13 @@
 // stays at /app/dashboard for now). This page is presentational over
 // /api/v1/stats and the existing MemoryCard component; it carries no
 // upload UI so the action bar stays uncluttered.
+//
+// MD3 migration (ADR 0009, Phase 2): tiles use the MD3 Card primitive
+// (outlined variant) and reach for the --ft-* surface roles. Accent
+// chips on stats remain hard-coded chart-style colors via `--ft-color-*`
+// containers where MD3 has a role; the Photos/Documents/Videos etc.
+// chips reuse tertiary/primary/secondary containers as a starting
+// hint set so we don't introduce new hex literals.
 
 "use client";
 
@@ -31,6 +38,7 @@ import {
   Video,
 } from "lucide-react";
 import { MemoryCard } from "../_components/memory-card";
+import { Card } from "@/components/ui/card";
 
 interface Stats {
   total: number;
@@ -74,21 +82,24 @@ function StatTile({
   accent?: string;
 }) {
   const inner = (
-    <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-4 hover:bg-muted/30 transition-colors">
+    <Card
+      variant="outlined"
+      className="flex flex-row items-start gap-3 p-4 transition-colors hover:bg-[var(--ft-color-surface-container-low)]"
+    >
       <div
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${
-          accent ?? "bg-primary/10 text-primary-text"
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--ft-shape-small)] ${
+          accent ?? "bg-[var(--ft-color-primary-container)] text-[var(--ft-color-on-primary-container)]"
         }`}
       >
         <Icon className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-2xl font-semibold tabular-nums text-foreground">
+        <p className="text-2xl font-semibold tabular-nums text-[var(--ft-color-on-surface)]">
           {value.toLocaleString()}
         </p>
-        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-xs text-[var(--ft-color-on-surface-variant)]">{label}</p>
       </div>
-    </div>
+    </Card>
   );
   return href ? <Link href={href}>{inner}</Link> : inner;
 }
@@ -142,7 +153,7 @@ export default function HomePage() {
             {Array.from({ length: 6 }).map((_, i) => (
               <div
                 key={i}
-                className="h-20 rounded-lg border border-border bg-card animate-pulse"
+                className="h-20 rounded-[var(--ft-shape-medium)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface)] animate-pulse"
               />
             ))}
           </div>
@@ -159,32 +170,32 @@ export default function HomePage() {
               value={stats.images}
               icon={ImageIcon}
               href="/app/library?kind=moment"
-              accent="bg-blue-500/10 text-blue-500"
+              accent="bg-[var(--ft-color-tertiary-container)] text-[var(--ft-color-on-tertiary-container)]"
             />
             <StatTile
               label="Documents"
               value={stats.documents}
               icon={FileText}
               href="/app/library?kind=document"
-              accent="bg-orange-500/10 text-orange-500"
+              accent="bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
             />
             <StatTile
               label="Videos"
               value={stats.videos}
               icon={Video}
-              accent="bg-purple-500/10 text-purple-500"
+              accent="bg-[var(--ft-color-primary-container)] text-[var(--ft-color-on-primary-container)]"
             />
             <StatTile
               label="Favorites"
               value={stats.favorites}
               icon={Heart}
-              accent="bg-pink-500/10 text-pink-500"
+              accent="bg-[var(--ft-color-error-container)] text-[var(--ft-color-on-error-container)]"
             />
             <StatTile
               label="This month"
               value={stats.thisMonth}
               icon={Calendar}
-              accent="bg-green-500/10 text-green-500"
+              accent="bg-[var(--ft-color-success-container)] text-[var(--ft-color-on-success-container)]"
             />
           </div>
         )}
@@ -205,18 +216,19 @@ export default function HomePage() {
         </h2>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {QUICK_JUMP.map((q) => (
-            <Link
-              key={q.href}
-              href={q.href}
-              className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:bg-muted/30"
-            >
-              <q.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground">{q.label}</p>
-                <p className="truncate text-[11px] text-muted-foreground">
-                  {q.hint}
-                </p>
-              </div>
+            <Link key={q.href} href={q.href}>
+              <Card
+                variant="outlined"
+                className="flex flex-row items-center gap-3 px-3 py-2.5 transition-colors hover:bg-[var(--ft-color-surface-container-low)]"
+              >
+                <q.icon className="h-4 w-4 shrink-0 text-[var(--ft-color-on-surface-variant)]" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-[var(--ft-color-on-surface)]">{q.label}</p>
+                  <p className="truncate text-[11px] text-[var(--ft-color-on-surface-variant)]">
+                    {q.hint}
+                  </p>
+                </div>
+              </Card>
             </Link>
           ))}
         </div>
