@@ -176,7 +176,7 @@ function MemoriesContent() {
 
       <div className="px-4 space-y-6">
         {loading && (
-          <p className="text-sm text-muted-foreground">Loading memories…</p>
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">Loading memories…</p>
         )}
 
         {error && !loading && (
@@ -187,18 +187,18 @@ function MemoriesContent() {
         )}
 
         {!loading && !error && totalCount === 0 && (
-          <div className="rounded-lg border border-dashed border-border p-8 text-center">
-            <p className="text-sm text-muted-foreground">
+          <div className="rounded-[var(--ft-shape-medium)] border border-dashed border-[var(--ft-color-outline-variant)] p-8 text-center">
+            <p className="text-sm text-[var(--ft-color-on-surface-variant)]">
               No memories from {headline} in prior years yet.
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-1 text-xs text-[var(--ft-color-on-surface-variant)]">
               Upload photos with capture dates to start building memories.
             </p>
           </div>
         )}
 
         {!loading && !error && totalCount > 0 && visibleTotal === 0 && (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">
             No matches for the current filters.
           </p>
         )}
@@ -207,13 +207,13 @@ function MemoriesContent() {
           y.assets.length === 0 ? null : (
             <section key={y.year} className="space-y-2">
               <div className="flex items-baseline justify-between">
-                <h2 className="font-heading text-base font-semibold text-foreground">
+                <h2 className="font-heading text-base font-semibold text-[var(--ft-color-on-surface)]">
                   {yearsAgo(y.year, date)}
-                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  <span className="ml-2 text-sm font-normal text-[var(--ft-color-on-surface-variant)]">
                     — {headline}, {y.year}
                   </span>
                 </h2>
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-[var(--ft-color-on-surface-variant)]">
                   {y.count} {y.count === 1 ? "asset" : "assets"}
                 </span>
               </div>
@@ -223,7 +223,7 @@ function MemoriesContent() {
                 viewMode="grid"
                 density={toolbar.view.density}
                 emptyState={
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <div className="flex items-center gap-2 text-sm text-[var(--ft-color-on-surface-variant)]">
                     <ImageIcon className="h-4 w-4" /> No items
                   </div>
                 }
@@ -245,7 +245,7 @@ function MemoriesContent() {
 
 export default function MemoriesPage() {
   return (
-    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+    <Suspense fallback={<div className="text-sm text-[var(--ft-color-on-surface-variant)] py-4">Loading…</div>}>
       <MemoriesContent />
     </Suspense>
   );
