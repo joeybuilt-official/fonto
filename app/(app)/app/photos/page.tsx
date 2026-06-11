@@ -11,6 +11,7 @@ import { AssetGrid } from "../_components/asset-grid";
 import { ListErrorState } from "../_components/list-states";
 import { AssetAskPanel } from "../_components/asset-ask-panel";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
+import { Button } from "@/components/ui/button";
 
 interface Collection {
   id: string;
@@ -32,34 +33,38 @@ function BatchActionBar({
 }) {
   if (selectedCount === 0) return null;
   return (
-    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-xl border border-border bg-card/95 backdrop-blur px-4 py-2.5 shadow-xl">
-      <span className="text-sm font-medium text-foreground mr-2">
+    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-[var(--ft-shape-large)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-high)]/95 backdrop-blur px-4 py-2.5 shadow-[var(--ft-elev-3)]">
+      <span className="text-sm font-medium text-[var(--ft-color-on-surface)] mr-2">
         {selectedCount} {selectedCount === 1 ? "photo" : "photos"} selected
       </span>
-      <button
+      <Button
+        variant="tonal"
+        size="sm"
         onClick={onAddToCollection}
-        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-primary/10 hover:text-primary-text transition-colors"
       >
         <FolderPlus className="h-3.5 w-3.5" />
         Add to collection
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="tonal"
+        size="sm"
         onClick={onDownload}
-        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/80 transition-colors"
       >
         <Download className="h-3.5 w-3.5" />
         Download
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="text"
+        size="sm"
         onClick={onTrash}
-        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
+        className="text-[var(--ft-color-error)] hover:bg-[color-mix(in_srgb,var(--ft-color-error)_8%,transparent)]"
       >
         <Trash2 className="h-3.5 w-3.5" />
         Move to trash
-      </button>
+      </Button>
       <button
         onClick={onClear}
-        className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        className="rounded-[var(--ft-shape-full)] p-1.5 text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] transition-colors"
         title="Clear selection"
       >
         <X className="h-4 w-4" />
@@ -78,28 +83,28 @@ function AddToCollectionModal({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--ft-color-scrim)]/60 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="w-80 rounded-xl border border-border bg-card shadow-xl"
+        className="w-80 rounded-[var(--ft-shape-large)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-high)] shadow-[var(--ft-elev-3)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <p className="text-sm font-semibold text-foreground">Add to Collection</p>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+        <div className="flex items-center justify-between border-b border-[var(--ft-color-outline-variant)] px-4 py-3">
+          <p className="text-sm font-semibold text-[var(--ft-color-on-surface)]">Add to Collection</p>
+          <button onClick={onClose} className="text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]">
             <X className="h-4 w-4" />
           </button>
         </div>
         {collections.length === 0 ? (
-          <p className="px-4 py-6 text-center text-sm text-muted-foreground">No collections yet.</p>
+          <p className="px-4 py-6 text-center text-sm text-[var(--ft-color-on-surface-variant)]">No collections yet.</p>
         ) : (
           <div className="max-h-64 overflow-y-auto py-1">
             {collections.map((col) => (
               <button
                 key={col.id}
                 onClick={() => onSelect(col.id)}
-                className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors"
+                className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] transition-colors"
               >
-                <FolderPlus className="h-4 w-4 text-muted-foreground" />
+                <FolderPlus className="h-4 w-4 text-[var(--ft-color-on-surface-variant)]" />
                 {col.name}
               </button>
             ))}
