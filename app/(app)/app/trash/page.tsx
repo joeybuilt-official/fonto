@@ -29,21 +29,21 @@ function BulkBar({
 }) {
   if (count === 0) return null;
   return (
-    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-xl border border-border bg-card/95 backdrop-blur px-4 py-2.5 shadow-xl">
-      <span className="text-sm font-medium text-foreground mr-2">
+    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-[var(--ft-shape-large)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-high)]/95 backdrop-blur px-4 py-2.5 shadow-[var(--ft-elev-3)]">
+      <span className="text-sm font-medium text-[var(--ft-color-on-surface)] mr-2">
         {count} {count === 1 ? "item" : "items"} selected
       </span>
       <button
         onClick={onRestore}
-        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-primary/10 hover:text-primary-text transition-colors"
+        className="flex items-center gap-1.5 rounded-[var(--ft-shape-small)] bg-[var(--ft-color-surface-container)] px-3 py-1.5 text-xs font-medium text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-secondary-container)] hover:text-[var(--ft-color-on-secondary-container)] transition-colors"
       >
         <RotateCcw className="h-3.5 w-3.5" />
         Restore
       </button>
       <ConfirmButton
         onConfirm={onDelete}
-        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
-        armedClassName="bg-destructive/15 ring-1 ring-destructive"
+        className="flex items-center gap-1.5 rounded-[var(--ft-shape-small)] bg-[var(--ft-color-surface-container)] px-3 py-1.5 text-xs font-medium text-[var(--ft-color-error)] hover:bg-[var(--ft-color-error-container)] transition-colors"
+        armedClassName="bg-[var(--ft-color-error-container)] ring-1 ring-[var(--ft-color-error)]"
         confirmLabel={
           <span className="flex items-center gap-1 font-bold">
             <Trash2 className="h-3.5 w-3.5" />
@@ -56,7 +56,7 @@ function BulkBar({
       </ConfirmButton>
       <button
         onClick={onClear}
-        className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        className="rounded-[var(--ft-shape-small)] p-1.5 text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)] transition-colors"
         title="Clear selection"
       >
         <X className="h-4 w-4" />
@@ -177,17 +177,17 @@ function TrashContent() {
       />
 
       {actionError && (
-        <p className="mx-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p className="mx-4 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-error)]/40 bg-[var(--ft-color-error-container)] px-3 py-2 text-sm text-[var(--ft-color-on-error-container)]">
           {actionError}
         </p>
       )}
 
       {loading ? (
-        <p className="px-4 py-4 text-sm text-muted-foreground">Loading…</p>
+        <p className="px-4 py-4 text-sm text-[var(--ft-color-on-surface-variant)]">Loading…</p>
       ) : items.length === 0 && !toolbar.filters.q && !toolbar.filters.mime ? (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <Trash2 className="h-10 w-10 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Trash is empty.</p>
+          <Trash2 className="h-10 w-10 text-[var(--ft-color-on-surface-variant)]" />
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">Trash is empty.</p>
         </div>
       ) : (
         <div className="px-4">
@@ -214,7 +214,7 @@ function TrashContent() {
 
 export default function TrashPage() {
   return (
-    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+    <Suspense fallback={<div className="text-sm text-[var(--ft-color-on-surface-variant)] py-4">Loading…</div>}>
       <TrashContent />
     </Suspense>
   );
