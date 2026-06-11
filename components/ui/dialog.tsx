@@ -5,6 +5,7 @@
 import * as React from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 
+import { Button, type ButtonProps } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 /**
@@ -36,6 +37,33 @@ function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
 
 function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
+}
+
+// Shorthand: `DialogCloseButton` renders an MD3 `<Button>` that, when
+// clicked, closes the parent dialog. base-ui's `render` prop on
+// `Dialog.Close` swaps the underlying element — we hand it a Button so
+// the close action inherits the MD3 variant system (filled / tonal /
+// outlined / text / elevated) instead of forcing callers to hand-roll
+// the close trigger. Default variant is `text` (subtle dismiss).
+function DialogCloseButton({
+  variant = "text",
+  size,
+  children,
+  className,
+  ...props
+}: Omit<DialogPrimitive.Close.Props, "render"> &
+  Pick<ButtonProps, "variant" | "size">) {
+  return (
+    <DialogPrimitive.Close
+      data-slot="dialog-close-button"
+      render={
+        <Button variant={variant} size={size} className={className}>
+          {children}
+        </Button>
+      }
+      {...props}
+    />
+  )
 }
 
 function DialogContent({
@@ -125,6 +153,7 @@ export {
   Dialog,
   DialogTrigger,
   DialogClose,
+  DialogCloseButton,
   DialogContent,
   DialogHeader,
   DialogFooter,

@@ -91,7 +91,18 @@ export interface AssetPageToolbarProps {
     label: string;
     icon?: React.ReactNode;
     onClick: () => void;
-    variant?: "default" | "outline" | "secondary";
+    /** Accepts both the legacy shadcn variants (`default`, `outline`,
+     *  `secondary`) and the MD3 set (`filled`, `tonal`, `outlined`, `text`,
+     *  `elevated`). Forwarded verbatim to `<Button variant={...}>`. */
+    variant?:
+      | "default"
+      | "outline"
+      | "secondary"
+      | "filled"
+      | "tonal"
+      | "outlined"
+      | "text"
+      | "elevated";
   };
 }
 
