@@ -144,28 +144,28 @@ function MetadataPanel({
   }
 
   return (
-    <div className="absolute inset-y-0 right-0 z-30 w-full max-w-sm shrink-0 overflow-y-auto border-l border-border bg-card text-sm sm:static sm:inset-auto sm:z-auto sm:w-72 sm:max-w-none">
+    <div className="absolute inset-y-0 right-0 z-30 w-full max-w-sm shrink-0 overflow-y-auto border-l border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-low)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)] sm:static sm:inset-auto sm:z-auto sm:w-72 sm:max-w-none">
       <div className="p-4 space-y-5">
         {/* DETAILS */}
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2">Details</p>
+          <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-widest text-[var(--ft-color-on-surface-variant)] mb-2">Details</p>
           <div className="space-y-1.5">
             <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground text-xs shrink-0">Filename</span>
-              <span className="text-xs text-foreground text-right truncate max-w-36" title={asset.filename}>{asset.filename}</span>
+              <span className="text-[var(--ft-color-on-surface-variant)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] shrink-0">Filename</span>
+              <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] text-right truncate max-w-36" title={asset.filename}>{asset.filename}</span>
             </div>
             <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground text-xs shrink-0">Size</span>
+              <span className="text-[var(--ft-color-on-surface-variant)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] shrink-0">Size</span>
               <span className="text-xs text-foreground">{formatBytes(asset.sizeBytes)}</span>
             </div>
             <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground text-xs shrink-0">Captured</span>
+              <span className="text-[var(--ft-color-on-surface-variant)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] shrink-0">Captured</span>
               <span className="text-xs text-foreground">{formatDate(asset.capturedAt)}</span>
             </div>
             {asset.classification && (
               <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground text-xs shrink-0">Type</span>
-                <span className="text-xs text-foreground capitalize">{asset.classification}</span>
+                <span className="text-[var(--ft-color-on-surface-variant)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] shrink-0">Type</span>
+                <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] capitalize">{asset.classification}</span>
               </div>
             )}
             {(() => {
@@ -173,20 +173,20 @@ function MetadataPanel({
               const h = asset.heightPx ?? asset.videoHeight;
               return w && h ? (
                 <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground text-xs shrink-0">Dimensions</span>
+                  <span className="text-[var(--ft-color-on-surface-variant)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] shrink-0">Dimensions</span>
                   <span className="text-xs text-foreground">{w} × {h}</span>
                 </div>
               ) : null;
             })()}
             {asset.pageCount != null && asset.pageCount > 0 && (
               <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground text-xs shrink-0">Pages</span>
+                <span className="text-[var(--ft-color-on-surface-variant)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] shrink-0">Pages</span>
                 <span className="text-xs text-foreground">{asset.pageCount}</span>
               </div>
             )}
             {asset.durationSeconds != null && asset.durationSeconds > 0 && (
               <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground text-xs shrink-0">Duration</span>
+                <span className="text-[var(--ft-color-on-surface-variant)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] shrink-0">Duration</span>
                 <span className="text-xs text-foreground">
                   {Math.floor(asset.durationSeconds / 60)}:
                   {String(Math.round(asset.durationSeconds % 60)).padStart(2, "0")}
@@ -199,20 +199,20 @@ function MetadataPanel({
         {/* DESCRIPTION */}
         {asset.description && (
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2">Description</p>
-            <p className="text-xs text-foreground leading-relaxed">{asset.description}</p>
+            <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-widest text-[var(--ft-color-on-surface-variant)] mb-2">Description</p>
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-relaxed text-[var(--ft-color-on-surface)]">{asset.description}</p>
           </div>
         )}
 
         {/* TAGS */}
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2">Tags</p>
+          <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-widest text-[var(--ft-color-on-surface-variant)] mb-2">Tags</p>
           <div className="flex flex-wrap gap-1.5">
             {tags.map((tag) => (
               <button
                 key={tag.id}
                 onClick={() => onRemoveTag(tag.id)}
-                className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-muted text-foreground hover:bg-destructive/20 hover:text-destructive transition-colors"
+                className="flex items-center gap-1 rounded-[var(--ft-shape-full)] px-2 py-0.5 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium bg-[var(--ft-color-surface-container)] text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-error-container)] hover:text-[var(--ft-color-on-error-container)] transition-colors"
                 title="Click to remove"
               >
                 <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
@@ -223,7 +223,7 @@ function MetadataPanel({
             {!addingTag && (
               <button
                 onClick={() => setAddingTag(true)}
-                className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground transition-colors"
+                className="flex items-center gap-1 rounded-[var(--ft-shape-full)] px-2 py-0.5 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium border border-dashed border-[var(--ft-color-outline)] text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)] hover:border-[var(--ft-color-on-surface)] transition-colors"
               >
                 <Plus className="h-2.5 w-2.5" />
                 Add tag
@@ -239,7 +239,7 @@ function MetadataPanel({
                   onKeyDown={handleTagSubmit}
                   onBlur={() => { if (!tagInput.trim()) setAddingTag(false); }}
                   placeholder="Tag name (Enter to add)"
-                  className="w-full rounded border border-border bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  className="w-full rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] px-2 py-1 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] placeholder:text-[var(--ft-color-on-surface-variant)] focus:outline-none focus:ring-1 focus:ring-[var(--ft-color-primary)]"
                 />
                 {unassignedTags.length > 0 && (
                   <div className="flex flex-wrap gap-1">
@@ -247,7 +247,7 @@ function MetadataPanel({
                       <button
                         key={t.id}
                         onClick={() => { onAddTag(t.id); setAddingTag(false); setTagInput(""); }}
-                        className="rounded-full px-2 py-0.5 text-[10px] bg-muted text-foreground hover:bg-primary/10 hover:text-primary-text transition-colors"
+                        className="rounded-[var(--ft-shape-full)] px-2 py-0.5 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] bg-[var(--ft-color-surface-container)] text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-primary-container)] hover:text-[var(--ft-color-on-primary-container)] transition-colors"
                       >
                         {t.name}
                       </button>
@@ -261,25 +261,25 @@ function MetadataPanel({
 
         {/* ACTIONS */}
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2">Actions</p>
+          <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-widest text-[var(--ft-color-on-surface-variant)] mb-2">Actions</p>
           <div className="space-y-1.5">
             {/* Add to Collection dropdown */}
             <div ref={colRef} className="relative">
               <button
                 onClick={() => setShowCollections((v) => !v)}
-                className="flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors"
+                className="flex w-full items-center gap-2 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] px-3 py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)] transition-colors"
               >
-                <FolderPlus className="h-3.5 w-3.5 text-muted-foreground" />
+                <FolderPlus className="h-3.5 w-3.5 text-[var(--ft-color-on-surface-variant)]" />
                 Add to Collection
                 <ChevronLeft className={`h-3 w-3 ml-auto text-muted-foreground transition-transform ${showCollections ? "-rotate-90" : "rotate-90"}`} />
               </button>
               {showCollections && collections.length > 0 && (
-                <div className="absolute top-full left-0 right-0 z-20 mt-1 rounded-lg border border-border bg-popover shadow-lg py-1 max-h-36 overflow-y-auto">
+                <div className="absolute top-full left-0 right-0 z-20 mt-1 rounded-[var(--ft-shape-medium)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container)] shadow-[var(--ft-elev-2)] py-1 max-h-36 overflow-y-auto">
                   {collections.map((col) => (
                     <button
                       key={col.id}
                       onClick={() => { onAddToCollection(col.id); setShowCollections(false); }}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors"
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container-high)] transition-colors"
                     >
                       {col.name}
                     </button>
@@ -287,16 +287,16 @@ function MetadataPanel({
                 </div>
               )}
               {showCollections && collections.length === 0 && (
-                <div className="absolute top-full left-0 right-0 z-20 mt-1 rounded-lg border border-border bg-popover shadow-lg py-2 px-3">
-                  <p className="text-xs text-muted-foreground">No collections yet</p>
+                <div className="absolute top-full left-0 right-0 z-20 mt-1 rounded-[var(--ft-shape-medium)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container)] shadow-[var(--ft-elev-2)] py-2 px-3">
+                  <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">No collections yet</p>
                 </div>
               )}
             </div>
             <button
               onClick={onDownload}
-              className="flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors"
+              className="flex w-full items-center gap-2 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] px-3 py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)] transition-colors"
             >
-              <Download className="h-3.5 w-3.5 text-muted-foreground" />
+              <Download className="h-3.5 w-3.5 text-[var(--ft-color-on-surface-variant)]" />
               Download
             </button>
             {/* Re-scan — re-run the full recognition pipeline (OCR, labels,
@@ -304,14 +304,14 @@ function MetadataPanel({
             <button
               onClick={handleRescan}
               disabled={rescanState === "loading"}
-              className="flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+              className="flex w-full items-center gap-2 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] px-3 py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)] transition-colors disabled:opacity-50"
             >
               {rescanState === "loading" ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
               ) : rescanState === "done" ? (
-                <Check className="h-3.5 w-3.5 text-green-500" />
+                <Check className="h-3.5 w-3.5 text-[var(--ft-color-success)]" />
               ) : (
-                <ScanSearch className="h-3.5 w-3.5 text-muted-foreground" />
+                <ScanSearch className="h-3.5 w-3.5 text-[var(--ft-color-on-surface-variant)]" />
               )}
               {rescanState === "done" ? "Re-scan queued" : "Re-scan (AI)"}
             </button>
@@ -319,12 +319,12 @@ function MetadataPanel({
             <button
               onClick={onShare}
               disabled={shareState.loading}
-              className="flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+              className="flex w-full items-center gap-2 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] px-3 py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)] transition-colors disabled:opacity-50"
             >
               {shareState.copied ? (
-                <Check className="h-3.5 w-3.5 text-green-500" />
+                <Check className="h-3.5 w-3.5 text-[var(--ft-color-success)]" />
               ) : (
-                <Share2 className="h-3.5 w-3.5 text-muted-foreground" />
+                <Share2 className="h-3.5 w-3.5 text-[var(--ft-color-on-surface-variant)]" />
               )}
               {shareState.copied
                 ? "Link copied"
@@ -335,20 +335,20 @@ function MetadataPanel({
                 : "Share (24h link)"}
             </button>
             {shareState.url && (
-              <div className="flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-[10px]">
-                <code className="flex-1 truncate font-mono text-muted-foreground">
+              <div className="flex items-center gap-1 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container)] px-2 py-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)]">
+                <code className="flex-1 truncate font-mono text-[var(--ft-color-on-surface-variant)]">
                   {shareState.url}
                 </code>
                 <button
                   onClick={onShare}
-                  className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                  className="rounded p-0.5 text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
                   title="Copy"
                 >
                   {shareState.copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
                 </button>
                 <button
                   onClick={onRevokeShare}
-                  className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                  className="rounded p-0.5 text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-error)]"
                   title="Revoke link"
                 >
                   <X className="h-3 w-3" />
@@ -358,15 +358,15 @@ function MetadataPanel({
             {/* Phase 2.5 — full share management (password, downloads, views). */}
             <button
               onClick={onOpenShareDialog}
-              className="flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors"
+              className="flex w-full items-center gap-2 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] px-3 py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)] transition-colors"
             >
-              <Settings className="h-3.5 w-3.5 text-muted-foreground" />
+              <Settings className="h-3.5 w-3.5 text-[var(--ft-color-on-surface-variant)]" />
               Manage share links…
             </button>
             <ConfirmButton
               onConfirm={() => onTrash?.()}
-              className="flex w-full items-center gap-2 rounded-md border border-destructive/30 bg-background px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
-              armedClassName="bg-destructive/15 ring-1 ring-destructive"
+              className="flex w-full items-center gap-2 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-error)]/30 bg-[var(--ft-color-surface)] px-3 py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)] hover:bg-[var(--ft-color-error-container)] transition-colors"
+              armedClassName="bg-[var(--ft-color-error-container)] ring-1 ring-[var(--ft-color-error)]"
               confirmLabel={
                 <span className="flex items-center gap-2 font-bold">
                   <Trash2 className="h-3.5 w-3.5" />
