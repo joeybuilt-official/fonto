@@ -151,13 +151,13 @@ class _SearchScreenState extends State<SearchScreen> {
         final a = _results[i];
         final url = _thumbs[a.id];
         final tile = url == null
-            ? Container(color: Colors.black12)
+            ? imageSkeleton(context)
             : Hero(
                 tag: a.id,
                 child: CachedNetworkImage(
                   imageUrl: url,
                   fit: BoxFit.cover,
-                  placeholder: (_, __) => Container(color: Colors.black12),
+                  placeholder: (ctx, _) => imageSkeleton(ctx),
                   errorWidget: (_, __, ___) =>
                       const Icon(Icons.broken_image),
                 ),

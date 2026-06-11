@@ -195,16 +195,16 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
           return GestureDetector(
             onTap: () => _openDetail(i),
             child: url == null
-                ? Container(color: Colors.black12)
+                ? imageSkeleton(context)
                 : CachedNetworkImage(
                     imageUrl: url,
                     fit: BoxFit.cover,
                     memCacheWidth: 260,
                     memCacheHeight: 260,
-                    placeholder: (_, __) => Container(color: Colors.black12),
-                    errorWidget: (_, __, ___) => const ColoredBox(
-                      color: Colors.black12,
-                      child: Icon(Icons.broken_image),
+                    placeholder: (ctx, _) => imageSkeleton(ctx),
+                    errorWidget: (ctx, _, __) => ColoredBox(
+                      color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                      child: const Icon(Icons.broken_image),
                     ),
                   ),
           );

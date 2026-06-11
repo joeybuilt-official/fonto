@@ -124,6 +124,14 @@ class ListEmptyState extends StatelessWidget {
   }
 }
 
+/// Image placeholder that respects the MD3 surface scale — use as the
+/// `placeholder`/`errorWidget` for `CachedNetworkImage` and the fallback
+/// box for tiles whose URL isn't loaded yet. Dark mode renders a sensible
+/// neutral instead of a hard `Colors.black12` tint.
+Widget imageSkeleton(BuildContext context) => ColoredBox(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    );
+
 /// Kind-aware default empty copy for the Library and filtered-asset surfaces.
 /// Used when no filter is set — pairs with the web LENS_EMPTY map.
 String defaultEmptyForKind(String? kind) {
