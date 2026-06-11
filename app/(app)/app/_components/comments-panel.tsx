@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Send, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface CommentRow {
   id: string;
@@ -110,21 +111,27 @@ export function CommentsPanel({ assetId, currentUserId, canModerate }: CommentsP
     }
   }
 
+  // Side panel inside the lightbox — NOT a bottom-sheet, so stays a
+  // tokenized div per the in-flight Sheet-only-for-bottom rule. Sits on
+  // the surface-container background to read against the photo's black
+  // surround.
   return (
-    <div className="absolute inset-y-0 right-0 z-30 flex w-full max-w-sm shrink-0 flex-col border-l border-border bg-card text-sm sm:static sm:inset-auto sm:z-auto sm:w-80 sm:max-w-none">
-      <div className="px-4 py-3 border-b border-border">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+    <div className="absolute inset-y-0 right-0 z-30 flex w-full max-w-sm shrink-0 flex-col border-l border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-low)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)] sm:static sm:inset-auto sm:z-auto sm:w-80 sm:max-w-none">
+      <div className="px-[var(--ft-space-4)] py-[var(--ft-space-3)] border-b border-[var(--ft-color-outline-variant)]">
+        <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-widest text-[var(--ft-color-on-surface-variant)]">
           Comments
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      <div className="flex-1 overflow-y-auto px-[var(--ft-space-4)] py-[var(--ft-space-3)] space-y-[var(--ft-space-3)]">
         {loading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <div className="flex justify-center py-[var(--ft-space-8)]">
+            <Loader2 className="h-5 w-5 animate-spin text-[var(--ft-color-on-surface-variant)]" />
           </div>
         ) : comments.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic">No comments yet.</p>
+          <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] italic text-[var(--ft-color-on-surface-variant)]">
+            No comments yet.
+          </p>
         ) : (
           comments.map((c) => {
             const isDeleted = c.deletedAt !== null;
@@ -132,20 +139,20 @@ export function CommentsPanel({ assetId, currentUserId, canModerate }: CommentsP
             const canDelete = !isDeleted && (isMine || canModerate);
             return (
               <div key={c.id} className="group">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-xs font-medium text-foreground truncate">
+                <div className="flex items-baseline justify-between gap-[var(--ft-space-2)]">
+                  <span className="text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-on-surface)] truncate">
                     {isMine ? "You" : c.userId.slice(0, 8)}
                   </span>
                   <span
-                    className="text-[10px] text-muted-foreground shrink-0"
+                    className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)] shrink-0"
                     title={new Date(c.createdAt).toLocaleString()}
                   >
                     {formatRelative(c.createdAt)}
                   </span>
                 </div>
                 <p
-                  className={`mt-0.5 whitespace-pre-wrap break-words text-xs ${
-                    isDeleted ? "italic text-muted-foreground" : "text-foreground"
+                  className={`mt-0.5 whitespace-pre-wrap break-words text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] ${
+                    isDeleted ? "italic text-[var(--ft-color-on-surface-variant)]" : "text-[var(--ft-color-on-surface)]"
                   }`}
                 >
                   {isDeleted ? "[deleted]" : c.body}
@@ -153,7 +160,7 @@ export function CommentsPanel({ assetId, currentUserId, canModerate }: CommentsP
                 {canDelete && (
                   <button
                     onClick={() => void handleDelete(c.id)}
-                    className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="mt-1 inline-flex items-center gap-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-error)] opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     <Trash2 className="h-3 w-3" />
                     delete
@@ -167,7 +174,7 @@ export function CommentsPanel({ assetId, currentUserId, canModerate }: CommentsP
 
       <form
         onSubmit={handlePost}
-        className="border-t border-border p-3 flex flex-col gap-2"
+        className="border-t border-[var(--ft-color-outline-variant)] p-[var(--ft-space-3)] flex flex-col gap-[var(--ft-space-2)]"
       >
         <textarea
           ref={inputRef}
@@ -176,7 +183,7 @@ export function CommentsPanel({ assetId, currentUserId, canModerate }: CommentsP
           placeholder="Write a comment…"
           rows={2}
           maxLength={10_240}
-          className="resize-none rounded-md border border-input bg-background px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+          className="resize-none rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] px-[var(--ft-space-2)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] placeholder:text-[var(--ft-color-on-surface-variant)] outline-none focus:border-[var(--ft-color-primary)] focus:ring-1 focus:ring-[var(--ft-color-primary)]"
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
@@ -184,21 +191,23 @@ export function CommentsPanel({ assetId, currentUserId, canModerate }: CommentsP
             }
           }}
         />
-        {error && <p className="text-[10px] text-destructive">{error}</p>}
+        {error && (
+          <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-error)]">
+            {error}
+          </p>
+        )}
         <div className="flex items-center justify-between">
-          <span className="text-[10px] text-muted-foreground">⌘+Enter to send</span>
-          <button
-            type="submit"
-            disabled={!draft.trim() || posting}
-            className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground disabled:opacity-40"
-          >
+          <span className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">
+            ⌘+Enter to send
+          </span>
+          <Button type="submit" size="sm" disabled={!draft.trim() || posting}>
             {posting ? (
               <Loader2 className="h-3 w-3 animate-spin" />
             ) : (
               <Send className="h-3 w-3" />
             )}
             Post
-          </button>
+          </Button>
         </div>
       </form>
     </div>
