@@ -14,19 +14,59 @@ final List<RegExp> _patterns = [
 
 final RegExp _bareId = RegExp(r"^[a-zA-Z0-9_-]{10,}$");
 
-/// Returns the Drive file ID parsed from [input], or null if none found.
-String? parseDriveFileId(String input) {
-  final s = input.trim();
-  if (s.isEmpty) return null;
+// A Takeout direct-download URL identifies the export by a UUID, not a Drive
+// file ID (e.g. ...?id=8e0f24e6-…-9bed6647c0d0&i=54&user=…&rapt=…). Real Drive
+// file IDs are never UUIDs, so the 8-4-4-4-12 hex shape is a reliable tell.
+final RegExp _uuid = RegExp(
+  r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+  caseSensitive: false,
+);
 
+/// What a pasted value actually is.
+enum DriveInputKind { id, takeoutDownload, none }
+
+class DriveInput {
+  const DriveInput(this.kind, [this.fileId]);
+  final DriveInputKind kind;
+  final String? fileId;
+}
+
+/// Classify a pasted value: a usable Drive file ID, a temporary Takeout
+/// download-link (signed googleusercontent URL the server can't re-fetch), or
+/// nothing recognizable. Mirrors classifyDriveInput in lib/import/driveLink.ts.
+DriveInput classifyDriveInput(String input) {
+  final s = input.trim();
+  if (s.isEmpty) return const DriveInput(DriveInputKind.none);
+
+  final lower = s.toLowerCase();
+  final looksLikeTakeoutDownload = lower.contains("rapt=") ||
+      lower.contains("googleusercontent.com") ||
+      lower.contains("usercontent.google");
+
+  String? candidate;
   if (s.contains("/") || s.contains("?") || s.contains("=")) {
     for (final p in _patterns) {
       final m = p.firstMatch(s);
-      if (m != null) return m.group(1);
+      if (m != null) {
+        candidate = m.group(1);
+        break;
+      }
     }
-    return null;
+  } else if (_bareId.hasMatch(s)) {
+    candidate = s;
   }
 
-  if (_bareId.hasMatch(s)) return s;
-  return null;
+  if (looksLikeTakeoutDownload ||
+      (candidate != null && _uuid.hasMatch(candidate))) {
+    return const DriveInput(DriveInputKind.takeoutDownload);
+  }
+  return candidate != null
+      ? DriveInput(DriveInputKind.id, candidate)
+      : const DriveInput(DriveInputKind.none);
+}
+
+/// Returns the Drive file ID parsed from [input], or null if none found.
+String? parseDriveFileId(String input) {
+  final c = classifyDriveInput(input);
+  return c.kind == DriveInputKind.id ? c.fileId : null;
 }

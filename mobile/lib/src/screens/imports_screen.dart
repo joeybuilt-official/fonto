@@ -56,9 +56,14 @@ final _connectSignIn = GoogleSignIn(
 const _pollInterval = Duration(seconds: 3);
 
 class ImportsScreen extends StatefulWidget {
-  const ImportsScreen({super.key, required this.client});
+  const ImportsScreen({super.key, required this.client, this.provider});
 
   final FontoClient client;
+
+  /// When set ("google" | "amazon"), the screen shows ONLY that provider's
+  /// import flow — so Settings can offer them as two separate entries instead
+  /// of one combined hub. null shows both (the legacy bundled view).
+  final String? provider;
 
   @override
   State<ImportsScreen> createState() => _ImportsScreenState();
@@ -82,6 +87,24 @@ class _ImportsScreenState extends State<ImportsScreen> {
   }
 
   bool get _googleConnected => _googleIntegration?.isActive ?? false;
+
+  bool get _showGoogle => widget.provider == null || widget.provider == "google";
+  bool get _showAmazon => widget.provider == null || widget.provider == "amazon";
+
+  String get _screenTitle => widget.provider == "google"
+      ? "Google Takeout"
+      : widget.provider == "amazon"
+          ? "Amazon Photos"
+          : "Imports";
+
+  /// Jobs to show — scoped to the active provider so the Google screen doesn't
+  /// list Amazon imports and vice-versa.
+  List<ImportJob> get _visibleJobs {
+    final p = widget.provider;
+    if (p == null) return _jobs;
+    final want = p == "google" ? "google-takeout" : "amazon-photos";
+    return _jobs.where((j) => j.provider == want).toList();
+  }
 
   @override
   void initState() {
@@ -176,7 +199,7 @@ class _ImportsScreenState extends State<ImportsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Imports")),
+      appBar: AppBar(title: Text(_screenTitle)),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
@@ -184,36 +207,40 @@ class _ImportsScreenState extends State<ImportsScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  _buildGoogleTile(),
-                  const SizedBox(height: 16),
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.cloud_outlined),
-                      title: const Text("Import from Google Takeout"),
-                      subtitle: const Text(
-                          "Import a Takeout archive from your Drive."),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => _openImporter(
-                        TakeoutImportScreen(
-                          client: widget.client,
-                          googleConnected: _googleConnected,
+                  if (_showGoogle) ...[
+                    _buildGoogleTile(),
+                    const SizedBox(height: 16),
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.cloud_outlined),
+                        title: const Text("Import from Google Takeout"),
+                        subtitle: const Text(
+                            "Import a Takeout archive from your Drive."),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _openImporter(
+                          TakeoutImportScreen(
+                            client: widget.client,
+                            googleConnected: _googleConnected,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.photo_album_outlined),
-                      title: const Text("Import from Amazon Photos"),
-                      subtitle: const Text(
-                          "Upload a ZIP exported from Amazon Photos."),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () =>
-                          _openImporter(AmazonImportScreen(client: widget.client)),
+                    const SizedBox(height: 16),
+                  ],
+                  if (_showAmazon) ...[
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.photo_album_outlined),
+                        title: const Text("Import from Amazon Photos"),
+                        subtitle: const Text(
+                            "Upload a ZIP exported from Amazon Photos."),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _openImporter(
+                            AmazonImportScreen(client: widget.client)),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
+                    const SizedBox(height: 16),
+                  ],
                   _buildJobsCard(),
                 ],
               ),
@@ -299,13 +326,13 @@ class _ImportsScreenState extends State<ImportsScreen> {
               style: TextStyle(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 12),
-            if (_jobs.isEmpty)
+            if (_visibleJobs.isEmpty)
               const Text(
                 "No imports yet.",
                 style: TextStyle(fontSize: 13),
               )
             else
-              ..._jobs.map(_buildJobRow),
+              ..._visibleJobs.map(_buildJobRow),
           ],
         ),
       ),

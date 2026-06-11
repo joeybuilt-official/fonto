@@ -73,7 +73,13 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
 
   Future<void> _start() async {
     if (_busy) return;
-    final id = parseDriveFileId(_controller.text);
+    final input = classifyDriveInput(_controller.text);
+    if (input.kind == DriveInputKind.takeoutDownload) {
+      setState(() => _msg =
+          "That's a Takeout download link — the server can't read it. Re-export with \"Add to Drive\" and paste the Drive link, or use \"Choose .zip & import\" below.");
+      return;
+    }
+    final id = input.kind == DriveInputKind.id ? input.fileId : null;
     if (id == null) {
       setState(() => _msg =
           "That doesn't look like a Google Drive link or file ID. Paste the link to your Takeout archive in Drive.");
@@ -98,7 +104,9 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final id = parseDriveFileId(_controller.text);
+    final input = classifyDriveInput(_controller.text);
+    final id = input.kind == DriveInputKind.id ? input.fileId : null;
+    final isTakeoutDownload = input.kind == DriveInputKind.takeoutDownload;
     return Scaffold(
       appBar: AppBar(title: const Text("Google Takeout")),
       body: ListView(
@@ -136,11 +144,13 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              _controller.text.trim().isNotEmpty && id == null
-                  ? "Couldn't find a Drive file ID in that text."
-                  : id != null
-                      ? "Detected file ID: $id"
-                      : " ",
+              isTakeoutDownload
+                  ? "That's a Takeout download link — use \"Add to Drive\" or the .zip upload below."
+                  : _controller.text.trim().isNotEmpty && id == null
+                      ? "Couldn't find a Drive file ID in that text."
+                      : id != null
+                          ? "Detected file ID: $id"
+                          : " ",
               style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 12),

@@ -322,7 +322,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _openImports() async {
+  Future<void> _openImports(String provider) async {
     final auth = await AuthStore.load();
     if (!mounted) return;
     if (!auth.isConfigured) {
@@ -334,7 +334,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final client = FontoClient(auth);
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ImportsScreen(client: client),
+        builder: (_) => ImportsScreen(client: client, provider: provider),
       ),
     );
     client.close();
@@ -460,13 +460,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 ListTile(
                   leading: const Icon(Icons.cloud_download_outlined),
-                  title: const Text("Google Takeout & Amazon Photos"),
+                  title: const Text("Google Takeout"),
                   subtitle: const Text(
-                    "Server-side import: a Google Takeout archive or an Amazon "
-                    "Photos .zip, with progress.",
+                    "Server-side import of a Google Takeout archive from your "
+                    "Drive, with progress.",
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: _openImports,
+                  onTap: () => _openImports("google"),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_album_outlined),
+                  title: const Text("Amazon Photos"),
+                  subtitle: const Text(
+                    "Upload an Amazon Photos .zip and import it server-side, "
+                    "with progress.",
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openImports("amazon"),
                 ),
                 ListTile(
                   leading: const Icon(Icons.folder_outlined),
