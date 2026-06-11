@@ -54,7 +54,7 @@ export function TabBar({
       role="tablist"
       aria-label={label}
       className={cn(
-        "flex gap-1 overflow-x-auto border-b border-border px-4",
+        "flex gap-[var(--ft-space-1)] overflow-x-auto border-b border-[var(--ft-color-outline-variant)] px-[var(--ft-space-4)]",
         className,
       )}
     >
@@ -74,10 +74,10 @@ export function TabBar({
             aria-current={isActive ? "page" : undefined}
             tabIndex={isActive ? 0 : -1}
             className={cn(
-              "-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors",
+              "-mb-px flex items-center gap-[var(--ft-space-2)] whitespace-nowrap border-b-2 px-[var(--ft-space-3)] py-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium tracking-[var(--ft-type-label-large-tracking)] transition-colors",
               isActive
-                ? "border-primary-text text-primary-text"
-                : "border-transparent text-muted-foreground hover:text-foreground",
+                ? "border-[var(--ft-color-primary)] text-[var(--ft-color-primary)]"
+                : "border-transparent text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]",
             )}
           >
             <Icon className="h-3.5 w-3.5" />

@@ -567,7 +567,7 @@ function LibraryContent() {
           <LibraryChipStrip toolbar={toolbar} />
         </div>
         {isTrash && (
-          <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          <div className="flex items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-small)] bg-[var(--ft-color-error-container)] px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] text-[var(--ft-color-on-error-container)]">
             <Trash2 className="h-3.5 w-3.5" />
             Viewing Trash. Items here are deleted permanently after 30 days
             (see settings).
@@ -577,7 +577,7 @@ function LibraryContent() {
 
       {timelineMode ? (
         bucketsLoading && buckets.length === 0 ? (
-          <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
+          <div className="flex items-center gap-[var(--ft-space-2)] px-[var(--ft-space-4)] py-[var(--ft-space-4)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading…
           </div>
@@ -677,34 +677,34 @@ function BatchActionBar({
 }) {
   if (count === 0) return null;
   return (
-    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-2 rounded-xl border border-border bg-card/95 px-4 py-2.5 shadow-xl backdrop-blur">
-      <span className="mr-2 text-sm font-medium text-foreground">
+    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-large)] bg-[var(--ft-color-surface-container-high)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] shadow-[var(--ft-elev-3)] backdrop-blur">
+      <span className="mr-2 text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-on-surface)]">
         {count} selected
       </span>
       <button
         onClick={onAddToCollection}
-        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-primary/10 hover:text-primary-text"
+        className="inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] bg-[var(--ft-color-secondary-container)] px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-on-secondary-container)] transition-colors hover:brightness-95"
       >
         <FolderPlus className="h-3.5 w-3.5" />
         Add to collection
       </button>
       <button
         onClick={onDownload}
-        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/80"
+        className="inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] bg-[var(--ft-color-secondary-container)] px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-on-secondary-container)] transition-colors hover:brightness-95"
       >
         <Download className="h-3.5 w-3.5" />
         Download
       </button>
       <button
         onClick={onTrash}
-        className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
+        className="inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] bg-[var(--ft-color-error-container)] px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-on-error-container)] transition-colors hover:brightness-95"
       >
         <Trash2 className="h-3.5 w-3.5" />
         Move to trash
       </button>
       <button
         onClick={onClear}
-        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="rounded-[var(--ft-shape-full)] p-1.5 text-[var(--ft-color-on-surface-variant)] transition-colors hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
         title="Clear selection"
       >
         <X className="h-4 w-4" />
@@ -724,21 +724,21 @@ function AddToCollectionModal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--ft-color-scrim)]/50 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="w-80 rounded-xl border border-border bg-card shadow-xl"
+        className="w-80 rounded-[var(--ft-shape-large)] bg-[var(--ft-color-surface-container-high)] shadow-[var(--ft-elev-3)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <p className="text-sm font-semibold text-foreground">Add to Collection</p>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+        <div className="flex items-center justify-between border-b border-[var(--ft-color-outline-variant)] px-[var(--ft-space-4)] py-[var(--ft-space-3)]">
+          <p className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)] font-medium text-[var(--ft-color-on-surface)]">Add to Collection</p>
+          <button onClick={onClose} className="text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]">
             <X className="h-4 w-4" />
           </button>
         </div>
         {collections.length === 0 ? (
-          <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+          <p className="px-[var(--ft-space-4)] py-[var(--ft-space-6)] text-center text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
             No collections yet.
           </p>
         ) : (
@@ -747,9 +747,9 @@ function AddToCollectionModal({
               <button
                 key={col.id}
                 onClick={() => onSelect(col.id)}
-                className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-foreground transition-colors hover:bg-muted"
+                className="flex w-full items-center gap-[var(--ft-space-2)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)] transition-colors hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
               >
-                <FolderPlus className="h-4 w-4 text-muted-foreground" />
+                <FolderPlus className="h-4 w-4 text-[var(--ft-color-on-surface-variant)]" />
                 {col.name}
               </button>
             ))}
@@ -773,10 +773,10 @@ function DateRangeChip({
   return (
     <Popover>
       <PopoverTrigger
-        className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs transition-colors ${
+        className={`inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
           active
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-input bg-background text-muted-foreground hover:text-foreground"
+            ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+            : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
         }`}
       >
         <CalendarDays className="h-3 w-3" />
@@ -792,30 +792,30 @@ function DateRangeChip({
         )}
       </PopoverTrigger>
       <PopoverContent className="w-72" align="start" sideOffset={6}>
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
           Date range
         </p>
-        <div className="flex items-center gap-2 pt-1.5">
+        <div className="flex items-center gap-[var(--ft-space-2)] pt-1.5">
           <input
             type="date"
             value={from ?? ""}
             onChange={(e) => onChange({ from: e.target.value || null })}
             aria-label="From"
-            className="h-7 flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/40"
+            className="h-8 flex-1 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-3)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] focus:border-[var(--ft-color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--ft-color-primary)]"
           />
-          <span className="text-xs text-muted-foreground">→</span>
+          <span className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">→</span>
           <input
             type="date"
             value={to ?? ""}
             onChange={(e) => onChange({ to: e.target.value || null })}
             aria-label="To"
-            className="h-7 flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/40"
+            className="h-8 flex-1 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-3)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] focus:border-[var(--ft-color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--ft-color-primary)]"
           />
         </div>
         {active && (
           <button
             onClick={() => onChange({ from: null, to: null })}
-            className="mt-1 text-[11px] text-muted-foreground hover:text-foreground"
+            className="mt-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
           >
             Clear
           </button>
@@ -863,10 +863,10 @@ function FolderChip({
   return (
     <Popover open={open} onOpenChange={(v: boolean) => setOpen(v)}>
       <PopoverTrigger
-        className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs transition-colors ${
+        className={`inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
           active
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-input bg-background text-muted-foreground hover:text-foreground"
+            ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+            : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
         }`}
       >
         <FolderTree className="h-3 w-3" />
@@ -882,11 +882,11 @@ function FolderChip({
         )}
       </PopoverTrigger>
       <PopoverContent className="w-72 max-h-64 overflow-y-auto" align="start" sideOffset={6}>
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
           Folder
         </p>
         {folderLoading ? (
-          <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-[var(--ft-space-2)] py-2 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
             <Loader2 className="h-3 w-3 animate-spin" />
             Loading…
           </div>
@@ -897,10 +897,10 @@ function FolderChip({
                 onChange(null);
                 setOpen(false);
               }}
-              className={`rounded px-2 py-1 text-left text-xs transition-colors ${
+              className={`rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1 text-left text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] transition-colors ${
                 activePath === null
-                  ? "bg-primary/10 font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  ? "bg-[var(--ft-color-secondary-container)] font-medium text-[var(--ft-color-on-secondary-container)]"
+                  : "text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
               }`}
             >
               All folders
@@ -912,10 +912,10 @@ function FolderChip({
                   onChange(f.path);
                   setOpen(false);
                 }}
-                className={`rounded px-2 py-1 text-left text-xs transition-colors ${
+                className={`rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1 text-left text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] transition-colors ${
                   activePath === f.path
-                    ? "bg-primary/10 font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    ? "bg-[var(--ft-color-secondary-container)] font-medium text-[var(--ft-color-on-secondary-container)]"
+                    : "text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
                 }`}
               >
                 {f.path}
@@ -944,10 +944,10 @@ function ClassificationChip({
   return (
     <Popover open={open} onOpenChange={(v: boolean) => setOpen(v)}>
       <PopoverTrigger
-        className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs transition-colors ${
+        className={`inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
           active
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-input bg-background text-muted-foreground hover:text-foreground"
+            ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+            : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
         }`}
       >
         <TagIcon className="h-3 w-3" />
@@ -963,7 +963,7 @@ function ClassificationChip({
         )}
       </PopoverTrigger>
       <PopoverContent className="w-64" align="start" sideOffset={6}>
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
           Type
         </p>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -976,10 +976,10 @@ function ClassificationChip({
                   onChange(isActive ? null : c.value);
                   setOpen(false);
                 }}
-                className={`h-7 rounded-full border px-2.5 text-xs font-medium transition-colors ${
+                className={`inline-flex h-8 items-center justify-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
                   isActive
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-background text-foreground hover:bg-muted"
+                    ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+                    : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
                 }`}
               >
                 {c.label}
@@ -1014,10 +1014,10 @@ function LensSelector({
             role="tab"
             aria-selected={isActive}
             onClick={() => onChange(lens.value)}
-            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
+            className={`inline-flex h-8 shrink-0 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
               isActive
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+                ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+                : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
             }`}
           >
             <Icon className="h-4 w-4" />
@@ -1061,9 +1061,9 @@ function LibraryEmptyState({
 
   if (filterCount > 0) {
     return (
-      <div className="flex flex-col items-center gap-3 py-16 text-center">
-        <ImageIcon className="h-10 w-10 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
+      <div className="flex flex-col items-center gap-[var(--ft-space-3)] py-16 text-center">
+        <ImageIcon className="h-10 w-10 text-[var(--ft-color-on-surface-variant)]" />
+        <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
           No {activeLens === "all" ? "assets" : activeLens === "moment" ? "moments" : activeLens + "s"}{" "}
           match these filters.
         </p>
@@ -1072,7 +1072,7 @@ function LibraryEmptyState({
             toolbar.resetFilters();
             if (placeFilter) router.replace(pathname);
           }}
-          className="rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent"
+          className="inline-flex h-8 items-center justify-center rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]"
         >
           Clear filters
         </button>
@@ -1081,9 +1081,9 @@ function LibraryEmptyState({
   }
 
   return (
-    <div className="flex flex-col items-center gap-3 py-16 text-center">
-      <ImageIcon className="h-10 w-10 text-muted-foreground" />
-      <p className="text-sm text-muted-foreground">
+    <div className="flex flex-col items-center gap-[var(--ft-space-3)] py-16 text-center">
+      <ImageIcon className="h-10 w-10 text-[var(--ft-color-on-surface-variant)]" />
+      <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
         {LENS_EMPTY[activeLens] ?? "No assets in your library yet."}
       </p>
     </div>
@@ -1095,14 +1095,14 @@ function LibraryEmptyState({
 // refreshKey, which is in the dependency list of both effects.
 function LibraryErrorState({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="flex flex-col items-center gap-3 py-16 text-center">
-      <ImageIcon className="h-10 w-10 text-destructive/70" />
-      <p className="text-sm text-muted-foreground">
+    <div className="flex flex-col items-center gap-[var(--ft-space-3)] py-16 text-center">
+      <ImageIcon className="h-10 w-10 text-[var(--ft-color-error)]/70" />
+      <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
         Couldn&apos;t load your library. Check your connection and retry.
       </p>
       <button
         onClick={onRetry}
-        className="rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent"
+        className="inline-flex h-8 items-center justify-center rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]"
       >
         Retry
       </button>
@@ -1196,12 +1196,12 @@ function LibraryActivePills({
 
   if (!pills.length) return null;
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+    <div className="flex flex-wrap items-center gap-1.5 text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)]">
       {pills.map((p) => (
         <button
           key={p.key}
           onClick={p.clear}
-          className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-primary-text hover:bg-primary/20 transition-colors"
+          className="inline-flex items-center gap-1 rounded-[var(--ft-shape-full)] bg-[var(--ft-color-secondary-container)] px-[var(--ft-space-3)] py-1 text-[var(--ft-color-on-secondary-container)] hover:brightness-95 transition-colors"
         >
           <span>{p.label}</span>
           <span aria-hidden className="text-base leading-none">×</span>
@@ -1211,7 +1211,7 @@ function LibraryActivePills({
       {pills.length > 1 && (
         <button
           onClick={() => toolbar.resetFilters()}
-          className="ml-1 rounded-full px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          className="ml-1 rounded-[var(--ft-shape-full)] px-[var(--ft-space-2)] py-1 text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
         >
           Clear all
         </button>
@@ -1228,9 +1228,9 @@ function LibraryChipStrip({
   const { filters, setFilters } = toolbar;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs">
+    <div className="flex flex-wrap items-center gap-[var(--ft-space-2)] text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)]">
       {/* Lifecycle chips — Active / Archived / Trash. Mutually exclusive. */}
-      <div className="flex items-center gap-1 rounded-md border border-input bg-background p-0.5">
+      <div className="flex items-center gap-1 rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] p-0.5">
         {LIFECYCLES.map((l) => {
           const active = filters.lifecycle === l.value;
           const Icon = l.icon;
@@ -1238,10 +1238,10 @@ function LibraryChipStrip({
             <button
               key={l.value}
               onClick={() => setFilters({ lifecycle: l.value })}
-              className={`flex items-center gap-1 rounded px-2 py-1 transition-colors ${
+              className={`flex items-center gap-1 rounded-[var(--ft-shape-full)] px-[var(--ft-space-2)] py-1 transition-colors ${
                 active
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+                  : "text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
               }`}
             >
               <Icon className="h-3 w-3" />
@@ -1252,7 +1252,7 @@ function LibraryChipStrip({
       </div>
 
       {/* Mime chips — All / Images / Videos / Documents. */}
-      <div className="flex items-center gap-1 rounded-md border border-input bg-background p-0.5">
+      <div className="flex items-center gap-1 rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] p-0.5">
         {MIMES.map((m) => {
           const active = (filters.mime ?? null) === m.value;
           const Icon = m.icon;
@@ -1260,10 +1260,10 @@ function LibraryChipStrip({
             <button
               key={m.label}
               onClick={() => setFilters({ mime: m.value })}
-              className={`flex items-center gap-1 rounded px-2 py-1 transition-colors ${
+              className={`flex items-center gap-1 rounded-[var(--ft-shape-full)] px-[var(--ft-space-2)] py-1 transition-colors ${
                 active
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+                  : "text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
               }`}
             >
               <Icon className="h-3 w-3" />
@@ -1276,10 +1276,10 @@ function LibraryChipStrip({
       {/* Favorite chip — toggle. */}
       <button
         onClick={() => setFilters({ favorite: !filters.favorite })}
-        className={`flex items-center gap-1 rounded-md border px-2 py-1.5 transition-colors ${
+        className={`inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
           filters.favorite
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-input bg-background text-muted-foreground hover:text-foreground"
+            ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+            : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
         }`}
       >
         <Heart className="h-3 w-3" fill={filters.favorite ? "currentColor" : "none"} />
@@ -1297,10 +1297,10 @@ function LibraryChipStrip({
               : filters.ratingMin + 1;
           setFilters({ ratingMin: next });
         }}
-        className={`flex items-center gap-1 rounded-md border px-2 py-1.5 transition-colors ${
+        className={`inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
           filters.ratingMin != null
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-input bg-background text-muted-foreground hover:text-foreground"
+            ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+            : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
         }`}
         title="Cycle minimum rating: off → 4 → 5 → off"
       >
@@ -1365,10 +1365,10 @@ function PeopleGroupChip({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-sm transition-colors ${
+        className={`inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
           isActive
             ? "border-transparent text-white"
-            : "border-input bg-background text-muted-foreground hover:text-foreground"
+            : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
         }`}
         style={isActive && activeGroup ? { backgroundColor: activeGroup.color } : undefined}
       >
@@ -1388,7 +1388,7 @@ function PeopleGroupChip({
       <PopoverContent className="w-52 p-2" align="start">
         <div className="flex flex-col gap-1">
           {groups.length === 0 && (
-            <p className="text-xs text-muted-foreground px-1">No groups yet.</p>
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)] px-1">No groups yet.</p>
           )}
           {groups.map((g) => (
             <button
@@ -1397,16 +1397,16 @@ function PeopleGroupChip({
                 onChange(activeGroupId === g.id ? null : g.id);
                 setOpen(false);
               }}
-              className={`flex items-center gap-2 rounded px-2 py-1.5 text-xs text-left transition-colors hover:bg-muted/50 ${
+              className={`flex items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-left text-[var(--ft-color-on-surface)] transition-colors hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] ${
                 activeGroupId === g.id ? "font-medium" : ""
               }`}
             >
               <span
-                className="h-2.5 w-2.5 rounded-full shrink-0"
+                className="h-2.5 w-2.5 rounded-[var(--ft-shape-full)] shrink-0"
                 style={{ backgroundColor: g.color }}
               />
               {g.name}
-              {activeGroupId === g.id && <span className="ml-auto text-muted-foreground">✓</span>}
+              {activeGroupId === g.id && <span className="ml-auto text-[var(--ft-color-on-surface-variant)]">✓</span>}
             </button>
           ))}
         </div>
@@ -1417,7 +1417,7 @@ function PeopleGroupChip({
 
 export default function LibraryPage() {
   return (
-    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+    <Suspense fallback={<div className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)] py-4">Loading…</div>}>
       <LibraryContent />
     </Suspense>
   );

@@ -141,15 +141,15 @@ export function AssetPageToolbar({
   }, [q]);
 
   return (
-    <div className="sticky top-0 z-20 flex flex-col gap-2 border-b border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/75">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="sticky top-0 z-20 flex flex-col gap-[var(--ft-space-2)] border-b border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface)]/95 px-[var(--ft-space-4)] py-[var(--ft-space-3)] backdrop-blur supports-[backdrop-filter]:bg-[var(--ft-color-surface)]/75">
+      <div className="flex flex-wrap items-center gap-[var(--ft-space-2)]">
         {/* Slot 1: title + count */}
-        <div className="flex min-w-0 items-baseline gap-2">
-          <h1 className="truncate font-heading text-base font-semibold text-foreground">
+        <div className="flex min-w-0 items-baseline gap-[var(--ft-space-2)]">
+          <h1 className="truncate font-heading text-[length:var(--ft-type-title-large-size)] leading-[var(--ft-type-title-large-line)] font-semibold text-[var(--ft-color-on-surface)]">
             {title}
           </h1>
           {count != null && (
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            <span className="shrink-0 text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] tabular-nums text-[var(--ft-color-on-surface-variant)]">
               {count.toLocaleString()}
             </span>
           )}
@@ -158,14 +158,14 @@ export function AssetPageToolbar({
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {/* Slot 2: search */}
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ft-color-on-surface-variant)]" />
             <input
               ref={inputRef}
               type="search"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder={searchPlaceholder}
-              className="h-7 w-48 rounded-md border border-border bg-background pl-7 pr-2 text-xs text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/40"
+              className="h-8 w-48 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-transparent pl-7 pr-[var(--ft-space-2)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] placeholder:text-[var(--ft-color-on-surface-variant)] focus:border-[var(--ft-color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--ft-color-primary)]"
             />
           </div>
 
@@ -205,7 +205,7 @@ export function AssetPageToolbar({
 
           {/* Slot 6: view mode */}
           {viewModes && viewModes.length > 1 && (
-            <div className="inline-flex overflow-hidden rounded-md border border-border">
+            <div className="inline-flex overflow-hidden rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)]">
               {viewModes.map((m) => {
                 const active = view.viewMode === m;
                 return (
@@ -214,10 +214,10 @@ export function AssetPageToolbar({
                     onClick={() => setView({ viewMode: m })}
                     title={VIEW_MODE_META[m].label}
                     className={cn(
-                      "flex h-7 items-center justify-center px-2 text-xs transition-colors",
+                      "flex h-8 items-center justify-center px-[var(--ft-space-2)] text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] transition-colors",
                       active
-                        ? "bg-muted text-foreground"
-                        : "bg-background text-muted-foreground hover:bg-muted/60"
+                        ? "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+                        : "bg-transparent text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
                     )}
                     aria-pressed={active}
                   >
@@ -301,8 +301,8 @@ function SortMenu({
               setOpen(false);
             }}
             className={cn(
-              "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-xs hover:bg-muted",
-              value === o && "bg-muted font-medium"
+              "flex w-full items-center justify-between rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]",
+              value === o && "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)] font-medium"
             )}
           >
             <span>{SORT_LABELS[o]}</span>
@@ -347,8 +347,8 @@ function DensityMenu({
                 setOpen(false);
               }}
               className={cn(
-                "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-xs hover:bg-muted",
-                value === d && "bg-muted font-medium"
+                "flex w-full items-center justify-between rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]",
+                value === d && "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)] font-medium"
               )}
             >
               <span className="flex items-center gap-2">
