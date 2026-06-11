@@ -22,6 +22,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { buttonVariants } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
 import { cn } from "@/lib/utils";
 import type { FilterState } from "@/lib/hooks/use-toolbar-state";
 
@@ -45,7 +46,8 @@ const MIME_CHIPS = [
 
 // Curated palette — matches the dominant-color bucketing used during
 // ingest (sharp's named extraction). Hex values are display-only; the
-// query string carries the name.
+// query string carries the name. These are the literal swatch colours
+// the user is picking; they're data, not styling.
 const COLOR_CHIPS = [
   { value: "red", hex: "#ef4444" },
   { value: "orange", hex: "#f97316" },
@@ -87,15 +89,6 @@ interface FilterPopoverProps {
   available: FilterKey[];
   /** Reset all filter keys back to default. */
   onReset?: () => void;
-}
-
-function chipBase(active: boolean): string {
-  return cn(
-    "h-7 rounded-full border px-2.5 text-xs font-medium transition-colors",
-    active
-      ? "border-primary bg-primary text-primary-foreground"
-      : "border-border bg-background text-foreground hover:bg-muted"
-  );
 }
 
 function activeCount(s: FilterState, keys: FilterKey[]): number {
@@ -184,7 +177,7 @@ export function FilterPopover({
         <Filter className="h-3.5 w-3.5" />
         <span>Filter</span>
         {n > 0 && (
-          <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+          <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-[var(--ft-shape-full)] bg-[var(--ft-color-primary)] px-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-semibold text-[var(--ft-color-on-primary)]">
             {n}
           </span>
         )}
@@ -195,11 +188,13 @@ export function FilterPopover({
         sideOffset={6}
       >
         <div className="flex items-center justify-between">
-          <p className="font-heading text-sm font-medium">Filter</p>
+          <p className="font-heading text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)] font-medium text-[var(--ft-color-on-surface)]">
+            Filter
+          </p>
           {n > 0 && onReset && (
             <button
               onClick={onReset}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+              className="flex items-center gap-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
             >
               <X className="h-3 w-3" />
               Clear all
@@ -213,15 +208,16 @@ export function FilterPopover({
               {SUBTYPE_CHIPS.map((c) => {
                 const active = state.type === c.value;
                 return (
-                  <button
+                  <Chip
                     key={c.value}
+                    variant="filter"
+                    selected={active}
                     onClick={() =>
                       onChange({ type: active ? null : c.value })
                     }
-                    className={chipBase(active)}
                   >
                     {c.label}
-                  </button>
+                  </Chip>
                 );
               })}
             </div>
@@ -234,15 +230,16 @@ export function FilterPopover({
               {MIME_CHIPS.map((c) => {
                 const active = state.mime === c.value;
                 return (
-                  <button
+                  <Chip
                     key={c.value}
+                    variant="filter"
+                    selected={active}
                     onClick={() =>
                       onChange({ mime: active ? null : c.value })
                     }
-                    className={chipBase(active)}
                   >
                     {c.label}
-                  </button>
+                  </Chip>
                 );
               })}
             </div>
@@ -251,13 +248,15 @@ export function FilterPopover({
 
         {showDate && (
           <Section label="Date">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-[var(--ft-space-2)]">
               <DateInput
                 value={state.from ?? ""}
                 onChange={(v) => onChange({ from: v || null })}
                 label="From"
               />
-              <span className="text-xs text-muted-foreground">→</span>
+              <span className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                →
+              </span>
               <DateInput
                 value={state.to ?? ""}
                 onChange={(v) => onChange({ to: v || null })}
@@ -280,10 +279,10 @@ export function FilterPopover({
                       onChange({ color: active ? null : c.value })
                     }
                     className={cn(
-                      "h-6 w-6 rounded-full border-2 transition-transform",
+                      "h-6 w-6 rounded-[var(--ft-shape-full)] border-2 transition-transform",
                       active
-                        ? "border-primary scale-110"
-                        : "border-border hover:scale-105"
+                        ? "border-[var(--ft-color-primary)] scale-110"
+                        : "border-[var(--ft-color-outline-variant)] hover:scale-105"
                     )}
                     style={{ background: c.hex }}
                   />
@@ -295,15 +294,16 @@ export function FilterPopover({
 
         {showLifecycle && (
           <Section label="Status">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-[var(--ft-space-2)]">
               {(["active", "archived", "trashed"] as const).map((lc) => (
-                <button
+                <Chip
                   key={lc}
+                  variant="filter"
+                  selected={state.lifecycle === lc}
                   onClick={() => onChange({ lifecycle: lc })}
-                  className={chipBase(state.lifecycle === lc)}
                 >
                   {lc[0].toUpperCase() + lc.slice(1)}
-                </button>
+                </Chip>
               ))}
             </div>
           </Section>
@@ -311,14 +311,15 @@ export function FilterPopover({
 
         {(showFavorite || showRating) && (
           <Section label="Quality">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-[var(--ft-space-2)]">
               {showFavorite && (
-                <button
+                <Chip
+                  variant="filter"
+                  selected={state.favorite}
                   onClick={() => onChange({ favorite: !state.favorite })}
-                  className={chipBase(state.favorite)}
                 >
                   ♥ Favorites only
-                </button>
+                </Chip>
               )}
               {showRating && (
                 <div className="flex items-center gap-1">
@@ -337,7 +338,7 @@ export function FilterPopover({
                           "h-6 w-6 text-base transition-colors",
                           active
                             ? "text-yellow-500"
-                            : "text-muted-foreground hover:text-foreground"
+                            : "text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
                         )}
                         aria-label={`At least ${r} star${r === 1 ? "" : "s"}`}
                       >
@@ -346,7 +347,7 @@ export function FilterPopover({
                     );
                   })}
                   {state.ratingMin != null && (
-                    <span className="ml-1 text-[11px] text-muted-foreground">
+                    <span className="ml-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">
                       {state.ratingMin}+
                     </span>
                   )}
@@ -362,8 +363,10 @@ export function FilterPopover({
               {tags.map((t) => {
                 const active = state.tagIds.includes(t.id);
                 return (
-                  <button
+                  <Chip
                     key={t.id}
+                    variant="filter"
+                    selected={active}
                     onClick={() =>
                       onChange({
                         tagIds: active
@@ -371,7 +374,6 @@ export function FilterPopover({
                           : [...state.tagIds, t.id],
                       })
                     }
-                    className={chipBase(active)}
                     style={
                       active && t.color
                         ? { background: t.color, borderColor: t.color }
@@ -379,7 +381,7 @@ export function FilterPopover({
                     }
                   >
                     #{t.name}
-                  </button>
+                  </Chip>
                 );
               })}
             </div>
@@ -392,8 +394,10 @@ export function FilterPopover({
               {people.slice(0, 24).map((p) => {
                 const active = state.personIds.includes(p.id);
                 return (
-                  <button
+                  <Chip
                     key={p.id}
+                    variant="filter"
+                    selected={active}
                     onClick={() =>
                       onChange({
                         personIds: active
@@ -401,13 +405,12 @@ export function FilterPopover({
                           : [...state.personIds, p.id],
                       })
                     }
-                    className={chipBase(active)}
                   >
                     {p.name ?? "Unnamed"}{" "}
-                    <span className="text-[10px] opacity-60">
+                    <span className="text-[length:var(--ft-type-label-small-size)] opacity-60">
                       ({p.instanceCount})
                     </span>
-                  </button>
+                  </Chip>
                 );
               })}
             </div>
@@ -428,15 +431,15 @@ export function FilterPopover({
                       })
                     }
                     className={cn(
-                      "flex items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition-colors",
+                      "flex items-center justify-between gap-[var(--ft-space-2)] rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1.5 text-left text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] transition-colors",
                       active
-                        ? "bg-primary text-primary-foreground"
-                        : "hover:bg-muted"
+                        ? "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+                        : "text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
                     )}
                     title={f.path}
                   >
                     <span className="truncate">{f.path}</span>
-                    <span className="shrink-0 text-[10px] opacity-60">
+                    <span className="shrink-0 text-[length:var(--ft-type-label-small-size)] opacity-60">
                       {f.assetCount}
                     </span>
                   </button>
@@ -459,7 +462,7 @@ function Section({
 }) {
   return (
     <div className="flex flex-col gap-1.5 pt-1.5">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
         {label}
       </p>
       {children}
@@ -482,7 +485,7 @@ function DateInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       aria-label={label}
-      className="h-7 flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/40"
+      className="h-8 flex-1 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-3)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] focus:border-[var(--ft-color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--ft-color-primary)]"
     />
   );
 }
