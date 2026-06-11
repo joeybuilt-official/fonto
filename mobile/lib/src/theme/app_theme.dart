@@ -63,7 +63,7 @@ class FontoTheme {
         backgroundColor: scheme.surfaceContainerHigh,
         surfaceTintColor: Colors.transparent,
         elevation: 1,
-        shape: RoundedRectangleBorder(
+        shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.only(
             topLeft: Radius.circular(FontoShape.extraLarge),
             topRight: Radius.circular(FontoShape.extraLarge),
@@ -76,7 +76,7 @@ class FontoTheme {
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: scheme.surfaceContainer,
         indicatorColor: scheme.secondaryContainer,
-        labelTextStyle: WidgetStatePropertyAll(FontoType.labelMedium),
+        labelTextStyle: const WidgetStatePropertyAll(FontoType.labelMedium),
         elevation: 0,
         height: 80,
       ),
@@ -124,9 +124,9 @@ class FontoTheme {
       ),
       // Chips: filled style w/ stadium shape — used heavily in the lens
       // filter row + people / collection tags.
-      chipTheme: ChipThemeData(
-        shape: const StadiumBorder(),
-        padding: const EdgeInsets.symmetric(
+      chipTheme: const ChipThemeData(
+        shape: StadiumBorder(),
+        padding: EdgeInsets.symmetric(
           horizontal: FontoSpace.s3,
           vertical: FontoSpace.s1,
         ),
