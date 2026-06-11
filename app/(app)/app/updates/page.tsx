@@ -57,8 +57,8 @@ function UpdatesContent() {
   return (
     <div className="space-y-4">
       <div className="px-4 pt-4">
-        <h1 className="text-2xl font-semibold text-foreground">Updates</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <h1 className="text-2xl font-semibold text-[var(--ft-color-on-surface)]">Updates</h1>
+        <p className="mt-1 text-sm text-[var(--ft-color-on-surface-variant)]">
           What&apos;s new in your workspace — uploads, activity, and assets
           shared with you.
         </p>
@@ -102,7 +102,7 @@ function UpdatesContent() {
 
 export default function UpdatesPage() {
   return (
-    <Suspense fallback={<div className="text-sm text-muted-foreground py-4 px-4">Loading…</div>}>
+    <Suspense fallback={<div className="text-sm text-[var(--ft-color-on-surface-variant)] py-4 px-4">Loading…</div>}>
       <UpdatesContent />
     </Suspense>
   );
