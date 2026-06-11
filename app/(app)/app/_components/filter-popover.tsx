@@ -91,10 +91,10 @@ interface FilterPopoverProps {
 
 function chipBase(active: boolean): string {
   return cn(
-    "h-7 rounded-full border px-2.5 text-xs font-medium transition-colors",
+    "inline-flex h-8 items-center justify-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors",
     active
-      ? "border-primary bg-primary text-primary-foreground"
-      : "border-border bg-background text-foreground hover:bg-muted"
+      ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+      : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
   );
 }
 
@@ -184,7 +184,7 @@ export function FilterPopover({
         <Filter className="h-3.5 w-3.5" />
         <span>Filter</span>
         {n > 0 && (
-          <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+          <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-[var(--ft-shape-full)] bg-[var(--ft-color-primary)] px-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-semibold text-[var(--ft-color-on-primary)]">
             {n}
           </span>
         )}
@@ -195,11 +195,11 @@ export function FilterPopover({
         sideOffset={6}
       >
         <div className="flex items-center justify-between">
-          <p className="font-heading text-sm font-medium">Filter</p>
+          <p className="font-heading text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)] font-medium text-[var(--ft-color-on-surface)]">Filter</p>
           {n > 0 && onReset && (
             <button
               onClick={onReset}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+              className="flex items-center gap-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
             >
               <X className="h-3 w-3" />
               Clear all
@@ -280,10 +280,10 @@ export function FilterPopover({
                       onChange({ color: active ? null : c.value })
                     }
                     className={cn(
-                      "h-6 w-6 rounded-full border-2 transition-transform",
+                      "h-6 w-6 rounded-[var(--ft-shape-full)] border-2 transition-transform",
                       active
-                        ? "border-primary scale-110"
-                        : "border-border hover:scale-105"
+                        ? "border-[var(--ft-color-primary)] scale-110"
+                        : "border-[var(--ft-color-outline-variant)] hover:scale-105"
                     )}
                     style={{ background: c.hex }}
                   />
@@ -337,7 +337,7 @@ export function FilterPopover({
                           "h-6 w-6 text-base transition-colors",
                           active
                             ? "text-yellow-500"
-                            : "text-muted-foreground hover:text-foreground"
+                            : "text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
                         )}
                         aria-label={`At least ${r} star${r === 1 ? "" : "s"}`}
                       >
@@ -346,7 +346,7 @@ export function FilterPopover({
                     );
                   })}
                   {state.ratingMin != null && (
-                    <span className="ml-1 text-[11px] text-muted-foreground">
+                    <span className="ml-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">
                       {state.ratingMin}+
                     </span>
                   )}
@@ -428,15 +428,15 @@ export function FilterPopover({
                       })
                     }
                     className={cn(
-                      "flex items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition-colors",
+                      "flex items-center justify-between gap-[var(--ft-space-2)] rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1.5 text-left text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] transition-colors",
                       active
-                        ? "bg-primary text-primary-foreground"
-                        : "hover:bg-muted"
+                        ? "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+                        : "text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
                     )}
                     title={f.path}
                   >
                     <span className="truncate">{f.path}</span>
-                    <span className="shrink-0 text-[10px] opacity-60">
+                    <span className="shrink-0 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] opacity-60">
                       {f.assetCount}
                     </span>
                   </button>
@@ -459,7 +459,7 @@ function Section({
 }) {
   return (
     <div className="flex flex-col gap-1.5 pt-1.5">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
         {label}
       </p>
       {children}
@@ -482,7 +482,7 @@ function DateInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       aria-label={label}
-      className="h-7 flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/40"
+      className="h-8 flex-1 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-3)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] focus:border-[var(--ft-color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--ft-color-primary)]"
     />
   );
 }
