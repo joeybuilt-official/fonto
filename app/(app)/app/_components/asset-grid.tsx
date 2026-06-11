@@ -116,9 +116,9 @@ export function AssetGrid({
     return (
       <div className={cn("flex-1", className)}>
         {emptyState ?? (
-          <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+          <div className="flex flex-col items-center justify-center py-16 text-center text-[var(--ft-color-on-surface-variant)]">
             <ImageIcon className="mb-2 h-8 w-8 opacity-50" />
-            <p className="text-sm">No assets to show.</p>
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)]">No assets to show.</p>
           </div>
         )}
       </div>
@@ -145,7 +145,7 @@ export function AssetGrid({
             onSelect={handleSelect}
           />
         ) : (
-          <ul className="divide-y divide-border">
+          <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
             {assets.map((a, i) => (
               <AssetRow
                 key={a.id}
@@ -288,11 +288,11 @@ function AssetRow({
       <button
         onClick={(e) => (selectMode ? onSelect(e) : onClick())}
         className={cn(
-          "flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/40",
-          selected && "bg-primary/10"
+          "flex w-full items-center gap-[var(--ft-space-3)] px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-left transition-colors hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]",
+          selected && "bg-[var(--ft-color-secondary-container)]"
         )}
       >
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[var(--ft-shape-small)] bg-[var(--ft-color-surface-container)]">
           {isImage && thumbUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -302,14 +302,14 @@ function AssetRow({
               loading="lazy"
             />
           ) : (
-            <ImageIcon className="h-4 w-4 text-muted-foreground" />
+            <ImageIcon className="h-4 w-4 text-[var(--ft-color-on-surface-variant)]" />
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">
+          <p className="truncate text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] font-medium text-[var(--ft-color-on-surface)]">
             {asset.filename}
           </p>
-          <p className="truncate text-[11px] text-muted-foreground">
+          <p className="truncate text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">
             {asset.mimeType} ·{" "}
             {Math.round(asset.sizeBytes / 1024).toLocaleString()} KB
             {asset.capturedAt
@@ -465,7 +465,7 @@ function VirtualList({
                   transform: `translateY(${vRow.start}px)`,
                 }}
               >
-                <ul className="divide-y divide-border">
+                <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
                   <AssetRow
                     asset={a}
                     index={vRow.index}
