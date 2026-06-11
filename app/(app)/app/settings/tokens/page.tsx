@@ -4,6 +4,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  TextField,
+  TextFieldInput,
+  TextFieldLabel,
+} from "@/components/ui";
 
 type Scope = "read" | "write" | "admin";
 
@@ -128,181 +138,214 @@ export default function TokensPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div className="flex items-center gap-3">
+    <div className="space-y-[var(--ft-space-6)] max-w-3xl">
+      <div className="flex items-center gap-[var(--ft-space-3)]">
         <Link
           href="/app/settings"
-          className="text-sm text-muted-foreground hover:text-foreground"
+          className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
         >
           ← Settings
         </Link>
       </div>
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">API tokens</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1 className="text-[length:var(--ft-type-headline-small-size)] leading-[var(--ft-type-headline-small-line)] tracking-[var(--ft-type-headline-small-tracking)] font-medium text-[var(--ft-color-on-surface)]">
+          API tokens
+        </h1>
+        <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)] mt-[var(--ft-space-1)]">
           Personal access tokens for the Fonto API. Use these from the CLI,
           the mobile app, or any 3rd-party integration. Send as
-          <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">Authorization: Bearer fonto_pat_…</code>
+          <code className="mx-1 rounded-[var(--ft-shape-extra-small)] bg-[var(--ft-color-surface-container)] px-[var(--ft-space-1)] py-[2px] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)]">
+            Authorization: Bearer fonto_pat_…
+          </code>
           or
-          <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">x-api-key: fonto_pat_…</code>.
+          <code className="mx-1 rounded-[var(--ft-shape-extra-small)] bg-[var(--ft-color-surface-container)] px-[var(--ft-space-1)] py-[2px] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)]">
+            x-api-key: fonto_pat_…
+          </code>
+          .
         </p>
       </div>
 
       {error && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="rounded-[var(--ft-shape-medium)] border border-[var(--ft-color-error)]/40 bg-[var(--ft-color-error-container)] p-[var(--ft-space-3)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-error-container)]">
           {error}
         </div>
       )}
 
       {justCreated && (
-        <div className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">
-              Token created — copy it now
-            </h2>
-            <button
-              type="button"
-              onClick={() => setJustCreated(null)}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Dismiss
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            This is the <strong>only time</strong> you&apos;ll see this token in
-            full. Copy it now and store it somewhere safe (a password manager).
-            If you lose it, revoke it and create a new one.
-          </p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 select-all overflow-x-auto rounded-md border border-border bg-card px-3 py-2 text-xs font-mono text-foreground">
-              {justCreated.token}
-            </code>
-            <button
-              type="button"
-              onClick={onCopy}
-              className="rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted"
-            >
-              {copied ? "Copied" : "Copy"}
-            </button>
-          </div>
-        </div>
+        <Card variant="outlined" className="border-amber-500/50 bg-amber-500/5">
+          <CardContent className="space-y-[var(--ft-space-3)]">
+            <div className="flex items-center justify-between">
+              <h2 className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)] font-medium text-[var(--ft-color-on-surface)]">
+                Token created — copy it now
+              </h2>
+              <Button
+                variant="text"
+                size="sm"
+                onClick={() => setJustCreated(null)}
+              >
+                Dismiss
+              </Button>
+            </div>
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+              This is the <strong>only time</strong> you&apos;ll see this token in
+              full. Copy it now and store it somewhere safe (a password manager).
+              If you lose it, revoke it and create a new one.
+            </p>
+            <div className="flex items-center gap-[var(--ft-space-2)]">
+              <code className="flex-1 select-all overflow-x-auto rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-low)] px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] font-mono text-[var(--ft-color-on-surface)]">
+                {justCreated.token}
+              </code>
+              <Button variant="outlined" size="sm" onClick={onCopy}>
+                {copied ? "Copied" : "Copy"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
-      <form
-        onSubmit={onCreate}
-        className="rounded-lg border border-border bg-card p-6 space-y-4"
-      >
-        <h2 className="text-sm font-semibold text-foreground">Create a token</h2>
-        <div className="space-y-2">
-          <label htmlFor="token-name" className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Name
-          </label>
-          <input
-            id="token-name"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. MacBook CLI"
-            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-            required
-            maxLength={120}
-          />
-        </div>
+      <Card variant="outlined">
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Create a token
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={onCreate} className="space-y-[var(--ft-space-4)]">
+            <TextField>
+              <TextFieldLabel htmlFor="token-name" className="uppercase tracking-wide">
+                Name
+              </TextFieldLabel>
+              <TextFieldInput
+                id="token-name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. MacBook CLI"
+                required
+                maxLength={120}
+              />
+            </TextField>
 
-        <div className="space-y-2">
-          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Scopes
-          </span>
-          <div className="flex flex-wrap gap-3">
-            {(["read", "write", "admin"] as Scope[]).map((s) => (
-              <label key={s} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={scopes.includes(s)}
-                  onChange={() => toggleScope(s)}
-                />
-                <span className="capitalize">{s}</span>
-              </label>
-            ))}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            <strong>read</strong> — list, read, search.
-            <strong className="ml-2">write</strong> — upload, edit, delete.
-            <strong className="ml-2">admin</strong> — manage workspace settings.
-            Higher scopes imply lower ones.
-          </p>
-        </div>
+            <div className="space-y-[var(--ft-space-2)]">
+              {/* Scopes — multi-select checkboxes. No MD3 Checkbox primitive
+                  exposed via the @/components/ui barrel yet, so the native
+                  inputs stay; only labels + spacing move to tokens. Flagged
+                  in agent report. */}
+              <span className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase">
+                Scopes
+              </span>
+              <div className="flex flex-wrap gap-[var(--ft-space-3)]">
+                {(["read", "write", "admin"] as Scope[]).map((s) => (
+                  <label
+                    key={s}
+                    className="flex items-center gap-[var(--ft-space-2)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={scopes.includes(s)}
+                      onChange={() => toggleScope(s)}
+                      className="accent-[var(--ft-color-primary)]"
+                    />
+                    <span className="capitalize">{s}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                <strong>read</strong> — list, read, search.
+                <strong className="ml-2">write</strong> — upload, edit, delete.
+                <strong className="ml-2">admin</strong> — manage workspace settings.
+                Higher scopes imply lower ones.
+              </p>
+            </div>
 
-        <div className="space-y-2">
-          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Expires in
-          </span>
-          <div className="flex flex-wrap gap-3">
-            {EXPIRY_OPTIONS.map((opt) => (
-              <label key={opt.label} className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="expiry"
-                  checked={expiryDays === opt.days}
-                  onChange={() => setExpiryDays(opt.days)}
-                />
-                {opt.label}
-              </label>
-            ))}
-          </div>
-        </div>
+            <div className="space-y-[var(--ft-space-2)]">
+              {/* Expiry — native radios; no MD3 RadioGroup primitive in barrel. */}
+              <span className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase">
+                Expires in
+              </span>
+              <div className="flex flex-wrap gap-[var(--ft-space-3)]">
+                {EXPIRY_OPTIONS.map((opt) => (
+                  <label
+                    key={opt.label}
+                    className="flex items-center gap-[var(--ft-space-2)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]"
+                  >
+                    <input
+                      type="radio"
+                      name="expiry"
+                      checked={expiryDays === opt.days}
+                      onChange={() => setExpiryDays(opt.days)}
+                      className="accent-[var(--ft-color-primary)]"
+                    />
+                    {opt.label}
+                  </label>
+                ))}
+              </div>
+            </div>
 
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={creating || !name.trim() || scopes.length === 0}
-            className="rounded-md border border-border bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
-          >
-            {creating ? "Creating…" : "Create token"}
-          </button>
-        </div>
-      </form>
+            <div className="flex justify-end">
+              <Button
+                type="submit"
+                variant="filled"
+                size="lg"
+                disabled={creating || !name.trim() || scopes.length === 0}
+              >
+                {creating ? "Creating…" : "Create token"}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
-        <h2 className="text-sm font-semibold text-foreground">Active tokens</h2>
-        {tokens === null ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : tokens.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No tokens yet. Create one above.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {tokens.map((t) => (
-              <li key={t.id} className="py-3 flex items-center justify-between gap-4">
-                <div className="space-y-1 min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-foreground truncate">
-                      {t.name}
-                    </span>
-                    <span className="text-xs font-mono text-muted-foreground">
-                      {t.prefix}{t.firstFour}…{t.lastFour}
-                    </span>
+      <Card variant="outlined">
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Active tokens
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {tokens === null ? (
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+              Loading…
+            </p>
+          ) : tokens.length === 0 ? (
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+              No tokens yet. Create one above.
+            </p>
+          ) : (
+            <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
+              {tokens.map((t) => (
+                <li key={t.id} className="py-[var(--ft-space-3)] flex items-center justify-between gap-[var(--ft-space-4)]">
+                  <div className="space-y-[var(--ft-space-1)] min-w-0 flex-1">
+                    <div className="flex items-center gap-[var(--ft-space-2)]">
+                      <span className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] font-medium text-[var(--ft-color-on-surface)] truncate">
+                        {t.name}
+                      </span>
+                      <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] font-mono text-[var(--ft-color-on-surface-variant)]">
+                        {t.prefix}{t.firstFour}…{t.lastFour}
+                      </span>
+                    </div>
+                    <div className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)] flex flex-wrap gap-x-[var(--ft-space-3)] gap-y-[var(--ft-space-1)]">
+                      <span>scopes: {t.scopes.join(", ")}</span>
+                      <span>created: {formatDate(t.createdAt)}</span>
+                      <span>last used: {formatDate(t.lastUsedAt)}</span>
+                      <span>expires: {formatDate(t.expiresAt)}</span>
+                    </div>
                   </div>
-                  <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-1">
-                    <span>scopes: {t.scopes.join(", ")}</span>
-                    <span>created: {formatDate(t.createdAt)}</span>
-                    <span>last used: {formatDate(t.lastUsedAt)}</span>
-                    <span>expires: {formatDate(t.expiresAt)}</span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onRevoke(t.id)}
-                  className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
-                >
-                  Revoke
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+                  <Button
+                    type="button"
+                    variant="outlined"
+                    size="sm"
+                    onClick={() => onRevoke(t.id)}
+                    className="border-[var(--ft-color-error)]/40 text-[var(--ft-color-error)] hover:bg-[var(--ft-color-error)]/10"
+                  >
+                    Revoke
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
