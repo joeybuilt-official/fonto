@@ -53,10 +53,10 @@ export function ProcessingNotice() {
   return (
     <Link
       href="/app/imports"
-      className="flex items-center gap-2.5 rounded-md bg-secondary px-4 py-2 text-secondary-foreground transition-colors hover:bg-secondary/80"
+      className="flex items-center gap-[var(--ft-space-3)] rounded-[var(--ft-shape-small)] bg-[var(--ft-color-secondary-container)] px-[var(--ft-space-4)] py-[var(--ft-space-2)] text-[var(--ft-color-on-secondary-container)] transition-colors hover:brightness-95"
     >
       <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-      <span className="flex-1 text-xs">
+      <span className="flex-1 text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)]">
         Processing {processing} {processing === 1 ? "item" : "items"} on Fonto…
       </span>
       <ChevronRight className="h-4 w-4 shrink-0 opacity-70" />
