@@ -104,6 +104,7 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final input = classifyDriveInput(_controller.text);
     final id = input.kind == DriveInputKind.id ? input.fileId : null;
     final isTakeoutDownload = input.kind == DriveInputKind.takeoutDownload;
@@ -113,22 +114,22 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           if (!widget.googleConnected)
-            const Text(
+            Text(
               "Connect Google on the Imports screen first, then come back here.",
-              style: TextStyle(fontSize: 13),
+              style: theme.textTheme.bodyMedium,
             )
           else ...[
-            const Text(
+            Text(
               "How to get the link",
-              style: TextStyle(fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               "1. In Google Takeout, choose \"Add to Drive\" as the destination.\n"
               "2. Open the archive in Google Drive and copy its link "
               "(Share → Copy link, or the address bar URL).\n"
               "3. Paste it below.",
-              style: TextStyle(fontSize: 13),
+              style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 16),
             TextField(
@@ -151,7 +152,7 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
                       : id != null
                           ? "Detected file ID: $id"
                           : " ",
-              style: const TextStyle(fontSize: 12),
+              style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
             FilledButton(
@@ -160,18 +161,18 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
             ),
             if (_msg != null) ...[
               const SizedBox(height: 8),
-              Text(_msg!, style: const TextStyle(fontSize: 12)),
+              Text(_msg!, style: theme.textTheme.bodySmall),
             ],
             const Divider(height: 32),
-            const Text(
+            Text(
               "Or upload a downloaded archive",
-              style: TextStyle(fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               "Exported with \"Send download link\" instead? Download the .zip in "
               "your browser, then upload it here (dates, places and albums are kept).",
-              style: TextStyle(fontSize: 13),
+              style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
@@ -187,7 +188,7 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
             ),
             if (_uploadMsg != null) ...[
               const SizedBox(height: 8),
-              Text(_uploadMsg!, style: const TextStyle(fontSize: 12)),
+              Text(_uploadMsg!, style: theme.textTheme.bodySmall),
             ],
           ],
         ],
