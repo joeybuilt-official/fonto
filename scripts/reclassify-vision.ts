@@ -123,7 +123,7 @@ async function main(): Promise<void> {
       AND exif->>'ExposureTime' IS NULL
       AND exif->>'FocalLength' IS NULL
       AND mime_type LIKE 'image/%'
-      AND COALESCE(preview_key, storage_key) IS NOT NULL
+      AND filename IS NOT NULL
     ORDER BY created_at DESC
     LIMIT ${limit === Number.POSITIVE_INFINITY ? 100_000_000 : limit}
   `) as unknown as Row[];

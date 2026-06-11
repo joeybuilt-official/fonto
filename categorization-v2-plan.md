@@ -27,6 +27,9 @@ v1 reduced screenshots 5392→2062 and cleaned Documents. Remaining problem: scr
 - Thumbnail montage harness: `/tmp/montage.mjs` (fetch /api/v1/assets/urls variant=thumb → HTML grid → screenshot).
 - Verify distribution: `SELECT kind,count(*) ... GROUP BY kind`.
 
+## VALIDATION (2026-06-10) — run-vs-live PROVEN ineffective without tuned prompt
+Ran `reclassify-vision.ts --limit=30 --dry-run` against LIVE plexo-api: 27 processed, **only 1 changed** (→document via OCR), 26 stayed photo→moment; 3 errors. The live service runs `gemma3:4b-fonto` + the UN-TUNED prompt and re-confirms "photo" for the suspects — same failure as CLIP. So a full run NOW would NOT catch screenshots/graphics AND would burn the `classify_method='llm-vision-rerun'` marker (blocking a proper tuned re-run). CONFIRMED: must deploy the tuned prompt first (and consider restoring the `qwen2.5vl:7b-fonto` model — live overrode it down to gemma3:4b). Also: ~10% call errors in the sample — investigate (image fetch / VLM timeout) before the real run. Script fix applied: dropped non-existent `storage_key` from the WHERE (committed).
+
 ## STATUS (2026-06-10) — PARKED, ready to run, blocked on Plexo deploy
 - ✅ Prompt tuned + **MERGED to plexo `origin/main` (34e805b)** (fast-forward off d1ab068; canonical). Sharpens `photo` to real camera captures only + adds an explicit screenshot/graphic DISAMBIGUATION rule in `apps/api/src/routes/vision.ts` `ANALYZE_SYSTEM_PROMPT`. Will ship next time `plexo-api` builds from main. Patch backup: `/tmp/fonto-audit/plexo-vision-prompt.patch`.
 - ✅ Runner written: `scripts/reclassify-vision.ts` (committed Fonto main 0a5afbc). Forces `analyzeImageUnified` on the suspect bucket, re-derives kind, marks `classify_method='llm-vision-rerun'` (resumable). Run: `docker exec <fonto-worker> node_modules/.bin/tsx scripts/reclassify-vision.ts --workspace-id=00000000-0000-0000-0000-000000000000 [--dry-run] [--concurrency=4]`.
