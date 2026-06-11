@@ -1192,8 +1192,11 @@ class _TimelineScrubberState extends State<_TimelineScrubber> {
                     decoration: BoxDecoration(
                       color: scheme.primary,
                       borderRadius: BorderRadius.circular(4),
-                      boxShadow: const [
-                        BoxShadow(color: Colors.black26, blurRadius: 4),
+                      boxShadow: [
+                        BoxShadow(
+                          color: scheme.shadow.withValues(alpha: 0.25),
+                          blurRadius: 4,
+                        ),
                       ],
                     ),
                   ),
@@ -1212,11 +1215,10 @@ class _TimelineScrubberState extends State<_TimelineScrubber> {
                     ),
                     child: Text(
                       _monthLabel(_bubbleMonth!),
-                      style: TextStyle(
-                        color: scheme.onInverseSurface,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            color: scheme.onInverseSurface,
+                            fontWeight: FontWeight.w600,
+                          ),
                     ),
                   ),
                 ),
@@ -1288,10 +1290,12 @@ class _ProgressBanners extends StatelessWidget {
                                 Expanded(
                                   child: Text(
                                     label,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: scheme.onTertiaryContainer,
-                                    ),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color: scheme.onTertiaryContainer,
+                                        ),
                                   ),
                                 ),
                                 Icon(Icons.chevron_right,
@@ -1327,10 +1331,12 @@ class _ProgressBanners extends StatelessWidget {
                             Expanded(
                               child: Text(
                                 "Uploading ${up.done.clamp(0, up.total)} of ${up.total} to your library",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: scheme.onPrimaryContainer,
-                                ),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      color: scheme.onPrimaryContainer,
+                                    ),
                               ),
                             ),
                             Icon(Icons.chevron_right,
@@ -1376,10 +1382,12 @@ class _ProgressBanners extends StatelessWidget {
                           child: Text(
                             "Processing $processing "
                             "${processing == 1 ? 'item' : 'items'} on Fonto…",
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: scheme.onSecondaryContainer,
-                            ),
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                  color: scheme.onSecondaryContainer,
+                                ),
                           ),
                         ),
                         Icon(Icons.chevron_right,
@@ -1451,11 +1459,13 @@ class _AssetTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final placeholderColor =
+        Theme.of(context).colorScheme.surfaceContainerHighest;
     final Widget media;
     if (url == null) {
       // No URL yet: images/videos get a neutral box; docs get the doc card.
       media = (_isImage || _isVideo)
-          ? Container(color: Colors.black12)
+          ? Container(color: placeholderColor)
           : _DocPlaceholder(asset: asset);
     } else if (_isImage || _isVideo) {
       media = Hero(
@@ -1466,10 +1476,10 @@ class _AssetTile extends StatelessWidget {
           // Decode at grid-tile resolution to cap per-tile memory ~130×130px.
           memCacheWidth: 260,
           memCacheHeight: 260,
-          placeholder: (_, __) => Container(color: Colors.black12),
-          errorWidget: (_, __, ___) => const ColoredBox(
-            color: Colors.black12,
-            child: Icon(Icons.broken_image),
+          placeholder: (_, __) => Container(color: placeholderColor),
+          errorWidget: (_, __, ___) => ColoredBox(
+            color: placeholderColor,
+            child: const Icon(Icons.broken_image),
           ),
         ),
       );
@@ -1530,7 +1540,9 @@ class _ProcessingBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: Colors.black54,
+        // Scrim-over-photo overlay — must stay dark regardless of theme so the
+        // spinner reads on a bright photo behind it.
+        color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(4),
       ),
       child: const SizedBox(
@@ -1554,25 +1566,25 @@ class _DocPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final dot = asset.filename.lastIndexOf(".");
     final ext = dot > 0 && dot < asset.filename.length - 1
         ? asset.filename.substring(dot + 1).toUpperCase()
         : "DOC";
     return Container(
-      color: const Color(0xFFECEAF4),
+      color: theme.colorScheme.surfaceContainerHigh,
       padding: const EdgeInsets.all(6),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.description_outlined,
-              size: 34, color: Colors.black54),
+          Icon(Icons.description_outlined,
+              size: 34, color: theme.colorScheme.onSurfaceVariant),
           const SizedBox(height: 4),
           Text(
             ext,
-            style: const TextStyle(
+            style: theme.textTheme.labelSmall?.copyWith(
               fontWeight: FontWeight.bold,
-              fontSize: 11,
-              color: Colors.black54,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 2),
@@ -1581,7 +1593,9 @@ class _DocPlaceholder extends StatelessWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 10, color: Colors.black54),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -1599,7 +1613,9 @@ class _TypeBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: Colors.black54,
+        // Scrim-over-photo overlay; white-on-black reads on any image
+        // beneath the badge.
+        color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Icon(icon, size: 16, color: Colors.white),
@@ -1665,15 +1681,14 @@ class _AppDrawer extends StatelessWidget {
             // at every access.
             if (t != null && (t.paths.isNotEmpty || t.rootAssetCount > 0)) ...[
               const Divider(),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                 child: Text(
                   "FOLDERS",
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.8,
-                  ),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.8,
+                      ),
                 ),
               ),
               if (t.rootAssetCount > 0)
