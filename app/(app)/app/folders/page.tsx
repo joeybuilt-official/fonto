@@ -74,10 +74,10 @@ function Breadcrumb({ prefix }: { prefix: string }) {
   }
 
   return (
-    <nav className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+    <nav className="flex flex-wrap items-center gap-1 text-sm text-[var(--ft-color-on-surface-variant)]">
       <Link
         href="/app/folders"
-        className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-muted hover:text-foreground transition-colors"
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--ft-color-surface-container)] hover:text-[var(--ft-color-on-surface)] transition-colors"
       >
         <Home className="h-3.5 w-3.5" />
         Root
@@ -86,11 +86,11 @@ function Breadcrumb({ prefix }: { prefix: string }) {
         const isLast = i === accumulated.length - 1;
         return (
           <span key={seg.path} className="flex items-center gap-1">
-            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
+            <ChevronRight className="h-3.5 w-3.5 text-[var(--ft-color-on-surface-variant)]/50" />
             <Link
               href={folderHref(seg.path)}
-              className={`rounded px-1.5 py-0.5 hover:bg-muted hover:text-foreground transition-colors ${
-                isLast ? "text-foreground font-medium" : ""
+              className={`rounded px-1.5 py-0.5 hover:bg-[var(--ft-color-surface-container)] hover:text-[var(--ft-color-on-surface)] transition-colors ${
+                isLast ? "text-[var(--ft-color-on-surface)] font-medium" : ""
               }`}
             >
               {seg.name}
@@ -134,8 +134,10 @@ function FolderCard({
   return (
     <div
       className={cn(
-        "group relative flex items-center gap-3 rounded-lg border bg-card px-3 py-3 transition-colors hover:bg-muted",
-        dropTarget ? "border-primary ring-2 ring-primary" : "border-border",
+        "group relative flex items-center gap-3 rounded-[var(--ft-shape-medium)] border bg-[var(--ft-color-surface)] px-3 py-3 transition-colors hover:bg-[var(--ft-color-surface-container-low)]",
+        dropTarget
+          ? "border-[var(--ft-color-primary)] ring-2 ring-[var(--ft-color-primary)]"
+          : "border-[var(--ft-color-outline-variant)]",
         busy && "opacity-50 pointer-events-none"
       )}
       onDragOver={(e) => {
@@ -157,12 +159,12 @@ function FolderCard({
       }}
     >
       <Link href={folderHref(folder.path)} className="flex flex-1 items-center gap-3 min-w-0">
-        <FolderIcon className="h-8 w-8 shrink-0 text-primary-text" />
+        <FolderIcon className="h-8 w-8 shrink-0 text-[var(--ft-color-primary)]" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">
+          <p className="truncate text-sm font-medium text-[var(--ft-color-on-surface)]">
             {folder.name}
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-[var(--ft-color-on-surface-variant)]">
             {folder.assetCount} {folder.assetCount === 1 ? "item" : "items"}
           </p>
         </div>
@@ -174,19 +176,19 @@ function FolderCard({
             e.stopPropagation();
             setMenuOpen((v) => !v);
           }}
-          className="opacity-0 group-hover:opacity-100 rounded p-1.5 text-muted-foreground hover:bg-background hover:text-foreground transition-opacity"
+          className="opacity-0 group-hover:opacity-100 rounded p-1.5 text-[var(--ft-color-on-surface-variant)] hover:bg-[var(--ft-color-surface)] hover:text-[var(--ft-color-on-surface)] transition-opacity"
           aria-label={`Actions for ${folder.name}`}
         >
           <MoreVertical className="h-4 w-4" />
         </button>
         {menuOpen && (
-          <div className="absolute right-0 top-8 z-20 min-w-36 rounded-lg border border-border bg-popover shadow-lg py-1">
+          <div className="absolute right-0 top-8 z-20 min-w-36 rounded-[var(--ft-shape-medium)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-high)] shadow-[var(--ft-elev-2)] py-1">
             <button
               onClick={() => {
                 setMenuOpen(false);
                 onAction("rename", folder);
               }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)] transition-colors"
             >
               <Pencil className="h-3.5 w-3.5" />
               Rename
@@ -196,7 +198,7 @@ function FolderCard({
                 setMenuOpen(false);
                 onAction("move", folder);
               }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)] transition-colors"
             >
               <ArrowRight className="h-3.5 w-3.5" />
               Move…
@@ -206,7 +208,7 @@ function FolderCard({
                 setMenuOpen(false);
                 onAction("delete", folder);
               }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-destructive hover:bg-muted transition-colors"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-[var(--ft-color-error)] hover:bg-[var(--ft-color-surface-container)] transition-colors"
             >
               <Trash2 className="h-3.5 w-3.5" />
               Delete…
@@ -454,7 +456,7 @@ function FoldersContent() {
         <Breadcrumb prefix={listing?.prefix ?? prefix} />
 
         {loading ? (
-          <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 py-4 text-sm text-[var(--ft-color-on-surface-variant)]">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading folder…
           </div>
@@ -467,7 +469,7 @@ function FoldersContent() {
           <>
             {listing && listing.folders.length > 0 && (
               <section>
-                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
                   Folders
                 </h2>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -488,7 +490,7 @@ function FoldersContent() {
 
             {assets.length > 0 && (
               <section>
-                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
                   {assets.length} {assets.length === 1 ? "item" : "items"} at
                   this level
                 </h2>
@@ -505,13 +507,13 @@ function FoldersContent() {
               listing.folders.length === 0 &&
               assets.length === 0 && (
                 <div className="flex flex-col items-center gap-3 py-16 text-center">
-                  <ImageIcon className="h-10 w-10 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground max-w-md">
+                  <ImageIcon className="h-10 w-10 text-[var(--ft-color-on-surface-variant)]" />
+                  <p className="text-sm text-[var(--ft-color-on-surface-variant)] max-w-md">
                     This folder is empty. Uploads carry their source directory
-                    via the <code className="text-foreground">X-Fonto-Path</code>{" "}
-                    header (multipart), the <code className="text-foreground">path</code>{" "}
-                    field on <code className="text-foreground">/assets/init</code>,
-                    or <code className="text-foreground">metadata.path</code> on tus.
+                    via the <code className="text-[var(--ft-color-on-surface)]">X-Fonto-Path</code>{" "}
+                    header (multipart), the <code className="text-[var(--ft-color-on-surface)]">path</code>{" "}
+                    field on <code className="text-[var(--ft-color-on-surface)]">/assets/init</code>,
+                    or <code className="text-[var(--ft-color-on-surface)]">metadata.path</code> on tus.
                   </p>
                 </div>
               )}
@@ -536,7 +538,7 @@ function FoldersContent() {
 
 export default function FoldersPage() {
   return (
-    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+    <Suspense fallback={<div className="text-sm text-[var(--ft-color-on-surface-variant)] py-4">Loading…</div>}>
       <FoldersContent />
     </Suspense>
   );
