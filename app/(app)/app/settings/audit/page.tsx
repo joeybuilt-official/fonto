@@ -23,6 +23,7 @@ import { ensurePersonalWorkspace } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { requireWorkspaceOwner } from "@/lib/authz";
 import { AuditAction } from "@/lib/audit";
+import { Card } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -35,9 +36,11 @@ const ACTION_OPTIONS = Object.values(AuditAction);
 
 function AdminsOnly(): React.ReactElement {
   return (
-    <main className="p-8 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-4">Admins only</h1>
-      <p className="text-sm text-muted-foreground">
+    <main className="p-[var(--ft-space-8)] max-w-3xl mx-auto">
+      <h1 className="text-[length:var(--ft-type-headline-small-size)] leading-[var(--ft-type-headline-small-line)] tracking-[var(--ft-type-headline-small-tracking)] font-medium text-[var(--ft-color-on-surface)] mb-[var(--ft-space-4)]">
+        Admins only
+      </h1>
+      <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
         The audit log is restricted to the workspace owner.
       </p>
     </main>
@@ -91,29 +94,35 @@ export default async function AuditLogPage({
     .limit(200);
 
   return (
-    <main className="p-8 max-w-6xl mx-auto space-y-6">
+    <main className="p-[var(--ft-space-8)] max-w-6xl mx-auto space-y-[var(--ft-space-6)]">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">Audit log</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1 className="text-[length:var(--ft-type-headline-small-size)] leading-[var(--ft-type-headline-small-line)] tracking-[var(--ft-type-headline-small-tracking)] font-medium text-[var(--ft-color-on-surface)]">
+          Audit log
+        </h1>
+        <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)] mt-[var(--ft-space-1)]">
           The 200 most recent mutating actions in this workspace. Rows older
           than the retention window are removed automatically by a daily
           sweep (default 90 days; see <code className="font-mono">AUDIT_RETENTION_DAYS</code>).
         </p>
-        <p className="text-xs text-muted-foreground mt-1">
+        <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)] mt-[var(--ft-space-1)]">
           IPs are stored as a truncated subnet (/24 IPv4, /48 IPv6) — never
           the full client IP.
         </p>
       </div>
 
-      <form className="flex items-center gap-2" action="/app/settings/audit">
-        <label htmlFor="action" className="text-xs font-medium text-muted-foreground uppercase">
+      {/* Filter form is a plain HTML GET form. MD3 Select is a controlled
+          client component and would break the bookmarkable `?action=` URL
+          flow; native <select> + native submit <button> are tokenised
+          instead. Flagged in agent report. */}
+      <form className="flex items-center gap-[var(--ft-space-2)]" action="/app/settings/audit">
+        <label htmlFor="action" className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase">
           Action
         </label>
         <select
           id="action"
           name="action"
           defaultValue={actionFilter ?? ""}
-          className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+          className="h-9 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-3)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)] focus:border-[var(--ft-color-primary)] focus:ring-1 focus:ring-[var(--ft-color-primary)]"
         >
           <option value="">All</option>
           {ACTION_OPTIONS.map((a) => (
@@ -124,54 +133,54 @@ export default async function AuditLogPage({
         </select>
         <button
           type="submit"
-          className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
+          className="h-9 rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] tracking-[var(--ft-type-label-large-tracking)] font-medium text-[var(--ft-color-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]"
         >
           Apply
         </button>
         {actionFilter && (
           <Link
             href="/app/settings/audit"
-            className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
+            className="h-9 inline-flex items-center rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] tracking-[var(--ft-type-label-large-tracking)] font-medium text-[var(--ft-color-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]"
           >
             Clear
           </Link>
         )}
       </form>
 
-      <div className="rounded-lg border border-border bg-card overflow-x-auto">
+      <Card variant="outlined" className="overflow-x-auto">
         {rows.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground">
+          <p className="px-[var(--ft-space-4)] py-[var(--ft-space-6)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
             No audit events yet.
           </p>
         ) : (
-          <table className="w-full text-xs">
-            <thead className="text-muted-foreground bg-muted/50">
+          <table className="w-full text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)]">
+            <thead className="text-[var(--ft-color-on-surface-variant)] bg-[var(--ft-color-surface-container-low)]">
               <tr>
-                <th className="text-left px-3 py-2">When</th>
-                <th className="text-left px-3 py-2">Actor</th>
-                <th className="text-left px-3 py-2">Action</th>
-                <th className="text-left px-3 py-2">Target</th>
-                <th className="text-left px-3 py-2">IP subnet</th>
-                <th className="text-left px-3 py-2">User agent</th>
-                <th className="text-left px-3 py-2">Metadata</th>
+                <th className="text-left px-[var(--ft-space-3)] py-[var(--ft-space-2)]">When</th>
+                <th className="text-left px-[var(--ft-space-3)] py-[var(--ft-space-2)]">Actor</th>
+                <th className="text-left px-[var(--ft-space-3)] py-[var(--ft-space-2)]">Action</th>
+                <th className="text-left px-[var(--ft-space-3)] py-[var(--ft-space-2)]">Target</th>
+                <th className="text-left px-[var(--ft-space-3)] py-[var(--ft-space-2)]">IP subnet</th>
+                <th className="text-left px-[var(--ft-space-3)] py-[var(--ft-space-2)]">User agent</th>
+                <th className="text-left px-[var(--ft-space-3)] py-[var(--ft-space-2)]">Metadata</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-t border-border align-top">
-                  <td className="px-3 py-2 font-mono whitespace-nowrap">
+                <tr key={r.id} className="border-t border-[var(--ft-color-outline-variant)] align-top text-[var(--ft-color-on-surface)]">
+                  <td className="px-[var(--ft-space-3)] py-[var(--ft-space-2)] font-mono whitespace-nowrap">
                     {r.createdAt.toISOString()}
                   </td>
-                  <td className="px-3 py-2 font-mono">{r.userId}</td>
-                  <td className="px-3 py-2 font-mono">{r.action}</td>
-                  <td className="px-3 py-2 font-mono">
+                  <td className="px-[var(--ft-space-3)] py-[var(--ft-space-2)] font-mono">{r.userId}</td>
+                  <td className="px-[var(--ft-space-3)] py-[var(--ft-space-2)] font-mono">{r.action}</td>
+                  <td className="px-[var(--ft-space-3)] py-[var(--ft-space-2)] font-mono">
                     {r.targetType ? `${r.targetType}:${r.targetId ?? "—"}` : "—"}
                   </td>
-                  <td className="px-3 py-2 font-mono">{r.ipAddress ?? "—"}</td>
-                  <td className="px-3 py-2 truncate max-w-[16ch]" title={r.userAgent ?? ""}>
+                  <td className="px-[var(--ft-space-3)] py-[var(--ft-space-2)] font-mono">{r.ipAddress ?? "—"}</td>
+                  <td className="px-[var(--ft-space-3)] py-[var(--ft-space-2)] truncate max-w-[16ch]" title={r.userAgent ?? ""}>
                     {r.userAgent ?? "—"}
                   </td>
-                  <td className="px-3 py-2 font-mono break-all">
+                  <td className="px-[var(--ft-space-3)] py-[var(--ft-space-2)] font-mono break-all">
                     {formatMetadata(r.metadata)}
                   </td>
                 </tr>
@@ -179,7 +188,7 @@ export default async function AuditLogPage({
             </tbody>
           </table>
         )}
-      </div>
+      </Card>
     </main>
   );
 }
