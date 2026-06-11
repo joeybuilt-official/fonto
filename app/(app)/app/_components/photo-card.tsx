@@ -121,11 +121,11 @@ function QuickActionsMenu({ asset, onAddToCollection, onRemove, showRemove }: Qu
         <span>More</span>
       </button>
       {open && (
-        <div className="absolute bottom-7 right-0 z-20 min-w-36 rounded-lg border border-border bg-popover shadow-lg py-1">
+        <div className="absolute bottom-7 right-0 z-20 min-w-36 rounded-[var(--ft-shape-extra-small)] bg-[var(--ft-color-surface-container)] shadow-[var(--ft-elev-2)] py-[var(--ft-space-2)]">
           {onAddToCollection && (
             <button
               onClick={(e) => { e.stopPropagation(); onAddToCollection(asset.id); setOpen(false); }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors"
+              className="flex w-full items-center gap-[var(--ft-space-2)] px-[var(--ft-space-3)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] transition-colors"
             >
               <FolderPlus className="h-3.5 w-3.5" />
               Add to Collection
@@ -133,7 +133,7 @@ function QuickActionsMenu({ asset, onAddToCollection, onRemove, showRemove }: Qu
           )}
           <button
             onClick={handleDownload}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted transition-colors"
+            className="flex w-full items-center gap-[var(--ft-space-2)] px-[var(--ft-space-3)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] transition-colors"
           >
             <Download className="h-3.5 w-3.5" />
             Download
@@ -141,7 +141,7 @@ function QuickActionsMenu({ asset, onAddToCollection, onRemove, showRemove }: Qu
           {showRemove && onRemove && (
             <button
               onClick={(e) => { e.stopPropagation(); onRemove(asset.id); setOpen(false); }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-destructive hover:bg-muted transition-colors"
+              className="flex w-full items-center gap-[var(--ft-space-2)] px-[var(--ft-space-3)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] transition-colors"
             >
               <Trash2 className="h-3.5 w-3.5" />
               Remove from Collection
@@ -150,7 +150,7 @@ function QuickActionsMenu({ asset, onAddToCollection, onRemove, showRemove }: Qu
           {!showRemove && (
             <button
               onClick={handleTrash}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-destructive hover:bg-muted transition-colors"
+              className="flex w-full items-center gap-[var(--ft-space-2)] px-[var(--ft-space-3)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] transition-colors"
             >
               <Trash2 className="h-3.5 w-3.5" />
               Move to Trash
@@ -252,16 +252,16 @@ export function PhotoCard({
         e.dataTransfer.setData("application/x-fonto-asset", asset.id);
         e.dataTransfer.effectAllowed = "move";
       }}
-      className={`relative cursor-pointer overflow-hidden rounded-lg transition-all ${
+      className={`relative cursor-pointer overflow-hidden rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container-low)] shadow-[var(--ft-elev-1)] transition-all ${
         selected
-          ? "ring-2 ring-primary ring-offset-1"
+          ? "ring-2 ring-[var(--ft-color-primary)] ring-offset-1"
           : "ring-0"
       } ${isProcessing ? "animate-pulse ring-1 ring-yellow-500/50" : ""}`}
     >
       {/* Image */}
-      <div className="aspect-square bg-muted/30 flex items-center justify-center overflow-hidden">
+      <div className="aspect-square bg-[var(--ft-color-surface-container)]/30 flex items-center justify-center overflow-hidden">
         {loading ? (
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <Loader2 className="h-5 w-5 animate-spin text-[var(--ft-color-on-surface-variant)]" />
         ) : url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -274,7 +274,7 @@ export function PhotoCard({
             decoding="async"
           />
         ) : (
-          <ImageIcon className="h-8 w-8 text-muted-foreground" />
+          <ImageIcon className="h-8 w-8 text-[var(--ft-color-on-surface-variant)]" />
         )}
       </div>
 
@@ -361,13 +361,13 @@ export function PhotoCard({
           onClick={(e) => { e.stopPropagation(); onSelect?.(e); }}
         >
           <div
-            className={`h-5 w-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+            className={`h-5 w-5 rounded-[var(--ft-shape-full)] border-2 flex items-center justify-center transition-colors ${
               selected
-                ? "bg-primary border-primary"
+                ? "bg-[var(--ft-color-primary)] border-[var(--ft-color-primary)]"
                 : "bg-black/40 border-white/80"
             }`}
           >
-            {selected && <Check className="h-3 w-3 text-white" />}
+            {selected && <Check className="h-3 w-3 text-[var(--ft-color-on-primary)]" />}
           </div>
         </div>
       )}
