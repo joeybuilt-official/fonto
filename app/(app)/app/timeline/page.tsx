@@ -138,14 +138,14 @@ function TimelineContent() {
           onRetry={() => setRefreshKey((k) => k + 1)}
         />
       ) : loading ? (
-        <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 px-4 py-4 text-sm text-[var(--ft-color-on-surface-variant)]">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading timeline…
         </div>
       ) : assets.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <Clock className="h-10 w-10 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
+          <Clock className="h-10 w-10 text-[var(--ft-color-on-surface-variant)]" />
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">
             No assets match the current filters.
           </p>
         </div>
@@ -185,7 +185,7 @@ function TimelineContent() {
 
 export default function TimelinePage() {
   return (
-    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+    <Suspense fallback={<div className="text-sm text-[var(--ft-color-on-surface-variant)] py-4">Loading…</div>}>
       <TimelineContent />
     </Suspense>
   );
