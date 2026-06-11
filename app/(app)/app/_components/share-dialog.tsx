@@ -14,7 +14,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Copy, Eye, Loader2, Lock, Trash2, X } from "lucide-react";
+import { Check, Copy, Eye, Loader2, Lock, Trash2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import {
+  TextField,
+  TextFieldInput,
+  TextFieldLabel,
+} from "@/components/ui/text-field";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export type ShareTargetType = "asset" | "collection" | "set";
 
@@ -172,150 +192,144 @@ export function ShareDialog({ open, onClose, targetType, targetId }: Props) {
     }
   }
 
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4"
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl rounded-xl border border-border bg-background shadow-xl"
-      >
-        <div className="flex items-center justify-between border-b border-border px-5 py-3">
-          <h2 className="text-sm font-semibold">Share link</h2>
-          <button
-            onClick={onClose}
-            className="rounded p-1 text-muted-foreground hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Share link</DialogTitle>
+        </DialogHeader>
 
-        <div className="space-y-5 px-5 py-4">
+        <div className="space-y-[var(--ft-space-5)]">
           {/* Create form */}
-          <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
-            <p className="text-xs font-semibold text-foreground">New share</p>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-                Expiry
-                <select
+          <div className="space-y-[var(--ft-space-3)] rounded-[var(--ft-shape-medium)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-low)] p-[var(--ft-space-3)]">
+            <p className="text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-on-surface)]">
+              New share
+            </p>
+            <div className="grid grid-cols-2 gap-[var(--ft-space-2)]">
+              <TextField className="gap-[var(--ft-space-1)]">
+                <TextFieldLabel>Expiry</TextFieldLabel>
+                <Select<number>
                   value={expiryMs}
-                  onChange={(e) => setExpiryMs(Number(e.target.value))}
-                  className="rounded border border-border bg-background px-2 py-1 text-xs"
+                  onValueChange={(v) => setExpiryMs(v as number)}
                 >
-                  {EXPIRY_PRESETS.map((p) => (
-                    <option key={p.label} value={p.ms}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-                Max views (optional)
-                <input
+                  <SelectTrigger className="h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EXPIRY_PRESETS.map((p) => (
+                      <SelectItem key={p.label} value={p.ms}>
+                        {p.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </TextField>
+              <TextField variant="outlined">
+                <TextFieldLabel>Max views (optional)</TextFieldLabel>
+                <TextFieldInput
                   type="number"
                   min={1}
                   value={maxViews}
                   onChange={(e) => setMaxViews(e.target.value)}
-                  className="rounded border border-border bg-background px-2 py-1 text-xs"
                   placeholder="Unlimited"
                 />
-              </label>
+              </TextField>
             </div>
-            <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-              Password (optional)
-              <input
+            <TextField variant="outlined">
+              <TextFieldLabel>Password (optional)</TextFieldLabel>
+              <TextFieldInput
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Leave blank for none"
-                className="rounded border border-border bg-background px-2 py-1 text-xs"
               />
               {password && (
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
                   {passwordStrengthHint(password)}
                 </span>
               )}
-            </label>
-            <label className="flex items-center gap-2 text-[11px] text-foreground">
-              <input
-                type="checkbox"
+            </TextField>
+            <label className="flex items-center gap-[var(--ft-space-2)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+              <Switch
                 checked={allowDownload}
-                onChange={(e) => setAllowDownload(e.target.checked)}
+                onCheckedChange={setAllowDownload}
               />
               Allow viewers to download the original
             </label>
-            {error && <p className="text-[11px] text-red-500">{error}</p>}
-            <button
-              onClick={handleCreate}
-              disabled={creating}
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-            >
+            {error && (
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]">
+                {error}
+              </p>
+            )}
+            <Button onClick={handleCreate} disabled={creating} size="sm">
               {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               Create link
-            </button>
+            </Button>
           </div>
 
           {/* Existing shares */}
           <div>
-            <p className="mb-2 text-xs font-semibold text-foreground">Active shares</p>
+            <p className="mb-[var(--ft-space-2)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-on-surface)]">
+              Active shares
+            </p>
             {loading ? (
-              <p className="text-xs text-muted-foreground">Loading…</p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">Loading…</p>
             ) : shares.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No active shares.</p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">No active shares.</p>
             ) : (
-              <ul className="space-y-2">
+              <ul className="space-y-[var(--ft-space-2)]">
                 {shares.map((s) => (
                   <li
                     key={s.id}
-                    className="rounded-lg border border-border bg-card p-2"
+                    className="rounded-[var(--ft-shape-medium)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container)] p-[var(--ft-space-2)]"
                   >
-                    <div className="flex items-center gap-2">
-                      <code className="flex-1 truncate font-mono text-[11px] text-muted-foreground">
+                    <div className="flex items-center gap-[var(--ft-space-2)]">
+                      <code className="flex-1 truncate font-mono text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
                         /share/{s.slug}
                       </code>
                       {s.passwordProtected && (
-                        <span title="Password protected" className="text-muted-foreground">
+                        <span title="Password protected" className="text-[var(--ft-color-on-surface-variant)]">
                           <Lock className="h-3 w-3" />
                         </span>
                       )}
                       <span
                         title="Views"
-                        className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                        className="inline-flex items-center gap-[var(--ft-space-1)] rounded-[var(--ft-shape-extra-small)] bg-[var(--ft-color-surface-container-high)] px-[var(--ft-space-2)] py-0.5 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]"
                       >
                         <Eye className="h-3 w-3" />
                         {s.viewCount}
                         {s.maxViews !== null && <span>/{s.maxViews}</span>}
                       </span>
-                      <button
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
                         onClick={() => handleCopy(s.slug)}
-                        className="rounded p-1 text-muted-foreground hover:text-foreground"
                         title="Copy URL"
                       >
                         {copiedSlug === s.slug ? (
-                          <Check className="h-3 w-3 text-green-500" />
+                          <Check className="h-3 w-3 text-[var(--ft-color-success)]" />
                         ) : (
                           <Copy className="h-3 w-3" />
                         )}
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
                         onClick={() => handleOpenViews(s.id)}
-                        className="rounded p-1 text-muted-foreground hover:text-foreground"
                         title="Recent views"
                       >
                         <Eye className="h-3 w-3" />
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        size="icon-xs"
+                        variant="destructive"
                         onClick={() => handleRevoke(s.id)}
-                        className="rounded p-1 text-muted-foreground hover:text-destructive"
                         title="Revoke"
                       >
                         <Trash2 className="h-3 w-3" />
-                      </button>
+                      </Button>
                     </div>
-                    <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                    <div className="mt-[var(--ft-space-1)] flex flex-wrap gap-[var(--ft-space-2)] text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">
                       {s.expiresAt ? (
                         <span>Expires {new Date(s.expiresAt).toLocaleString()}</span>
                       ) : (
@@ -328,18 +342,18 @@ export function ShareDialog({ open, onClose, targetType, targetId }: Props) {
                     </div>
 
                     {viewsOpenFor === s.id && (
-                      <div className="mt-2 max-h-48 overflow-y-auto rounded border border-border bg-background p-2 text-[10px]">
+                      <div className="mt-[var(--ft-space-2)] max-h-48 overflow-y-auto rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface)] p-[var(--ft-space-2)] text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)]">
                         {viewsLoading ? (
-                          <p className="text-muted-foreground">Loading…</p>
+                          <p className="text-[var(--ft-color-on-surface-variant)]">Loading…</p>
                         ) : views.length === 0 ? (
-                          <p className="text-muted-foreground">No views yet.</p>
+                          <p className="text-[var(--ft-color-on-surface-variant)]">No views yet.</p>
                         ) : (
-                          <ul className="space-y-1">
+                          <ul className="space-y-[var(--ft-space-1)]">
                             {views.map((v) => (
                               <li
                                 key={v.id}
-                                className={`flex items-center gap-2 ${
-                                  v.success ? "" : "text-red-500"
+                                className={`flex items-center gap-[var(--ft-space-2)] ${
+                                  v.success ? "" : "text-[var(--ft-color-error)]"
                                 }`}
                               >
                                 <span className="font-mono">
@@ -347,7 +361,7 @@ export function ShareDialog({ open, onClose, targetType, targetId }: Props) {
                                 </span>
                                 {!v.success && <span>(failed)</span>}
                                 {v.userAgent && (
-                                  <span className="ml-auto max-w-[50%] truncate text-muted-foreground">
+                                  <span className="ml-auto max-w-[50%] truncate text-[var(--ft-color-on-surface-variant)]">
                                     {v.userAgent}
                                   </span>
                                 )}
@@ -363,7 +377,7 @@ export function ShareDialog({ open, onClose, targetType, targetId }: Props) {
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
