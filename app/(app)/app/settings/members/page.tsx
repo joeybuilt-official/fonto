@@ -15,6 +15,20 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ConfirmButton } from "@/components/confirm-button";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  TextField,
+  TextFieldInput,
+} from "@/components/ui";
 
 type Role = "owner" | "editor" | "viewer";
 
@@ -173,8 +187,11 @@ export default function MembersSettingsPage() {
       </div>
 
       {/* ── Active members ───────────────────────────────────────────── */}
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
-        <h2 className="text-sm font-semibold text-foreground">Active members</h2>
+      <Card variant="outlined" className="space-y-4 p-6">
+        <CardHeader className="p-0">
+          <CardTitle className="text-sm font-semibold">Active members</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
         {membersUnavailable ? (
           <p className="text-xs text-muted-foreground">
             The members endpoint is not yet available in this build. The
@@ -209,39 +226,45 @@ export default function MembersSettingsPage() {
             ))}
           </ul>
         )}
-      </div>
+        </CardContent>
+      </Card>
 
       {/* ── Invite form ──────────────────────────────────────────────── */}
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
-        <h2 className="text-sm font-semibold text-foreground">
-          Invite a member
-        </h2>
+      <Card variant="outlined" className="space-y-4 p-6">
+        <CardHeader className="p-0">
+          <CardTitle className="text-sm font-semibold">Invite a member</CardTitle>
+        </CardHeader>
         <form onSubmit={handleCreate} className="space-y-3">
-          <div className="flex gap-2">
-            <input
-              type="email"
-              required
-              aria-label="Email address to invite"
-              placeholder="email@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="flex-1 rounded border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-            <select
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <TextField className="flex-1" name="email">
+              <TextFieldInput
+                type="email"
+                required
+                aria-label="Email address to invite"
+                placeholder="email@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </TextField>
+            <Select
               value={role}
-              onChange={(e) => setRole(e.target.value as "editor" | "viewer")}
-              className="rounded border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              onValueChange={(v) => v && setRole(v as "editor" | "viewer")}
             >
-              <option value="viewer">Viewer</option>
-              <option value="editor">Editor</option>
-            </select>
-            <button
+              <SelectTrigger aria-label="Role" className="sm:w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="viewer">Viewer</SelectItem>
+                <SelectItem value="editor">Editor</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
               type="submit"
+              variant="filled"
               disabled={creating}
-              className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-[#1D9089] disabled:opacity-60"
             >
               {creating ? "Sending…" : "Send invite"}
-            </button>
+            </Button>
           </div>
           {error && <p className="text-xs text-destructive">{error}</p>}
           <p className="text-xs text-muted-foreground">
@@ -249,13 +272,14 @@ export default function MembersSettingsPage() {
             copy the link from the table below and share it manually.
           </p>
         </form>
-      </div>
+      </Card>
 
       {/* ── Pending invitations ──────────────────────────────────────── */}
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
-        <h2 className="text-sm font-semibold text-foreground">
-          Pending invitations
-        </h2>
+      <Card variant="outlined" className="space-y-4 p-6">
+        <CardHeader className="p-0">
+          <CardTitle className="text-sm font-semibold">Pending invitations</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
         {invitations === null ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : invitations.length === 0 ? (
@@ -278,13 +302,14 @@ export default function MembersSettingsPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
+                  <Button
                     type="button"
+                    variant="outlined"
+                    size="sm"
                     onClick={() => handleCopy(inv.url)}
-                    className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
                   >
                     {copiedToken === inv.url ? "Copied" : "Copy link"}
-                  </button>
+                  </Button>
                   <ConfirmButton
                     onConfirm={() => handleRevoke(inv.id)}
                     confirmLabel="Confirm revoke"
@@ -297,7 +322,8 @@ export default function MembersSettingsPage() {
             ))}
           </ul>
         )}
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

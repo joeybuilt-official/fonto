@@ -3,6 +3,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  TextField,
+  TextFieldInput,
+  TextFieldLabel,
+} from "@/components/ui";
 
 interface WebhookEndpoint {
   id: string;
@@ -197,42 +207,37 @@ export default function WebhooksSettingsPage() {
         </div>
       )}
 
-      <div className="rounded-lg border border-border bg-card">
+      <Card variant="outlined" className="p-0">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold">Endpoints</h2>
-          <button
-            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+          <Button
+            variant="outlined"
+            size="sm"
             onClick={() => setShowCreate((s) => !s)}
           >
             {showCreate ? "Cancel" : "Add endpoint"}
-          </button>
+          </Button>
         </div>
 
         {showCreate && (
           <div className="px-4 py-4 border-b border-border space-y-3 bg-muted/30">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground uppercase mb-1">
-                URL
-              </label>
-              <input
+            <TextField name="webhook-url">
+              <TextFieldLabel className="uppercase">URL</TextFieldLabel>
+              <TextFieldInput
                 type="url"
                 placeholder="https://example.com/webhooks/fonto"
                 value={newUrl}
                 onChange={(e) => setNewUrl(e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
               />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground uppercase mb-1">
-                Description (optional)
-              </label>
-              <input
+            </TextField>
+            <TextField name="webhook-description">
+              <TextFieldLabel className="uppercase">Description (optional)</TextFieldLabel>
+              <TextFieldInput
                 type="text"
                 value={newDescription}
                 onChange={(e) => setNewDescription(e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
               />
-            </div>
+            </TextField>
             <div>
               <label className="block text-xs font-medium text-muted-foreground uppercase mb-1">
                 Events
@@ -252,13 +257,14 @@ export default function WebhooksSettingsPage() {
                 ))}
               </div>
             </div>
-            <button
+            <Button
+              variant="filled"
+              size="sm"
               disabled={!newUrl || createBusy}
               onClick={() => void onCreate()}
-              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
             >
               {createBusy ? "Creating…" : "Create endpoint"}
-            </button>
+            </Button>
           </div>
         )}
 
@@ -279,7 +285,7 @@ export default function WebhooksSettingsPage() {
                       <p className="font-mono text-sm truncate">{endpoint.url}</p>
                       <p className="text-xs text-muted-foreground">
                         {endpoint.enabledEvents.length} event(s) ·{" "}
-                        <span className={enabled ? "text-green-600" : "text-amber-600"}>
+                        <span className={enabled ? "text-[var(--ft-color-success,oklch(0.6_0.13_160))]" : "text-amber-600"}>
                           {enabled ? "enabled" : "disabled"}
                         </span>
                       </p>
@@ -290,30 +296,34 @@ export default function WebhooksSettingsPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-1">
-                      <button
-                        className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+                      <Button
+                        variant="text"
+                        size="xs"
                         onClick={() => void onTest(endpoint)}
                       >
                         Test
-                      </button>
-                      <button
-                        className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+                      </Button>
+                      <Button
+                        variant="text"
+                        size="xs"
                         onClick={() => void onToggle(endpoint)}
                       >
                         {enabled ? "Disable" : "Enable"}
-                      </button>
-                      <button
-                        className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+                      </Button>
+                      <Button
+                        variant="text"
+                        size="xs"
                         onClick={() => onExpand(endpoint.id)}
                       >
                         {isExpanded ? "Hide" : "Deliveries"}
-                      </button>
-                      <button
-                        className="rounded-md border border-destructive/50 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="xs"
                         onClick={() => void onDelete(endpoint)}
                       >
                         Delete
-                      </button>
+                      </Button>
                     </div>
                   </div>
 
@@ -362,7 +372,7 @@ export default function WebhooksSettingsPage() {
             })}
           </ul>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

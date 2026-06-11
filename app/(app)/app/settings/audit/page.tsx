@@ -23,6 +23,7 @@ import { ensurePersonalWorkspace } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { requireWorkspaceOwner } from "@/lib/authz";
 import { AuditAction } from "@/lib/audit";
+import { Button, Card } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -113,7 +114,7 @@ export default async function AuditLogPage({
           id="action"
           name="action"
           defaultValue={actionFilter ?? ""}
-          className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+          className="h-10 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-4)] text-sm text-[var(--ft-color-on-surface)] outline-none focus:border-[var(--ft-color-primary)] focus:ring-1 focus:ring-[var(--ft-color-primary)]"
         >
           <option value="">All</option>
           {ACTION_OPTIONS.map((a) => (
@@ -122,23 +123,19 @@ export default async function AuditLogPage({
             </option>
           ))}
         </select>
-        <button
-          type="submit"
-          className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
-        >
+        <Button type="submit" variant="filled" size="sm">
           Apply
-        </button>
+        </Button>
         {actionFilter && (
-          <Link
-            href="/app/settings/audit"
-            className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
-          >
-            Clear
-          </Link>
+          <Button
+            variant="outlined"
+            size="sm"
+            render={<Link href="/app/settings/audit">Clear</Link>}
+          />
         )}
       </form>
 
-      <div className="rounded-lg border border-border bg-card overflow-x-auto">
+      <Card variant="outlined" className="overflow-x-auto p-0">
         {rows.length === 0 ? (
           <p className="px-4 py-6 text-sm text-muted-foreground">
             No audit events yet.
@@ -179,7 +176,7 @@ export default async function AuditLogPage({
             </tbody>
           </table>
         )}
-      </div>
+      </Card>
     </main>
   );
 }
