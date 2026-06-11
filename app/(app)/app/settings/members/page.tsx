@@ -15,6 +15,20 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ConfirmButton } from "@/components/confirm-button";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  TextField,
+  TextFieldInput,
+} from "@/components/ui";
 
 type Role = "owner" | "editor" | "viewer";
 
@@ -156,148 +170,185 @@ export default function MembersSettingsPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div className="flex items-center gap-2">
+    <div className="space-y-[var(--ft-space-6)] max-w-3xl">
+      <div className="flex items-center gap-[var(--ft-space-2)]">
         <Link
           href="/app/settings"
-          className="text-xs text-muted-foreground hover:underline"
+          className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)] hover:underline"
         >
           ← Settings
         </Link>
       </div>
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">Members</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1 className="text-[length:var(--ft-type-headline-small-size)] leading-[var(--ft-type-headline-small-line)] tracking-[var(--ft-type-headline-small-tracking)] font-medium text-[var(--ft-color-on-surface)]">
+          Members
+        </h1>
+        <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)] mt-[var(--ft-space-1)]">
           Invite people to your workspace and manage their access.
         </p>
       </div>
 
       {/* ── Active members ───────────────────────────────────────────── */}
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
-        <h2 className="text-sm font-semibold text-foreground">Active members</h2>
-        {membersUnavailable ? (
-          <p className="text-xs text-muted-foreground">
-            The members endpoint is not yet available in this build. The
-            workspace owner is always a member by definition; invited users
-            will appear here once they accept.
-          </p>
-        ) : members === null ? (
-          <p className="text-sm text-muted-foreground">Loading members…</p>
-        ) : members.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Just you. Invite someone below to collaborate.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {members.map((m) => (
-              <li
-                key={m.userId}
-                className="flex items-center justify-between py-2"
-              >
-                <div>
-                  <p className="text-sm text-foreground">
-                    {m.name ?? m.email ?? m.userId}
-                  </p>
-                  {m.email && m.name && (
-                    <p className="text-xs text-muted-foreground">{m.email}</p>
-                  )}
-                </div>
-                <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                  {m.role}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <Card variant="outlined">
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Active members
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {membersUnavailable ? (
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+              The members endpoint is not yet available in this build. The
+              workspace owner is always a member by definition; invited users
+              will appear here once they accept.
+            </p>
+          ) : members === null ? (
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+              Loading members…
+            </p>
+          ) : members.length === 0 ? (
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+              Just you. Invite someone below to collaborate.
+            </p>
+          ) : (
+            <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
+              {members.map((m) => (
+                <li
+                  key={m.userId}
+                  className="flex items-center justify-between py-[var(--ft-space-2)]"
+                >
+                  <div>
+                    <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                      {m.name ?? m.email ?? m.userId}
+                    </p>
+                    {m.email && m.name && (
+                      <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                        {m.email}
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] uppercase text-[var(--ft-color-on-surface-variant)]">
+                    {m.role}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── Invite form ──────────────────────────────────────────────── */}
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
-        <h2 className="text-sm font-semibold text-foreground">
-          Invite a member
-        </h2>
-        <form onSubmit={handleCreate} className="space-y-3">
-          <div className="flex gap-2">
-            <input
-              type="email"
-              required
-              aria-label="Email address to invite"
-              placeholder="email@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="flex-1 rounded border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as "editor" | "viewer")}
-              className="rounded border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-            >
-              <option value="viewer">Viewer</option>
-              <option value="editor">Editor</option>
-            </select>
-            <button
-              type="submit"
-              disabled={creating}
-              className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-[#1D9089] disabled:opacity-60"
-            >
-              {creating ? "Sending…" : "Send invite"}
-            </button>
-          </div>
-          {error && <p className="text-xs text-destructive">{error}</p>}
-          <p className="text-xs text-muted-foreground">
-            Invitations expire in 7 days. Email delivery is not configured —
-            copy the link from the table below and share it manually.
-          </p>
-        </form>
-      </div>
+      <Card variant="outlined">
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Invite a member
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleCreate} className="space-y-[var(--ft-space-3)]">
+            <div className="flex gap-[var(--ft-space-2)] items-end">
+              <TextField className="flex-1">
+                <TextFieldInput
+                  type="email"
+                  required
+                  aria-label="Email address to invite"
+                  placeholder="email@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </TextField>
+              <Select
+                value={role}
+                onValueChange={(v) => setRole(v as "editor" | "viewer")}
+              >
+                <SelectTrigger aria-label="Role" className="h-14 w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="viewer">Viewer</SelectItem>
+                  <SelectItem value="editor">Editor</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                type="submit"
+                variant="filled"
+                size="lg"
+                disabled={creating}
+                className="h-14"
+              >
+                {creating ? "Sending…" : "Send invite"}
+              </Button>
+            </div>
+            {error && (
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]">
+                {error}
+              </p>
+            )}
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+              Invitations expire in 7 days. Email delivery is not configured —
+              copy the link from the table below and share it manually.
+            </p>
+          </form>
+        </CardContent>
+      </Card>
 
       {/* ── Pending invitations ──────────────────────────────────────── */}
-      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
-        <h2 className="text-sm font-semibold text-foreground">
-          Pending invitations
-        </h2>
-        {invitations === null ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : invitations.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No pending invitations.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {invitations.map((inv) => (
-              <li
-                key={inv.id}
-                className="flex items-center justify-between py-3"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-foreground">
-                    {inv.email}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {inv.role} · expires {formatDate(inv.expiresAt)}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(inv.url)}
-                    className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
-                  >
-                    {copiedToken === inv.url ? "Copied" : "Copy link"}
-                  </button>
-                  <ConfirmButton
-                    onConfirm={() => handleRevoke(inv.id)}
-                    confirmLabel="Confirm revoke"
-                    className="rounded-md border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/5"
-                  >
-                    Revoke
-                  </ConfirmButton>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <Card variant="outlined">
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Pending invitations
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {invitations === null ? (
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+              Loading…
+            </p>
+          ) : invitations.length === 0 ? (
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+              No pending invitations.
+            </p>
+          ) : (
+            <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
+              {invitations.map((inv) => (
+                <li
+                  key={inv.id}
+                  className="flex items-center justify-between py-[var(--ft-space-3)]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                      {inv.email}
+                    </p>
+                    <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                      {inv.role} · expires {formatDate(inv.expiresAt)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-[var(--ft-space-2)]">
+                    <Button
+                      type="button"
+                      variant="outlined"
+                      size="sm"
+                      onClick={() => handleCopy(inv.url)}
+                    >
+                      {copiedToken === inv.url ? "Copied" : "Copy link"}
+                    </Button>
+                    {/* ConfirmButton is a shared component outside settings/
+                        scope; classes stay legacy per migration brief
+                        ("don't touch shared components"). */}
+                    <ConfirmButton
+                      onConfirm={() => handleRevoke(inv.id)}
+                      confirmLabel="Confirm revoke"
+                      className="rounded-md border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/5"
+                    >
+                      Revoke
+                    </ConfirmButton>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
