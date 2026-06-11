@@ -13,8 +13,21 @@
 // Public share-LINKS (token URLs) are a separate feature — see the
 // existing ShareDialog component invoked from MetadataPanel.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Users, Loader2, Check, X } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 
 interface UserWorkspace {
   id: string;
@@ -49,7 +62,6 @@ export function AssetWorkspaceShare({ assetId, sourceWorkspaceId }: AssetWorkspa
   const [accessLevel, setAccessLevel] = useState<AccessLevel>("viewer");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const popRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -81,17 +93,6 @@ export function AssetWorkspaceShare({ assetId, sourceWorkspaceId }: AssetWorkspa
     if (!open) return;
     void refresh();
   }, [open, refresh]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onClick(e: MouseEvent) {
-      if (popRef.current && !popRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [open]);
 
   async function handleShare() {
     if (!targetId || submitting) return;
@@ -127,111 +128,133 @@ export function AssetWorkspaceShare({ assetId, sourceWorkspaceId }: AssetWorkspa
   }
 
   return (
-    <div className="relative" ref={popRef}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className={`rounded-full p-1.5 transition-colors shrink-0 ${
-          open ? "text-white bg-white/15" : "text-white/70 hover:text-white hover:bg-white/10"
-        }`}
-        title="Share to workspace"
-      >
-        <Users className="h-5 w-5" />
-      </button>
+    <Popover open={open} onOpenChange={setOpen}>
+      {/* text-white on photo-chrome top bar per ADR 0009 lightbox rule —
+          overlay icons stay white-on-black regardless of system theme. */}
+      <PopoverTrigger
+        render={
+          <button
+            className={`rounded-full p-1.5 transition-colors shrink-0 ${
+              open ? "text-white bg-white/15" : "text-white/70 hover:text-white hover:bg-white/10"
+            }`}
+            title="Share to workspace"
+          >
+            <Users className="h-5 w-5" />
+          </button>
+        }
+      />
 
-      {open && (
-        <div className="absolute right-0 top-10 z-30 w-80 rounded-lg border border-border bg-popover p-3 shadow-xl text-sm">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2">
-            Share to workspace
+      <PopoverContent align="end" sideOffset={10} className="w-80">
+        <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-widest text-[var(--ft-color-on-surface-variant)] mb-[var(--ft-space-2)]">
+          Share to workspace
+        </p>
+
+        {loading ? (
+          <div className="flex justify-center py-[var(--ft-space-4)]">
+            <Loader2 className="h-4 w-4 animate-spin text-[var(--ft-color-on-surface-variant)]" />
+          </div>
+        ) : workspaces.length === 0 ? (
+          <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] italic text-[var(--ft-color-on-surface-variant)]">
+            No other workspaces to share with.
           </p>
-
-          {loading ? (
-            <div className="flex justify-center py-4">
-              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-            </div>
-          ) : workspaces.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic">
-              No other workspaces to share with.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              <div>
-                <label className="text-[10px] text-muted-foreground">Workspace</label>
-                <select
-                  value={targetId}
-                  onChange={(e) => setTargetId(e.target.value)}
-                  className="mt-0.5 w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
-                >
-                  {workspaces.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-muted-foreground">Access level</label>
-                <select
-                  value={accessLevel}
-                  onChange={(e) => setAccessLevel(e.target.value as AccessLevel)}
-                  className="mt-0.5 w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
-                >
-                  {ACCESS_LEVELS.map((lvl) => (
-                    <option key={lvl} value={lvl}>
-                      {lvl}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {error && <p className="text-[10px] text-destructive">{error}</p>}
-              <button
-                onClick={() => void handleShare()}
-                disabled={submitting || !targetId}
-                className="inline-flex w-full items-center justify-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
+        ) : (
+          <div className="space-y-[var(--ft-space-2)]">
+            <div>
+              <label className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Workspace
+              </label>
+              <Select<string>
+                value={targetId}
+                onValueChange={(v) => { if (v) setTargetId(v); }}
               >
-                {submitting ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Check className="h-3 w-3" />
-                )}
-                Share
-              </button>
+                <SelectTrigger className="mt-0.5 h-9">
+                  <SelectValue placeholder="Select workspace" />
+                </SelectTrigger>
+                <SelectContent>
+                  {workspaces.map((w) => (
+                    <SelectItem key={w.id} value={w.id}>
+                      {w.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          )}
-
-          {shares.length > 0 && (
-            <div className="mt-3 border-t border-border pt-2">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">
-                Active shares
+            <div>
+              <label className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Access level
+              </label>
+              <Select<AccessLevel>
+                value={accessLevel}
+                onValueChange={(v) => { if (v) setAccessLevel(v); }}
+              >
+                <SelectTrigger className="mt-0.5 h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ACCESS_LEVELS.map((lvl) => (
+                    <SelectItem key={lvl} value={lvl}>
+                      {lvl}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {error && (
+              <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-error)]">
+                {error}
               </p>
-              <ul className="space-y-1.5">
-                {shares.map((s) => {
-                  const ws = workspaces.find((w) => w.id === s.targetWorkspaceId);
-                  return (
-                    <li
-                      key={s.id}
-                      className="flex items-center justify-between gap-2 text-xs"
-                    >
-                      <span className="truncate">
-                        {ws?.name ?? s.targetWorkspaceId.slice(0, 8)}
-                        <span className="ml-1.5 text-[10px] text-muted-foreground">
-                          ({s.accessLevel})
-                        </span>
+            )}
+            <Button
+              onClick={() => void handleShare()}
+              disabled={submitting || !targetId}
+              size="sm"
+              className="w-full"
+            >
+              {submitting ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Check className="h-3 w-3" />
+              )}
+              Share
+            </Button>
+          </div>
+        )}
+
+        {shares.length > 0 && (
+          <div className="mt-[var(--ft-space-3)] border-t border-[var(--ft-color-outline-variant)] pt-[var(--ft-space-2)]">
+            <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-widest text-[var(--ft-color-on-surface-variant)] mb-1.5">
+              Active shares
+            </p>
+            <ul className="space-y-1.5">
+              {shares.map((s) => {
+                const ws = workspaces.find((w) => w.id === s.targetWorkspaceId);
+                return (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-[var(--ft-space-2)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)]"
+                  >
+                    <span className="truncate text-[var(--ft-color-on-surface)]">
+                      {ws?.name ?? s.targetWorkspaceId.slice(0, 8)}
+                      <span className="ml-1.5 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                        ({s.accessLevel})
                       </span>
-                      <button
-                        onClick={() => void handleRevoke(s.targetWorkspaceId)}
-                        className="text-muted-foreground hover:text-destructive"
-                        title="Revoke share"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+                    </span>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      onClick={() => void handleRevoke(s.targetWorkspaceId)}
+                      title="Revoke share"
+                      className="text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-error)]"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
