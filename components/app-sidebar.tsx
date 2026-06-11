@@ -16,6 +16,8 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import type { User } from "@/lib/auth/types";
@@ -40,6 +42,11 @@ import type { RecentAlbum } from "@/lib/sidebar/recent-albums";
 // continue to render for any directly-loaded deep link that bypasses
 // the middleware. Phase 7.1 follow-up removes the deprecation pages
 // themselves once the redirect layer has been live ≥1 release cycle.
+//
+// ADR 0009 Phase 2 (group C) — sidebar surface uses Card variant="filled"
+// (surface-container-highest); nav rows use Button variant="tonal" for
+// active + "text" for inactive. Existing collapse/onClose logic and the
+// `aria-current="page"` contract are preserved.
 const navItems = [
   { href: "/app/home",        label: "Home",        icon: Home },
   { href: "/app/library",     label: "Library",     icon: Library },
@@ -71,102 +78,120 @@ export function AppSidebar({
   }
 
   return (
-    <aside className="flex w-56 flex-col border-r border-border bg-sidebar h-full">
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
-        <Link
-          href="/app/home"
-          className="font-heading text-sm font-semibold tracking-tight"
-          onClick={onClose}
-        >
-          <span className="text-primary">_</span>fonto
-        </Link>
-        {onClose && (
-          <button
+    <Card
+      variant="filled"
+      // Override the default rounded card shape — the sidebar is a
+      // full-height chrome surface, not a content card. Keep the
+      // surface-container-highest fill from the variant.
+      className="w-56 h-full rounded-none border-r border-[var(--ft-color-outline-variant)]"
+      role="complementary"
+    >
+      <aside className="flex h-full flex-1 flex-col min-h-0">
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--ft-color-outline-variant)] px-4">
+          <Link
+            href="/app/home"
+            className="font-heading text-sm font-semibold tracking-tight"
             onClick={onClose}
-            className="rounded p-1 text-muted-foreground hover:text-foreground"
-            aria-label="Close menu"
           >
-            <X className="h-4 w-4" />
-          </button>
-        )}
-      </div>
-
-      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
-        {navItems.map((item) => {
-          // Active when the pathname matches exactly OR is a deeper
-          // sub-route (e.g. /app/collections/<id> keeps Collections
-          // highlighted). Home is an exact-only match since it sits at
-          // the same level prefix as the rest of /app/*.
-          const active =
-            item.href === "/app/home"
-              ? pathname === item.href
-              : pathname === item.href || pathname.startsWith(item.href + "/");
-          // Phase 7b — Collections entry hosts a pinned-albums sub-list
-          // (Immich pattern, ADR 0005 FU-C1). Sub-list renders only when
-          // there are albums to pin AND the operator is on desktop or
-          // already inside the Collections branch — we always render in
-          // the markup but the indent + smaller text keeps it cheap.
-          const isCollections = item.href === "/app/collections";
-          return (
-            <div key={item.href}>
-              <Link
-                href={item.href}
-                onClick={onClose}
-                aria-current={active ? "page" : undefined}
-                className={`flex items-center gap-2 rounded px-3 py-2.5 text-sm font-medium transition-colors ${
-                  active
-                    ? "bg-sidebar-accent text-foreground"
-                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-                }`}
-              >
-                <item.icon className="h-4 w-4 shrink-0" />
-                {item.label}
-              </Link>
-              {isCollections && recentAlbums.length > 0 && (
-                <ul className="mt-0.5 space-y-0.5 pl-7">
-                  {recentAlbums.map((album) => {
-                    const albumHref = `/app/collections/${album.id}`;
-                    const albumActive = pathname === albumHref;
-                    return (
-                      <li key={album.id}>
-                        <Link
-                          href={albumHref}
-                          onClick={onClose}
-                          aria-current={albumActive ? "page" : undefined}
-                          title={album.name}
-                          className={`block truncate rounded px-2 py-1 text-xs transition-colors ${
-                            albumActive
-                              ? "bg-sidebar-accent text-foreground"
-                              : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-                          }`}
-                        >
-                          {album.name}
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          );
-        })}
-      </nav>
-
-      <div className="border-t border-border px-3 py-3 space-y-2">
-        <ThemeToggle />
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-xs text-muted-foreground min-w-0">
-            {user.email}
-          </span>
-          <button
-            onClick={handleSignOut}
-            className="shrink-0 rounded p-1.5 text-muted-foreground hover:text-foreground"
-            title="Sign out"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-          </button>
+            <span className="text-[var(--ft-color-primary)]">_</span>fonto
+          </Link>
+          {onClose && (
+            <Button
+              variant="text"
+              size="icon-sm"
+              onClick={onClose}
+              aria-label="Close menu"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
         </div>
-      </div>
-    </aside>
+
+        <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
+          {navItems.map((item) => {
+            // Active when the pathname matches exactly OR is a deeper
+            // sub-route (e.g. /app/collections/<id> keeps Collections
+            // highlighted). Home is an exact-only match since it sits at
+            // the same level prefix as the rest of /app/*.
+            const active =
+              item.href === "/app/home"
+                ? pathname === item.href
+                : pathname === item.href || pathname.startsWith(item.href + "/");
+            // Phase 7b — Collections entry hosts a pinned-albums sub-list
+            // (Immich pattern, ADR 0005 FU-C1). Sub-list renders only when
+            // there are albums to pin AND the operator is on desktop or
+            // already inside the Collections branch — we always render in
+            // the markup but the indent + smaller text keeps it cheap.
+            const isCollections = item.href === "/app/collections";
+            const Icon = item.icon;
+            return (
+              <div key={item.href}>
+                <Button
+                  variant={active ? "tonal" : "text"}
+                  // Justify-start for nav-row alignment; full width so the
+                  // tonal pill fills the rail.
+                  className="w-full justify-start gap-2 px-3"
+                  render={
+                    <Link
+                      href={item.href}
+                      onClick={onClose}
+                      aria-current={active ? "page" : undefined}
+                    />
+                  }
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </Button>
+                {isCollections && recentAlbums.length > 0 && (
+                  <ul className="mt-0.5 space-y-0.5 pl-7">
+                    {recentAlbums.map((album) => {
+                      const albumHref = `/app/collections/${album.id}`;
+                      const albumActive = pathname === albumHref;
+                      return (
+                        <li key={album.id}>
+                          <Button
+                            variant={albumActive ? "tonal" : "text"}
+                            size="sm"
+                            className="w-full justify-start truncate"
+                            title={album.name}
+                            render={
+                              <Link
+                                href={albumHref}
+                                onClick={onClose}
+                                aria-current={albumActive ? "page" : undefined}
+                              />
+                            }
+                          >
+                            <span className="truncate">{album.name}</span>
+                          </Button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </nav>
+
+        <div className="border-t border-[var(--ft-color-outline-variant)] px-3 py-3 space-y-2">
+          <ThemeToggle />
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-xs text-[var(--ft-color-on-surface-variant)] min-w-0">
+              {user.email}
+            </span>
+            <Button
+              variant="text"
+              size="icon-sm"
+              onClick={handleSignOut}
+              title="Sign out"
+              aria-label="Sign out"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </aside>
+    </Card>
   );
 }

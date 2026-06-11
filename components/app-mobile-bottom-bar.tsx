@@ -12,8 +12,8 @@
 // `<a>` (not an icon-only button) so screen readers announce
 // destinations, and the active tab carries `aria-current="page"` so
 // users on assistive tech know where they are in the hierarchy. Touch
-// targets meet the iOS HIG 44×44 px floor — each tab's hit area is
-// `min-h-[56px]` (label + icon + safe-area padding combined).
+// targets meet the iOS HIG 44×44 px floor — NavBar's MD3 default
+// height (80 px) clears that with margin.
 //
 // Activation logic uses Next's `usePathname()`:
 //   /app/library*          → Library tab active
@@ -26,6 +26,13 @@
 // Settings is intentionally NOT in the bar — UX-C6 demotes it to the
 // avatar menu on mobile. Home is reachable via the sidebar drawer that
 // the existing mobile-header hamburger opens.
+//
+// ADR 0009 Phase 2 (group C) — migrated to the MD3 `<NavBar>` primitive.
+// The hand-tuned 64×32 active-indicator pill is now NavBar's built-in
+// selected state (secondary-container fill, on-secondary-container
+// icon/label colour). Each tab renders as a `Link` via Base UI's
+// `render` prop so we keep client-side routing + `aria-current` while
+// still getting NavBarItem's MD3 styling and focus ring.
 
 "use client";
 
@@ -38,7 +45,7 @@ import {
   Bell,
   Search,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { NavBar, NavBarItem } from "@/components/ui/nav-bar";
 
 interface BottomBarTab {
   href: string;
@@ -60,54 +67,37 @@ export function AppMobileBottomBar() {
   const pathname = usePathname();
 
   return (
-    <nav
+    <NavBar
       role="navigation"
       aria-label="Primary"
       // pb-safe respects the iOS home-indicator inset where available;
-      // falls back to a small bottom padding otherwise. The border-top
-      // keeps the bar visually pinned even when content scrolls behind.
-      className="flex shrink-0 items-stretch justify-between gap-0 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] md:hidden"
+      // md:hidden hides the bar on desktop where the sidebar is always
+      // visible. The NavBar primitive owns the surface colour
+      // (surface-container) + elevation-2 + 80 px height.
+      className="border-t border-[var(--ft-color-outline-variant)] pb-[env(safe-area-inset-bottom)] md:hidden"
     >
       {TABS.map((t) => {
         const isActive =
           pathname === t.match || pathname.startsWith(t.match + "/");
         const Icon = t.icon;
         return (
-          <Link
+          <NavBarItem
             key={t.href}
-            href={t.href}
-            aria-current={isActive ? "page" : undefined}
-            // Phase 6 AA pass:
-            //   - inactive label text-foreground/70 (≈6.2:1 vs bg, was
-            //     muted-foreground 4.2:1 — failed AA at 10px)
-            //   - active label text-foreground + semibold (≈15:1) +
-            //     teal icon as the brand-color signifier
-            //   - non-color active indicator: 2px teal top bar so
-            //     colour-blind / monochrome users see the selection
-            //   - focus-visible ring for keyboard a11y
-            className={cn(
-              "group relative flex min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-[10px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              isActive
-                ? "text-foreground font-semibold"
-                : "text-foreground/70 hover:text-foreground",
-            )}
-          >
-            {isActive && (
-              <span
-                aria-hidden="true"
-                className="absolute inset-x-3 top-0 h-0.5 rounded-b-sm bg-primary"
+            active={isActive}
+            icon={<Icon />}
+            label={t.label}
+            // Base UI's `render` prop lets us swap the underlying button
+            // for a Next.js `Link` so we keep client-side routing and the
+            // `aria-current="page"` contract from Phase 6 (UX-C3).
+            render={
+              <Link
+                href={t.href}
+                aria-current={isActive ? "page" : undefined}
               />
-            )}
-            <Icon
-              className={cn(
-                "h-5 w-5",
-                isActive ? "text-primary-text" : "text-foreground/70 group-hover:text-foreground",
-              )}
-            />
-            <span className="leading-tight">{t.label}</span>
-          </Link>
+            }
+          />
         );
       })}
-    </nav>
+    </NavBar>
   );
 }

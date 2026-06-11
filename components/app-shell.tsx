@@ -9,10 +9,16 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { AppMobileBottomBar } from "@/components/app-mobile-bottom-bar";
 import { AppMobileAvatarMenu } from "@/components/app-mobile-avatar-menu";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
+import { Button } from "@/components/ui/button";
 import { UiV2ChangelogDialog } from "@/app/(app)/app/_components/ui-v2-changelog-dialog";
 import type { User } from "@/lib/auth/types";
 import type { RecentAlbum } from "@/lib/sidebar/recent-albums";
 
+// ADR 0009 Phase 2 (group C) — the shell anchors the global background
+// to `var(--ft-color-surface)` so light + dark mode are both honoured
+// via the existing `.dark` toggle on `<html>` (both blocks defined in
+// `app/globals.css`). The mobile-header hamburger and overlay scrim
+// pick up MD3 tokens too. Routing + theme-provider behaviour unchanged.
 export function AppShell({
   user,
   recentAlbums,
@@ -24,17 +30,18 @@ export function AppShell({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="flex h-dvh overflow-hidden">
+    <div className="flex h-dvh overflow-hidden bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface)]">
       {/* Desktop sidebar - hidden on mobile */}
       <div className="hidden md:flex">
         <AppSidebar user={user} recentAlbums={recentAlbums} />
       </div>
 
-      {/* Mobile overlay */}
+      {/* Mobile overlay — `scrim` token follows MD3 spec (full black,
+          50% opacity), matching the Sheet / Dialog primitives. */}
       {open && (
         <>
           <div
-            className="fixed inset-0 z-40 bg-black/50 md:hidden"
+            className="fixed inset-0 z-40 bg-[var(--ft-color-scrim)]/50 md:hidden"
             onClick={() => setOpen(false)}
           />
           <div className="fixed inset-y-0 left-0 z-50 md:hidden">
@@ -52,16 +59,18 @@ export function AppShell({
         {/* Mobile header — hamburger (sidebar drawer for Home + the
             still-extant legacy entries), brand, plexo status, avatar
             menu (UX-C6 Settings demotion target). */}
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 md:hidden">
-          <button
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface)] px-4 md:hidden">
+          <Button
+            variant="text"
+            size="icon-sm"
             onClick={() => setOpen(true)}
-            className="rounded p-2 -ml-2 text-muted-foreground hover:text-foreground"
             aria-label="Open navigation"
+            className="-ml-2"
           >
             <Menu className="h-5 w-5" />
-          </button>
+          </Button>
           <Link href="/app/home" className="font-heading text-sm font-semibold">
-            <span className="text-primary">_</span>fonto
+            <span className="text-[var(--ft-color-primary)]">_</span>fonto
           </Link>
           <div className="ml-auto flex items-center gap-2">
             <PlexoConnectionStatus />
