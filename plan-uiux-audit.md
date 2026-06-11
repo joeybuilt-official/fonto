@@ -64,4 +64,4 @@ ADR: `adr/0008-uiux-audit-methodology.md`. Findings deliverable: `audit-findings
 - Deps: Phase 5 approval
 - Subagents: general-purpose for multi-file fixes; Explore for impact analysis
 - Exit: all approved findings resolved + verified; status updated throughout.
-- Status: DONE — shipped + deployed (b4bb93b) + pushed (f05bbdd) + live-verified
+- Status: COMPLETE — all P0/P1/P2/P3 resolved (fixed or closed-with-reason). Final P3s closed 2026-06-10 (docs/api CDN fallback, mobile folder back-button; share Escape/attempts = won't-fix N/A). Web deployed myfonto.com @ ac72e2a + live-verified; mobile changes in APK tags through v2.0.347. Audit done.
