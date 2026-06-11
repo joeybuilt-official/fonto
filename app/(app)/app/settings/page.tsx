@@ -7,6 +7,19 @@ import { useSession } from "@/lib/auth/client";
 import Link from "next/link";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 import { cn } from "@/lib/utils";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Chip,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui";
 
 type IntegrationStatus = "active" | "needs_reconnect" | "revoked";
 interface Integration {
@@ -108,24 +121,28 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-xl md:max-w-3xl">
+    <div className="space-y-[var(--ft-space-6)] max-w-xl md:max-w-3xl">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">Manage your account and workspace</p>
+        <h1 className="text-[length:var(--ft-type-headline-small-size)] leading-[var(--ft-type-headline-small-line)] tracking-[var(--ft-type-headline-small-tracking)] font-medium text-[var(--ft-color-on-surface)]">
+          Settings
+        </h1>
+        <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)] mt-[var(--ft-space-1)]">
+          Manage your account and workspace
+        </p>
       </div>
 
       {/* Desktop tab strip (md+). At mobile everything stays single-column,
           so the tab strip is hidden and tabClass() never collapses anything. */}
-      <div className="hidden md:flex items-center gap-1 border-b border-border">
+      <div className="hidden md:flex items-center gap-[var(--ft-space-1)] border-b border-[var(--ft-color-outline-variant)]">
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id)}
             className={cn(
-              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              "px-[var(--ft-space-4)] py-[var(--ft-space-2)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] tracking-[var(--ft-type-label-large-tracking)] font-medium border-b-2 -mb-px transition-colors",
               activeTab === t.id
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
+                ? "border-[var(--ft-color-primary)] text-[var(--ft-color-on-surface)]"
+                : "border-transparent text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
             )}
           >
             {t.label}
@@ -133,82 +150,121 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("account"))}>
-        <h2 className="text-sm font-semibold text-foreground">Account</h2>
-        <div className="space-y-3">
+      <Card variant="outlined" className={tabClass("account")}>
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Account
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-[var(--ft-space-3)]">
           <div>
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Name</label>
-            <p className="mt-1 text-sm text-foreground">{user?.name ?? "—"}</p>
+            <label className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase">
+              Name
+            </label>
+            <p className="mt-[var(--ft-space-1)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+              {user?.name ?? "—"}
+            </p>
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Email</label>
-            <p className="mt-1 text-sm text-foreground">{user?.email ?? "—"}</p>
+            <label className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase">
+              Email
+            </label>
+            <p className="mt-[var(--ft-space-1)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+              {user?.email ?? "—"}
+            </p>
           </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("storage"))}>
-        <h2 className="text-sm font-semibold text-foreground">Storage</h2>
-        {storage ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Total assets</span>
-              <span className="text-sm font-medium text-foreground">{storage.assetCount}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Storage used</span>
-              <span className="text-sm font-medium text-foreground">
-                {formatBytes(storage.usageBytes)}
-                {storage.quotaBytes != null && (
-                  <span className="text-muted-foreground font-normal"> / {formatBytes(storage.quotaBytes)}</span>
-                )}
-              </span>
-            </div>
-            {storage.quotaBytes != null && (
-              <div className="space-y-1">
-                <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      storage.usageBytes / storage.quotaBytes >= 0.9
-                        ? "bg-destructive"
-                        : storage.usageBytes / storage.quotaBytes >= 0.75
-                        ? "bg-yellow-500"
-                        : "bg-primary"
-                    }`}
-                    style={{ width: `${Math.min(100, (storage.usageBytes / storage.quotaBytes) * 100).toFixed(1)}%` }}
-                  />
-                </div>
-                {storage.usageBytes / storage.quotaBytes >= 0.9 && (
-                  <p className="text-xs text-destructive">Storage almost full — delete or archive assets to free space.</p>
-                )}
+      <Card variant="outlined" className={tabClass("storage")}>
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Storage
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {storage ? (
+            <div className="space-y-[var(--ft-space-3)]">
+              <div className="flex items-center justify-between">
+                <span className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+                  Total assets
+                </span>
+                <span className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] font-medium text-[var(--ft-color-on-surface)]">
+                  {storage.assetCount}
+                </span>
               </div>
-            )}
-            <div className="pt-2 border-t border-border">
-              <p className="text-xs text-muted-foreground">
-                Assets are stored securely in Cloudflare R2.
-                {storage.quotaBytes == null && " No storage quota on the current plan."}
-              </p>
+              <div className="flex items-center justify-between">
+                <span className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+                  Storage used
+                </span>
+                <span className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] font-medium text-[var(--ft-color-on-surface)]">
+                  {formatBytes(storage.usageBytes)}
+                  {storage.quotaBytes != null && (
+                    <span className="text-[var(--ft-color-on-surface-variant)] font-normal">
+                      {" "}
+                      / {formatBytes(storage.quotaBytes)}
+                    </span>
+                  )}
+                </span>
+              </div>
+              {storage.quotaBytes != null && (
+                <div className="space-y-[var(--ft-space-1)]">
+                  {/* Progress bar — no MD3 ProgressIndicator primitive in the
+                      barrel yet; tokenised colours but keeps existing div
+                      shape until a primitive lands (flagged in report). */}
+                  <div className="h-2 w-full rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-high)] overflow-hidden">
+                    <div
+                      className={cn(
+                        "h-full rounded-[var(--ft-shape-full)] transition-all",
+                        storage.usageBytes / storage.quotaBytes >= 0.9
+                          ? "bg-[var(--ft-color-error)]"
+                          : storage.usageBytes / storage.quotaBytes >= 0.75
+                          ? "bg-yellow-500"
+                          : "bg-[var(--ft-color-primary)]"
+                      )}
+                      style={{ width: `${Math.min(100, (storage.usageBytes / storage.quotaBytes) * 100).toFixed(1)}%` }}
+                    />
+                  </div>
+                  {storage.usageBytes / storage.quotaBytes >= 0.9 && (
+                    <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]">
+                      Storage almost full — delete or archive assets to free space.
+                    </p>
+                  )}
+                </div>
+              )}
+              <div className="pt-[var(--ft-space-2)] border-t border-[var(--ft-color-outline-variant)]">
+                <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                  Assets are stored securely in Cloudflare R2.
+                  {storage.quotaBytes == null && " No storage quota on the current plan."}
+                </p>
+              </div>
             </div>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Loading storage info…</p>
-        )}
-      </div>
+          ) : (
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+              Loading storage info…
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
-      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("integrations"))}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-foreground">Plexo AI</h2>
+      <Card variant="outlined" className={tabClass("integrations")}>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Plexo AI
+          </CardTitle>
           <PlexoConnectionStatus />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Plexo powers AI classification, auto-tagging, and cross-app intelligence for your assets.
-        </p>
-        <div className="space-y-3 pt-1">
+        </CardHeader>
+        <CardContent className="space-y-[var(--ft-space-3)]">
+          <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+            Plexo powers AI classification, auto-tagging, and cross-app intelligence for your assets.
+          </p>
           {/* Google Photos (Takeout) — real connect/reconnect flow (Phase 4). */}
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center justify-between gap-[var(--ft-space-3)]">
             <div>
-              <p className="text-sm text-foreground">Google Photos (Takeout)</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Google Photos (Takeout)
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
                 {googleStatus === "active"
                   ? "Connected — import a Takeout archive from the Imports page."
                   : googleStatus === "needs_reconnect"
@@ -216,32 +272,35 @@ export default function SettingsPage() {
                   : "Connect to import a Google Takeout archive of your photos."}
               </p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-[var(--ft-space-2)] shrink-0">
               {googleStatus === "active" ? (
                 <>
-                  <span className="text-xs font-medium text-green-600 dark:text-green-500">
+                  {/* Success role — newly added in 36152c8; replaces the
+                      legacy text-green-600 dark:text-green-500 literal. */}
+                  <Chip
+                    variant="assist"
+                    disabled
+                    className="border-transparent bg-[var(--ft-color-success-container)] text-[var(--ft-color-on-success-container)] opacity-100 disabled:opacity-100"
+                  >
                     Connected
-                  </span>
-                  <button
+                  </Chip>
+                  <Button
+                    variant="outlined"
+                    size="sm"
                     onClick={handleGoogleDisconnect}
                     disabled={googleBusy}
-                    className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-50"
                   >
                     {googleBusy ? "Disconnecting…" : "Disconnect"}
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <a
-                  href="/api/v1/integrations/google/auth"
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    googleStatus === "needs_reconnect"
-                      ? "border border-yellow-500 text-yellow-700 dark:text-yellow-500 hover:bg-yellow-500/10"
-                      : "bg-primary text-primary-foreground hover:bg-primary/90"
-                  )}
+                <Button
+                  variant={googleStatus === "needs_reconnect" ? "outlined" : "filled"}
+                  size="sm"
+                  render={<a href="/api/v1/integrations/google/auth" />}
                 >
                   {googleStatus === "needs_reconnect" ? "Reconnect" : "Connect"}
-                </a>
+                </Button>
               )}
             </div>
           </div>
@@ -249,7 +308,7 @@ export default function SettingsPage() {
           {googleStatus === "active" && (
             <Link
               href="/app/imports"
-              className="block text-xs font-medium text-primary-text hover:underline"
+              className="block text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] tracking-[var(--ft-type-label-large-tracking)] font-medium text-[var(--ft-color-primary)] hover:underline"
             >
               Go to Imports →
             </Link>
@@ -262,104 +321,143 @@ export default function SettingsPage() {
           ].map((conn) => (
             <div key={conn.id} className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-foreground">{conn.label}</p>
-                <p className="text-xs text-muted-foreground">{conn.desc}</p>
+                <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                  {conn.label}
+                </p>
+                <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                  {conn.desc}
+                </p>
               </div>
-              <span className="text-xs text-muted-foreground rounded-md border border-border px-2 py-1">
+              <Chip variant="suggestion" disabled className="opacity-100 disabled:opacity-100">
                 Coming soon
-              </span>
+              </Chip>
             </div>
           ))}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("integrations"))}>
-        <h2 className="text-sm font-semibold text-foreground">Recognition</h2>
-        <p className="text-xs text-muted-foreground">
-          Re-run AI recognition (OCR, object/scene labels, descriptions, and
-          face detection) across your library. Runs on the local vision engine
-          and processes assets in the background.
-        </p>
-        <div className="flex items-center justify-between gap-3 pt-1">
-          <div>
-            <p className="text-sm text-foreground">Re-scan assets</p>
-            <p className="text-xs text-muted-foreground">Choose which assets to re-scan.</p>
+      <Card variant="outlined" className={tabClass("integrations")}>
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Recognition
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-[var(--ft-space-3)]">
+          <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+            Re-run AI recognition (OCR, object/scene labels, descriptions, and
+            face detection) across your library. Runs on the local vision engine
+            and processes assets in the background.
+          </p>
+          <div className="flex items-center justify-between gap-[var(--ft-space-3)]">
+            <div>
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Re-scan assets
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Choose which assets to re-scan.
+              </p>
+            </div>
+            <div className="flex items-center gap-[var(--ft-space-2)] shrink-0">
+              <Select
+                value={rescanScope}
+                onValueChange={(v) => setRescanScope(v as "all" | "images" | "failed")}
+                disabled={rescanBusy}
+              >
+                <SelectTrigger aria-label="Re-scan scope" className="h-9 w-[160px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All assets</SelectItem>
+                  <SelectItem value="images">Images only</SelectItem>
+                  <SelectItem value="failed">Failed / unprocessed</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outlined"
+                size="sm"
+                onClick={handleRescanAll}
+                disabled={rescanBusy}
+              >
+                {rescanBusy ? "Queuing…" : "Re-scan"}
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <select
-              aria-label="Re-scan scope"
-              value={rescanScope}
-              onChange={(e) => setRescanScope(e.target.value as "all" | "images" | "failed")}
-              disabled={rescanBusy}
-              className="rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground disabled:opacity-50"
-            >
-              <option value="all">All assets</option>
-              <option value="images">Images only</option>
-              <option value="failed">Failed / unprocessed</option>
-            </select>
-            <button
-              onClick={handleRescanAll}
-              disabled={rescanBusy}
-              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-50"
-            >
-              {rescanBusy ? "Queuing…" : "Re-scan"}
-            </button>
-          </div>
-        </div>
-        {rescanMsg && <p className="text-xs text-muted-foreground">{rescanMsg}</p>}
-      </div>
-
-      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("account"))}>
-        <h2 className="text-sm font-semibold text-foreground">Members</h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-foreground">Workspace members</p>
-            <p className="text-xs text-muted-foreground">
-              Invite collaborators as editors or viewers.
+          {rescanMsg && (
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+              {rescanMsg}
             </p>
-          </div>
-          <Link
-            href="/app/settings/members"
-            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
-          >
-            Manage members
-          </Link>
-        </div>
-      </div>
+          )}
+        </CardContent>
+      </Card>
 
-      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("account"))}>
-        <h2 className="text-sm font-semibold text-foreground">API access</h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-foreground">Personal access tokens</p>
-            <p className="text-xs text-muted-foreground">
-              For the CLI, mobile app, and 3rd-party integrations.
-            </p>
+      <Card variant="outlined" className={tabClass("account")}>
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Members
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Workspace members
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Invite collaborators as editors or viewers.
+              </p>
+            </div>
+            <Button variant="outlined" size="sm" render={<Link href="/app/settings/members" />}>
+              Manage members
+            </Button>
           </div>
-          <Link
-            href="/app/settings/tokens"
-            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
-          >
-            Manage tokens
-          </Link>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      <div className={cn("rounded-lg border border-border bg-card p-6 space-y-4", tabClass("account"))}>
-        <h2 className="text-sm font-semibold text-foreground">Data</h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-foreground">Export metadata</p>
-            <p className="text-xs text-muted-foreground">Download all asset metadata as JSON</p>
+      <Card variant="outlined" className={tabClass("account")}>
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            API access
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Personal access tokens
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                For the CLI, mobile app, and 3rd-party integrations.
+              </p>
+            </div>
+            <Button variant="outlined" size="sm" render={<Link href="/app/settings/tokens" />}>
+              Manage tokens
+            </Button>
           </div>
-          <Link
-            href="/api/export"
-            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
-          >
-            Export JSON
-          </Link>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
+
+      <Card variant="outlined" className={tabClass("account")}>
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Data
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Export metadata
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Download all asset metadata as JSON
+              </p>
+            </div>
+            <Button variant="outlined" size="sm" render={<a href="/api/export" />}>
+              Export JSON
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
