@@ -21,7 +21,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
 import { cn } from "@/lib/utils";
 import type { FilterState } from "@/lib/hooks/use-toolbar-state";
 
@@ -45,7 +46,9 @@ const MIME_CHIPS = [
 
 // Curated palette — matches the dominant-color bucketing used during
 // ingest (sharp's named extraction). Hex values are display-only; the
-// query string carries the name.
+// query string carries the name. These are the literal swatch colours
+// the user is picking; they're data, not styling.
+// TODO: tokenise once chart palette exists
 const COLOR_CHIPS = [
   { value: "red", hex: "#ef4444" },
   { value: "orange", hex: "#f97316" },
@@ -87,15 +90,6 @@ interface FilterPopoverProps {
   available: FilterKey[];
   /** Reset all filter keys back to default. */
   onReset?: () => void;
-}
-
-function chipBase(active: boolean): string {
-  return cn(
-    "inline-flex h-8 items-center justify-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors",
-    active
-      ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
-      : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
-  );
 }
 
 function activeCount(s: FilterState, keys: FilterKey[]): number {
@@ -179,7 +173,7 @@ export function FilterPopover({
   return (
     <Popover>
       <PopoverTrigger
-        className={buttonVariants({ variant: "outline", size: "sm" })}
+        className={buttonVariants({ variant: "outlined", size: "sm" })}
       >
         <Filter className="h-3.5 w-3.5" />
         <span>Filter</span>
@@ -197,13 +191,15 @@ export function FilterPopover({
         <div className="flex items-center justify-between">
           <p className="font-heading text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)] font-medium text-[var(--ft-color-on-surface)]">Filter</p>
           {n > 0 && onReset && (
-            <button
+            <Button
+              variant="text"
+              size="xs"
               onClick={onReset}
-              className="flex items-center gap-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
+              className="text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
             >
               <X className="h-3 w-3" />
               Clear all
-            </button>
+            </Button>
           )}
         </div>
 
@@ -213,15 +209,16 @@ export function FilterPopover({
               {SUBTYPE_CHIPS.map((c) => {
                 const active = state.type === c.value;
                 return (
-                  <button
+                  <Chip
                     key={c.value}
+                    variant="filter"
+                    selected={active}
                     onClick={() =>
                       onChange({ type: active ? null : c.value })
                     }
-                    className={chipBase(active)}
                   >
                     {c.label}
-                  </button>
+                  </Chip>
                 );
               })}
             </div>
@@ -234,15 +231,16 @@ export function FilterPopover({
               {MIME_CHIPS.map((c) => {
                 const active = state.mime === c.value;
                 return (
-                  <button
+                  <Chip
                     key={c.value}
+                    variant="filter"
+                    selected={active}
                     onClick={() =>
                       onChange({ mime: active ? null : c.value })
                     }
-                    className={chipBase(active)}
                   >
                     {c.label}
-                  </button>
+                  </Chip>
                 );
               })}
             </div>
@@ -295,15 +293,16 @@ export function FilterPopover({
 
         {showLifecycle && (
           <Section label="Status">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-[var(--ft-space-2)]">
               {(["active", "archived", "trashed"] as const).map((lc) => (
-                <button
+                <Chip
                   key={lc}
+                  variant="filter"
+                  selected={state.lifecycle === lc}
                   onClick={() => onChange({ lifecycle: lc })}
-                  className={chipBase(state.lifecycle === lc)}
                 >
                   {lc[0].toUpperCase() + lc.slice(1)}
-                </button>
+                </Chip>
               ))}
             </div>
           </Section>
@@ -311,14 +310,15 @@ export function FilterPopover({
 
         {(showFavorite || showRating) && (
           <Section label="Quality">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-[var(--ft-space-2)]">
               {showFavorite && (
-                <button
+                <Chip
+                  variant="filter"
+                  selected={state.favorite}
                   onClick={() => onChange({ favorite: !state.favorite })}
-                  className={chipBase(state.favorite)}
                 >
                   ♥ Favorites only
-                </button>
+                </Chip>
               )}
               {showRating && (
                 <div className="flex items-center gap-1">
@@ -362,8 +362,10 @@ export function FilterPopover({
               {tags.map((t) => {
                 const active = state.tagIds.includes(t.id);
                 return (
-                  <button
+                  <Chip
                     key={t.id}
+                    variant="filter"
+                    selected={active}
                     onClick={() =>
                       onChange({
                         tagIds: active
@@ -371,7 +373,6 @@ export function FilterPopover({
                           : [...state.tagIds, t.id],
                       })
                     }
-                    className={chipBase(active)}
                     style={
                       active && t.color
                         ? { background: t.color, borderColor: t.color }
@@ -379,7 +380,7 @@ export function FilterPopover({
                     }
                   >
                     #{t.name}
-                  </button>
+                  </Chip>
                 );
               })}
             </div>
@@ -392,8 +393,10 @@ export function FilterPopover({
               {people.slice(0, 24).map((p) => {
                 const active = state.personIds.includes(p.id);
                 return (
-                  <button
+                  <Chip
                     key={p.id}
+                    variant="filter"
+                    selected={active}
                     onClick={() =>
                       onChange({
                         personIds: active
@@ -401,13 +404,12 @@ export function FilterPopover({
                           : [...state.personIds, p.id],
                       })
                     }
-                    className={chipBase(active)}
                   >
                     {p.name ?? "Unnamed"}{" "}
-                    <span className="text-[10px] opacity-60">
+                    <span className="text-[length:var(--ft-type-label-small-size)] opacity-60">
                       ({p.instanceCount})
                     </span>
-                  </button>
+                  </Chip>
                 );
               })}
             </div>

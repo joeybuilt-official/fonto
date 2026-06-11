@@ -10,6 +10,8 @@
 
 import Link from "next/link";
 import { ArrowRight, Info } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 export function DeprecationBanner({
   label,
@@ -28,18 +30,22 @@ export function DeprecationBanner({
   movedInto?: string;
 }) {
   return (
-    <div className="mx-4 mt-3 flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
-      <Info className="h-3.5 w-3.5 shrink-0 text-primary-text" />
-      <p className="min-w-0 flex-1">
+    <Card
+      variant="filled"
+      className="mx-[var(--ft-space-4)] mt-[var(--ft-space-3)] flex flex-row items-center gap-[var(--ft-space-2)] !bg-[var(--ft-color-surface-container-high)] px-[var(--ft-space-3)] py-[var(--ft-space-2)]"
+    >
+      <Info className="h-3.5 w-3.5 shrink-0 text-[var(--ft-color-primary)]" />
+      <p className="min-w-0 flex-1 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)]">
         <span className="font-medium">{label}</span> has moved into {movedInto}.
       </p>
-      <Link
-        href={newHref}
-        className="flex items-center gap-1 rounded border border-primary/40 bg-background px-2 py-1 font-medium text-primary-text hover:bg-primary/10 transition-colors"
+      <Button
+        render={<Link href={newHref} />}
+        variant="text"
+        size="xs"
       >
         Go to {newLabel}
         <ArrowRight className="h-3 w-3" />
-      </Link>
-    </div>
+      </Button>
+    </Card>
   );
 }

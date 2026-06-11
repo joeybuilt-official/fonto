@@ -158,13 +158,15 @@ export function CommentsPanel({ assetId, currentUserId, canModerate }: CommentsP
                   {isDeleted ? "[deleted]" : c.body}
                 </p>
                 {canDelete && (
-                  <button
+                  <Button
+                    variant="text"
+                    size="xs"
                     onClick={() => void handleDelete(c.id)}
-                    className="mt-1 inline-flex items-center gap-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-error)] opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="mt-1 text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-error)] opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     <Trash2 className="h-3 w-3" />
                     delete
-                  </button>
+                  </Button>
                 )}
               </div>
             );

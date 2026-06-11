@@ -15,6 +15,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Loader2, ChevronRight } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 const POLL_MS = 6000;
 
@@ -51,15 +53,22 @@ export function ProcessingNotice() {
   if (processing <= 0) return null;
 
   return (
-    <Link
-      href="/app/imports"
-      className="flex items-center gap-2.5 rounded-md bg-secondary px-4 py-2 text-secondary-foreground transition-colors hover:bg-secondary/80"
+    <Card
+      variant="filled"
+      className="flex flex-row items-center gap-[var(--ft-space-3)] !bg-[var(--ft-color-surface-container-high)] px-[var(--ft-space-4)] py-[var(--ft-space-2)]"
     >
-      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-      <span className="flex-1 text-xs">
+      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ft-color-on-surface-variant)]" />
+      <span className="flex-1 text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] text-[var(--ft-color-on-surface)]">
         Processing {processing} {processing === 1 ? "item" : "items"} on Fonto…
       </span>
-      <ChevronRight className="h-4 w-4 shrink-0 opacity-70" />
-    </Link>
+      <Button
+        render={<Link href="/app/imports" />}
+        variant="text"
+        size="xs"
+      >
+        View
+        <ChevronRight className="h-3.5 w-3.5" />
+      </Button>
+    </Card>
   );
 }

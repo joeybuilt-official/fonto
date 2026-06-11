@@ -50,6 +50,17 @@ import type {
   ViewMode,
 } from "@/lib/hooks/use-toolbar-state";
 
+// Map the legacy primaryAction.variant API ("default" | "outline" | "secondary")
+// onto MD3 button variants. Keeps host pages backwards-compatible while the
+// toolbar internals consume the new namespace.
+function mapPrimaryVariant(
+  v?: "default" | "outline" | "secondary"
+): "filled" | "outlined" | "tonal" {
+  if (v === "outline") return "outlined";
+  if (v === "secondary") return "tonal";
+  return "filled";
+}
+
 const SORT_LABELS: Record<SortKey, string> = {
   newest: "Newest",
   oldest: "Oldest",
@@ -191,21 +202,21 @@ export function AssetPageToolbar({
           {/* Slot 5: AI ask */}
           {onAskAI && (
             <Button
-              variant="outline"
+              variant="text"
               size="sm"
               onClick={() =>
                 onAskAI(getAskContextIds ? getAskContextIds() : [])
               }
               aria-label="Ask AI about this view"
             >
-              <Sparkles className="h-3.5 w-3.5 text-primary-text" />
+              <Sparkles className="h-3.5 w-3.5" />
               <span>Ask</span>
             </Button>
           )}
 
           {/* Slot 6: view mode */}
           {viewModes && viewModes.length > 1 && (
-            <div className="inline-flex overflow-hidden rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)]">
+            <div className="inline-flex overflow-hidden rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)]">
               {viewModes.map((m) => {
                 const active = view.viewMode === m;
                 return (
@@ -239,7 +250,7 @@ export function AssetPageToolbar({
           {/* Slot 8: select mode */}
           {showSelect && (
             <Button
-              variant={selectMode ? "default" : "outline"}
+              variant={selectMode ? "tonal" : "text"}
               size="sm"
               onClick={() => setSelectMode(!selectMode)}
             >
@@ -260,7 +271,7 @@ export function AssetPageToolbar({
           {/* Slot 9: page action */}
           {primaryAction && (
             <Button
-              variant={primaryAction.variant ?? "default"}
+              variant={mapPrimaryVariant(primaryAction.variant)}
               size="sm"
               onClick={primaryAction.onClick}
             >
@@ -287,27 +298,29 @@ function SortMenu({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        className={buttonVariants({ variant: "outline", size: "sm" })}
+        className={buttonVariants({ variant: "outlined", size: "sm" })}
       >
         <ArrowUpDown className="h-3.5 w-3.5" />
         <span>{SORT_LABELS[value]}</span>
       </PopoverTrigger>
       <PopoverContent className="w-44 p-1" align="end" sideOffset={6}>
         {options.map((o) => (
-          <button
+          <Button
             key={o}
+            variant="text"
+            size="sm"
             onClick={() => {
               onChange(o);
               setOpen(false);
             }}
             className={cn(
-              "flex w-full items-center justify-between rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]",
-              value === o && "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)] font-medium"
+              "w-full justify-between !rounded-[var(--ft-shape-small)]",
+              value === o && "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
             )}
           >
             <span>{SORT_LABELS[o]}</span>
             {value === o && <Check className="h-3 w-3" />}
-          </button>
+          </Button>
         ))}
       </PopoverContent>
     </Popover>
@@ -331,7 +344,7 @@ function DensityMenu({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        className={buttonVariants({ variant: "outline", size: "icon-sm" })}
+        className={buttonVariants({ variant: "outlined", size: "icon-sm" })}
         title={`Density: ${DENSITY_META[value].label}`}
         aria-label="Change grid density"
       >
@@ -340,23 +353,25 @@ function DensityMenu({
       <PopoverContent className="w-40 p-1" align="end" sideOffset={6}>
         {(Object.keys(DENSITY_META) as Array<keyof typeof DENSITY_META>).map(
           (d) => (
-            <button
+            <Button
               key={d}
+              variant="text"
+              size="sm"
               onClick={() => {
                 onChange(d);
                 setOpen(false);
               }}
               className={cn(
-                "flex w-full items-center justify-between rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]",
-                value === d && "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)] font-medium"
+                "w-full justify-between !rounded-[var(--ft-shape-small)]",
+                value === d && "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
               )}
             >
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-[var(--ft-space-2)]">
                 {DENSITY_META[d].icon}
                 {DENSITY_META[d].label}
               </span>
               {value === d && <Check className="h-3 w-3" />}
-            </button>
+            </Button>
           )
         )}
       </PopoverContent>
