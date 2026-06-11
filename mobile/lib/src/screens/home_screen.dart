@@ -655,6 +655,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final title = _folder == null ? "Fonto" : _folder!;
     return Scaffold(
       appBar: AppBar(
+        // Inside a folder, show a back affordance to return to the root view
+        // (otherwise the only way back was via the drawer). null leading keeps
+        // the default drawer hamburger at the root.
+        leading: _folder != null
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: "Back to all photos",
+                onPressed: () {
+                  setState(() => _folder = null);
+                  _refresh();
+                },
+              )
+            : null,
         title: Text(title, overflow: TextOverflow.ellipsis),
         actions: [
           // Live upload-queue badge. During a foreground drain we show the

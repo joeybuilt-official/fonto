@@ -19,6 +19,28 @@ export default function ApiReferencePage() {
   return (
     <>
       <h1 className="sr-only">Fonto API Reference</h1>
+
+      {/* Fallback shown if Scalar's CDN script fails to load or render (offline,
+          blocked, CDN outage). The inline script below hides it once Scalar
+          mounts; if Scalar never mounts, this stays so the spec is still
+          reachable. Also covers JS-disabled via <noscript>. */}
+      <div id="api-fallback" className="mx-auto max-w-2xl p-8 text-sm text-muted-foreground">
+        <p className="font-medium text-foreground">Loading the API reference…</p>
+        <p className="mt-2">
+          If it doesn&apos;t appear, view the raw spec:{" "}
+          <a href="/api/v1/openapi.json" className="text-primary hover:underline">
+            /api/v1/openapi.json
+          </a>{" "}
+          (OpenAPI 3.1 JSON).
+        </p>
+      </div>
+      <noscript>
+        <div className="mx-auto max-w-2xl p-8 text-sm">
+          The interactive API reference needs JavaScript. View the raw spec at{" "}
+          <a href="/api/v1/openapi.json">/api/v1/openapi.json</a>.
+        </div>
+      </noscript>
+
       {/* The standalone Scalar element reads its config from the script body. */}
       <script
         id="api-reference"
@@ -36,6 +58,14 @@ export default function ApiReferencePage() {
       <script
         async
         src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@latest/dist/browser/standalone.js"
+      />
+      {/* Hide the fallback once Scalar actually renders its app; if it never
+          mounts (CDN down/blocked), the fallback + raw-spec link stay. */}
+      <script
+        dangerouslySetInnerHTML={{
+          __html:
+            "(function(){var tries=0;var t=setInterval(function(){tries++;if(document.querySelector('.scalar-app, scalar-api-reference, [data-v-app]')){var f=document.getElementById('api-fallback');if(f)f.style.display='none';clearInterval(t);}if(tries>40)clearInterval(t);},250);})();",
+        }}
       />
     </>
   );
