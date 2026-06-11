@@ -21,6 +21,7 @@
 // recoverStuck() resets any 'downloading' rows left orphaned by a killed process.
 
 import "dart:async";
+import "dart:convert";
 import "dart:io";
 
 import "package:flutter/foundation.dart";
@@ -210,14 +211,87 @@ class DriveDownloadQueue {
     await _refreshPending();
   }
 
-  /// HTTP statuses worth retrying: rate-limit (403/429), request timeout (408),
-  /// transient 5xx, and expired-token 401 (the next batch refreshes the token).
-  static bool _isRetryableStatus(int code) =>
-      code == 401 || code == 403 || code == 408 || code == 429 || (code >= 500 && code <= 599);
+  /// Drive returns 403 for BOTH rate-limiting AND non-downloadable files, so a
+  /// bare status code can't tell "wait and retry" from "this will never work".
+  /// We read the error body's `reason` to decide. Rate-limit / transient →
+  /// retry; permission / not-found / abuse → permanent (don't burn 6 attempts).
+  static bool _retryable(int status, String reason) {
+    if (status == 401 || status == 408 || status == 429) return true;
+    if (status >= 500 && status <= 599) return true;
+    if (status == 403) {
+      const rateLimited = {
+        "userRateLimitExceeded",
+        "rateLimitExceeded",
+        "dailyLimitExceeded",
+        "backendError",
+        "internalError",
+      };
+      return rateLimited.contains(reason);
+    }
+    return false; // 404 + other 4xx are permanent
+  }
+
+  /// Pull Google's machine `reason` (e.g. userRateLimitExceeded,
+  /// cannotDownloadAbusiveFile, fileNotDownloadable) out of a Drive JSON error
+  /// body: {"error":{"code":403,"errors":[{"reason":"…"}],"status":"…"}}.
+  static String _driveErrorReason(String body) {
+    if (body.isEmpty) return "";
+    try {
+      final j = jsonDecode(body);
+      final err = (j is Map) ? j["error"] : null;
+      if (err is Map) {
+        final errs = err["errors"];
+        if (errs is List && errs.isNotEmpty && errs.first is Map) {
+          final r = (errs.first as Map)["reason"];
+          if (r is String && r.isNotEmpty) return r;
+        }
+        final status = err["status"];
+        if (status is String) return status; // e.g. PERMISSION_DENIED
+      }
+    } catch (_) {/* non-JSON body — fall through */}
+    return "";
+  }
+
+  /// Plain-English, user-facing reason for a failed download. The Transfers
+  /// screen shows this verbatim, so it must explain what (if anything) the user
+  /// can do — "tap Retry" for transient, a clear dead-end for permanent.
+  static String _humanError(int status, String reason) {
+    switch (status) {
+      case 401:
+        return "Google sign-in expired — will retry";
+      case 403:
+        if (reason == "cannotDownloadAbusiveFile") {
+          return "Google flagged this file in its virus scan — skipped";
+        }
+        if (reason == "fileNotDownloadable" || reason == "notDownloadable") {
+          return "Not downloadable from Drive (e.g. a Google Doc)";
+        }
+        if (_retryable(status, reason)) {
+          return "Google rate-limited the import — tap Retry";
+        }
+        return "No permission to download this file from Drive";
+      case 404:
+        return "No longer in your Google Drive";
+      case 408:
+        return "Drive timed out — will retry";
+      case 429:
+        return "Google rate-limited the import — tap Retry";
+      default:
+        if (status >= 500) return "Google Drive server error — will retry";
+        return "Download failed (HTTP $status)";
+    }
+  }
 
   /// Network-level exceptions are transient: socket drops, stream idle-timeout.
   static bool _isRetryableError(Object e) =>
       e is SocketException || e is TimeoutException || e is http.ClientException || e is HttpException;
+
+  /// Plain-English label for a transient network exception (shown in Transfers).
+  static String _exceptionLabel(Object e) {
+    if (e is TimeoutException) return "Drive timed out";
+    if (e is SocketException) return "Network dropped";
+    return "Connection error";
+  }
 
   /// Exponential backoff for the row's current attempt count, with jitter,
   /// capped at [_maxBackoff]. `2s, 4s, 8s, 16s, 32s, 60s…`.
@@ -339,21 +413,37 @@ class DriveDownloadQueue {
         final attempts = (row["attempts"] as int?) ?? 0;
         File? tmp;
         try {
-          final uri = Uri.parse("$_kDriveApiBase/files/$id")
-              .replace(queryParameters: {"alt": "media"});
+          final uri = Uri.parse("$_kDriveApiBase/files/$id").replace(
+            // acknowledgeAbuse lets owned files Google flagged in its malware
+            // scan download anyway (ignored for non-flagged files), recovering
+            // the "cannotDownloadAbusiveFile" 403s.
+            queryParameters: {"alt": "media", "acknowledgeAbuse": "true"},
+          );
           final req = http.Request("GET", uri)..headers.addAll(headers);
           // Timeout here is on receiving response HEADERS only.
           final streamed = await client
               .send(req)
               .timeout(const Duration(seconds: 60));
           if (streamed.statusCode != 200) {
-            if (_isRetryableStatus(streamed.statusCode)) {
+            // Read the small JSON error body to learn WHY (Google's `reason`),
+            // so we can show a plain-English message and split "retry later"
+            // from "this will never work" instead of burning 6 attempts on a
+            // permission/not-found failure.
+            String body = "";
+            try {
+              body = await streamed.stream
+                  .bytesToString()
+                  .timeout(const Duration(seconds: 10));
+            } catch (_) {/* empty/unreadable body — reason stays "" */}
+            final reason = _driveErrorReason(body);
+            final msg = _humanError(streamed.statusCode, reason);
+            if (_retryable(streamed.statusCode, reason)) {
               // Back off (honoring Retry-After) so the per-user rate-limit
               // window can recover instead of burning every attempt in seconds.
               await _respectBackoff(attempts, streamed.headers);
-              await q.markFailed(id, "HTTP ${streamed.statusCode}");
+              await q.markFailed(id, msg);
             } else {
-              await q.markPermanent(id, "HTTP ${streamed.statusCode}");
+              await q.markPermanent(id, msg);
             }
             continue;
           }
@@ -384,9 +474,9 @@ class DriveDownloadQueue {
           }
           if (_isRetryableError(e)) {
             await Future.delayed(_backoffFor(attempts));
-            await q.markFailed(id, e.toString());
+            await q.markFailed(id, "${_exceptionLabel(e)} — will retry");
           } else {
-            await q.markPermanent(id, e.toString());
+            await q.markPermanent(id, "Download error (${e.runtimeType})");
           }
         }
       }
