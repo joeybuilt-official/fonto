@@ -35,6 +35,13 @@ export const colorTokens = {
     onError: "#FFFFFF",
     errorContainer: "#FFDAD6",
     onErrorContainer: "#410002",
+    // Fonto extension role — Material 3 doesn't ship "success", but
+    // import-complete / uploaded / saved states are common enough that
+    // tertiary/secondary were getting overloaded. See ADR 0009.
+    success: "#006E1C",
+    onSuccess: "#FFFFFF",
+    successContainer: "#ABF59B",
+    onSuccessContainer: "#002106",
     surface: "#FAFDFB",
     onSurface: "#191C1B",
     surfaceContainerLowest: "#FFFFFF",
@@ -68,6 +75,10 @@ export const colorTokens = {
     onError: "#690005",
     errorContainer: "#93000A",
     onErrorContainer: "#FFDAD6",
+    success: "#88D982",
+    onSuccess: "#003910",
+    successContainer: "#005313",
+    onSuccessContainer: "#A4F49C",
     surface: "#101413",
     onSurface: "#E0E3E1",
     surfaceContainerLowest: "#0B0F0E",

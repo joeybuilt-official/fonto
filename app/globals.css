@@ -156,6 +156,15 @@
   --ft-color-on-error: #FFFFFF;
   --ft-color-error-container: #FFDAD6;
   --ft-color-on-error-container: #410002;
+  /* Color — success (Material 3 doesn't ship a "success" role; Fonto adds
+   * one because "import complete", "saved", "uploaded" status states are
+   * frequent and tertiary/secondary were getting overloaded as a stand-in.
+   * Green tone-40 light / tone-80 dark per the same generation rules as
+   * the spec roles. ADR 0009 documents this extension. */
+  --ft-color-success: #006E1C;
+  --ft-color-on-success: #FFFFFF;
+  --ft-color-success-container: #ABF59B;
+  --ft-color-on-success-container: #002106;
   /* Color — surface scale */
   --ft-color-surface: #FAFDFB;
   --ft-color-on-surface: #191C1B;
@@ -259,6 +268,10 @@
   --ft-color-on-error: #690005;
   --ft-color-error-container: #93000A;
   --ft-color-on-error-container: #FFDAD6;
+  --ft-color-success: #88D982;
+  --ft-color-on-success: #003910;
+  --ft-color-success-container: #005313;
+  --ft-color-on-success-container: #A4F49C;
   --ft-color-surface: #101413;
   --ft-color-on-surface: #E0E3E1;
   --ft-color-surface-container-lowest: #0B0F0E;

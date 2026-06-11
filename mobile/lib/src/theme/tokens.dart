@@ -19,6 +19,67 @@ import "package:flutter/material.dart";
 /// Brand seed colour. Single source of truth for the tonal palette.
 const Color brandSeed = Color(0xFF2AB0A5);
 
+/// Fonto extension to MD3's color roles. Material 3 doesn't ship a "success"
+/// role; we add one because import-complete / uploaded / saved states show
+/// up frequently and `tertiary`/`secondary` were getting overloaded as a
+/// stand-in. Light values are tone-40 / 90; dark values are tone-80 / 30
+/// — same generation rules MD3 uses for the spec roles.
+///
+/// Read at call site via `Theme.of(context).extension<FontoColors>()!.success`.
+class FontoColors extends ThemeExtension<FontoColors> {
+  const FontoColors({
+    required this.success,
+    required this.onSuccess,
+    required this.successContainer,
+    required this.onSuccessContainer,
+  });
+
+  final Color success;
+  final Color onSuccess;
+  final Color successContainer;
+  final Color onSuccessContainer;
+
+  static const FontoColors light = FontoColors(
+    success: Color(0xFF006E1C),
+    onSuccess: Color(0xFFFFFFFF),
+    successContainer: Color(0xFFABF59B),
+    onSuccessContainer: Color(0xFF002106),
+  );
+
+  static const FontoColors dark = FontoColors(
+    success: Color(0xFF88D982),
+    onSuccess: Color(0xFF003910),
+    successContainer: Color(0xFF005313),
+    onSuccessContainer: Color(0xFFA4F49C),
+  );
+
+  @override
+  FontoColors copyWith({
+    Color? success,
+    Color? onSuccess,
+    Color? successContainer,
+    Color? onSuccessContainer,
+  }) {
+    return FontoColors(
+      success: success ?? this.success,
+      onSuccess: onSuccess ?? this.onSuccess,
+      successContainer: successContainer ?? this.successContainer,
+      onSuccessContainer: onSuccessContainer ?? this.onSuccessContainer,
+    );
+  }
+
+  @override
+  FontoColors lerp(ThemeExtension<FontoColors>? other, double t) {
+    if (other is! FontoColors) return this;
+    return FontoColors(
+      success: Color.lerp(success, other.success, t)!,
+      onSuccess: Color.lerp(onSuccess, other.onSuccess, t)!,
+      successContainer: Color.lerp(successContainer, other.successContainer, t)!,
+      onSuccessContainer: Color.lerp(onSuccessContainer, other.onSuccessContainer, t)!,
+    );
+  }
+}
+
 /// Shape scale per Material 3 (`small`, `medium`, `large`, `extra-large`).
 /// We use the upstream defaults — they read as "Material" without feeling
 /// rounder than the brand wants. Buttons + chips inherit pill shapes; cards

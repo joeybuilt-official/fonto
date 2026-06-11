@@ -27,6 +27,11 @@ class FontoTheme {
     return ThemeData(
       colorScheme: scheme,
       useMaterial3: true,
+      // Fonto's "success" role — MD3 doesn't ship one. Read via
+      // `Theme.of(context).extension<FontoColors>()!.success`.
+      extensions: <ThemeExtension<dynamic>>[
+        brightness == Brightness.dark ? FontoColors.dark : FontoColors.light,
+      ],
       textTheme: FontoType.textTheme,
       // Anchor the global background to the tonal surface scale so screens
       // stop bleeding through to default white on cold start.
