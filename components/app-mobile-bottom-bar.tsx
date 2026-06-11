@@ -26,6 +26,13 @@
 // Settings is intentionally NOT in the bar — UX-C6 demotes it to the
 // avatar menu on mobile. Home is reachable via the sidebar drawer that
 // the existing mobile-header hamburger opens.
+//
+// MD3 migration (ADR 0009, Phase 2): the bar is rendered through the
+// `NavBar` / `NavBarItem` primitives so the selection state becomes the
+// MD3 `secondary-container` pill behind the icon + `label-medium`
+// typography. The active 2 px teal top-bar indicator is retained as a
+// non-color signifier (colour-blind / monochrome fallback) on top of
+// the MD3 pill.
 
 "use client";
 
@@ -38,6 +45,7 @@ import {
   Bell,
   Search,
 } from "lucide-react";
+import { NavBar, NavBarItem } from "@/components/ui/nav-bar";
 import { cn } from "@/lib/utils";
 
 interface BottomBarTab {
@@ -60,54 +68,39 @@ export function AppMobileBottomBar() {
   const pathname = usePathname();
 
   return (
-    <nav
+    <NavBar
       role="navigation"
       aria-label="Primary"
       // pb-safe respects the iOS home-indicator inset where available;
-      // falls back to a small bottom padding otherwise. The border-top
-      // keeps the bar visually pinned even when content scrolls behind.
-      className="flex shrink-0 items-stretch justify-between gap-0 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] md:hidden"
+      // falls back to a small bottom padding otherwise.
+      className="h-auto min-h-20 pb-[env(safe-area-inset-bottom)] md:hidden"
     >
       {TABS.map((t) => {
         const isActive =
           pathname === t.match || pathname.startsWith(t.match + "/");
         const Icon = t.icon;
         return (
-          <Link
+          <NavBarItem
             key={t.href}
-            href={t.href}
-            aria-current={isActive ? "page" : undefined}
-            // Phase 6 AA pass:
-            //   - inactive label text-foreground/70 (≈6.2:1 vs bg, was
-            //     muted-foreground 4.2:1 — failed AA at 10px)
-            //   - active label text-foreground + semibold (≈15:1) +
-            //     teal icon as the brand-color signifier
-            //   - non-color active indicator: 2px teal top bar so
-            //     colour-blind / monochrome users see the selection
-            //   - focus-visible ring for keyboard a11y
-            className={cn(
-              "group relative flex min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-[10px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              isActive
-                ? "text-foreground font-semibold"
-                : "text-foreground/70 hover:text-foreground",
-            )}
-          >
-            {isActive && (
-              <span
-                aria-hidden="true"
-                className="absolute inset-x-3 top-0 h-0.5 rounded-b-sm bg-primary"
+            render={
+              <Link
+                href={t.href}
+                aria-current={isActive ? "page" : undefined}
               />
+            }
+            active={isActive}
+            icon={<Icon />}
+            label={t.label}
+            // Preserve the non-color 2 px brand-teal top indicator for
+            // colour-blind / monochrome a11y; layered over the MD3 pill.
+            className={cn(
+              "min-h-[56px]",
+              isActive &&
+                "before:pointer-events-none before:absolute before:inset-x-3 before:top-0 before:h-0.5 before:rounded-b-sm before:bg-[var(--ft-color-primary)] before:content-['']",
             )}
-            <Icon
-              className={cn(
-                "h-5 w-5",
-                isActive ? "text-primary-text" : "text-foreground/70 group-hover:text-foreground",
-              )}
-            />
-            <span className="leading-tight">{t.label}</span>
-          </Link>
+          />
         );
       })}
-    </nav>
+    </NavBar>
   );
 }
