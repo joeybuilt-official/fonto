@@ -299,14 +299,13 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
                         width: 96,
                         child: Text(
                           r.$1,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.outline,
-                            fontSize: 13,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.outline,
+                              ),
                         ),
                       ),
                       Expanded(
-                        child: Text(r.$2, style: const TextStyle(fontSize: 13)),
+                        child: Text(r.$2, style: Theme.of(context).textTheme.bodySmall),
                       ),
                     ],
                   ),
@@ -321,6 +320,8 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Photo viewer chrome stays intentionally black/white — photo content
+    // reads best on a dark surround regardless of system theme.
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -329,7 +330,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
         title: Text(
           _cur.filename,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 14),
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.white),
         ),
         actions: [
           if (_cur.mimeType.startsWith("image/"))
@@ -501,7 +502,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
                   shape: BoxShape.circle,
                   border: Border.all(
                     color: face.personId != null
-                        ? Colors.lightBlueAccent
+                        ? Theme.of(context).colorScheme.primary
                         : Colors.white70,
                     width: 2,
                   ),
@@ -900,12 +901,11 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
                                       Text(
                                         _faces[_activeFaceIndex].personName ??
                                             "Tap to tag",
-                                        style: TextStyle(
-                                          color: _faces[_activeFaceIndex].personName != null
-                                              ? Colors.lightBlueAccent
-                                              : Colors.white54,
-                                          fontSize: 12,
-                                        ),
+                                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                              color: _faces[_activeFaceIndex].personName != null
+                                                  ? Theme.of(context).colorScheme.primary
+                                                  : Colors.white54,
+                                            ),
                                       ),
                                     ],
                                   ),
@@ -949,6 +949,7 @@ class _FaceImageOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
     return LayoutBuilder(builder: (ctx, constraints) {
       final ww = constraints.maxWidth;
       final wh = constraints.maxHeight;
@@ -979,13 +980,13 @@ class _FaceImageOverlay extends StatelessWidget {
                 const Icon(Icons.broken_image, color: Colors.white54, size: 48),
           ),
           if (imageDims != null)
-            ..._buildFaceOverlays(ww, wh, imageDims!),
+            ..._buildFaceOverlays(ww, wh, imageDims!, primary),
         ],
       );
     });
   }
 
-  List<Widget> _buildFaceOverlays(double ww, double wh, Size dims) {
+  List<Widget> _buildFaceOverlays(double ww, double wh, Size dims, Color taggedColor) {
     final s = min(ww / dims.width, wh / dims.height);
     final rx = (ww - dims.width * s) / 2;
     final ry = (wh - dims.height * s) / 2;
@@ -999,10 +1000,12 @@ class _FaceImageOverlay extends StatelessWidget {
       final d = max(fw, fh) + (isActive ? 20 : 12);
       final cx = left + fw / 2;
       final cy = top + fh / 2;
+      // Active face stays yellow — high-contrast against any photo content.
+      // TODO: tokenise once a face-tag palette exists.
       final borderColor = isActive
           ? Colors.yellowAccent
           : face.personId != null
-              ? Colors.lightBlueAccent
+              ? taggedColor
               : Colors.white70;
       final borderWidth = isActive ? 1.5 : 1.0;
       final circle = Positioned(
@@ -1295,7 +1298,7 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.black26,
+                    color: Theme.of(context).colorScheme.outlineVariant,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -1328,7 +1331,9 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   child: Text(
                     _saveError!,
-                    style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
                   ),
                 ),
               if (_suggestionsLoading)
@@ -1340,9 +1345,15 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
-                      child: Text("Suggestions", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54)),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      child: Text(
+                        "Suggestions",
+                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
                     ),
                     ..._suggestions
                         .where((s) => s.person.id != widget.face.personId)
@@ -1363,9 +1374,15 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
                       );
                     }),
                     const Divider(),
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
-                      child: Text("All people", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54)),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                      child: Text(
+                        "All people",
+                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
                     ),
                   ],
                 ),
