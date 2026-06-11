@@ -37,19 +37,19 @@ function tileUrl(lat: number, lng: number, z: number): string {
 function PlaceCover({ entry }: { entry: PlaceEntry }) {
   if (entry.lat == null || entry.lng == null) {
     return (
-      <div className="aspect-square rounded-lg bg-muted/30 flex items-center justify-center">
-        <MapPin className="h-8 w-8 text-muted-foreground" />
+      <div className="aspect-square rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container)] flex items-center justify-center">
+        <MapPin className="h-8 w-8 text-[var(--ft-color-on-surface-variant)]" />
       </div>
     );
   }
   return (
     <div
-      className="relative aspect-square rounded-lg bg-muted/30 overflow-hidden bg-cover bg-center"
+      className="relative aspect-square rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container)] overflow-hidden bg-cover bg-center"
       style={{ backgroundImage: `url(${tileUrl(entry.lat, entry.lng, MAP_ZOOM)})` }}
       role="img"
       aria-label={`Map of ${entry.name}`}
     >
-      <MapPin className="absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-full text-rose-600 drop-shadow" />
+      <MapPin className="absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-full text-[var(--ft-color-error)] drop-shadow" />
     </div>
   );
 }
@@ -98,11 +98,13 @@ function PlacesContent() {
           <p className="text-sm text-muted-foreground">Loading places…</p>
         )}
 
-        {error && !loading && <p className="text-sm text-destructive">{error}</p>}
+        {error && !loading && (
+          <p className="text-sm text-[var(--ft-color-error)]">{error}</p>
+        )}
 
         {!loading && !error && places.length === 0 && (
-          <div className="rounded-lg border border-dashed border-border p-8 text-center">
-            <p className="text-sm text-muted-foreground">
+          <div className="rounded-[var(--ft-shape-medium)] border border-dashed border-[var(--ft-color-outline-variant)] p-8 text-center">
+            <p className="text-sm text-[var(--ft-color-on-surface-variant)]">
               No places yet. Import photos taken with location data and
               they&rsquo;ll group here by where they were shot.
             </p>
@@ -118,10 +120,10 @@ function PlacesContent() {
             >
               <PlaceCover entry={p} />
               <div className="px-1">
-                <div className="truncate text-sm font-medium text-foreground group-hover:underline">
+                <div className="truncate text-sm font-medium text-[var(--ft-color-on-surface)] group-hover:underline">
                   {p.name}
                 </div>
-                <div className="text-xs text-muted-foreground">
+                <div className="text-xs text-[var(--ft-color-on-surface-variant)]">
                   {p.count} {p.count === 1 ? "photo" : "photos"}
                 </div>
               </div>
