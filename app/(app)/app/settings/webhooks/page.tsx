@@ -3,6 +3,17 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Chip,
+  TextField,
+  TextFieldInput,
+  TextFieldLabel,
+} from "@/components/ui";
 
 interface WebhookEndpoint {
   id: string;
@@ -165,204 +176,241 @@ export default function WebhooksSettingsPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-[var(--ft-space-6)] max-w-3xl">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">Webhooks</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1 className="text-[length:var(--ft-type-headline-small-size)] leading-[var(--ft-type-headline-small-line)] tracking-[var(--ft-type-headline-small-tracking)] font-medium text-[var(--ft-color-on-surface)]">
+          Webhooks
+        </h1>
+        <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)] mt-[var(--ft-space-1)]">
           Receive HTTPS callbacks when assets, tags, and collections change in your workspace.
         </p>
       </div>
 
       {error && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="rounded-[var(--ft-shape-small)] border border-[var(--ft-color-error)]/40 bg-[var(--ft-color-error-container)] px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-error-container)]">
           {error}
         </div>
       )}
 
       {revealedSecret && (
-        <div className="rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm space-y-2">
+        <div className="rounded-[var(--ft-shape-small)] border border-amber-500/50 bg-amber-500/10 px-[var(--ft-space-4)] py-[var(--ft-space-3)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)] space-y-[var(--ft-space-2)]">
           <p className="font-medium">Signing secret — shown once</p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
             Save this somewhere safe. Fonto will never reveal it again.
           </p>
-          <code className="block break-all rounded bg-background border border-border px-2 py-1 font-mono text-xs">
+          <code className="block break-all rounded-[var(--ft-shape-extra-small)] bg-[var(--ft-color-surface-container-low)] border border-[var(--ft-color-outline-variant)] px-[var(--ft-space-2)] py-[var(--ft-space-1)] font-mono text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)]">
             {revealedSecret.secret}
           </code>
-          <button
-            className="text-xs underline"
+          <Button
+            variant="text"
+            size="sm"
             onClick={() => setRevealedSecret(null)}
           >
             Dismiss
-          </button>
+          </Button>
         </div>
       )}
 
-      <div className="rounded-lg border border-border bg-card">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <h2 className="text-sm font-semibold">Endpoints</h2>
-          <button
-            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+      <Card variant="outlined">
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Endpoints
+          </CardTitle>
+          <Button
+            variant="outlined"
+            size="sm"
             onClick={() => setShowCreate((s) => !s)}
           >
             {showCreate ? "Cancel" : "Add endpoint"}
-          </button>
-        </div>
+          </Button>
+        </CardHeader>
 
         {showCreate && (
-          <div className="px-4 py-4 border-b border-border space-y-3 bg-muted/30">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground uppercase mb-1">
-                URL
-              </label>
-              <input
+          <div className="px-[var(--ft-space-4)] py-[var(--ft-space-4)] border-y border-[var(--ft-color-outline-variant)] space-y-[var(--ft-space-3)] bg-[var(--ft-color-surface-container-low)]">
+            <TextField>
+              <TextFieldLabel className="uppercase">URL</TextFieldLabel>
+              <TextFieldInput
                 type="url"
                 placeholder="https://example.com/webhooks/fonto"
                 value={newUrl}
                 onChange={(e) => setNewUrl(e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
               />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground uppercase mb-1">
+            </TextField>
+            <TextField>
+              <TextFieldLabel className="uppercase">
                 Description (optional)
-              </label>
-              <input
+              </TextFieldLabel>
+              <TextFieldInput
                 type="text"
                 value={newDescription}
                 onChange={(e) => setNewDescription(e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
               />
-            </div>
+            </TextField>
             <div>
-              <label className="block text-xs font-medium text-muted-foreground uppercase mb-1">
+              {/* Events — native checkboxes; no MD3 Checkbox primitive in
+                  the @/components/ui barrel yet. Flagged in agent report. */}
+              <label className="block text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase mb-[var(--ft-space-1)]">
                 Events
               </label>
-              <div className="grid grid-cols-2 gap-1">
+              <div className="grid grid-cols-2 gap-[var(--ft-space-1)]">
                 {ALL_EVENTS.map((e) => (
-                  <label key={e} className="flex items-center gap-2 text-sm">
+                  <label
+                    key={e}
+                    className="flex items-center gap-[var(--ft-space-2)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]"
+                  >
                     <input
                       type="checkbox"
                       checked={!!newEvents[e]}
                       onChange={(ev) =>
                         setNewEvents((prev) => ({ ...prev, [e]: ev.target.checked }))
                       }
+                      className="accent-[var(--ft-color-primary)]"
                     />
-                    <code className="text-xs">{e}</code>
+                    <code className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)]">
+                      {e}
+                    </code>
                   </label>
                 ))}
               </div>
             </div>
-            <button
+            <Button
+              variant="filled"
+              size="default"
               disabled={!newUrl || createBusy}
               onClick={() => void onCreate()}
-              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
             >
               {createBusy ? "Creating…" : "Create endpoint"}
-            </button>
+            </Button>
           </div>
         )}
 
-        {loading ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p>
-        ) : endpoints.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground">No webhook endpoints yet.</p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {endpoints.map((endpoint) => {
-              const isExpanded = expanded === endpoint.id;
-              const enabled = endpoint.disabledAt === null;
-              const list = deliveries[endpoint.id];
-              return (
-                <li key={endpoint.id} className="px-4 py-3 space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-mono text-sm truncate">{endpoint.url}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {endpoint.enabledEvents.length} event(s) ·{" "}
-                        <span className={enabled ? "text-green-600" : "text-amber-600"}>
-                          {enabled ? "enabled" : "disabled"}
-                        </span>
-                      </p>
-                      {endpoint.description && (
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {endpoint.description}
+        <CardContent>
+          {loading ? (
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+              Loading…
+            </p>
+          ) : endpoints.length === 0 ? (
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+              No webhook endpoints yet.
+            </p>
+          ) : (
+            <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
+              {endpoints.map((endpoint) => {
+                const isExpanded = expanded === endpoint.id;
+                const enabled = endpoint.disabledAt === null;
+                const list = deliveries[endpoint.id];
+                return (
+                  <li key={endpoint.id} className="py-[var(--ft-space-3)] space-y-[var(--ft-space-2)]">
+                    <div className="flex items-center justify-between gap-[var(--ft-space-3)]">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-mono text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)] truncate">
+                          {endpoint.url}
                         </p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
-                        onClick={() => void onTest(endpoint)}
-                      >
-                        Test
-                      </button>
-                      <button
-                        className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
-                        onClick={() => void onToggle(endpoint)}
-                      >
-                        {enabled ? "Disable" : "Enable"}
-                      </button>
-                      <button
-                        className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
-                        onClick={() => onExpand(endpoint.id)}
-                      >
-                        {isExpanded ? "Hide" : "Deliveries"}
-                      </button>
-                      <button
-                        className="rounded-md border border-destructive/50 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-                        onClick={() => void onDelete(endpoint)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-
-                  {isExpanded && (
-                    <div className="rounded border border-border bg-muted/20 overflow-x-auto">
-                      {list ? (
-                        list.length === 0 ? (
-                          <p className="px-3 py-2 text-xs text-muted-foreground">
-                            No deliveries yet.
+                        <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)] flex items-center gap-[var(--ft-space-2)]">
+                          <span>{endpoint.enabledEvents.length} event(s)</span>
+                          <span>·</span>
+                          {/* Success role from 36152c8 for "enabled"; warning
+                              stays on amber until a warning role is added. */}
+                          <Chip
+                            variant="assist"
+                            disabled
+                            className={
+                              enabled
+                                ? "h-5 border-transparent bg-[var(--ft-color-success-container)] text-[var(--ft-color-on-success-container)] px-[var(--ft-space-2)] text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] opacity-100 disabled:opacity-100"
+                                : "h-5 border-transparent bg-amber-500/15 text-amber-600 dark:text-amber-400 px-[var(--ft-space-2)] text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] opacity-100 disabled:opacity-100"
+                            }
+                          >
+                            {enabled ? "enabled" : "disabled"}
+                          </Chip>
+                        </p>
+                        {endpoint.description && (
+                          <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)] mt-[2px]">
+                            {endpoint.description}
                           </p>
-                        ) : (
-                          <table className="w-full text-xs">
-                            <thead className="text-muted-foreground">
-                              <tr>
-                                <th className="text-left px-2 py-1">Event</th>
-                                <th className="text-left px-2 py-1">State</th>
-                                <th className="text-left px-2 py-1">Status</th>
-                                <th className="text-left px-2 py-1">Attempt</th>
-                                <th className="text-left px-2 py-1">Last attempt</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {list.map((d) => (
-                                <tr key={d.id} className="border-t border-border">
-                                  <td className="px-2 py-1 font-mono">{d.eventType}</td>
-                                  <td className="px-2 py-1">{d.state}</td>
-                                  <td className="px-2 py-1">{d.lastResponseStatus ?? "—"}</td>
-                                  <td className="px-2 py-1">{d.attempts}</td>
-                                  <td className="px-2 py-1">
-                                    {d.lastAttemptAt
-                                      ? new Date(d.lastAttemptAt).toLocaleString()
-                                      : "—"}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )
-                      ) : (
-                        <p className="px-3 py-2 text-xs text-muted-foreground">Loading…</p>
-                      )}
+                        )}
+                      </div>
+                      <div className="flex items-center gap-[var(--ft-space-1)]">
+                        <Button
+                          variant="outlined"
+                          size="xs"
+                          onClick={() => void onTest(endpoint)}
+                        >
+                          Test
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="xs"
+                          onClick={() => void onToggle(endpoint)}
+                        >
+                          {enabled ? "Disable" : "Enable"}
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="xs"
+                          onClick={() => onExpand(endpoint.id)}
+                        >
+                          {isExpanded ? "Hide" : "Deliveries"}
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="xs"
+                          onClick={() => void onDelete(endpoint)}
+                          className="border-[var(--ft-color-error)]/40 text-[var(--ft-color-error)] hover:bg-[var(--ft-color-error)]/10"
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
+
+                    {isExpanded && (
+                      <div className="rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-low)] overflow-x-auto">
+                        {list ? (
+                          list.length === 0 ? (
+                            <p className="px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                              No deliveries yet.
+                            </p>
+                          ) : (
+                            <table className="w-full text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)]">
+                              <thead className="text-[var(--ft-color-on-surface-variant)]">
+                                <tr>
+                                  <th className="text-left px-[var(--ft-space-2)] py-[var(--ft-space-1)]">Event</th>
+                                  <th className="text-left px-[var(--ft-space-2)] py-[var(--ft-space-1)]">State</th>
+                                  <th className="text-left px-[var(--ft-space-2)] py-[var(--ft-space-1)]">Status</th>
+                                  <th className="text-left px-[var(--ft-space-2)] py-[var(--ft-space-1)]">Attempt</th>
+                                  <th className="text-left px-[var(--ft-space-2)] py-[var(--ft-space-1)]">Last attempt</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {list.map((d) => (
+                                  <tr key={d.id} className="border-t border-[var(--ft-color-outline-variant)]">
+                                    <td className="px-[var(--ft-space-2)] py-[var(--ft-space-1)] font-mono">{d.eventType}</td>
+                                    <td className="px-[var(--ft-space-2)] py-[var(--ft-space-1)]">{d.state}</td>
+                                    <td className="px-[var(--ft-space-2)] py-[var(--ft-space-1)]">{d.lastResponseStatus ?? "—"}</td>
+                                    <td className="px-[var(--ft-space-2)] py-[var(--ft-space-1)]">{d.attempts}</td>
+                                    <td className="px-[var(--ft-space-2)] py-[var(--ft-space-1)]">
+                                      {d.lastAttemptAt
+                                        ? new Date(d.lastAttemptAt).toLocaleString()
+                                        : "—"}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )
+                        ) : (
+                          <p className="px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                            Loading…
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
