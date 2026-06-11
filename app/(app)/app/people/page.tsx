@@ -16,6 +16,8 @@ import { Dialog } from "@base-ui/react/dialog";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { ListErrorState } from "../_components/list-states";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
+import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
 
 interface PersonGroup {
   id: string;
@@ -138,10 +140,10 @@ function ManageGroupsDialog({
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 bg-black/40 z-40" />
-        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-lg bg-background p-5 shadow-lg ring-1 ring-foreground/10 outline-none">
+        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-[var(--ft-shape-large)] bg-[var(--ft-color-surface-container-high)] p-5 shadow-[var(--ft-elev-3)] outline-none">
           <Dialog.Title className="mb-4 text-sm font-semibold">Manage Groups</Dialog.Title>
 
-          {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
+          {error && <p className="mb-3 text-xs text-[var(--ft-color-error)]">{error}</p>}
 
           {builtinGroups.length > 0 && (
             <div className="mb-3 space-y-0.5">
@@ -163,7 +165,7 @@ function ManageGroupsDialog({
                   {editing === g.id ? (
                     <>
                       <input
-                        className="flex-1 rounded border border-input bg-background px-2 py-0.5 text-sm outline-none focus:ring-1 focus:ring-foreground/30"
+                        className="flex-1 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] px-2 py-0.5 text-sm outline-none focus:ring-1 focus:ring-[var(--ft-color-primary)]"
                         value={editName}
                         onChange={(e) => setEditName(e.target.value)}
                         onKeyDown={(e) => {
@@ -172,16 +174,16 @@ function ManageGroupsDialog({
                         }}
                         autoFocus
                       />
-                      <button type="button" disabled={saving || !editName.trim()} onClick={() => void saveEdit(g.id)} className="text-xs text-primary-text hover:underline disabled:opacity-50">Save</button>
-                      <button type="button" onClick={() => setEditing(null)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                      <button type="button" disabled={saving || !editName.trim()} onClick={() => void saveEdit(g.id)} className="text-xs text-[var(--ft-color-primary)] hover:underline disabled:opacity-50">Save</button>
+                      <button type="button" onClick={() => setEditing(null)} className="text-xs text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]">Cancel</button>
                     </>
                   ) : (
                     <>
-                      <span className="flex-1 text-sm text-foreground">{g.name}</span>
-                      <button type="button" onClick={() => startEdit(g)} className="text-muted-foreground hover:text-foreground" aria-label={`Rename ${g.name}`}>
+                      <span className="flex-1 text-sm text-[var(--ft-color-on-surface)]">{g.name}</span>
+                      <button type="button" onClick={() => startEdit(g)} className="text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]" aria-label={`Rename ${g.name}`}>
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
-                      <button type="button" disabled={saving} onClick={() => void deleteGroup(g.id)} className="text-muted-foreground hover:text-destructive disabled:opacity-50" aria-label={`Delete ${g.name}`}>
+                      <button type="button" disabled={saving} onClick={() => void deleteGroup(g.id)} className="text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-error)] disabled:opacity-50" aria-label={`Delete ${g.name}`}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </>
@@ -191,8 +193,8 @@ function ManageGroupsDialog({
             </div>
           )}
 
-          <div className="border-t border-border pt-4">
-            <p className="mb-2 text-xs font-medium text-muted-foreground">Add custom group</p>
+          <div className="border-t border-[var(--ft-color-outline-variant)] pt-4">
+            <p className="mb-2 text-xs font-medium text-[var(--ft-color-on-surface-variant)]">Add custom group</p>
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-1.5">
                 {PRESET_COLORS.map((c) => (
@@ -200,7 +202,7 @@ function ManageGroupsDialog({
                     key={c}
                     type="button"
                     onClick={() => setNewColor(c)}
-                    className={`h-5 w-5 rounded-full transition-transform ${newColor === c ? "scale-125 ring-2 ring-offset-1 ring-foreground/30" : ""}`}
+                    className={`h-5 w-5 rounded-full transition-transform ${newColor === c ? "scale-125 ring-2 ring-offset-1 ring-[var(--ft-color-primary)]/40" : ""}`}
                     style={{ backgroundColor: c }}
                     aria-label={`Color ${c}`}
                   />
@@ -212,22 +214,22 @@ function ManageGroupsDialog({
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") void createGroup(); }}
-                  className="flex-1 rounded border border-input bg-background px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-foreground/30"
+                  className="flex-1 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-[var(--ft-color-primary)]"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="tonal"
                   disabled={saving || !newName.trim()}
                   onClick={() => void createGroup()}
-                  className="rounded border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
                 >
                   Add
-                </button>
+                </Button>
               </div>
             </div>
           </div>
 
           <div className="mt-4 flex justify-end">
-            <Dialog.Close className="rounded border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted">
+            <Dialog.Close className="rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-3 py-1.5 text-sm font-medium text-[var(--ft-color-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]">
               Done
             </Dialog.Close>
           </div>
@@ -528,37 +530,30 @@ function PeopleContent() {
       {!loading && groups.some((g) => activeGroupIds.has(g.id)) && (
         <div className="px-4 overflow-x-auto">
           <div className="flex items-center gap-2 pb-1 min-w-0">
-            <button
-              type="button"
+            <Chip
+              variant="filter"
+              selected={activeGroupId === null}
               onClick={() => setActiveGroupId(null)}
-              className={`shrink-0 inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                activeGroupId === null
-                  ? "border-foreground bg-foreground text-background"
-                  : "border-border bg-background text-muted-foreground hover:text-foreground"
-              }`}
+              className="shrink-0"
             >
               All
-            </button>
+            </Chip>
             {groups
               .filter((g) => activeGroupIds.has(g.id))
               .map((g) => (
-                <button
+                <Chip
                   key={g.id}
-                  type="button"
+                  variant="filter"
+                  selected={activeGroupId === g.id}
                   onClick={() => setActiveGroupId(activeGroupId === g.id ? null : g.id)}
-                  className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                    activeGroupId === g.id
-                      ? "border-transparent text-white"
-                      : "border-border bg-background text-muted-foreground hover:text-foreground"
-                  }`}
-                  style={activeGroupId === g.id ? { backgroundColor: g.color } : undefined}
+                  className="shrink-0"
                 >
                   <span
                     className="h-2 w-2 rounded-full shrink-0"
                     style={{ backgroundColor: g.color }}
                   />
                   {g.name}
-                </button>
+                </Chip>
               ))}
           </div>
         </div>
@@ -577,7 +572,7 @@ function PeopleContent() {
         </div>
 
         {toast && (
-          <div className="rounded border border-border bg-muted/30 px-3 py-2 text-sm text-foreground">
+          <div className="rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container)] px-3 py-2 text-sm text-[var(--ft-color-on-surface)]">
             {toast}
           </div>
         )}
@@ -589,8 +584,8 @@ function PeopleContent() {
         )}
 
         {!loading && !error && persons.length === 0 && (
-          <div className="rounded-lg border border-dashed border-border p-8 text-center">
-            <p className="text-sm text-muted-foreground">
+          <div className="rounded-[var(--ft-shape-medium)] border border-dashed border-[var(--ft-color-outline-variant)] p-8 text-center">
+            <p className="text-sm text-[var(--ft-color-on-surface-variant)]">
               No people yet. Upload photos with faces and click
               &ldquo;Run clustering&rdquo; to build cluster cards.
             </p>
@@ -598,7 +593,7 @@ function PeopleContent() {
         )}
 
         {!loading && !error && persons.length > 0 && visible.length === 0 && (
-          <p className="text-sm text-muted-foreground">No matches.</p>
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">No matches.</p>
         )}
 
         {!loading && (
@@ -627,7 +622,7 @@ function PeopleContent() {
                 type="button"
                 onClick={() => void ignorePerson(p.id)}
                 disabled={ignoring.has(p.id)}
-                className="absolute right-1 top-1 inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[11px] font-medium text-white opacity-0 transition-opacity hover:bg-black/80 focus:opacity-100 group-hover:opacity-100 disabled:opacity-60"
+                className="absolute right-1 top-1 inline-flex items-center gap-1 rounded-[var(--ft-shape-full)] bg-[var(--ft-color-inverse-surface)]/80 px-2 py-1 text-[11px] font-medium text-[var(--ft-color-on-inverse-surface)] opacity-0 transition-opacity hover:bg-[var(--ft-color-inverse-surface)] focus:opacity-100 group-hover:opacity-100 disabled:opacity-60"
                 title="Ignore this person"
                 aria-label={`Ignore ${p.name ?? "this person"}`}
               >
@@ -645,7 +640,7 @@ function PeopleContent() {
 
 export default function PeoplePage() {
   return (
-    <Suspense fallback={<div className="text-sm text-muted-foreground py-4">Loading…</div>}>
+    <Suspense fallback={<div className="text-sm text-[var(--ft-color-on-surface-variant)] py-4">Loading…</div>}>
       <PeopleContent />
     </Suspense>
   );
