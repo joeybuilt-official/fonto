@@ -20,6 +20,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { signOut } from "@/lib/auth/client";
 import type { User } from "@/lib/auth/types";
 import type { RecentAlbum } from "@/lib/sidebar/recent-albums";
+import { cn } from "@/lib/utils";
 
 // UX consolidation Phase 7a — the sidebar is the canonical desktop
 // surface; mobile relies on `app-mobile-bottom-bar.tsx` for the same
@@ -40,6 +41,12 @@ import type { RecentAlbum } from "@/lib/sidebar/recent-albums";
 // continue to render for any directly-loaded deep link that bypasses
 // the middleware. Phase 7.1 follow-up removes the deprecation pages
 // themselves once the redirect layer has been live ≥1 release cycle.
+//
+// MD3 migration (ADR 0009, Phase 2): selection state is the MD3
+// `secondary-container` pill behind the row with `on-secondary-container`
+// content; hover state is an 8 % state-layer over the on-surface
+// foreground role; type ramp is `label-large` for primary entries and
+// `label-medium` for the pinned-albums sub-list.
 const navItems = [
   { href: "/app/home",        label: "Home",        icon: Home },
   { href: "/app/library",     label: "Library",     icon: Library },
@@ -52,6 +59,17 @@ const navItems = [
   { href: "/app/imports",     label: "Imports",     icon: Upload },
   { href: "/app/settings",    label: "Settings",    icon: Settings },
 ];
+
+// MD3 label-large typography for primary nav rows.
+const navItemBase =
+  "flex items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium tracking-[var(--ft-type-label-large-tracking)] transition-colors outline-none";
+
+// Inactive: on-surface-variant on transparent + 8 % hover overlay.
+// Active: secondary-container pill + on-secondary-container content.
+const navItemInactive =
+  "text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)] focus-visible:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_10%,transparent)]";
+const navItemActive =
+  "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]";
 
 export function AppSidebar({
   user,
@@ -71,19 +89,19 @@ export function AppSidebar({
   }
 
   return (
-    <aside className="flex w-56 flex-col border-r border-border bg-sidebar h-full">
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
+    <aside className="flex h-full w-56 flex-col border-r border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-low)] text-[var(--ft-color-on-surface)]">
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--ft-color-outline-variant)] px-[var(--ft-space-4)]">
         <Link
           href="/app/home"
           className="font-heading text-sm font-semibold tracking-tight"
           onClick={onClose}
         >
-          <span className="text-primary">_</span>fonto
+          <span className="text-[var(--ft-color-primary)]">_</span>fonto
         </Link>
         {onClose && (
           <button
             onClick={onClose}
-            className="rounded p-1 text-muted-foreground hover:text-foreground"
+            className="rounded-[var(--ft-shape-full)] p-[var(--ft-space-1)] text-[var(--ft-color-on-surface-variant)] transition-colors hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
             aria-label="Close menu"
           >
             <X className="h-4 w-4" />
@@ -91,7 +109,7 @@ export function AppSidebar({
         )}
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
+      <nav className="flex-1 space-y-[var(--ft-space-1)] overflow-y-auto px-[var(--ft-space-2)] py-[var(--ft-space-3)]">
         {navItems.map((item) => {
           // Active when the pathname matches exactly OR is a deeper
           // sub-route (e.g. /app/collections/<id> keeps Collections
@@ -113,17 +131,16 @@ export function AppSidebar({
                 href={item.href}
                 onClick={onClose}
                 aria-current={active ? "page" : undefined}
-                className={`flex items-center gap-2 rounded px-3 py-2.5 text-sm font-medium transition-colors ${
-                  active
-                    ? "bg-sidebar-accent text-foreground"
-                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-                }`}
+                className={cn(
+                  navItemBase,
+                  active ? navItemActive : navItemInactive,
+                )}
               >
                 <item.icon className="h-4 w-4 shrink-0" />
                 {item.label}
               </Link>
               {isCollections && recentAlbums.length > 0 && (
-                <ul className="mt-0.5 space-y-0.5 pl-7">
+                <ul className="mt-[var(--ft-space-1)] space-y-[var(--ft-space-1)] pl-7">
                   {recentAlbums.map((album) => {
                     const albumHref = `/app/collections/${album.id}`;
                     const albumActive = pathname === albumHref;
@@ -134,11 +151,10 @@ export function AppSidebar({
                           onClick={onClose}
                           aria-current={albumActive ? "page" : undefined}
                           title={album.name}
-                          className={`block truncate rounded px-2 py-1 text-xs transition-colors ${
-                            albumActive
-                              ? "bg-sidebar-accent text-foreground"
-                              : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-                          }`}
+                          className={cn(
+                            "block truncate rounded-[var(--ft-shape-full)] px-[var(--ft-space-2)] py-[var(--ft-space-1)] text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium tracking-[var(--ft-type-label-medium-tracking)] transition-colors outline-none",
+                            albumActive ? navItemActive : navItemInactive,
+                          )}
                         >
                           {album.name}
                         </Link>
@@ -152,16 +168,17 @@ export function AppSidebar({
         })}
       </nav>
 
-      <div className="border-t border-border px-3 py-3 space-y-2">
+      <div className="space-y-[var(--ft-space-2)] border-t border-[var(--ft-color-outline-variant)] px-[var(--ft-space-3)] py-[var(--ft-space-3)]">
         <ThemeToggle />
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-xs text-muted-foreground min-w-0">
+        <div className="flex items-center justify-between gap-[var(--ft-space-2)]">
+          <span className="min-w-0 truncate text-xs text-[var(--ft-color-on-surface-variant)]">
             {user.email}
           </span>
           <button
             onClick={handleSignOut}
-            className="shrink-0 rounded p-1.5 text-muted-foreground hover:text-foreground"
+            className="shrink-0 rounded-[var(--ft-shape-full)] p-1.5 text-[var(--ft-color-on-surface-variant)] transition-colors hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
             title="Sign out"
+            aria-label="Sign out"
           >
             <LogOut className="h-3.5 w-3.5" />
           </button>
