@@ -11,7 +11,7 @@ import {
   assetStorageKeyLegacy,
   hlsSegmentKeyPrefix,
 } from "@/lib/r2";
-import { storage } from "@/lib/storage";
+import { storage, localFs } from "@/lib/storage";
 import { plexoPublishEvent } from "@/lib/plexo";
 
 /**
@@ -57,6 +57,21 @@ export async function POST(request: NextRequest) {
         await storage().delete(key);
       } catch {
         await storage().delete(legacyKey);
+      }
+
+      // Phase B5 (storage placement) — clear the original from EVERY backend it
+      // lives on. Mirror/local_only assets keep a local-disk original (C2:
+      // derivatives are R2-only, so only the original is ever local); a stamped
+      // local_original_stored_at means a local copy exists. Best-effort +
+      // guarded on LOCAL_STORAGE_ROOT so r2_only purges (and unmounted hosts)
+      // are unaffected. localFs.delete is ENOENT-safe.
+      if (process.env.LOCAL_STORAGE_ROOT && asset.localOriginalStoredAt) {
+        try {
+          await localFs().delete(key);
+          await localFs().delete(legacyKey);
+        } catch (err) {
+          console.warn(`[fonto] purge-trashed: local delete failed for ${asset.id}:`, err);
+        }
       }
 
       // Phase 8b — wipe any HLS ladder + sprite under fonto/{ws}/{id}/hls/.

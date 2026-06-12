@@ -224,6 +224,12 @@ export const JobNames = {
   Import: "media-import",
   // Phase B3 (storage placement) — mirror an asset's original R2→local.
   StorageSync: "storage-sync",
+  // Phase B5 (storage placement) — throttled backfill: enqueue mirror-sync for
+  // existing un-mirrored originals in mirror/local_only workspaces.
+  BackfillStorageMirror: "backfill-storage-mirror",
+  // Phase B5 (storage placement) — nightly reconcile: repair R2↔local divergence
+  // for stamped mirror assets (restore local, re-push to R2, or flag loss).
+  ReconcileStorageMirror: "reconcile-storage-mirror",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];
