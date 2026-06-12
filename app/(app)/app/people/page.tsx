@@ -174,7 +174,7 @@ function ManageGroupsDialog({
                         }}
                         autoFocus
                       />
-                      <button type="button" disabled={saving || !editName.trim()} onClick={() => void saveEdit(g.id)} className="text-xs text-[var(--ft-color-primary)] hover:underline disabled:opacity-50">Save</button>
+                      <button type="button" disabled={saving || !editName.trim()} onClick={() => void saveEdit(g.id)} className="text-xs text-[var(--ft-color-primary-text)] hover:underline disabled:opacity-50">Save</button>
                       <button type="button" onClick={() => setEditing(null)} className="text-xs text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]">Cancel</button>
                     </>
                   ) : (
@@ -229,7 +229,7 @@ function ManageGroupsDialog({
           </div>
 
           <div className="mt-4 flex justify-end">
-            <Dialog.Close className="rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-3 py-1.5 text-sm font-medium text-[var(--ft-color-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]">
+            <Dialog.Close className="rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-3 py-1.5 text-sm font-medium text-[var(--ft-color-primary-text)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]">
               Done
             </Dialog.Close>
           </div>

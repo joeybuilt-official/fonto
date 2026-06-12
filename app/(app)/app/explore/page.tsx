@@ -151,13 +151,13 @@ function ExploreTile({ tile }: { tile: TileDef }) {
         </div>
 
         <div className="space-y-1">
-          <p className="text-base font-semibold text-[var(--ft-color-on-surface)] transition-colors group-hover:text-[var(--ft-color-primary)]">
+          <p className="text-base font-semibold text-[var(--ft-color-on-surface)] transition-colors group-hover:text-[var(--ft-color-primary-text)]">
             {tile.label}
           </p>
           <p className="text-sm text-[var(--ft-color-on-surface-variant)]">{tile.subtitle}</p>
         </div>
 
-        <div className="mt-1 flex items-center gap-1 text-xs font-medium text-[var(--ft-color-primary)] opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="mt-1 flex items-center gap-1 text-xs font-medium text-[var(--ft-color-primary-text)] opacity-0 transition-opacity group-hover:opacity-100">
           Open
           <ArrowRight className="h-3 w-3" />
         </div>
