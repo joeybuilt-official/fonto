@@ -5,8 +5,8 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray, sql } from "drizzle-orm";
-import { getS3Client, assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
-import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import { plexoPublishEvent } from "@/lib/plexo";
 import { nextSeq } from "@/lib/db/seq";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
@@ -247,14 +247,13 @@ export async function DELETE(
 
   const key = assetStorageKey(asset.workspaceId, asset.id, asset.filename);
   const legacyKey = assetStorageKeyLegacy(asset.workspaceId, asset.id, asset.filename);
-  const bucket = process.env.R2_BUCKET!;
 
   try {
-    await getS3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    await storage().delete(key);
   } catch {
     // Try legacy key path for assets uploaded before the fonto/ prefix migration
     try {
-      await getS3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: legacyKey }));
+      await storage().delete(legacyKey);
     } catch (err) {
       console.error("[fonto] R2 delete failed for both key paths, proceeding with DB delete:", err);
     }

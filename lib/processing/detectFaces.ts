@@ -30,15 +30,14 @@
 // asset; manual re-runs from a CLI should DELETE existing rows for the
 // asset first if a re-detection is desired.
 
-import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import {
   assetDerivativeKey,
   assetStorageKey,
-  getS3Client,
 } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import { generateFaceCropsForAsset } from "@/lib/processing/faceCrop";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -68,16 +67,7 @@ function visionBase(): string | null {
 }
 
 async function downloadFromR2(bucket: string, key: string): Promise<Buffer> {
-  const out = await getS3Client().send(
-    new GetObjectCommand({ Bucket: bucket, Key: key })
-  );
-  const chunks: Buffer[] = [];
-  const body = out.Body as AsyncIterable<Uint8Array> | undefined;
-  if (!body) throw new Error(`R2 object empty body: ${key}`);
-  for await (const chunk of body) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
+  return storage().getBuffer(key);
 }
 
 function parseFaces(raw: DetectFaceResponseBody): ParsedFace[] {

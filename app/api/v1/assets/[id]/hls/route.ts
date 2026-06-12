@@ -24,9 +24,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { resolveAssetAccess } from "@/lib/assets/access";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { getS3Client } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import { addVideoHlsTranscodeJob } from "@/lib/queue/queues";
 
 // Same-origin path so the browser resolves the master's relative
@@ -83,12 +81,7 @@ export async function GET(
   const playlistUrl = playbackUrlFor(asset.id, "master.m3u8");
   let spriteUrl: string | null = null;
   if (asset.spriteKey) {
-    const s3 = getS3Client();
-    spriteUrl = await getSignedUrl(
-      s3,
-      new GetObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: asset.spriteKey }),
-      { expiresIn: 3600 }
-    );
+    spriteUrl = await storage().presignGet(asset.spriteKey, { expiresIn: 3600 });
   }
 
   return NextResponse.json(

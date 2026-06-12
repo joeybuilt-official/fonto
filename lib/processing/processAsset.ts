@@ -10,10 +10,9 @@
 // from the BullMQ worker; the API route just enqueues a job.
 
 import { eq, and, inArray } from "drizzle-orm";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { db, schema } from "@/lib/db";
-import { getS3Client, assetStorageKey } from "@/lib/r2";
+import { assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import {
   plexoAvailable,
   plexoEnsureWorkspace,
@@ -240,14 +239,7 @@ async function processAssetInner(
             const visionKey =
               imgRow.previewKey ??
               assetStorageKey(imgRow.workspaceId, assetId, filename);
-            const signedUrl = await getSignedUrl(
-              getS3Client(),
-              new GetObjectCommand({
-                Bucket: process.env.R2_BUCKET!,
-                Key: visionKey,
-              }),
-              { expiresIn: 300 }
-            );
+            const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
             const unifiedStartedAt = Date.now();
             unifiedResult = await analyzeImageUnified({
               workspaceId: plexoWorkspaceId,
@@ -347,14 +339,7 @@ async function processAssetInner(
               const visionKey =
                 imgRow.previewKey ??
                 assetStorageKey(imgRow.workspaceId, assetId, filename);
-              const signedUrl = await getSignedUrl(
-                getS3Client(),
-                new GetObjectCommand({
-                  Bucket: process.env.R2_BUCKET!,
-                  Key: visionKey,
-                }),
-                { expiresIn: 300 }
-              );
+              const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
               preDescribeLabels = (await labelImageUrl(signedUrl)).labels;
             }
           } catch (err) {
@@ -838,18 +823,13 @@ export async function runOcrForAsset(
     return;
   }
 
-  const bucket = process.env.R2_BUCKET!;
   // Prefer the decoded preview so OCR works on HEIC/RAW originals the VLM
   // can't decode; fall back to the original until the preview derivative lands.
   const key =
     asset.previewKey ?? assetStorageKey(asset.workspaceId, asset.id, asset.filename);
   let signedUrl: string;
   try {
-    signedUrl = await getSignedUrl(
-      getS3Client(),
-      new GetObjectCommand({ Bucket: bucket, Key: key }),
-      { expiresIn: 300 }
-    );
+    signedUrl = await storage().presignGet(key, { expiresIn: 300 });
   } catch (err) {
     console.warn("[fonto] OCR presign failed for asset", assetId, err);
     await db

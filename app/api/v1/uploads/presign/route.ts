@@ -26,14 +26,13 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { getS3Client, assetStorageKey } from "@/lib/r2";
+import { assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 
 const DEFAULT_MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 500 MB
@@ -136,16 +135,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // Sign a PUT with the exact Content-Type the client must replay. R2 (S3)
   // includes signed headers in the signature, so the client's PUT MUST send
   // this same Content-Type or the upload is rejected.
-  const command = new PutObjectCommand({
-    Bucket: bucket,
-    Key: key,
-    ContentType: body.mimeType,
-    ContentLength: body.sizeBytes,
-  });
-
   let uploadUrl: string;
   try {
-    uploadUrl = await getSignedUrl(getS3Client(), command, {
+    uploadUrl = await storage().presignPut(key, {
+      contentType: body.mimeType,
+      contentLength: body.sizeBytes,
       expiresIn: PRESIGN_EXPIRES_SECONDS,
     });
   } catch (err) {

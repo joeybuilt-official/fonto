@@ -23,11 +23,11 @@
 // exhausts attempts and the job lands in DLQ — uploads themselves are
 // unaffected.
 
-import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { eq, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { assetStorageKey, getS3Client } from "@/lib/r2";
+import { assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import { embedImage, visionConfigured } from "@/lib/plexo-vision";
 
 export interface EmbedAssetInput {
@@ -48,16 +48,7 @@ export interface EmbedAssetResult {
 }
 
 async function downloadFromR2(bucket: string, key: string): Promise<Buffer> {
-  const out = await getS3Client().send(
-    new GetObjectCommand({ Bucket: bucket, Key: key })
-  );
-  const chunks: Buffer[] = [];
-  const body = out.Body as AsyncIterable<Uint8Array> | undefined;
-  if (!body) throw new Error(`R2 object empty body: ${key}`);
-  for await (const chunk of body) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
+  return storage().getBuffer(key);
 }
 
 /** Format `number[]` as a pgvector literal `[0.1,0.2,...]`. */

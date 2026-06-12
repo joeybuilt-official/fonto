@@ -21,15 +21,9 @@
 // the reply.
 
 import { createHash } from "crypto";
-import {
-  HeadObjectCommand,
-  GetObjectCommand,
-  type GetObjectCommandOutput,
-} from "@aws-sdk/client-s3";
-import { Readable } from "stream";
 import { db, schema } from "@/lib/db";
 import { eq, sql } from "drizzle-orm";
-import { getS3Client } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import {
   createAssetRow,
   type CreateAssetResult,
@@ -48,56 +42,18 @@ function skipServerChecksum(): boolean {
 }
 
 /**
- * Stream an S3 GetObjectCommand body through a SHA-256 hasher without ever
+ * Stream a web ReadableStream body through a SHA-256 hasher without ever
  * holding the full object in memory. Returns the hex digest.
  */
-async function streamSha256(body: GetObjectCommandOutput["Body"]): Promise<string> {
-  if (!body) throw new Error("R2 GetObject returned empty body");
+async function streamSha256(body: ReadableStream): Promise<string> {
   const hash = createHash("sha256");
-  if (body instanceof Readable) {
-    for await (const chunk of body) hash.update(chunk as Buffer);
-    return hash.digest("hex");
+  const reader = (body as ReadableStream<Uint8Array>).getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) hash.update(Buffer.from(value));
   }
-  if (typeof (body as { getReader?: unknown }).getReader === "function") {
-    const reader = (body as ReadableStream<Uint8Array>).getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) hash.update(Buffer.from(value));
-    }
-    return hash.digest("hex");
-  }
-  if (typeof (body as { arrayBuffer?: () => Promise<ArrayBuffer> }).arrayBuffer === "function") {
-    const ab = await (body as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer();
-    hash.update(Buffer.from(ab));
-    return hash.digest("hex");
-  }
-  throw new Error("Unsupported R2 GetObject body type");
-}
-
-/** Buffer an S3 GetObject body fully. Used only when we need bytes for EXIF. */
-async function bufferS3Body(body: GetObjectCommandOutput["Body"]): Promise<Buffer> {
-  if (!body) throw new Error("R2 GetObject returned empty body");
-  if (body instanceof Readable) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of body) chunks.push(chunk as Buffer);
-    return Buffer.concat(chunks);
-  }
-  if (typeof (body as { getReader?: unknown }).getReader === "function") {
-    const reader = (body as ReadableStream<Uint8Array>).getReader();
-    const chunks: Buffer[] = [];
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) chunks.push(Buffer.from(value));
-    }
-    return Buffer.concat(chunks);
-  }
-  if (typeof (body as { arrayBuffer?: () => Promise<ArrayBuffer> }).arrayBuffer === "function") {
-    const ab = await (body as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer();
-    return Buffer.from(ab);
-  }
-  throw new Error("Unsupported R2 GetObject body type");
+  return hash.digest("hex");
 }
 
 /**
@@ -131,15 +87,12 @@ export async function finalizeUpload(
 
   const bucket = process.env.R2_BUCKET;
   if (!bucket) return { ok: false, status: 500, error: "R2_BUCKET not configured" };
-  const s3 = getS3Client();
 
   // 1) HEAD: confirm the object exists and matches the declared size.
   let headSize: number | null = null;
   try {
-    const head = await s3.send(
-      new HeadObjectCommand({ Bucket: bucket, Key: upload.storageKey })
-    );
-    headSize = typeof head.ContentLength === "number" ? head.ContentLength : null;
+    const head = await storage().stat(upload.storageKey);
+    headSize = typeof head.contentLength === "number" ? head.contentLength : null;
   } catch (err) {
     console.error("[fonto] R2 HEAD failed:", err);
     return { ok: false, status: 404, error: "Upload object not found in storage" };
@@ -161,10 +114,8 @@ export async function finalizeUpload(
     sha256 = upload.clientChecksum.toLowerCase();
   } else {
     try {
-      const get = await s3.send(
-        new GetObjectCommand({ Bucket: bucket, Key: upload.storageKey })
-      );
-      sha256 = await streamSha256(get.Body);
+      const get = await storage().getStream(upload.storageKey);
+      sha256 = await streamSha256(get.body);
     } catch (err) {
       console.error("[fonto] streaming sha256 failed:", err);
       return { ok: false, status: 500, error: "Failed to verify upload" };
@@ -182,10 +133,7 @@ export async function finalizeUpload(
   //    no-op (extractExif returns nulls) but createAssetRow expects a buffer.
   let buffer: Buffer;
   try {
-    const get = await s3.send(
-      new GetObjectCommand({ Bucket: bucket, Key: upload.storageKey })
-    );
-    buffer = await bufferS3Body(get.Body);
+    buffer = await storage().getBuffer(upload.storageKey);
   } catch (err) {
     console.error("[fonto] R2 GET for EXIF failed:", err);
     return { ok: false, status: 500, error: "Failed to read upload" };

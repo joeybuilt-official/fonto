@@ -20,11 +20,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { assetDerivativeKey, assetStorageKey, getS3Client } from "@/lib/r2";
+import { assetDerivativeKey, assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import { decodeToBuffer } from "@/lib/processing/decode";
 import { probeVideo } from "@/lib/processing/probeVideo";
 import { extractVideoThumbnail } from "@/lib/processing/extractVideoThumbnail";
@@ -57,16 +57,7 @@ export interface GenerateThumbnailsResult {
 }
 
 async function downloadOriginal(bucket: string, key: string): Promise<Buffer> {
-  const out = await getS3Client().send(
-    new GetObjectCommand({ Bucket: bucket, Key: key })
-  );
-  const chunks: Buffer[] = [];
-  const body = out.Body as AsyncIterable<Uint8Array> | undefined;
-  if (!body) throw new Error(`R2 object empty body: ${key}`);
-  for await (const chunk of body) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
+  return storage().getBuffer(key);
 }
 
 async function uploadDerivative(
@@ -74,16 +65,11 @@ async function uploadDerivative(
   key: string,
   body: Buffer
 ): Promise<void> {
-  await getS3Client().send(
-    new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      Body: body,
-      ContentType: "image/webp",
-      ContentLength: body.length,
-      CacheControl: DERIVATIVE_CACHE_CONTROL,
-    })
-  );
+  await storage().put(key, body, {
+    contentType: "image/webp",
+    contentLength: body.length,
+    cacheControl: DERIVATIVE_CACHE_CONTROL,
+  });
 }
 
 /**

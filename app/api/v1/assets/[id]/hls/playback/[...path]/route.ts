@@ -21,8 +21,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { resolveAssetAccess } from "@/lib/assets/access";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getS3Client, hlsSegmentKeyPrefix } from "@/lib/r2";
+import { storage } from "@/lib/storage";
+import { hlsSegmentKeyPrefix } from "@/lib/r2";
 
 const ALLOWED_FILE = /^[a-zA-Z0-9._-]+$/;
 
@@ -46,18 +46,14 @@ export async function GET(
     return NextResponse.json({ error: "Not ready" }, { status: 409 });
   }
 
-  const bucket = process.env.R2_BUCKET!;
-  const s3 = getS3Client();
   const key = `${hlsSegmentKeyPrefix(asset.workspaceId, asset.id)}${file}`;
 
   // m3u8 playlists: pull bytes through so browser uses THIS path as
   // the base for resolving children. Cheap — playlists are <2 KB.
   if (file.endsWith(".m3u8")) {
     try {
-      const obj = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-      if (!obj.Body) return NextResponse.json({ error: "Empty" }, { status: 502 });
-      const body = await obj.Body.transformToByteArray();
-      return new NextResponse(Buffer.from(body), {
+      const buf = await storage().getBuffer(key);
+      return new NextResponse(new Uint8Array(buf), {
         status: 200,
         headers: {
           "Content-Type": "application/vnd.apple.mpegurl",
@@ -82,20 +78,16 @@ export async function GET(
   if (file.endsWith(".ts")) {
     const range = request.headers.get("range") ?? undefined;
     try {
-      const obj = await s3.send(
-        new GetObjectCommand({ Bucket: bucket, Key: key, Range: range })
-      );
-      if (!obj.Body) return NextResponse.json({ error: "Empty" }, { status: 502 });
-      const stream = (obj.Body as { transformToWebStream: () => ReadableStream }).transformToWebStream();
+      const { body, contentLength, contentRange } = await storage().getStream(key, { range });
       const headers: Record<string, string> = {
         "Content-Type": "video/mp2t",
         "Accept-Ranges": "bytes",
         "Cache-Control": "private, max-age=300, immutable",
       };
-      if (obj.ContentLength != null) headers["Content-Length"] = String(obj.ContentLength);
-      if (obj.ContentRange) headers["Content-Range"] = obj.ContentRange;
-      return new NextResponse(stream, {
-        status: obj.ContentRange ? 206 : 200,
+      if (contentLength != null) headers["Content-Length"] = String(contentLength);
+      if (contentRange) headers["Content-Range"] = contentRange;
+      return new NextResponse(body, {
+        status: contentRange ? 206 : 200,
         headers,
       });
     } catch (err) {
