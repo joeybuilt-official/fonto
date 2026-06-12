@@ -18,6 +18,7 @@ import type {
   FaceDetectJob,
   VideoHlsTranscodeJob,
   ImportJob,
+  StorageSyncJob,
 } from "./jobs";
 
 export const QueueNames = {
@@ -53,6 +54,10 @@ export const QueueNames = {
   // Long-running, streaming, app-managed resume; isolated on its own queue so
   // a multi-GB import never backlogs the asset-processing pipeline.
   Import: "media-import",
+  // Phase B3 (storage placement) — mirror an asset's original R2→local for
+  // `mirror`-policy workspaces. I/O-bound (R2 download + local write); own queue
+  // so a large-file mirror never backlogs asset-processing.
+  StorageSync: "storage-sync",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -107,6 +112,15 @@ export function thumbnailQueue(): Queue<ThumbnailJob> {
 
 export function classifyQueue(): Queue<ClassifyJob> {
   return getOrCreate<ClassifyJob>(QueueNames.Classify);
+}
+
+/**
+ * Phase B3 (storage placement) — mirror-sync queue. One job per asset whose
+ * effective policy is `mirror`; the handler streams the original R2→local and
+ * stamps assets.local_original_stored_at after a verified copy.
+ */
+export function storageSyncQueue(): Queue<StorageSyncJob> {
+  return getOrCreate<StorageSyncJob>(QueueNames.StorageSync);
 }
 
 /**

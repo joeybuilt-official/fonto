@@ -40,6 +40,7 @@ import {
   VideoHlsTranscodeJobSchema,
   BackfillFaceCropsJobSchema,
   ImportJobSchema,
+  StorageSyncJobSchema,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
@@ -48,6 +49,7 @@ import {
   type FaceDetectJob,
   type VideoHlsTranscodeJob,
   type ImportJob,
+  type StorageSyncJob,
 } from "@/lib/queue/jobs";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
@@ -67,6 +69,7 @@ import {
 } from "@/lib/processing/backfillFaceCrops";
 import { generateSpriteSheet } from "@/lib/processing/generateSpriteSheet";
 import { runImport } from "@/lib/import/runImport";
+import { syncAssetStorage } from "@/lib/storage/sync";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -89,6 +92,12 @@ const WEBHOOK_CONCURRENCY = Math.max(
 // hammering Postgres.
 const CLIP_DEDUP_CONCURRENCY = Math.max(
   parseInt(process.env.CLIP_DEDUP_WORKER_CONCURRENCY ?? "2", 10),
+  1
+);
+// Phase B3 — mirror-sync. I/O-bound (R2 download + local write). Modest default
+// so a burst of uploads to a mirror workspace doesn't saturate disk/bandwidth.
+const STORAGE_SYNC_CONCURRENCY = Math.max(
+  parseInt(process.env.STORAGE_SYNC_WORKER_CONCURRENCY ?? "3", 10),
   1
 );
 // Phase 4.5 — re-enqueue delay when the embedding isn't yet present on the
@@ -462,6 +471,67 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
   );
   w.on("error", (err) =>
     logger.error({ queue: QueueNames.Thumbnail, err: err.message }, "thumbnail worker error")
+  );
+
+  return w;
+}
+
+/**
+ * Phase B3 (storage placement) — mirror-sync worker. Streams a `mirror`-policy
+ * asset's original R2→local, size-verifies, and stamps
+ * local_original_stored_at. No-ops for non-mirror policies + already-synced
+ * rows, so it's safe to enqueue on every upload.
+ */
+function startStorageSyncWorker(): Worker<StorageSyncJob> {
+  const w = new Worker<StorageSyncJob>(
+    QueueNames.StorageSync,
+    async (job: Job<StorageSyncJob>) => {
+      const log = logger.child({
+        queue: QueueNames.StorageSync,
+        jobId: job.id,
+        assetId: job.data?.assetId,
+        attempt: job.attemptsMade + 1,
+      });
+
+      const parsed = StorageSyncJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid storage-sync payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const data = parsed.data;
+
+      const result = await syncAssetStorage(data.assetId, data.workspaceId);
+      if (!result.synced) {
+        log.info({ reason: result.reason }, "storage-sync skipped");
+      } else {
+        log.info({ bytes: result.bytes }, "storage-sync mirrored original");
+      }
+      return result;
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: STORAGE_SYNC_CONCURRENCY,
+      lockDuration: HEAVY_LOCK_DURATION_MS,
+      stalledInterval: HEAVY_STALLED_INTERVAL_MS,
+    }
+  );
+
+  w.on("completed", (job) =>
+    logger.info({ queue: QueueNames.StorageSync, jobId: job.id }, "storage-sync job completed")
+  );
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.StorageSync,
+        jobId: job?.id,
+        attempt: job?.attemptsMade,
+        err: err.message,
+      },
+      "storage-sync job failed"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.StorageSync, err: err.message }, "storage-sync worker error")
   );
 
   return w;
@@ -1484,6 +1554,7 @@ async function main(): Promise<void> {
   // Phase 1.1 — thumbnail derivatives. Separate worker so CPU-heavy sharp
   // encodes don't queue behind the umbrella processAsset pipeline.
   workers.push(startThumbnailWorker());
+  workers.push(startStorageSyncWorker());
 
   // Maintenance worker + recurring reaper schedule. Registered after the
   // primary worker so a boot-time failure here doesn't block asset

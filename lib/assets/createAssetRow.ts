@@ -444,6 +444,27 @@ export async function tryEnqueueFaceDetect(
 }
 
 /**
+ * Phase B3 (storage placement) — try to enqueue a mirror-sync job for the
+ * asset's original. Same fault-tolerant dynamic-import pattern as the other
+ * enqueues. NO mime filter (every original is mirrored, not just images). The
+ * worker handler reads the effective policy from Postgres and no-ops unless the
+ * workspace/asset policy keeps a local copy, so it's cheap to always enqueue.
+ */
+async function tryEnqueueStorageSync(assetId: string, workspaceId: string): Promise<void> {
+  try {
+    const mod = (await import("@/lib/queue")) as unknown as {
+      storageSyncQueue?: () => { add: (n: string, p: unknown) => Promise<unknown> };
+      JobNames?: Record<string, string>;
+    };
+    if (typeof mod.storageSyncQueue !== "function") return;
+    const jobName = mod.JobNames?.StorageSync ?? "storage-sync";
+    await mod.storageSyncQueue().add(jobName, { assetId, workspaceId });
+  } catch (err) {
+    console.warn("[fonto] storage-sync enqueue skipped:", err);
+  }
+}
+
+/**
  * Enqueue the full recognition pipeline for an asset: classify/describe/OCR
  * (ProcessAsset), thumbnail, CLIP embedding, and face detection. Shared by
  * the upload path (createAssetRow) and the user-triggered re-scan endpoints
@@ -474,6 +495,9 @@ export async function enqueueAssetProcessing(args: {
   }
   await tryEnqueueThumbnail(assetId, workspaceId, mimeType);
   void tryEnqueueClipEmbed(assetId, workspaceId, mimeType);
+  // Phase B3 — mirror the original to local for `mirror`-policy workspaces.
+  // No mime filter; the handler no-ops for non-mirror policies.
+  void tryEnqueueStorageSync(assetId, workspaceId);
   // Face detection is NOT enqueued here. It's deferred to processAsset (after
   // classification), where it only fires for `classification === "photo"` —
   // enqueuing at upload raced the classifier and ran face-detect on every
