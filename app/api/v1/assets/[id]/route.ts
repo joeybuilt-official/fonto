@@ -7,6 +7,7 @@ import { db, schema } from "@/lib/db";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
 import { storage } from "@/lib/storage";
+import { isStoragePolicy } from "@/lib/storage/policy";
 import { plexoPublishEvent } from "@/lib/plexo";
 import { nextSeq } from "@/lib/db/seq";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
@@ -67,6 +68,10 @@ export async function PATCH(
     // UX-2 — drag-drop a single asset between folders. Pass `null` to
     // move it to the workspace root.
     directoryPath?: string | null;
+    // Phase B6 (storage placement) — per-asset policy override. `null` clears
+    // the override (asset follows the workspace default). C4: only r2_only +
+    // mirror are selectable this initiative.
+    storagePolicyOverride?: string | null;
   };
 
   const updates: Record<string, unknown> = {};
@@ -141,6 +146,25 @@ export async function PATCH(
     }
   }
 
+  // Phase B6 (storage placement) — per-asset override. `null`/""/"default"
+  // clears it (asset follows the workspace policy); otherwise it must be a
+  // selectable policy (r2_only | mirror — C4 defers local_only).
+  let overrideTouched = false;
+  if (body.storagePolicyOverride !== undefined) {
+    const v = body.storagePolicyOverride;
+    if (v === null || v === "" || v === "default") {
+      updates.storagePolicyOverride = null;
+    } else if (isStoragePolicy(v) && (v === "r2_only" || v === "mirror")) {
+      updates.storagePolicyOverride = v;
+    } else {
+      return NextResponse.json(
+        { error: "storagePolicyOverride must be null, r2_only, or mirror" },
+        { status: 400 }
+      );
+    }
+    overrideTouched = true;
+  }
+
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
@@ -184,6 +208,24 @@ export async function PATCH(
     .returning();
 
   if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Phase B6 — if the override changed, (re)enqueue a mirror-sync. The handler
+  // reads the effective policy and no-ops when the asset isn't mirror-bound or
+  // is already synced, so a flip ONTO mirror starts mirroring and a flip off is
+  // harmless. Fault-tolerant; never block the response.
+  if (overrideTouched) {
+    void (async () => {
+      try {
+        const { storageSyncQueue, JobNames } = await import("@/lib/queue");
+        await storageSyncQueue().add(JobNames.StorageSync, {
+          assetId: id,
+          workspaceId: existing.workspaceId,
+        });
+      } catch (err) {
+        console.warn("[fonto] storage-sync enqueue after override skipped:", err);
+      }
+    })();
+  }
 
   if (emitEvent) {
     void plexoPublishEvent(emitEvent, {
