@@ -290,7 +290,11 @@ export default function SettingsPage() {
                       disabled={policyBusy}
                     >
                       <SelectTrigger aria-label="Storage placement" className="h-9 w-[180px] shrink-0">
-                        <SelectValue />
+                        {/* Base UI Select.Value renders the raw value unless a
+                            label mapping is provided — map it to the menu label. */}
+                        <SelectValue>
+                          {(v) => (v === "mirror" ? "Mirror to NAS + cloud" : "Cloud only (R2)")}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="r2_only">Cloud only (R2)</SelectItem>
