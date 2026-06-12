@@ -96,8 +96,35 @@ function MetadataPanel({
   const [tagInput, setTagInput] = useState("");
   const [showCollections, setShowCollections] = useState(false);
   const [rescanState, setRescanState] = useState<"idle" | "loading" | "done">("idle");
+  // Phase B6 — per-asset storage-placement override. "" = follow workspace default.
+  const [override, setOverride] = useState<string>(asset.storagePolicyOverride ?? "");
+  const [overrideBusy, setOverrideBusy] = useState(false);
   const tagInputRef = useRef<HTMLInputElement>(null);
   const colRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setOverride(asset.storagePolicyOverride ?? "");
+  }, [asset.id, asset.storagePolicyOverride]);
+
+  async function handleOverrideChange(next: string) {
+    if (overrideBusy || next === override) return;
+    setOverrideBusy(true);
+    const prev = override;
+    setOverride(next); // optimistic
+    try {
+      const res = await fetch(`/api/v1/assets/${asset.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // "" → null clears the override (asset follows the workspace policy).
+        body: JSON.stringify({ storagePolicyOverride: next === "" ? null : next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      setOverride(prev); // revert on failure
+    } finally {
+      setOverrideBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (addingTag) tagInputRef.current?.focus();
@@ -193,6 +220,33 @@ function MetadataPanel({
                 </span>
               </div>
             )}
+            {/* Phase B6 — per-asset storage placement. Default = follow the
+                workspace policy; override to pin this one asset. local_only is
+                deferred (C4), so only Default / Cloud / Mirror are offered. */}
+            <div className="flex justify-between gap-2 items-center">
+              <span className="text-muted-foreground text-xs shrink-0">Storage</span>
+              <div className="flex items-center gap-1.5">
+                {asset.localOriginalStoredAt && (
+                  <span
+                    className="text-[10px] text-green-500"
+                    title="A verified copy of the original is on your NAS disk"
+                  >
+                    On NAS
+                  </span>
+                )}
+                <select
+                  value={override}
+                  onChange={(e) => handleOverrideChange(e.target.value)}
+                  disabled={overrideBusy}
+                  aria-label="Storage placement for this asset"
+                  className="rounded border border-border bg-background px-1.5 py-0.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                >
+                  <option value="">Default</option>
+                  <option value="r2_only">Cloud only</option>
+                  <option value="mirror">Mirror to NAS</option>
+                </select>
+              </div>
+            </div>
           </div>
         </div>
 
