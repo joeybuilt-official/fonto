@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 interface UserWorkspace {
   id: string;
@@ -144,10 +145,23 @@ export function AssetWorkspaceShare({ assetId, sourceWorkspaceId }: AssetWorkspa
         }
       />
 
-      <PopoverContent align="end" sideOffset={10} className="w-80">
-        <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-widest text-[var(--ft-color-on-surface-variant)] mb-[var(--ft-space-2)]">
-          Share to workspace
-        </p>
+      {/* ADR 0009 phase 2 (group D) — peer/people object lives on an
+          MD3 <Card variant="elevated"> surface. PopoverContent is
+          stripped of its own bg/shadow/ring so the Card is the only
+          visible chrome; the Popover keeps providing positioning,
+          portal, and open/close animation. */}
+      <PopoverContent
+        align="end"
+        sideOffset={10}
+        className="w-80 bg-transparent p-0 shadow-none ring-0"
+      >
+        <Card variant="elevated" className="w-full">
+          <CardHeader>
+            <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-widest text-[var(--ft-color-on-surface-variant)]">
+              Share to workspace
+            </p>
+          </CardHeader>
+          <CardContent className="pt-0">
 
         {loading ? (
           <div className="flex justify-center py-[var(--ft-space-4)]">
@@ -207,6 +221,7 @@ export function AssetWorkspaceShare({ assetId, sourceWorkspaceId }: AssetWorkspa
             <Button
               onClick={() => void handleShare()}
               disabled={submitting || !targetId}
+              variant="filled"
               size="sm"
               className="w-full"
             >
@@ -241,7 +256,7 @@ export function AssetWorkspaceShare({ assetId, sourceWorkspaceId }: AssetWorkspa
                     </span>
                     <Button
                       size="icon-xs"
-                      variant="ghost"
+                      variant="text"
                       onClick={() => void handleRevoke(s.targetWorkspaceId)}
                       title="Revoke share"
                       className="text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-error)]"
@@ -254,6 +269,8 @@ export function AssetWorkspaceShare({ assetId, sourceWorkspaceId }: AssetWorkspa
             </ul>
           </div>
         )}
+          </CardContent>
+        </Card>
       </PopoverContent>
     </Popover>
   );

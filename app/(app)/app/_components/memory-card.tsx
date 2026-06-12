@@ -15,6 +15,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Sparkles, ImageIcon } from "lucide-react";
+import { Card } from "@/components/ui/card";
 
 interface MemoryAsset {
   id: string;
@@ -55,7 +56,7 @@ function YearTile({ year, asset, count }: { year: number; asset: MemoryAsset; co
       className="relative shrink-0 overflow-hidden rounded-lg group"
       title={`${count} ${count === 1 ? "asset" : "assets"} from ${year}`}
     >
-      <div className="h-32 w-32 bg-muted/30 flex items-center justify-center">
+      <div className="h-32 w-32 bg-[var(--ft-color-surface-container)] flex items-center justify-center">
         {url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -65,7 +66,7 @@ function YearTile({ year, asset, count }: { year: number; asset: MemoryAsset; co
             loading="lazy"
           />
         ) : (
-          <ImageIcon className="h-8 w-8 text-muted-foreground" />
+          <ImageIcon className="h-8 w-8 text-[var(--ft-color-on-surface-variant)]" />
         )}
       </div>
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2 text-white">
@@ -105,20 +106,26 @@ export function MemoryCard() {
   if (loading || years.length === 0) return null;
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-primary-text" />
-          <h2 className="text-sm font-semibold text-foreground">On this day</h2>
+    // ADR 0009 phase 2 (group D) — MD3 filled card surface for the
+    // dashboard "On this day" object. Tile layout and lazy-fetch inside
+    // YearTile untouched; only the wrapper chrome + header typography
+    // resolve through the --ft-* namespace now.
+    <Card variant="filled" className="p-[var(--ft-space-4)]">
+      <div className="mb-[var(--ft-space-3)] flex items-center justify-between">
+        <div className="flex items-center gap-[var(--ft-space-2)]">
+          <Sparkles className="h-4 w-4 text-[var(--ft-color-primary)]" />
+          <h2 className="text-[length:var(--ft-type-title-small-size)] leading-[var(--ft-type-title-small-line)] font-semibold text-[var(--ft-color-on-surface)]">
+            On this day
+          </h2>
         </div>
         <Link
           href="/app/memories"
-          className="text-xs text-primary-text hover:underline"
+          className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-primary)] hover:underline"
         >
           View all
         </Link>
       </div>
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="flex gap-[var(--ft-space-2)] overflow-x-auto pb-1">
         {years.map((y) => (
           <YearTile
             key={y.year}
@@ -128,6 +135,6 @@ export function MemoryCard() {
           />
         ))}
       </div>
-    </div>
+    </Card>
   );
 }

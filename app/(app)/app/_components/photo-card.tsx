@@ -4,6 +4,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play, Share2 } from "lucide-react";
+import { Card } from "@/components/ui/card";
 
 export interface Asset {
   id: string;
@@ -245,7 +246,12 @@ export function PhotoCard({
   }
 
   return (
-    <div
+    // ADR 0009 phase 2 (group D) — outer chrome now resolves through the
+    // MD3 <Card variant="filled"> primitive (surface-container-highest +
+    // 12 px shape). Image, badges, checkbox, and quick-actions positioning
+    // are unchanged per migration rule 1.
+    <Card
+      variant="filled"
       onClick={handleClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -257,11 +263,11 @@ export function PhotoCard({
         e.dataTransfer.setData("application/x-fonto-asset", asset.id);
         e.dataTransfer.effectAllowed = "move";
       }}
-      className={`relative cursor-pointer overflow-hidden rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container-low)] shadow-[var(--ft-elev-1)] transition-all ${
+      className={`relative cursor-pointer overflow-hidden transition-all ${
         selected
           ? "ring-2 ring-[var(--ft-color-primary)] ring-offset-1"
           : "ring-0"
-      } ${isProcessing ? "animate-pulse ring-1 ring-yellow-500/50" : ""}`}
+      } ${isProcessing ? "animate-pulse ring-1 ring-[var(--ft-color-tertiary)]/50" : ""}`}
     >
       {/* Image */}
       <div className="aspect-square bg-[var(--ft-color-surface-container)]/30 flex items-center justify-center overflow-hidden">
@@ -388,6 +394,6 @@ export function PhotoCard({
           />
         </div>
       )}
-    </div>
+    </Card>
   );
 }
