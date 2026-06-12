@@ -54,10 +54,19 @@ import type {
 // onto MD3 button variants. Keeps host pages backwards-compatible while the
 // toolbar internals consume the new namespace.
 function mapPrimaryVariant(
-  v?: "default" | "outline" | "secondary"
-): "filled" | "outlined" | "tonal" {
+  v?:
+    | "default"
+    | "outline"
+    | "secondary"
+    | "filled"
+    | "tonal"
+    | "outlined"
+    | "text"
+    | "elevated"
+): "filled" | "outlined" | "tonal" | "text" | "elevated" {
   if (v === "outline") return "outlined";
   if (v === "secondary") return "tonal";
+  if (v === "filled" || v === "tonal" || v === "outlined" || v === "text" || v === "elevated") return v;
   return "filled";
 }
 
