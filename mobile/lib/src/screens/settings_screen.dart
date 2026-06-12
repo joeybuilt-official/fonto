@@ -11,6 +11,7 @@ import "package:photo_manager/photo_manager.dart";
 import "package:workmanager/workmanager.dart";
 
 import "../api/fonto_client.dart";
+import "../api/models.dart";
 import "../state/auth_store.dart";
 import "../state/camera_roll_scanner.dart";
 import "../state/settings_store.dart";
@@ -39,11 +40,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _scanning = false;
   bool _reprocessing = false;
   List<String> _selectedAlbumIds = const [];
+  // Phase B6 (storage placement) — workspace policy + mirror coverage.
+  StoragePlacement? _storage;
+  bool _policyBusy = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadStorage();
+  }
+
+  Future<void> _loadStorage() async {
+    try {
+      final auth = await AuthStore.load();
+      final client = FontoClient(auth);
+      try {
+        final s = await client.storagePlacement();
+        if (mounted) setState(() => _storage = s);
+      } finally {
+        client.close();
+      }
+    } catch (_) {
+      // Best-effort — the section just stays hidden if the fetch fails.
+    }
+  }
+
+  Future<void> _onPolicyChange(String? next) async {
+    final current = _storage;
+    if (next == null || current == null || _policyBusy || next == current.policy) {
+      return;
+    }
+    setState(() => _policyBusy = true);
+    try {
+      final auth = await AuthStore.load();
+      final client = FontoClient(auth);
+      try {
+        await client.setStoragePolicy(next);
+      } finally {
+        client.close();
+      }
+      await _loadStorage();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              next == "mirror"
+                  ? "New uploads now mirror to NAS. Existing assets backfill in the background."
+                  : "New uploads are stored in the cloud only.",
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't change storage: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _policyBusy = false);
+    }
+  }
+
+  String _fmtBytes(int bytes) {
+    if (bytes < 1024) return "$bytes B";
+    if (bytes < 1024 * 1024) return "${(bytes / 1024).toStringAsFixed(1)} KB";
+    if (bytes < 1024 * 1024 * 1024) {
+      return "${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB";
+    }
+    return "${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB";
   }
 
   Future<void> _load() async {
@@ -439,6 +505,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: _reprocessing ? null : _reprocessAll,
                 ),
                 const Divider(),
+                // Phase B6 (storage placement) — workspace policy picker +
+                // mirror coverage, mirroring the web Settings → Storage card.
+                if (_storage != null) ...[
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text(
+                      "STORAGE",
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.cloud_outlined),
+                    title: const Text("Where originals live"),
+                    subtitle: const Text(
+                      "Mirror keeps a copy of every original on your NAS disk "
+                      "as well as in the cloud.",
+                    ),
+                    trailing: _policyBusy
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : DropdownButton<String>(
+                            value: _storage!.isMirror ? "mirror" : "r2_only",
+                            underline: const SizedBox.shrink(),
+                            onChanged: _onPolicyChange,
+                            items: const [
+                              DropdownMenuItem(
+                                value: "r2_only",
+                                child: Text("Cloud only"),
+                              ),
+                              DropdownMenuItem(
+                                value: "mirror",
+                                child: Text("Mirror to NAS"),
+                              ),
+                            ],
+                          ),
+                  ),
+                  if (_storage!.isMirror)
+                    ListTile(
+                      title: const Text("Mirror coverage"),
+                      subtitle: Text(
+                        "${_storage!.mirrored} / ${_storage!.eligible} originals copied "
+                        "· ${_fmtBytes(_storage!.localBytes)} on the host",
+                      ),
+                    ),
+                  const Divider(),
+                ],
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
                   child: Text(

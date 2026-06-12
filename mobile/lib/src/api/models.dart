@@ -775,3 +775,42 @@ class Integration {
         status: (j["status"] as String?) ?? "revoked",
       );
 }
+
+/// Phase B6 (storage placement) — the `storage` block from GET /api/v1/workspace.
+/// `policy` is the effective workspace policy; `mirror` figures describe how much
+/// of the eligible library has a verified local (NAS) copy. `localBytes` is the
+/// separate NAS-disk figure (C3), distinct from the R2 quota usage.
+class StoragePlacement {
+  const StoragePlacement({
+    required this.policy,
+    required this.usageBytes,
+    required this.quotaBytes,
+    required this.assetCount,
+    required this.eligible,
+    required this.mirrored,
+    required this.localBytes,
+  });
+
+  final String policy;
+  final int usageBytes;
+  final int? quotaBytes;
+  final int assetCount;
+  final int eligible;
+  final int mirrored;
+  final int localBytes;
+
+  bool get isMirror => policy == "mirror";
+
+  static StoragePlacement fromJson(Map<String, dynamic> j) {
+    final mirror = (j["mirror"] as Map<String, dynamic>?) ?? const {};
+    return StoragePlacement(
+      policy: (j["policy"] as String?) ?? "r2_only",
+      usageBytes: (j["usageBytes"] as num?)?.toInt() ?? 0,
+      quotaBytes: (j["quotaBytes"] as num?)?.toInt(),
+      assetCount: (j["assetCount"] as num?)?.toInt() ?? 0,
+      eligible: (mirror["eligible"] as num?)?.toInt() ?? 0,
+      mirrored: (mirror["mirrored"] as num?)?.toInt() ?? 0,
+      localBytes: (mirror["localBytes"] as num?)?.toInt() ?? 0,
+    );
+  }
+}

@@ -18,8 +18,8 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
-import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import { getS3Client, hlsSpriteKey, assetStorageKey } from "@/lib/r2";
+import { hlsSpriteKey, assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 
 const SPRITE_INTERVAL_SEC = 10;
 const TILE_HEIGHT = 90;        // px; tile aspect-ratio matches the source
@@ -58,8 +58,6 @@ export async function generateSpriteSheet(
   if (opts.durationSec <= 0) {
     throw new Error(`generateSpriteSheet: durationSec must be > 0 (got ${opts.durationSec})`);
   }
-  const bucket = process.env.R2_BUCKET!;
-  const s3 = getS3Client();
   const tmp = await mkdtemp(join(tmpdir(), "fonto-sprite-"));
   const sourcePath = join(tmp, "source");
   const framesDir = join(tmp, "frames");
@@ -68,9 +66,7 @@ export async function generateSpriteSheet(
   try {
     // Download source.
     const sourceKey = assetStorageKey(opts.workspaceId, opts.assetId, opts.filename);
-    const obj = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: sourceKey }));
-    if (!obj.Body) throw new Error(`R2 GET ${sourceKey} returned no body`);
-    const buf = Buffer.from(await obj.Body.transformToByteArray());
+    const buf = await storage().getBuffer(sourceKey);
     await import("node:fs/promises").then((fs) => fs.writeFile(sourcePath, buf));
 
     // Compute tile width from source aspect.
@@ -136,14 +132,9 @@ export async function generateSpriteSheet(
       .toBuffer();
 
     const spriteKey = hlsSpriteKey(opts.workspaceId, opts.assetId);
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: spriteKey,
-        Body: spriteBuf,
-        ContentType: "image/jpeg",
-      })
-    );
+    await storage().put(spriteKey, spriteBuf, {
+      contentType: "image/jpeg",
+    });
 
     return {
       spriteKey,

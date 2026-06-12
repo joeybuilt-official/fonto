@@ -27,13 +27,11 @@ import { getAuthUser } from "@/lib/auth/server";
 import { db, schema } from "@/lib/db";
 import { and, asc, eq, or, sql } from "drizzle-orm";
 import {
-  getS3Client,
   assetStorageKey,
   assetStorageKeyLegacy,
   assetDerivativeKey,
 } from "@/lib/r2";
-import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { storage } from "@/lib/storage";
 import { FileText, File as FileIcon, Download, Lock } from "lucide-react";
 import { verifyPassword } from "@/lib/share-links/password";
 import { hashIp } from "@/lib/share-links/ip-hash";
@@ -115,27 +113,21 @@ async function presignAssetUrl(asset: {
   if (!bucket) return null;
   const primary = assetStorageKey(asset.workspaceId, asset.id, asset.filename);
   const legacy = assetStorageKeyLegacy(asset.workspaceId, asset.id, asset.filename);
-  const s3 = getS3Client();
   let key = primary;
   try {
-    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: primary }));
+    await storage().stat(primary);
   } catch {
     key = legacy;
   }
-  return getSignedUrl(s3, new GetObjectCommand({ Bucket: bucket, Key: key }), {
-    expiresIn: 3600,
-  });
+  return storage().presignGet(key, { expiresIn: 3600 });
 }
 
 async function presignThumb(workspaceId: string, assetId: string): Promise<string | null> {
   const bucket = process.env.R2_BUCKET;
   if (!bucket) return null;
-  const s3 = getS3Client();
   const key = assetDerivativeKey(workspaceId, assetId, "thumb");
   try {
-    return await getSignedUrl(s3, new GetObjectCommand({ Bucket: bucket, Key: key }), {
-      expiresIn: 3600,
-    });
+    return await storage().presignGet(key, { expiresIn: 3600 });
   } catch {
     return null;
   }

@@ -34,6 +34,10 @@ export const workspaces = fontoSchema.table(
     // decremented on hard delete) and reconciled nightly.
     quotaBytes: bigint("quota_bytes", { mode: "number" }),
     usageBytes: bigint("usage_bytes", { mode: "number" }).notNull().default(0),
+    // Storage placement (Track B / migration 0040): 'r2_only'|'mirror'|'local_only',
+    // CHECK in SQL. Default r2_only = cloud-only (today's behavior). Per-asset
+    // override lives on assets.storage_policy_override.
+    storagePolicy: text("storage_policy").notNull().default("r2_only"),
   },
   (table) => [index("workspaces_user_id_idx").on(table.userId)]
 );
@@ -262,6 +266,13 @@ export const assets = fontoSchema.table(
     // self-populates as the worker drains it; `ready` rows are backfilled
     // once). Drives the lens-based library + bucket facets.
     kind: text("kind"),
+    // Storage placement (Track B / migration 0040). `storagePolicyOverride`
+    // NULL = inherit the workspace policy (the common case); a value pins this
+    // one asset. `localOriginalStoredAt` NULL = the ORIGINAL has no verified
+    // local copy; a timestamp = a size/etag-verified local copy exists (set by
+    // the mirror/backfill workers). Derivatives are never localized (C2).
+    storagePolicyOverride: text("storage_policy_override"),
+    localOriginalStoredAt: timestamp("local_original_stored_at", { withTimezone: true }),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),

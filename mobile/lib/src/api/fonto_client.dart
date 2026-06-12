@@ -75,6 +75,21 @@ class FontoClient {
     return json.decode(res.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> _patchJson(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final res = await _http.patch(
+      _uri(path),
+      headers: {..._headers, "Content-Type": "application/json"},
+      body: json.encode(body),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res.body));
+    }
+    return json.decode(res.body) as Map<String, dynamic>;
+  }
+
   String _extractError(String body) {
     try {
       final j = json.decode(body) as Map<String, dynamic>;
@@ -89,6 +104,22 @@ class FontoClient {
   Future<WorkspaceStats> stats() async {
     final j = await _getJson("/api/v1/stats");
     return WorkspaceStats.fromJson(j);
+  }
+
+  /// Phase B6 (storage placement) — GET /api/v1/workspace's storage block:
+  /// effective policy + mirror coverage + the separate NAS-disk figure.
+  Future<StoragePlacement> storagePlacement() async {
+    final j = await _getJson("/api/v1/workspace");
+    return StoragePlacement.fromJson(
+      (j["storage"] as Map<String, dynamic>?) ?? const {},
+    );
+  }
+
+  /// Phase B6 — PATCH /api/v1/workspace { storagePolicy }. Owner-only
+  /// server-side; throws ApiException(403) for non-owners. Only r2_only +
+  /// mirror are accepted (C4 defers local_only).
+  Future<void> setStoragePolicy(String policy) async {
+    await _patchJson("/api/v1/workspace", {"storagePolicy": policy});
   }
 
   /// One page of assets ordered by capture date (COALESCE(captured_at,

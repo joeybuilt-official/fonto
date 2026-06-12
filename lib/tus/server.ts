@@ -15,7 +15,6 @@
 // the App Router's standard Request/Response to tus via `server.handleWeb`,
 // which @tus/server v2 exposes natively — no Node http adapter required.
 
-import { CopyObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { Server } from "@tus/server";
 import { S3Store } from "@tus/s3-store";
 import { headers } from "next/headers";
@@ -23,9 +22,10 @@ import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
-import { getS3Client, assetStorageKey } from "@/lib/r2";
+import { assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import { dateFromFilename } from "@/lib/exif";
-import { assetProcessingQueue, thumbnailQueue, JobNames } from "@/lib/queue";
+import { assetProcessingQueue, thumbnailQueue, storageSyncQueue, JobNames } from "@/lib/queue";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -256,29 +256,18 @@ export function getTusServer(): Server {
         })
         .returning();
 
-      const bucket = process.env.R2_BUCKET!;
       const tempKey = upload.storage?.path ?? `${TUS_TEMP_PREFIX}/${upload.id}`;
       const finalKey = assetStorageKey(workspaceId, asset.id, filename);
 
       try {
-        await getS3Client().send(
-          new CopyObjectCommand({
-            Bucket: bucket,
-            Key: finalKey,
-            CopySource: `/${bucket}/${tempKey}`,
-            MetadataDirective: "REPLACE",
-            ContentType: mimeType,
-          })
-        );
+        await storage().copy(tempKey, finalKey, { contentType: mimeType });
 
         // Best-effort temp cleanup. We don't fail the upload if either of
         // these 404 — the tus internal .info sidecar key isn't part of the
         // public contract.
         await Promise.allSettled([
-          getS3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: tempKey })),
-          getS3Client().send(
-            new DeleteObjectCommand({ Bucket: bucket, Key: `${tempKey}.info` })
-          ),
+          storage().delete(tempKey),
+          storage().delete(`${tempKey}.info`),
         ]);
       } catch (err) {
         console.error("[fonto-tus] failed to move object to final key:", err);
@@ -328,6 +317,20 @@ export function getTusServer(): Server {
         }
       } catch (err) {
         console.error("[fonto-tus] failed to enqueue thumbnail:", err);
+      }
+
+      // Phase B3 — mirror the original to local for `mirror`-policy workspaces.
+      // tus inserts the asset row directly here (it does not go through
+      // createAssetRow.enqueueAssetProcessing), so it needs its own enqueue or
+      // tus uploads would silently never mirror. No mime filter; the handler
+      // reads the effective policy and no-ops for non-mirror workspaces.
+      try {
+        await storageSyncQueue().add(JobNames.StorageSync, {
+          assetId: asset.id,
+          workspaceId,
+        });
+      } catch (err) {
+        console.error("[fonto-tus] failed to enqueue storage-sync:", err);
       }
 
       // tus's HEAD response normally has no body. We surface the new asset

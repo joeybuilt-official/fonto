@@ -102,7 +102,7 @@ export function AssetAskPanel({
       <SheetContent side="right" className="w-full max-w-md p-0 gap-0">
         <SheetHeader className="flex flex-row items-center justify-between border-b border-[var(--ft-color-outline-variant)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] gap-[var(--ft-space-2)]">
           <div className="flex items-center gap-[var(--ft-space-2)]">
-            <Sparkles className="h-4 w-4 text-[var(--ft-color-primary)]" />
+            <Sparkles className="h-4 w-4 text-[var(--ft-color-primary-text)]" />
             <div className="flex flex-col">
               <SheetTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)] font-semibold text-[var(--ft-color-on-surface)]">
                 Ask

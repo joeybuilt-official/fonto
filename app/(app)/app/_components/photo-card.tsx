@@ -22,6 +22,11 @@ export interface Asset {
   // before the backfill stamps them, so we keep these optional on the client.
   isFavorite?: boolean;
   rating?: number;
+  // Phase B6 (storage placement) — per-asset policy override (null = follow the
+  // workspace default) + local-mirror marker (a timestamp ⇒ a verified local
+  // copy of the original exists). Serialized straight from the row.
+  storagePolicyOverride?: string | null;
+  localOriginalStoredAt?: string | null;
   // Phase 5.5 — manual stacks. NULL/undefined ⇒ standalone. When set, the
   // timeline only shows the primary; clicking opens the lightbox which
   // surfaces a "stack of N" badge with inline carousel of all members.

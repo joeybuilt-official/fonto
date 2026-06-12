@@ -139,6 +139,11 @@
   /* Color — primary (brand) */
   --ft-color-primary: #2AB0A5;
   --ft-color-on-primary: #FFFFFF;
+  /* Brand teal #2AB0A5 is only ~2.67:1 on the light surface — it fails WCAG AA
+   * as text. `--ft-color-primary` stays the brand fill/logo color; teal TEXT on
+   * a surface uses this AA-safe role (MD3 algorithmic tone-40 #006B61, ≥4.5:1).
+   * Mirrors the shadcn-namespace `--primary-text` from commit d2efcd0. */
+  --ft-color-primary-text: #006B61;
   --ft-color-primary-container: #A6E9DC;
   --ft-color-on-primary-container: #002020;
   /* Color — secondary (muted teal) */
@@ -254,6 +259,8 @@
 .dark {
   --ft-color-primary: #6FCFC2;
   --ft-color-on-primary: #003731;
+  /* Dark surface — the lifted tone-80 teal already passes AA as text. */
+  --ft-color-primary-text: #6FCFC2;
   --ft-color-primary-container: #005049;
   --ft-color-on-primary-container: #A6E9DC;
   --ft-color-secondary: #B1CCC8;

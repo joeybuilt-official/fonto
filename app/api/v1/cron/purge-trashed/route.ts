@@ -4,19 +4,14 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import {
-  DeleteObjectCommand,
-  DeleteObjectsCommand,
-  ListObjectsV2Command,
-} from "@aws-sdk/client-s3";
 import { db, schema } from "@/lib/db";
 import { eq, and, lt, isNotNull } from "drizzle-orm";
 import {
-  getS3Client,
   assetStorageKey,
   assetStorageKeyLegacy,
   hlsSegmentKeyPrefix,
 } from "@/lib/r2";
+import { storage, localFs } from "@/lib/storage";
 import { plexoPublishEvent } from "@/lib/plexo";
 
 /**
@@ -25,34 +20,8 @@ import { plexoPublishEvent } from "@/lib/plexo";
  * Safe to call when no HLS exists (ListObjectsV2 returns empty).
  */
 async function purgeHlsObjects(workspaceId: string, assetId: string): Promise<number> {
-  const bucket = process.env.R2_BUCKET!;
-  const s3 = getS3Client();
   const prefix = hlsSegmentKeyPrefix(workspaceId, assetId);
-  let totalDeleted = 0;
-  let continuationToken: string | undefined;
-  do {
-    const list = await s3.send(
-      new ListObjectsV2Command({
-        Bucket: bucket,
-        Prefix: prefix,
-        ContinuationToken: continuationToken,
-      })
-    );
-    const keys = (list.Contents ?? [])
-      .map((c) => c.Key)
-      .filter((k): k is string => !!k);
-    if (keys.length > 0) {
-      await s3.send(
-        new DeleteObjectsCommand({
-          Bucket: bucket,
-          Delete: { Objects: keys.map((Key) => ({ Key })) },
-        })
-      );
-      totalDeleted += keys.length;
-    }
-    continuationToken = list.IsTruncated ? list.NextContinuationToken : undefined;
-  } while (continuationToken);
-  return totalDeleted;
+  return storage().deletePrefix(prefix);
 }
 
 const GRACE_DAYS = 30;
@@ -78,7 +47,6 @@ export async function POST(request: NextRequest) {
 
   let purged = 0;
   let errors = 0;
-  const bucket = process.env.R2_BUCKET!;
 
   for (const asset of candidates) {
     try {
@@ -86,9 +54,24 @@ export async function POST(request: NextRequest) {
       const legacyKey = assetStorageKeyLegacy(asset.workspaceId, asset.id, asset.filename);
 
       try {
-        await getS3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+        await storage().delete(key);
       } catch {
-        await getS3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: legacyKey }));
+        await storage().delete(legacyKey);
+      }
+
+      // Phase B5 (storage placement) — clear the original from EVERY backend it
+      // lives on. Mirror/local_only assets keep a local-disk original (C2:
+      // derivatives are R2-only, so only the original is ever local); a stamped
+      // local_original_stored_at means a local copy exists. Best-effort +
+      // guarded on LOCAL_STORAGE_ROOT so r2_only purges (and unmounted hosts)
+      // are unaffected. localFs.delete is ENOENT-safe.
+      if (process.env.LOCAL_STORAGE_ROOT && asset.localOriginalStoredAt) {
+        try {
+          await localFs().delete(key);
+          await localFs().delete(legacyKey);
+        } catch (err) {
+          console.warn(`[fonto] purge-trashed: local delete failed for ${asset.id}:`, err);
+        }
       }
 
       // Phase 8b — wipe any HLS ladder + sprite under fonto/{ws}/{id}/hls/.

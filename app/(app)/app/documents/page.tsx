@@ -71,7 +71,7 @@ const SUBTYPE_COLORS: Record<string, string> = {
   receipt: "text-[var(--ft-color-tertiary)]",
   contract: "text-[var(--ft-color-on-surface-variant)]",
   letter: "text-[var(--ft-color-secondary)]",
-  report: "text-[var(--ft-color-primary)]",
+  report: "text-[var(--ft-color-primary-text)]",
   form: "text-[var(--ft-color-tertiary)]",
   document: "text-[var(--ft-color-on-surface-variant)]",
   scan: "text-[var(--ft-color-on-surface-variant)]",
@@ -201,7 +201,7 @@ function DocRow({
         )}
       </div>
       {active && (
-        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--ft-color-primary)]" />
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--ft-color-primary-text)]" />
       )}
     </button>
   );

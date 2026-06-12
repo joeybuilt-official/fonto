@@ -21,14 +21,13 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import {
-  getS3Client,
   hlsMasterKey,
   hlsRenditionKey,
   hlsSegmentKeyPrefix,
   assetStorageKey,
 } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 
 export interface RenditionSpec {
   // Used in the m3u8 filename + segment prefix.
@@ -103,8 +102,6 @@ export interface TranscodeOptions {
 export async function transcodeVideoHls(
   opts: TranscodeOptions
 ): Promise<HlsTranscodeResult> {
-  const bucket = process.env.R2_BUCKET!;
-  const s3 = getS3Client();
   const tmp = await mkdtemp(join(tmpdir(), "fonto-hls-"));
   const sourcePath = join(tmp, "source");
   const outDir = join(tmp, "out");
@@ -113,9 +110,7 @@ export async function transcodeVideoHls(
   try {
     // 1. Download source.
     const sourceKey = assetStorageKey(opts.workspaceId, opts.assetId, opts.filename);
-    const obj = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: sourceKey }));
-    if (!obj.Body) throw new Error(`R2 GET ${sourceKey} returned no body`);
-    const buf = Buffer.from(await obj.Body.transformToByteArray());
+    const buf = await storage().getBuffer(sourceKey);
     await writeFile(sourcePath, buf);
 
     // 2. Build the ffmpeg argv. One invocation, N outputs.
@@ -201,34 +196,21 @@ export async function transcodeVideoHls(
     // then per-rendition playlists, then the master last.
     for (const f of files) {
       if (f.endsWith(".ts")) {
-        await s3.send(
-          new PutObjectCommand({
-            Bucket: bucket,
-            Key: `${segmentPrefix}${f}`,
-            Body: await readFile(join(outDir, f)),
-            ContentType: "video/MP2T",
-          })
-        );
+        await storage().put(`${segmentPrefix}${f}`, await readFile(join(outDir, f)), {
+          contentType: "video/MP2T",
+        });
       }
     }
     for (const r of HLS_LADDER) {
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: hlsRenditionKey(opts.workspaceId, opts.assetId, r.name),
-          Body: await readFile(join(outDir, `${r.name}.m3u8`)),
-          ContentType: "application/vnd.apple.mpegurl",
-        })
+      await storage().put(
+        hlsRenditionKey(opts.workspaceId, opts.assetId, r.name),
+        await readFile(join(outDir, `${r.name}.m3u8`)),
+        { contentType: "application/vnd.apple.mpegurl" }
       );
     }
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: masterR2,
-        Body: masterContent,
-        ContentType: "application/vnd.apple.mpegurl",
-      })
-    );
+    await storage().put(masterR2, Buffer.from(masterContent), {
+      contentType: "application/vnd.apple.mpegurl",
+    });
 
     return {
       masterKey: masterR2,

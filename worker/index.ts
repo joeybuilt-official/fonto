@@ -40,6 +40,7 @@ import {
   VideoHlsTranscodeJobSchema,
   BackfillFaceCropsJobSchema,
   ImportJobSchema,
+  StorageSyncJobSchema,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
@@ -48,6 +49,7 @@ import {
   type FaceDetectJob,
   type VideoHlsTranscodeJob,
   type ImportJob,
+  type StorageSyncJob,
 } from "@/lib/queue/jobs";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
@@ -61,12 +63,15 @@ import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { runDailyDigest } from "@/lib/notifications/runDailyDigest";
 import { transcodeVideoHls } from "@/lib/processing/transcodeVideoHls";
 import { runAutoStack } from "@/lib/stacks/autoStack";
+import { backfillStorageMirror } from "@/lib/storage/backfill";
+import { reconcileStorageMirror } from "@/lib/storage/reconcile";
 import {
   backfillFaceCrops,
   DEFAULT_BACKFILL_BATCH_SIZE,
 } from "@/lib/processing/backfillFaceCrops";
 import { generateSpriteSheet } from "@/lib/processing/generateSpriteSheet";
 import { runImport } from "@/lib/import/runImport";
+import { syncAssetStorage } from "@/lib/storage/sync";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -89,6 +94,12 @@ const WEBHOOK_CONCURRENCY = Math.max(
 // hammering Postgres.
 const CLIP_DEDUP_CONCURRENCY = Math.max(
   parseInt(process.env.CLIP_DEDUP_WORKER_CONCURRENCY ?? "2", 10),
+  1
+);
+// Phase B3 — mirror-sync. I/O-bound (R2 download + local write). Modest default
+// so a burst of uploads to a mirror workspace doesn't saturate disk/bandwidth.
+const STORAGE_SYNC_CONCURRENCY = Math.max(
+  parseInt(process.env.STORAGE_SYNC_WORKER_CONCURRENCY ?? "3", 10),
   1
 );
 // Phase 4.5 — re-enqueue delay when the embedding isn't yet present on the
@@ -237,6 +248,26 @@ const BACKFILL_FACE_CROPS_BATCH_SIZE = Math.max(
     10
   ),
   1
+);
+
+// Phase B5 (storage placement) — mirror backfill + reconcile sweeps. Both are
+// DEFAULT-OFF and additionally require LOCAL_STORAGE_ROOT (no mount → nothing to
+// mirror into), so prod is untouched until the operator provisions the share
+// (G1) and opts in (G3). STORAGE_BACKFILL drains existing un-mirrored originals;
+// STORAGE_RECONCILE repairs R2↔local divergence nightly.
+const STORAGE_BACKFILL_ENABLED =
+  !!process.env.LOCAL_STORAGE_ROOT &&
+  ["1", "true", "yes"].includes((process.env.STORAGE_BACKFILL ?? "").trim().toLowerCase());
+const STORAGE_BACKFILL_INTERVAL_MS = Math.max(
+  parseInt(process.env.STORAGE_BACKFILL_INTERVAL_MS ?? `${5 * 60 * 1000}`, 10),
+  1000
+);
+const STORAGE_RECONCILE_ENABLED =
+  !!process.env.LOCAL_STORAGE_ROOT &&
+  ["1", "true", "yes"].includes((process.env.STORAGE_RECONCILE ?? "").trim().toLowerCase());
+const STORAGE_RECONCILE_INTERVAL_MS = Math.max(
+  parseInt(process.env.STORAGE_RECONCILE_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
+  60 * 1000
 );
 
 // Phase 2 (media import) — Google Takeout / Amazon ZIP import. Long-running,
@@ -462,6 +493,67 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
   );
   w.on("error", (err) =>
     logger.error({ queue: QueueNames.Thumbnail, err: err.message }, "thumbnail worker error")
+  );
+
+  return w;
+}
+
+/**
+ * Phase B3 (storage placement) — mirror-sync worker. Streams a `mirror`-policy
+ * asset's original R2→local, size-verifies, and stamps
+ * local_original_stored_at. No-ops for non-mirror policies + already-synced
+ * rows, so it's safe to enqueue on every upload.
+ */
+function startStorageSyncWorker(): Worker<StorageSyncJob> {
+  const w = new Worker<StorageSyncJob>(
+    QueueNames.StorageSync,
+    async (job: Job<StorageSyncJob>) => {
+      const log = logger.child({
+        queue: QueueNames.StorageSync,
+        jobId: job.id,
+        assetId: job.data?.assetId,
+        attempt: job.attemptsMade + 1,
+      });
+
+      const parsed = StorageSyncJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid storage-sync payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const data = parsed.data;
+
+      const result = await syncAssetStorage(data.assetId, data.workspaceId);
+      if (!result.synced) {
+        log.info({ reason: result.reason }, "storage-sync skipped");
+      } else {
+        log.info({ bytes: result.bytes }, "storage-sync mirrored original");
+      }
+      return result;
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: STORAGE_SYNC_CONCURRENCY,
+      lockDuration: HEAVY_LOCK_DURATION_MS,
+      stalledInterval: HEAVY_STALLED_INTERVAL_MS,
+    }
+  );
+
+  w.on("completed", (job) =>
+    logger.info({ queue: QueueNames.StorageSync, jobId: job.id }, "storage-sync job completed")
+  );
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.StorageSync,
+        jobId: job?.id,
+        attempt: job?.attemptsMade,
+        err: err.message,
+      },
+      "storage-sync job failed"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.StorageSync, err: err.message }, "storage-sync worker error")
   );
 
   return w;
@@ -1247,6 +1339,22 @@ function startMaintenanceWorker(): Worker {
         log.info(result, "face-crop backfill tick complete");
         return result;
       }
+      if (job.name === JobNames.BackfillStorageMirror) {
+        // Phase B5 — enqueue mirror-sync for a bounded batch of un-mirrored
+        // originals in mirror/local_only workspaces. Resumable + throttled.
+        log.info("storage-mirror backfill tick start");
+        const result = await backfillStorageMirror();
+        log.info(result, "storage-mirror backfill tick complete");
+        return result;
+      }
+      if (job.name === JobNames.ReconcileStorageMirror) {
+        // Phase B5 — nightly R2↔local divergence repair for stamped mirror
+        // assets (restore local, re-push to R2, or flag both-gone data loss).
+        log.info("storage-mirror reconcile tick start");
+        const result = await reconcileStorageMirror();
+        log.info(result, "storage-mirror reconcile tick complete");
+        return result;
+      }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");
       return null;
     },
@@ -1415,6 +1523,57 @@ async function ensureBackfillFaceCropsSchedule(): Promise<void> {
 }
 
 /**
+ * Phase B5 — register the throttled mirror-backfill sweep. DEFAULT-OFF: only
+ * registered when STORAGE_BACKFILL is truthy AND LOCAL_STORAGE_ROOT is set;
+ * otherwise actively remove any scheduler a prior boot left so flipping the flag
+ * off (or unmounting the share) stops the tick.
+ */
+async function ensureStorageMirrorBackfillSchedule(): Promise<void> {
+  if (!STORAGE_BACKFILL_ENABLED) {
+    await maintenanceQueue().removeJobScheduler(JobNames.BackfillStorageMirror);
+    logger.info(
+      { jobName: JobNames.BackfillStorageMirror },
+      "storage-mirror backfill disabled (schedule removed)"
+    );
+    return;
+  }
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.BackfillStorageMirror,
+    { every: STORAGE_BACKFILL_INTERVAL_MS },
+    { name: JobNames.BackfillStorageMirror }
+  );
+  logger.info(
+    { intervalMs: STORAGE_BACKFILL_INTERVAL_MS, jobName: JobNames.BackfillStorageMirror },
+    "storage-mirror backfill schedule registered"
+  );
+}
+
+/**
+ * Phase B5 — register the nightly mirror-reconcile sweep. DEFAULT-OFF: same
+ * gating as the backfill (STORAGE_RECONCILE truthy + LOCAL_STORAGE_ROOT set);
+ * removes a stale scheduler when disabled.
+ */
+async function ensureStorageMirrorReconcileSchedule(): Promise<void> {
+  if (!STORAGE_RECONCILE_ENABLED) {
+    await maintenanceQueue().removeJobScheduler(JobNames.ReconcileStorageMirror);
+    logger.info(
+      { jobName: JobNames.ReconcileStorageMirror },
+      "storage-mirror reconcile disabled (schedule removed)"
+    );
+    return;
+  }
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.ReconcileStorageMirror,
+    { every: STORAGE_RECONCILE_INTERVAL_MS },
+    { name: JobNames.ReconcileStorageMirror }
+  );
+  logger.info(
+    { intervalMs: STORAGE_RECONCILE_INTERVAL_MS, jobName: JobNames.ReconcileStorageMirror },
+    "storage-mirror reconcile schedule registered"
+  );
+}
+
+/**
  * Phase 9.1 — recompute usage_bytes for all workspaces from the live
  * assets table. Runs at most a few hundred workspaces; each UPDATE is
  * a single correlated sub-SELECT → safe in production load.
@@ -1484,6 +1643,7 @@ async function main(): Promise<void> {
   // Phase 1.1 — thumbnail derivatives. Separate worker so CPU-heavy sharp
   // encodes don't queue behind the umbrella processAsset pipeline.
   workers.push(startThumbnailWorker());
+  workers.push(startStorageSyncWorker());
 
   // Maintenance worker + recurring reaper schedule. Registered after the
   // primary worker so a boot-time failure here doesn't block asset
@@ -1547,6 +1707,22 @@ async function main(): Promise<void> {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
       "failed to register face-crop backfill schedule — backfill off until next boot"
+    );
+  }
+  try {
+    await ensureStorageMirrorBackfillSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register storage-mirror backfill schedule — backfill off until next boot"
+    );
+  }
+  try {
+    await ensureStorageMirrorReconcileSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register storage-mirror reconcile schedule — reconcile off until next boot"
     );
   }
 

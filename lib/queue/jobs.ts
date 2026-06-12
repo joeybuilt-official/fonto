@@ -167,6 +167,17 @@ export const ImportJobSchema = z.object({
 });
 export type ImportJob = z.infer<typeof ImportJobSchema>;
 
+// Phase B3 (storage placement) — mirror an asset's ORIGINAL from R2 to the local
+// backend (LOCAL_STORAGE_ROOT) for `mirror`-policy workspaces. Tiny payload: the
+// handler reads the asset + effective policy from Postgres and streams the copy.
+// Idempotent (skips when local_original_stored_at is already set). C2: originals
+// only (derivatives stay on R2). C4: mirror only (no local_only this initiative).
+export const StorageSyncJobSchema = z.object({
+  assetId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+});
+export type StorageSyncJob = z.infer<typeof StorageSyncJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -211,6 +222,14 @@ export const JobNames = {
   // Phase 0 (media import) — Google Takeout / Amazon Photos archive import.
   // One job per import_jobs row; long-running + app-managed resume.
   Import: "media-import",
+  // Phase B3 (storage placement) — mirror an asset's original R2→local.
+  StorageSync: "storage-sync",
+  // Phase B5 (storage placement) — throttled backfill: enqueue mirror-sync for
+  // existing un-mirrored originals in mirror/local_only workspaces.
+  BackfillStorageMirror: "backfill-storage-mirror",
+  // Phase B5 (storage placement) — nightly reconcile: repair R2↔local divergence
+  // for stamped mirror assets (restore local, re-push to R2, or flag loss).
+  ReconcileStorageMirror: "reconcile-storage-mirror",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

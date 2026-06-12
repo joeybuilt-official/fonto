@@ -5,9 +5,8 @@ import { and, eq } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { resolveAssetAccess } from "@/lib/assets/access";
 import { db, schema } from "@/lib/db";
-import { getS3Client, assetStorageKey } from "@/lib/r2";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 
 // Phase 1.1 — variant query param. `original` keeps the legacy behavior;
 // `thumb` / `preview` resolve the derivative R2 keys if present (and fall
@@ -43,7 +42,6 @@ export async function GET(
   if (!access) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const asset = access.asset;
 
-  const bucket = process.env.R2_BUCKET!;
   const variant = parseVariant(request.nextUrl.searchParams.get("variant"));
 
   // Pick the R2 key based on the requested variant. Derivatives may be NULL
@@ -92,11 +90,7 @@ export async function GET(
     servedVariant = "original";
   }
 
-  const url = await getSignedUrl(
-    getS3Client(),
-    new GetObjectCommand({ Bucket: bucket, Key: key }),
-    { expiresIn: 3600 }
-  );
+  const url = await storage().presignGet(key, { expiresIn: 3600 });
 
   // Cache-Control on the JSON response itself: derivative URLs are stable
   // for the variant lifetime, so an hour of caching on the JSON wrapper is

@@ -34,10 +34,15 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: "integrations", label: "Integrations" },
 ];
 
+type StoragePolicy = "r2_only" | "mirror" | "local_only";
+
 interface StorageInfo {
   usageBytes: number;
   quotaBytes: number | null;
   assetCount: number;
+  // Phase B6 (storage placement) — effective workspace policy + mirror coverage.
+  policy?: StoragePolicy;
+  mirror?: { eligible: number; mirrored: number; localBytes: number };
 }
 
 function formatBytes(bytes: number): string {
@@ -55,6 +60,9 @@ export default function SettingsPage() {
   const [rescanScope, setRescanScope] = useState<"all" | "images" | "failed">("all");
   const [rescanBusy, setRescanBusy] = useState(false);
   const [rescanMsg, setRescanMsg] = useState<string | null>(null);
+  // Phase B6 — storage-placement policy picker state.
+  const [policyBusy, setPolicyBusy] = useState(false);
+  const [policyMsg, setPolicyMsg] = useState<string | null>(null);
   const [googleStatus, setGoogleStatus] = useState<IntegrationStatus | null>(null);
   const [googleBusy, setGoogleBusy] = useState(false);
   // At md+ the page renders as tabs (Account / Storage / Integrations).
@@ -100,6 +108,36 @@ export default function SettingsPage() {
     }
   }
 
+  async function handlePolicyChange(next: StoragePolicy) {
+    if (policyBusy || !storage || storage.policy === next) return;
+    setPolicyBusy(true);
+    setPolicyMsg(null);
+    const prev = storage.policy;
+    // Optimistic — revert on failure.
+    setStorage((s) => (s ? { ...s, policy: next } : s));
+    try {
+      const res = await fetch("/api/v1/workspace", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storagePolicy: next }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      setPolicyMsg(
+        next === "mirror"
+          ? "New uploads now mirror to NAS. Existing assets backfill in the background."
+          : "New uploads are stored in Cloudflare R2 only."
+      );
+    } catch (err) {
+      setStorage((s) => (s ? { ...s, policy: prev } : s));
+      setPolicyMsg(err instanceof Error ? `Failed: ${err.message}` : "Failed to change policy.");
+    } finally {
+      setPolicyBusy(false);
+    }
+  }
+
   async function handleRescanAll() {
     if (rescanBusy) return;
     setRescanBusy(true);
@@ -141,7 +179,7 @@ export default function SettingsPage() {
             className={cn(
               "px-[var(--ft-space-4)] py-[var(--ft-space-2)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] tracking-[var(--ft-type-label-large-tracking)] font-medium border-b-2 -mb-px transition-colors",
               activeTab === t.id
-                ? "border-[var(--ft-color-primary)] text-[var(--ft-color-on-surface)]"
+                ? "border-[var(--ft-color-primary-text)] text-[var(--ft-color-on-surface)]"
                 : "border-transparent text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
             )}
           >
@@ -232,6 +270,76 @@ export default function SettingsPage() {
                   )}
                 </div>
               )}
+              {/* Phase B6 — storage-placement policy. R2-only (default) or
+                  mirror to the NAS local disk + R2. local_only is deferred. */}
+              {storage.policy != null && (
+                <div className="pt-[var(--ft-space-3)] border-t border-[var(--ft-color-outline-variant)] space-y-[var(--ft-space-3)]">
+                  <div className="flex items-center justify-between gap-[var(--ft-space-3)]">
+                    <div>
+                      <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                        Where originals live
+                      </p>
+                      <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                        Mirror keeps a copy of every original on your NAS disk
+                        as well as in the cloud.
+                      </p>
+                    </div>
+                    <Select
+                      value={storage.policy === "mirror" ? "mirror" : "r2_only"}
+                      onValueChange={(v) => handlePolicyChange(v as StoragePolicy)}
+                      disabled={policyBusy}
+                    >
+                      <SelectTrigger aria-label="Storage placement" className="h-9 w-[180px] shrink-0">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="r2_only">Cloud only (R2)</SelectItem>
+                        <SelectItem value="mirror">Mirror to NAS + cloud</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {storage.policy === "mirror" && storage.mirror && (
+                    <div className="space-y-[var(--ft-space-1)]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                          Mirror coverage
+                        </span>
+                        <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] font-medium text-[var(--ft-color-on-surface)]">
+                          {storage.mirror.mirrored} / {storage.mirror.eligible} originals
+                        </span>
+                      </div>
+                      <div className="h-2 w-full rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-high)] overflow-hidden">
+                        <div
+                          className="h-full rounded-[var(--ft-shape-full)] bg-[var(--ft-color-primary)] transition-all"
+                          style={{
+                            width: `${
+                              storage.mirror.eligible > 0
+                                ? Math.min(100, (storage.mirror.mirrored / storage.mirror.eligible) * 100).toFixed(1)
+                                : 0
+                            }%`,
+                          }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                          On NAS disk
+                        </span>
+                        <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] font-medium text-[var(--ft-color-on-surface)]">
+                          {formatBytes(storage.mirror.localBytes)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {policyMsg && (
+                    <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                      {policyMsg}
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="pt-[var(--ft-space-2)] border-t border-[var(--ft-color-outline-variant)]">
                 <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
                   Assets are stored securely in Cloudflare R2.
@@ -308,7 +416,7 @@ export default function SettingsPage() {
           {googleStatus === "active" && (
             <Link
               href="/app/imports"
-              className="block text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] tracking-[var(--ft-type-label-large-tracking)] font-medium text-[var(--ft-color-primary)] hover:underline"
+              className="block text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] tracking-[var(--ft-type-label-large-tracking)] font-medium text-[var(--ft-color-primary-text)] hover:underline"
             >
               Go to Imports →
             </Link>

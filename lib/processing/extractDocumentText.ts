@@ -17,9 +17,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { getS3Client, assetStorageKey } from "@/lib/r2";
+import { assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import { plexoVisionOcr } from "@/lib/plexo";
 import { pdfExtractText } from "@/lib/processing/renderPdfFirstPage";
 
@@ -39,16 +38,7 @@ export interface DocTextResult {
 }
 
 async function downloadToBuffer(bucket: string, key: string): Promise<Buffer> {
-  const out = await getS3Client().send(
-    new GetObjectCommand({ Bucket: bucket, Key: key })
-  );
-  const body = out.Body as AsyncIterable<Uint8Array> | undefined;
-  if (!body) throw new Error(`empty R2 body: ${key}`);
-  const chunks: Buffer[] = [];
-  for await (const chunk of body) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
+  return storage().getBuffer(key);
 }
 
 export async function extractDocumentText(params: {
@@ -79,11 +69,7 @@ export async function extractDocumentText(params: {
       }
       // Image-only scan: OCR the rendered preview derivative if it exists.
       if (previewKey) {
-        const url = await getSignedUrl(
-          getS3Client(),
-          new GetObjectCommand({ Bucket: bucket, Key: previewKey }),
-          { expiresIn: 300 }
-        );
+        const url = await storage().presignGet(previewKey, { expiresIn: 300 });
         const ocr = await plexoVisionOcr(workspaceId, url).catch(() => null);
         if (ocr && ocr.text.trim()) {
           return { text: ocr.text.trim(), method: "pdf-ocr" };

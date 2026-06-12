@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { NextRequest, NextResponse } from "next/server";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, desc, gte, isNull, isNotNull, lt, or, sql, SQL, like, exists } from "drizzle-orm";
-import { getS3Client, assetStorageKey } from "@/lib/r2";
+import { assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
 import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
 import { isKind } from "@/lib/classify/kind";
@@ -455,17 +455,11 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
     .where(eq(schema.assets.id, asset.id));
 
   const key = assetStorageKey(workspaceId, asset.id, file.name);
-  const bucket = process.env.R2_BUCKET!;
   try {
-    await getS3Client().send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: key,
-        Body: buffer,
-        ContentType: mimeType,
-        ContentLength: file.size,
-      })
-    );
+    await storage().put(key, buffer, {
+      contentType: mimeType,
+      contentLength: file.size,
+    });
 
     await db
       .update(schema.assets)

@@ -1072,7 +1072,7 @@ function LibraryEmptyState({
             toolbar.resetFilters();
             if (placeFilter) router.replace(pathname);
           }}
-          className="inline-flex h-8 items-center justify-center rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]"
+          className="inline-flex h-8 items-center justify-center rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-primary-text)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]"
         >
           Clear filters
         </button>
@@ -1102,7 +1102,7 @@ function LibraryErrorState({ onRetry }: { onRetry: () => void }) {
       </p>
       <button
         onClick={onRetry}
-        className="inline-flex h-8 items-center justify-center rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]"
+        className="inline-flex h-8 items-center justify-center rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-primary-text)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]"
       >
         Retry
       </button>

@@ -25,9 +25,8 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { and, inArray } from "drizzle-orm";
-import { getS3Client, assetStorageKey } from "@/lib/r2";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 
 type Variant = "thumb" | "preview" | "original";
 
@@ -92,9 +91,6 @@ export async function POST(request: NextRequest) {
       )
     );
 
-  const bucket = process.env.R2_BUCKET!;
-  const s3 = getS3Client();
-
   // Sign in parallel. The presigner is a pure crypto op (no network), so
   // Promise.all is bounded by CPU not RTT; even at the 500-id cap this
   // resolves in a handful of ms.
@@ -110,11 +106,7 @@ export async function POST(request: NextRequest) {
         key = assetStorageKey(asset.workspaceId, asset.id, asset.filename);
         served = "original";
       }
-      const url = await getSignedUrl(
-        s3,
-        new GetObjectCommand({ Bucket: bucket, Key: key }),
-        { expiresIn: 3600 }
-      );
+      const url = await storage().presignGet(key, { expiresIn: 3600 });
       return [asset.id, { url, served }] as const;
     })
   );

@@ -18,14 +18,13 @@
 // / missing. The bbox is normalised, so it maps onto whichever source we get.
 
 import sharp from "sharp";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { logger } from "@/lib/logger";
 import {
   assetDerivativeKey,
   assetStorageKey,
   faceCropKey,
-  getS3Client,
 } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 
 const FACE_CROP_SIZE_PX = 256;
 const FACE_CROP_QUALITY = 82;
@@ -64,16 +63,7 @@ export interface FaceCropSource {
 }
 
 async function downloadFromR2(bucket: string, key: string): Promise<Buffer> {
-  const out = await getS3Client().send(
-    new GetObjectCommand({ Bucket: bucket, Key: key })
-  );
-  const chunks: Buffer[] = [];
-  const body = out.Body as AsyncIterable<Uint8Array> | undefined;
-  if (!body) throw new Error(`R2 object empty body: ${key}`);
-  for await (const chunk of body) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
+  return storage().getBuffer(key);
 }
 
 /**
@@ -300,16 +290,11 @@ export async function generateFaceCrop(args: {
       .toBuffer();
 
     const key = faceCropKey(args.workspaceId, args.assetId, args.faceId);
-    await getS3Client().send(
-      new PutObjectCommand({
-        Bucket: args.bucket,
-        Key: key,
-        Body: crop,
-        ContentType: "image/webp",
-        ContentLength: crop.length,
-        CacheControl: DERIVATIVE_CACHE_CONTROL,
-      })
-    );
+    await storage().put(key, crop, {
+      contentType: "image/webp",
+      contentLength: crop.length,
+      cacheControl: DERIVATIVE_CACHE_CONTROL,
+    });
     return key;
   } catch (err) {
     log.warn(
