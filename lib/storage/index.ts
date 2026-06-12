@@ -11,6 +11,7 @@ import type { StorageBackend } from "./interface";
 
 export * from "./interface";
 export * from "./policy";
+export * from "./read";
 
 let _r2: StorageBackend | null = null;
 let _local: StorageBackend | null = null;

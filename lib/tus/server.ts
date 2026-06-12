@@ -25,7 +25,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { dateFromFilename } from "@/lib/exif";
-import { assetProcessingQueue, thumbnailQueue, JobNames } from "@/lib/queue";
+import { assetProcessingQueue, thumbnailQueue, storageSyncQueue, JobNames } from "@/lib/queue";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -317,6 +317,20 @@ export function getTusServer(): Server {
         }
       } catch (err) {
         console.error("[fonto-tus] failed to enqueue thumbnail:", err);
+      }
+
+      // Phase B3 — mirror the original to local for `mirror`-policy workspaces.
+      // tus inserts the asset row directly here (it does not go through
+      // createAssetRow.enqueueAssetProcessing), so it needs its own enqueue or
+      // tus uploads would silently never mirror. No mime filter; the handler
+      // reads the effective policy and no-ops for non-mirror workspaces.
+      try {
+        await storageSyncQueue().add(JobNames.StorageSync, {
+          assetId: asset.id,
+          workspaceId,
+        });
+      } catch (err) {
+        console.error("[fonto-tus] failed to enqueue storage-sync:", err);
       }
 
       // tus's HEAD response normally has no body. We surface the new asset
