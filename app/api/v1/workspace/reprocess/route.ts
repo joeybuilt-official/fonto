@@ -43,6 +43,8 @@ export async function POST(request: NextRequest) {
   const conditions = [
     eq(schema.assets.workspaceId, workspaceId),
     isNull(schema.assets.deletedAt),
+    // ADR 0008 — scope default
+    eq(schema.assets.scope, "PERSONAL"),
   ];
   if (scope === "images") {
     conditions.push(like(schema.assets.mimeType, "image/%"));

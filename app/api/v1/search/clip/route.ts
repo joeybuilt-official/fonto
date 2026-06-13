@@ -32,6 +32,7 @@ import { db, schema } from "@/lib/db";
 import { embedText, visionConfigured } from "@/lib/plexo-vision";
 import { nearestNeighbors } from "@/lib/vectors";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
+import { parseScopeParam, scopeCond } from "@/lib/scope";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -128,7 +129,10 @@ async function handle(request: NextRequest): Promise<NextResponse> {
     });
   }
 
-  const hits = await nearestNeighbors(workspaceId, queryVec, limit, SIMILARITY_THRESHOLD);
+  // ADR 0008 — scope default (no scope param on POST body ⇒ PERSONAL)
+  const __scope = parseScopeParam(request.nextUrl.searchParams);
+  const __sc = scopeCond(__scope);
+  const hits = await nearestNeighbors(workspaceId, queryVec, limit, SIMILARITY_THRESHOLD, __scope);
   if (!hits.length) {
     return NextResponse.json({ results: [] });
   }
@@ -141,7 +145,8 @@ async function handle(request: NextRequest): Promise<NextResponse> {
       and(
         eq(schema.assets.workspaceId, workspaceId),
         inArray(schema.assets.id, ids),
-        isNull(schema.assets.deletedAt)
+        isNull(schema.assets.deletedAt),
+        __sc
       )
     );
 

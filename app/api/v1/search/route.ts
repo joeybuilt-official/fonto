@@ -9,6 +9,7 @@ import { eq, and, or, ilike, inArray, gte, lte, isNull, sql } from "drizzle-orm"
 import { plexoMemorySearch } from "@/lib/plexo";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { deltaE76, parseHex, rgbToLab, type PaletteColor } from "@/lib/perceptual";
+import { parseScopeParam, scopeCond } from "@/lib/scope";
 
 const COLOR_DELTA_E_THRESHOLD = 30;
 
@@ -37,6 +38,9 @@ export async function GET(request: NextRequest) {
     inArray(schema.assets.workspaceId, workspaceIds),
     isNull(schema.assets.deletedAt),
   ];
+  // ADR 0008 — scope default
+  const __sc = scopeCond(parseScopeParam(searchParams));
+  if (__sc) conditions.push(__sc);
 
   if (classification) conditions.push(eq(schema.assets.classification, classification));
   if (correspondentId) conditions.push(eq(schema.assets.correspondentId, correspondentId));

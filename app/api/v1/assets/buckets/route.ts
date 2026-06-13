@@ -18,6 +18,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { and, eq, exists, gte, isNull, like, or, sql, SQL } from "drizzle-orm";
 import { isKind } from "@/lib/classify/kind";
+import { parseScopeParam, scopeCond } from "@/lib/scope";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -36,6 +37,9 @@ export async function GET(request: NextRequest) {
     eq(schema.assets.workspaceId, workspaceId),
     eq(schema.assets.lifecycleState, lifecycleFilter),
   ];
+  // ADR 0008 — scope default
+  const __sc = scopeCond(parseScopeParam(searchParams));
+  if (__sc) where.push(__sc);
 
   const favoriteParam = searchParams.get("favorite");
   if (favoriteParam === "1" || favoriteParam === "true") {

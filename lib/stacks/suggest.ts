@@ -133,6 +133,8 @@ export async function suggestStacks(workspaceId: string): Promise<StackSuggestio
       and(
         eq(schema.assets.workspaceId, workspaceId),
         eq(schema.assets.lifecycleState, "active"),
+        // ADR 0008 — scope default
+        eq(schema.assets.scope, "PERSONAL"),
         isNull(schema.assets.stackId),
         isNotNull(schema.assets.capturedAt),
         sql`${schema.assets.capturedAt} >= ${SENTINEL_CUTOFF}`

@@ -25,26 +25,27 @@ export async function GET() {
   const wsIds = workspaces.map((w) => w.id);
 
   const [favRow, trashRow, screenshotRow, archiveRow, docRow] = await Promise.all([
+    // ADR 0008 — scope default on every count
     db
       .select({ c: count() })
       .from(schema.assets)
-      .where(and(inArray(schema.assets.workspaceId, wsIds), eq(schema.assets.isFavorite, true), eq(schema.assets.lifecycleState, "active"))),
+      .where(and(inArray(schema.assets.workspaceId, wsIds), eq(schema.assets.isFavorite, true), eq(schema.assets.lifecycleState, "active"), eq(schema.assets.scope, "PERSONAL"))),
     db
       .select({ c: count() })
       .from(schema.assets)
-      .where(and(inArray(schema.assets.workspaceId, wsIds), eq(schema.assets.lifecycleState, "trashed"))),
+      .where(and(inArray(schema.assets.workspaceId, wsIds), eq(schema.assets.lifecycleState, "trashed"), eq(schema.assets.scope, "PERSONAL"))),
     db
       .select({ c: count() })
       .from(schema.assets)
-      .where(and(inArray(schema.assets.workspaceId, wsIds), eq(schema.assets.kind, "screenshot"), eq(schema.assets.lifecycleState, "active"))),
+      .where(and(inArray(schema.assets.workspaceId, wsIds), eq(schema.assets.kind, "screenshot"), eq(schema.assets.lifecycleState, "active"), eq(schema.assets.scope, "PERSONAL"))),
     db
       .select({ c: count() })
       .from(schema.assets)
-      .where(and(inArray(schema.assets.workspaceId, wsIds), eq(schema.assets.lifecycleState, "archived"))),
+      .where(and(inArray(schema.assets.workspaceId, wsIds), eq(schema.assets.lifecycleState, "archived"), eq(schema.assets.scope, "PERSONAL"))),
     db
       .select({ c: count() })
       .from(schema.assets)
-      .where(and(inArray(schema.assets.workspaceId, wsIds), eq(schema.assets.kind, "document"), eq(schema.assets.lifecycleState, "active"))),
+      .where(and(inArray(schema.assets.workspaceId, wsIds), eq(schema.assets.kind, "document"), eq(schema.assets.lifecycleState, "active"), eq(schema.assets.scope, "PERSONAL"))),
   ]);
 
   return NextResponse.json({

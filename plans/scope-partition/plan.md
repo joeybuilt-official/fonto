@@ -30,6 +30,11 @@ Partition deliberate photo shoots (pro + hobby) from personal life capture via a
 - ⚠ **Phase 2 prod migration apply** — manual apply of 0041 against prod `pushd/fonto` is operator-gated.
 - Push/deploy targets to confirm before first commit.
 
+## Discoveries (execution)
+
+- **sync/assets is intentionally NOT scope-filtered.** Server-filtering the delta-sync query by scope='PERSONAL' breaks removal propagation: a PERSONAL→SHOOT reassignment would drop out of the filtered stream, so a client never learns it changed and shows it stale. Fix = leave sync unfiltered + include `scope` in the payload; mobile-side exclusion is a deferred, scope-aware-client follow-up (gated). Data correctness > the exclusion feature here.
+- **Rule for all other read paths:** default PERSONAL; browsable surfaces (have searchParams) honor `?scope=PERSONAL|SHOOT|all` via parseScopeParam+scopeCond (opt-out); pure-personal surfaces (memories, dedup, stacks-suggest) hardcode PERSONAL. Dedup is filtered to the *incoming asset's* scope, not hard-PERSONAL.
+
 ## Phases
 
 ## Phase 0 — Audit

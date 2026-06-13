@@ -201,6 +201,7 @@ async function computePerceptualMetadata(
 async function findPHashNearDuplicate(
   workspaceId: string,
   newPHash: bigint,
+  scope: Scope,
   excludeAssetId?: string
 ): Promise<{
   id: string;
@@ -224,6 +225,9 @@ async function findPHashNearDuplicate(
       and(
         eq(schema.assets.workspaceId, workspaceId),
         eq(schema.assets.lifecycleState, "active"),
+        // ADR 0008 — keep near-dup hints within the incoming asset's scope so
+        // a PERSONAL upload never matches a SHOOT photo (and vice-versa).
+        eq(schema.assets.scope, scope),
         isNotNull(schema.assets.phash)
       )
     );
@@ -322,7 +326,8 @@ async function findClipNearDuplicate(
   workspaceId: string,
   clipVec: number[],
   excludeAssetId: string,
-  threshold: number
+  threshold: number,
+  scope: Scope
 ): Promise<{
   id: string;
   filename: string;
@@ -334,7 +339,7 @@ async function findClipNearDuplicate(
   // Filter excludeAssetId inline (the column-aware predicate is cheap enough).
   let matches: Awaited<ReturnType<typeof nearestNeighbors>>;
   try {
-    matches = (await nearestNeighbors(workspaceId, clipVec, 5, threshold)).filter(
+    matches = (await nearestNeighbors(workspaceId, clipVec, 5, threshold, scope)).filter(
       (m) => m.assetId !== excludeAssetId
     );
   } catch (err) {
@@ -576,7 +581,7 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
 
   let possibleDuplicate: PossibleDuplicate | null = null;
   if (phash != null) {
-    const match = await findPHashNearDuplicate(workspaceId, phash);
+    const match = await findPHashNearDuplicate(workspaceId, phash, resolvedScope);
     if (match) {
       possibleDuplicate = {
         assetId: match.id,
@@ -713,7 +718,8 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
         workspaceId,
         clipResult,
         asset.id,
-        threshold
+        threshold,
+        resolvedScope
       );
       if (clipMatch) {
         possibleDuplicate = {

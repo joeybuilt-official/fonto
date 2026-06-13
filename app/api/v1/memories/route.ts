@@ -149,6 +149,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       sql`
         ${schema.assets.workspaceId} = ${workspaceId}
         AND ${schema.assets.lifecycleState} = 'active'
+        AND ${schema.assets.scope} = 'PERSONAL'
         AND ${schema.assets.capturedAt} IS NOT NULL
         AND fonto.captured_mmdd_utc(${schema.assets.capturedAt}) = ANY(${pgArray(mmddList)}::text[])
         AND EXTRACT(YEAR FROM ${schema.assets.capturedAt} AT TIME ZONE 'UTC')

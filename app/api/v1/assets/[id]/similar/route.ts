@@ -8,6 +8,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray, ne, isNull } from "drizzle-orm";
 import { plexoAvailable, plexoMemorySearch } from "@/lib/plexo";
+import { parseScopeParam, scopeCond } from "@/lib/scope";
 
 export async function GET(
   _req: NextRequest,
@@ -20,6 +21,9 @@ export async function GET(
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) return NextResponse.json({ assets: [] });
   const workspaceIds = workspaces.map((w) => w.id);
+
+  // ADR 0008 — scope default
+  const __sc = scopeCond(parseScopeParam(new URL(_req.url).searchParams));
 
   const [asset] = await db
     .select()
@@ -38,7 +42,8 @@ export async function GET(
           inArray(schema.assets.workspaceId, workspaceIds),
           ne(schema.assets.id, id),
           isNull(schema.assets.deletedAt),
-          eq(schema.assets.classification, asset.classification ?? "")
+          eq(schema.assets.classification, asset.classification ?? ""),
+          __sc
         )
       )
       .limit(10);
@@ -65,7 +70,8 @@ export async function GET(
         and(
           inArray(schema.assets.id, similarIds),
           inArray(schema.assets.workspaceId, workspaceIds),
-          isNull(schema.assets.deletedAt)
+          isNull(schema.assets.deletedAt),
+          __sc
         )
       )
       .limit(10);

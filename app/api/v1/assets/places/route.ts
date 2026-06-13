@@ -49,6 +49,8 @@ export async function GET() {
       and(
         eq(schema.assets.workspaceId, workspaceId),
         eq(schema.assets.lifecycleState, "active"),
+        // ADR 0008 — scope default (no browse param on this route)
+        eq(schema.assets.scope, "PERSONAL"),
         isNotNull(schema.assets.placeName),
         ne(schema.assets.placeName, "")
       )

@@ -13,6 +13,7 @@ import { isKind } from "@/lib/classify/kind";
 import { detectMime } from "@/lib/mime";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
+import { parseScopeParam, scopeCond } from "@/lib/scope";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -72,6 +73,9 @@ export async function GET(request: NextRequest) {
   ];
   if (onlyFavorites) where.push(eq(schema.assets.isFavorite, true));
   if (ratingMin !== null) where.push(gte(schema.assets.rating, ratingMin));
+  // ADR 0008 — scope default
+  const __sc = scopeCond(parseScopeParam(searchParams));
+  if (__sc) where.push(__sc);
 
   // Timeline filter chips — coarse media type. Applied SERVER-side (unlike
   // the post-fetch `mime`/`subtype` filters below) so keyset pagination and
