@@ -990,7 +990,7 @@ class _FaceImageOverlay extends StatelessWidget {
     final s = min(ww / dims.width, wh / dims.height);
     final rx = (ww - dims.width * s) / 2;
     final ry = (wh - dims.height * s) / 2;
-    return faces.expand<Widget>((face) {
+    return _dedupeByBbox(faces).expand<Widget>((face) {
       final b = face.bbox;
       final left = rx + b.x * dims.width * s;
       final top = ry + b.y * dims.height * s;
@@ -1046,6 +1046,36 @@ class _FaceImageOverlay extends StatelessWidget {
       );
       return [circle, label];
     }).toList();
+  }
+
+  /// Fold faces whose bbox centers fall within a small radius into one survivor.
+  /// Server-side detection has historically been re-run without dedupe, so the
+  /// same physical face can come back as multiple AssetFace rows — when that
+  /// happens we'd otherwise paint concentric circles in slightly different
+  /// shades (active yellow stacked on tagged primary). Preference order:
+  /// named > anonymous; higher confidence wins ties.
+  static List<AssetFace> _dedupeByBbox(List<AssetFace> input) {
+    if (input.length < 2) return input;
+    const tol = 0.02; // ≈2% of image dimension — tight enough to keep distinct faces.
+    final kept = <AssetFace>[];
+    for (final f in input) {
+      final cx = f.bbox.x + f.bbox.w / 2;
+      final cy = f.bbox.y + f.bbox.h / 2;
+      final dupIdx = kept.indexWhere((k) {
+        final kcx = k.bbox.x + k.bbox.w / 2;
+        final kcy = k.bbox.y + k.bbox.h / 2;
+        return (kcx - cx).abs() < tol && (kcy - cy).abs() < tol;
+      });
+      if (dupIdx < 0) {
+        kept.add(f);
+        continue;
+      }
+      final existing = kept[dupIdx];
+      final fScore = (f.personId != null ? 1000 : 0) + f.confidence;
+      final eScore = (existing.personId != null ? 1000 : 0) + existing.confidence;
+      if (fScore > eScore) kept[dupIdx] = f;
+    }
+    return kept;
   }
 }
 
