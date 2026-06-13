@@ -11,12 +11,15 @@
 //   POST /api/v1/shoots   { name, clientId?, shootDate?, kind?, paid?, consentStatus? }
 //          -> { shoot }   (editor+)
 //   PATCH /api/v1/shoots  { id, ... }   -> { shoot }   (editor+)
-//   DELETE /api/v1/shoots { id }        -> { ok }      (editor+)
+//   DELETE /api/v1/shoots { id }   -> { ok, revertedAssets, batchId? }  (editor+)
 //
-// Soft-FK semantics: deleting a shoot does NOT clear `assets.shoot_id`. The
-// shoot row vanishes; affected assets still carry the now-dangling shoot_id
-// (matches the assets / correspondents / stacks pattern). Operators are
-// expected to reassign first via /api/v1/scope/reassign before deleting.
+// Delete semantics (ADR 0008): deleting a shoot reverts every asset filed into
+// it back to scope='PERSONAL' (clearing shoot_id + shoot_stage) so the photos
+// return to the personal timeline rather than becoming orphaned (SHOOT-scoped
+// but pointing at a deleted shoot = invisible everywhere). The revert is logged
+// to scope_reassignments under one batch and is reflected in `revertedAssets` +
+// `batchId`. Other soft-FKs (correspondents / stacks) keep dangling-on-delete
+// semantics; shoots are special-cased because scope makes orphaning user-visible.
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
@@ -25,6 +28,8 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { and, eq, isNull, sql } from "drizzle-orm";
+import { randomUUID } from "crypto";
+import { nextSeq } from "@/lib/db/seq";
 import { isShootStage, type ShootStage } from "@/lib/scope";
 
 interface ShootWithCounts {
@@ -251,11 +256,57 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "`id` is required" }, { status: 400 });
   }
 
-  const res = await db
-    .delete(schema.shoots)
+  // Confirm the shoot exists in this workspace before touching its assets.
+  const [shootRow] = await db
+    .select({ id: schema.shoots.id })
+    .from(schema.shoots)
     .where(and(eq(schema.shoots.id, body.id), eq(schema.shoots.workspaceId, workspaceId)))
-    .returning({ id: schema.shoots.id });
+    .limit(1);
+  if (!shootRow) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (res.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json({ ok: true });
+  // ADR 0008 — deleting a shoot must NOT orphan its photos. Any asset filed
+  // into this shoot is reverted to scope='PERSONAL' (shoot_id + shoot_stage
+  // cleared) so it returns to the personal timeline rather than becoming
+  // invisible (SHOOT-scoped but pointing at a now-deleted shoot). The revert
+  // is logged to scope_reassignments under one batch (auditable; the undo
+  // route guards against the deleted-shoot dangling-ref edge). seq is bumped
+  // so clients re-sync the change.
+  const affected = await db
+    .select({ id: schema.assets.id, scope: schema.assets.scope })
+    .from(schema.assets)
+    .where(and(eq(schema.assets.workspaceId, workspaceId), eq(schema.assets.shootId, body.id)));
+
+  const batchId = randomUUID();
+  let revertedAssets = 0;
+  for (const a of affected) {
+    const seq = await nextSeq(workspaceId, "asset");
+    await db
+      .update(schema.assets)
+      .set({ scope: "PERSONAL", shootId: null, shootStage: null, seq, updatedAt: new Date() })
+      .where(eq(schema.assets.id, a.id));
+    await db
+      .insert(schema.scopeReassignments)
+      .values({
+        workspaceId,
+        assetId: a.id,
+        batchId,
+        fromScope: a.scope,
+        toScope: "PERSONAL",
+        fromShootId: body.id,
+        toShootId: null,
+        actor: user.id,
+      })
+      .onConflictDoNothing();
+    revertedAssets += 1;
+  }
+
+  await db
+    .delete(schema.shoots)
+    .where(and(eq(schema.shoots.id, body.id), eq(schema.shoots.workspaceId, workspaceId)));
+
+  return NextResponse.json({
+    ok: true,
+    revertedAssets,
+    ...(revertedAssets > 0 ? { batchId } : {}),
+  });
 }

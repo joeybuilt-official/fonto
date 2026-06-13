@@ -15,8 +15,9 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { nextSeq } from "@/lib/db/seq";
+import { resolveUndoRestore } from "@/lib/scope";
 
 export async function POST(request: NextRequest) {
   const user = await getAuthUser();
@@ -49,12 +50,37 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No such batch in this workspace" }, { status: 404 });
   }
 
+  // Guard the dangling-shoot edge: a batch produced by a shoot DELETE records
+  // from_shoot_id = <the deleted shoot>. Restoring that id would re-orphan the
+  // asset (SHOOT-scoped, pointing at a shoot that no longer exists). So for any
+  // recorded from_shoot_id whose shoot is gone, drop the shoot_id on restore
+  // and keep the asset PERSONAL rather than re-filing it into nothing.
+  const wantShootIds = [
+    ...new Set(ledger.map((r) => r.fromShootId).filter((x): x is string => !!x)),
+  ];
+  const liveShootIds = new Set<string>();
+  if (wantShootIds.length > 0) {
+    const live = await db
+      .select({ id: schema.shoots.id })
+      .from(schema.shoots)
+      .where(
+        and(
+          eq(schema.shoots.workspaceId, workspaceId),
+          inArray(schema.shoots.id, wantShootIds)
+        )
+      );
+    for (const s of live) liveShootIds.add(s.id);
+  }
+
   let restored = 0;
+  let skippedDeletedShoot = 0;
   for (const r of ledger) {
+    const target = resolveUndoRestore(r.fromScope, r.fromShootId, liveShootIds);
+    if (r.fromShootId != null && target.shootId == null) skippedDeletedShoot += 1;
     const seq = await nextSeq(workspaceId, "asset");
     await db
       .update(schema.assets)
-      .set({ scope: r.fromScope, shootId: r.fromShootId ?? null, seq, updatedAt: new Date() })
+      .set({ scope: target.scope, shootId: target.shootId, seq, updatedAt: new Date() })
       .where(eq(schema.assets.id, r.assetId));
     restored += 1;
   }
@@ -68,5 +94,5 @@ export async function POST(request: NextRequest) {
       )
     );
 
-  return NextResponse.json({ restored });
+  return NextResponse.json({ restored, ...(skippedDeletedShoot > 0 ? { keptPersonalForDeletedShoot: skippedDeletedShoot } : {}) });
 }
