@@ -35,6 +35,7 @@ import { assetProcessingQueue, clipDedupCheckQueue, JobNames } from "@/lib/queue
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { emitActivity } from "@/lib/activity/emit";
 import { nextSeq } from "@/lib/db/seq";
+import { deriveScope, type Scope } from "@/lib/scope";
 import { embedImage, visionServiceConfigured } from "@/lib/plexo-vision";
 import { nearestNeighbors } from "@/lib/vectors";
 // Phase 1.1 `thumbnailQueue` + `JobNames.GenerateThumbnails` resolved
@@ -124,6 +125,12 @@ export interface CreateAssetInput {
   /** Full asset buffer for EXIF / pHash / palette extraction. */
   buffer: Buffer;
   source: string;
+  /**
+   * ADR 0008 — explicit scope choice (user-selected at upload). Wins over the
+   * folder-prefix heuristic. Omit to let `deriveScope` decide (defaults
+   * PERSONAL unless the directory matches a configured shoot prefix).
+   */
+  scope?: Scope | null;
   /**
    * Phase 3.5 — pre-normalised virtual folder path (or null). Callers are
    * responsible for running raw client input through
@@ -513,6 +520,9 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
   const { workspaceId, userId, userEmail, filename, mimeType, sizeBytes, buffer, source, preReservedId } = input;
   const directoryPath = input.directoryPath ?? null;
   const sha256 = input.sha256 ?? createHash("sha256").update(buffer).digest("hex");
+  // ADR 0008 — inference-free scope assignment. Explicit user choice wins;
+  // else a configured shoot-folder prefix; else PERSONAL.
+  const resolvedScope = deriveScope({ explicit: input.scope, directoryPath });
 
   // SHA-256 dedup: return existing non-purged asset if hash matches.
   const [duplicate] = await db
@@ -602,6 +612,8 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
       syncState: "synced",
       processingState: "captured",
       lifecycleState: "active",
+      // ADR 0008 — authoritative partition; defaults PERSONAL (see deriveScope).
+      scope: resolvedScope,
       source,
       extractedText,
       // Override (Takeout sidecar) wins; then EXIF date; then a date parsed
