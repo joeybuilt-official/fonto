@@ -35,11 +35,13 @@ function parseVariant(raw: unknown): Variant {
   return "thumb";
 }
 
-// Cap on a single batch. 500 covers the largest realistic grid page (the
-// virtualised AssetGrid only renders ~200 visible at a time; 500 gives
-// headroom for prefetch). Larger requests are rejected outright rather than
-// silently truncated so callers can't accidentally rely on partial fills.
-const MAX_BATCH = 500;
+// Cap on a single batch. The Flutter People grid loads cover thumbs for
+// EVERY person cluster in a single shot (no virtualisation on that screen
+// yet) and a seed-library workspace can have 2k+ clusters — 500 was too
+// tight and 4xx'd the whole grid into "Couldn't load this". Bumped to 5000;
+// the underlying R2 sign loop is O(n) but each sign is sub-ms so the
+// per-call wall-clock cost is still well under 1s for the worst case.
+const MAX_BATCH = 5000;
 
 export async function POST(request: NextRequest) {
   const user = await getAuthUser();
