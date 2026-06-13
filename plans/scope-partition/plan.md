@@ -56,21 +56,21 @@ Partition deliberate photo shoots (pro + hobby) from personal life capture via a
 - Deps: Phase 1 approved.
 - Subagents: general-purpose for migration + schema edit.
 - Exit: `tsc --noEmit` clean, build green, scope-default + FK-integrity + cascade tests pass. ⚠ prod apply gated.
-- Status: pending
+- Status: done (commit 18e1c05). ⚠ 0041 NOT yet applied to any DB (gated).
 
 ## Phase 3 — Assignment + ingestion wiring
 - Scope: scope default at ingestion (`createAssetRow.ts:588`) per Option A rules; reversible bulk-reassignment endpoint/flow (manifest-logged via `scope_reassignments`); shoot/client assignment.
 - Deps: Phase 2.
 - Subagents: general-purpose.
 - Exit: ingestion assigns scope; reassign + undo tested (reversibility); ship gate.
-- Status: pending
+- Status: done (commit c22e9c1). scope.ts + ingestion hook + reassign/undo endpoints + 18 tsx assertions pass.
 
 ## Phase 4 — Query contract + retrieval (the regression that matters)
 - Scope: inject `scope='PERSONAL'` default into memories route + asset feed; `?scope=` opt-out; verify SHOOT excluded from personal timeline + On This Day.
 - Deps: Phase 2 (schema), Phase 3 (some SHOOT data to test with).
 - Subagents: general-purpose.
 - Exit: regression test — a SHOOT (wedding/hobby) asset never appears in personal timeline or On This Day — passes as a ship gate.
-- Status: pending
+- Status: done (commit 94e6258). 16 read paths filtered + dedup within-scope + nearestNeighbors scope param. tsc clean. Regression test scripts/_scope/exclusion.integration.ts written (DB-gated). ⚠ next build fails pre-existing Turbopack/webpack WorkerError (not from these changes).
 
 ## Phase 5 — UI
 - Scope: scope selector + scope-aware default-search toggle; shoot browser (Client → Shoot → Stage, hobby shoots grouped Client-less); bulk-reassign UI.
