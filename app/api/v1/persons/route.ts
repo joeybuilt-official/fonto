@@ -47,17 +47,25 @@ export async function GET(request: NextRequest) {
 
   const includeHidden = request.nextUrl.searchParams.get("hidden") === "true";
   const filterGroupId = request.nextUrl.searchParams.get("group_id");
+  // Singleton clusters are mostly false-positive detections — random face
+  // fragments on objects, partial faces, etc. They explode the People grid
+  // into thousands of low-value cards (4k+ on the seed library, vs ~218
+  // clusters at instance_count >= 5). Default to >=2; let admin tooling
+  // opt-in via `?include_singletons=true`.
+  const includeSingletons =
+    request.nextUrl.searchParams.get("include_singletons") === "true";
+  const minInstances = includeSingletons ? 1 : 2;
 
-  // Default grid excludes hidden persons AND empty clusters (instance_count
-  // = 0). A re-cluster zeroes-out persons whose faces were all detached
-  // (e.g. the junk-screenshot prune) but keeps the row to preserve any
-  // name/hidden edits — those empty rows must never render as ghost cards.
+  // Default grid excludes hidden persons AND empty/singleton clusters.
+  // A re-cluster zeroes-out persons whose faces were all detached (e.g.
+  // the junk-screenshot prune) but keeps the row to preserve any
+  // name/hidden edits — those rows must never render as ghost cards.
   const baseWhere = includeHidden
     ? inArray(schema.persons.workspaceId, workspaceIds)
     : and(
         inArray(schema.persons.workspaceId, workspaceIds),
         eq(schema.persons.hidden, false),
-        gt(schema.persons.instanceCount, 0)
+        gt(schema.persons.instanceCount, minInstances - 1)
       );
 
   const where = filterGroupId
