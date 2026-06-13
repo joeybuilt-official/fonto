@@ -32,6 +32,8 @@ import { VirtualizedTimeline, type TimelineMonth } from "../_components/virtuali
 import { useToolbarState, type Lifecycle } from "@/lib/hooks/use-toolbar-state";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ProcessingNotice } from "../_components/processing-notice";
+import { ScopeSelector } from "../shoots/_components/scope-selector";
+import { useSavedScopeDefault } from "@/lib/hooks/use-saved-scope-default";
 
 interface LifecycleOption {
   value: Lifecycle;
@@ -150,6 +152,11 @@ function LibraryContent() {
 
   // Active lens — a missing ?kind= resolves to the default "Moments" lens.
   const activeLens = toolbar.filters.kind ?? "moment";
+
+  // ADR 0008 Phase 5 — apply the saved default-scope preference on first paint
+  // when no `?scope=` is in the URL. The selector chip strip takes over once
+  // the user clicks; this hook only fires when the URL is unset.
+  useSavedScopeDefault();
 
   // Server-side filter params shared by the buckets fetch and per-month
   // windowed fetch. Its identity changes whenever a filter changes, which is
@@ -554,6 +561,7 @@ function LibraryContent() {
       />
 
       <div className="px-4 space-y-3">
+        <ScopeSelector />
         <LensSelector
           active={activeLens}
           onChange={(value) =>

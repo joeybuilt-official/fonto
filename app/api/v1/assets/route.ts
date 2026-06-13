@@ -13,7 +13,7 @@ import { isKind } from "@/lib/classify/kind";
 import { detectMime } from "@/lib/mime";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
-import { parseScopeParam, scopeCond } from "@/lib/scope";
+import { parseScopeParam, scopeCond, isShootStage } from "@/lib/scope";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -76,6 +76,25 @@ export async function GET(request: NextRequest) {
   // ADR 0008 — scope default
   const __sc = scopeCond(parseScopeParam(searchParams));
   if (__sc) where.push(__sc);
+
+  // ADR 0008 Phase 5 — shoot browser drill-in. `?shootId=` filters to one
+  // shoot (or `?shootId=null` for assets scoped SHOOT but not yet filed).
+  // `?shootStage=` further filters to a single stage bucket; "unstaged"
+  // matches NULL stage. Both are advisory — they only narrow the asset
+  // feed; the scope default still applies (the shoot browser pairs these
+  // with `?scope=SHOOT`).
+  const shootIdRaw = searchParams.get("shootId");
+  if (shootIdRaw === "null") {
+    where.push(isNull(schema.assets.shootId));
+  } else if (shootIdRaw && shootIdRaw.trim() !== "") {
+    where.push(eq(schema.assets.shootId, shootIdRaw.trim()));
+  }
+  const shootStageRaw = searchParams.get("shootStage");
+  if (shootStageRaw === "unstaged") {
+    where.push(isNull(schema.assets.shootStage));
+  } else if (isShootStage(shootStageRaw)) {
+    where.push(eq(schema.assets.shootStage, shootStageRaw));
+  }
 
   // Timeline filter chips — coarse media type. Applied SERVER-side (unlike
   // the post-fetch `mime`/`subtype` filters below) so keyset pagination and

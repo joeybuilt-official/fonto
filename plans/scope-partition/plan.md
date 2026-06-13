@@ -77,7 +77,7 @@ Partition deliberate photo shoots (pro + hobby) from personal life capture via a
 - Deps: Phases 2–4.
 - Subagents: general-purpose.
 - Exit: shadcn/Tailwind v4 UI, tests, ship gate. ⚠ prod deploy gated.
-- Status: pending
+- Status: done (commit pending). ScopeSelector wired into /app/library; settings card for the saved default-scope localStorage preference; /app/shoots overview + /app/shoots/[id] stage browser (RAW|SELECTS|DELIVERED|REJECTS|Unstaged); BulkReassignDialog with batch undo. New endpoints /api/v1/clients + /api/v1/shoots (GET/POST/PATCH/DELETE). Asset feed gained ?shootId= + ?shootStage= filters; /api/v1/assets/[id] PATCH supports shootStage. tsc clean; 28-assertion harness scripts/_scope/phase5_ui_apis.test.ts passes.
 
 ## Ship gate (every phase)
 

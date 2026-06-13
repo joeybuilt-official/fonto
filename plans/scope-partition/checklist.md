@@ -55,7 +55,15 @@ PERSONAL read-paths to inject (expert leak audit):
 - [x] Embeddings stay ON for SHOOT (C1) — no change to embed enqueue
 
 ## Phase 5 — UI
-- [ ] Scope selector + default-search toggle
-- [ ] Shoot browser (Client → Shoot → Stage; hobby grouped)
-- [ ] Bulk-reassign UI
-- [ ] Tests; ship gate; ⚠ prod deploy gated
+- [x] Scope selector chip strip (`app/(app)/app/shoots/_components/scope-selector.tsx`); wired into `/app/library`
+- [x] Saved default-scope helper + hook (`lib/hooks/use-saved-scope-default.ts`); settings card under Account
+- [x] Shoot browser overview `/app/shoots` (Client → Shoot rows w/ stage counts; hobby = client-less group)
+- [x] Shoot detail `/app/shoots/[id]` with stage tabs (RAW|SELECTS|DELIVERED|REJECTS|Unstaged) + bulk-stage on selection
+- [x] Bulk-reassign dialog (`bulk-reassign-dialog.tsx`) wraps POST /api/v1/scope/reassign + /undo; surfaces returned batchId for undo
+- [x] Read APIs: `app/api/v1/clients/route.ts` + `app/api/v1/shoots/route.ts` (GET/POST/PATCH/DELETE, soft-FK semantics, per-shoot stage counts)
+- [x] Asset feed gained `?shootId=` + `?shootStage=` (incl. `null`/`unstaged` sentinels) for the shoot browser
+- [x] `/api/v1/assets/[id]` PATCH learns `shootStage` (RAW|SELECTS|DELIVERED|REJECTS|null)
+- [x] Sidebar Shoots entry added
+- [x] tsc --noEmit clean; tsx assertions `scripts/_scope/phase5_ui_apis.test.ts` (28 ok)
+- [ ] ⚠ Apply 0041 to prod pushd/fonto (operator-gated)
+- [ ] ⚠ Push feat/scope-partition + deploy (operator-gated)
