@@ -13,6 +13,7 @@ import {
   integer,
   doublePrecision,
   real,
+  date,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { vector } from "./drizzle-vector";
@@ -266,6 +267,18 @@ export const assets = fontoSchema.table(
     // self-populates as the worker drains it; `ready` rows are backfilled
     // once). Drives the lens-based library + bucket facets.
     kind: text("kind"),
+    // ADR 0008 — scope partition. Authoritative single-valued classification
+    // that drives DEFAULT behavior (timeline / On This Day / search default to
+    // PERSONAL). 'PERSONAL' (default) = personal life capture; 'SHOOT' = any
+    // deliberate session, professional or hobby. CHECK enforced in migration
+    // 0041. Existing rows backfill to PERSONAL via the column default.
+    scope: text("scope").notNull().default("PERSONAL"),
+    // ADR 0008 — N:1 soft FK to fonto.shoots (matches correspondentId style; no
+    // DB FK constraint). NULL unless the asset belongs to a filed session.
+    shootId: uuid("shoot_id"),
+    // ADR 0008 — per-asset stage within its shoot. CHECK (RAW | SELECTS |
+    // DELIVERED | REJECTS) in migration 0041. NULL = unfiled / not a shoot asset.
+    shootStage: text("shoot_stage"),
     // Storage placement (Track B / migration 0040). `storagePolicyOverride`
     // NULL = inherit the workspace policy (the common case); a value pins this
     // one asset. `localOriginalStoredAt` NULL = the ORIGINAL has no verified
@@ -324,6 +337,18 @@ export const assets = fontoSchema.table(
     index("assets_workspace_kind_idx")
       .on(table.workspaceId, table.kind)
       .where(sql`${table.lifecycleState} = 'active'`),
+    // ADR 0008 — default timeline/feed: workspace assets of one scope ordered
+    // by capture date. Serves the PERSONAL-default feed + the SHOOT browser.
+    index("assets_workspace_scope_captured_idx").on(
+      table.workspaceId,
+      table.scope,
+      sql`${table.capturedAt} desc`
+    ),
+    // ADR 0008 — shoot membership scans (browse a session's assets). Partial on
+    // filed shoot assets keeps the BTree small.
+    index("assets_shoot_id_idx")
+      .on(table.shootId)
+      .where(sql`${table.shootId} IS NOT NULL`),
   ]
 );
 
@@ -515,6 +540,86 @@ export const projects = fontoSchema.table(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [index("projects_workspace_id_idx").on(table.workspaceId)]
+);
+
+// ADR 0008 — scope partition: SHOOT organization (Client? -> Shoot -> Stage).
+//
+// A `client` is the optional parent of a professional shoot. Hobby shoots have
+// no client. Soft FKs throughout (no enforced DB FK) — matches the schema's
+// `correspondentId`/`stackId` style; route handlers own lifecycle.
+export const clients = fontoSchema.table(
+  "clients",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    name: text("name").notNull(),
+    notes: text("notes").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    // Phase 2.3 — delta-sync cursor; see assets.seq.
+    seq: bigint("seq", { mode: "bigint" }),
+  },
+  (table) => [
+    index("clients_workspace_id_idx").on(table.workspaceId),
+    index("clients_workspace_seq_idx").on(table.workspaceId, table.seq),
+  ]
+);
+
+// A `shoot` is one deliberate session. `clientId` NULL = hobby shoot; set =
+// professional. `paid`/`kind`/`consentStatus` are shoot attributes — the
+// pro/hobby distinction lives HERE, not as a top-level scope value.
+export const shoots = fontoSchema.table(
+  "shoots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    // Soft FK to fonto.clients.id. NULL = hobby shoot (no client).
+    clientId: uuid("client_id"),
+    name: text("name").notNull(),
+    shootDate: date("shoot_date"),
+    // Free-ish session kind ("wedding" | "senior" | "children" | "hobby" | ...).
+    kind: text("kind"),
+    paid: boolean("paid").notNull().default(false),
+    // Model-release / consent status; drives sharing policy. NULL = unset.
+    consentStatus: text("consent_status"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    // Phase 2.3 — delta-sync cursor; see assets.seq.
+    seq: bigint("seq", { mode: "bigint" }),
+  },
+  (table) => [
+    index("shoots_workspace_id_idx").on(table.workspaceId),
+    index("shoots_client_id_idx").on(table.clientId),
+    index("shoots_workspace_seq_idx").on(table.workspaceId, table.seq),
+  ]
+);
+
+// Reversible ledger for bulk scope reassignment (ADR 0008 D6). One row per
+// asset whose scope actually changed in a batch. UNIQUE(asset_id, batch_id)
+// makes batch re-runs idempotent; any batch can be undone by replaying the
+// from_* values. No rename/delete is ever done — reassignment only mutates
+// the scope/shoot_id columns, which this ledger records.
+export const scopeReassignments = fontoSchema.table(
+  "scope_reassignments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    assetId: uuid("asset_id").notNull(),
+    batchId: uuid("batch_id").notNull(),
+    fromScope: text("from_scope").notNull(),
+    toScope: text("to_scope").notNull(),
+    fromShootId: uuid("from_shoot_id"),
+    toShootId: uuid("to_shoot_id"),
+    actor: text("actor").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("scope_reassignments_asset_batch_idx").on(table.assetId, table.batchId),
+    index("scope_reassignments_batch_idx").on(table.batchId),
+    index("scope_reassignments_workspace_idx").on(table.workspaceId),
+  ]
 );
 
 export const correspondents = fontoSchema.table(
