@@ -23,12 +23,25 @@ Partition deliberate photo shoots (pro + hobby) from personal life capture via a
 - Embeddings stay ON for SHOOT (C1 — pending operator confirm); exclusion is from date-memory + default timeline only.
 - Backfill: existing → PERSONAL via column default; bulk SHOOT reassignment reversible via `scope_reassignments` ledger.
 
-## Open operator gates
+## Status: COMPLETE + DEPLOYED 2026-06-13
 
-- ~~C1~~ RESOLVED (embeddings ON for SHOOT) — see mode note.
-- ~~Phase 1 → 2 approval~~ — operator authorized autonomous finish 2026-06-13.
-- ⚠ **Phase 2 prod migration apply** — manual apply of 0041 against prod `pushd/fonto` is operator-gated.
-- Push/deploy targets to confirm before first commit.
+All five phases shipped, merged to main (733e918 = merge of feat/scope-partition), pushed to origin, deployed to prod myfonto.com.
+- Migration 0041 applied to prod pushd/fonto: 28,315 existing assets backfilled PERSONAL; clients/shoots/scope_reassignments tables live.
+- fonto + fonto-worker rebuilt + recreated; fonto healthy.
+- Live verify (authed Playwright): assets feed / ?scope=SHOOT / ?scope=all / memories / /shoots / /clients all 200 (no 500 on new column); /app/shoots renders desktop + mobile.
+
+## Resolved operator gates
+
+- ~~C1~~ embeddings ON for SHOOT.
+- ~~Phase 1 → 2 approval~~ — autonomous finish authorized.
+- ~~Phase 2 prod migration apply~~ — 0041 applied 2026-06-13.
+- ~~Push/deploy~~ — merged to main + pushed origin + deployed.
+
+## Follow-ups (deferred, non-blocking)
+
+- Mobile (Flutter) timeline still shows SHOOT — sync intentionally unfiltered (delta-sync correctness); needs a scope-aware mobile client. Web fully partitioned.
+- Option B (Plexo/Pex scope suggestion) gated on a Pex capability that doesn't exist.
+- `next build` Turbopack/webpack WorkerError is pre-existing repo config (Docker prod build unaffected).
 
 ## Discoveries (execution)
 
