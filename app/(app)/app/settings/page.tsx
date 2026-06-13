@@ -20,6 +20,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui";
+import {
+  loadScopeDefault,
+  saveScopeDefault,
+  type ScopeDefault,
+} from "@/lib/hooks/use-saved-scope-default";
 
 type IntegrationStatus = "active" | "needs_reconnect" | "revoked";
 interface Integration {
@@ -65,6 +70,13 @@ export default function SettingsPage() {
   const [policyMsg, setPolicyMsg] = useState<string | null>(null);
   const [googleStatus, setGoogleStatus] = useState<IntegrationStatus | null>(null);
   const [googleBusy, setGoogleBusy] = useState(false);
+  // ADR 0008 Phase 5 — saved default-scope preference for browsable surfaces.
+  // Only takes effect when no `?scope=` is in the URL (the chip strip wins).
+  const [scopeDefault, setScopeDefaultState] = useState<ScopeDefault>("PERSONAL");
+  useEffect(() => {
+    setScopeDefaultState(loadScopeDefault());
+  }, []);
+
   // At md+ the page renders as tabs (Account / Storage / Integrations).
   // At mobile every section is always visible — `tabClass(tab)` only emits
   // `md:hidden` for non-active sections, so the mobile flat layout is
@@ -499,6 +511,42 @@ export default function SettingsPage() {
               {rescanMsg}
             </p>
           )}
+        </CardContent>
+      </Card>
+
+      <Card variant="outlined" className={tabClass("account")}>
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Library default
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-[var(--ft-space-3)]">
+          <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+            Choose what shows up by default in your library, search, and timeline.
+            Personal hides shoot assets; All shows everything. Per-page chip
+            selectors always override this default.
+          </p>
+          <div className="flex items-center justify-between gap-[var(--ft-space-3)]">
+            <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+              Default scope
+            </p>
+            <Select
+              value={scopeDefault}
+              onValueChange={(v) => {
+                const next = v as ScopeDefault;
+                setScopeDefaultState(next);
+                saveScopeDefault(next);
+              }}
+            >
+              <SelectTrigger aria-label="Default scope" className="h-9 w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="PERSONAL">Personal only</SelectItem>
+                <SelectItem value="all">All (Personal + Shoots)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </CardContent>
       </Card>
 

@@ -12,6 +12,7 @@ import { visionConfigured } from "@/lib/plexo-vision";
 import { getCachedClipTextEmbedding, nearestNeighbors } from "@/lib/vectors";
 import { deltaE76, parseHex, rgbToLab } from "@/lib/perceptual";
 import { pgArray } from "@/lib/db/sql-helpers";
+import { parseScopeParam, scopeCond } from "@/lib/scope";
 
 type Condition = {
   field: string;
@@ -137,10 +138,14 @@ export async function GET(
   if (!sc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const q = sc.query as SmartQuery;
+  // ADR 0008 — scope default. Reused below as the kNN scope arg.
+  const __scope = parseScopeParam(new URL(_req.url).searchParams);
+  const __sc = scopeCond(__scope);
   const conditions: SQL[] = [
     inArray(schema.assets.workspaceId, workspaceIds),
     isNull(schema.assets.deletedAt),
   ];
+  if (__sc) conditions.push(__sc);
 
   const userConditions = (q.conditions ?? [])
     .map(buildCondition)
@@ -192,7 +197,8 @@ export async function GET(
           wsId,
           embedded.vector,
           CLIP_TEXT_KNN_LIMIT,
-          CLIP_TEXT_KNN_THRESHOLD
+          CLIP_TEXT_KNN_THRESHOLD,
+          __scope
         );
         for (const h of hits) matched.add(h.assetId);
       }

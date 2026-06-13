@@ -79,7 +79,9 @@ export async function GET() {
     .where(
       and(
         eq(schema.assets.workspaceId, workspaceId),
-        eq(schema.assets.lifecycleState, "active")
+        eq(schema.assets.lifecycleState, "active"),
+        // ADR 0008 — scope default
+        eq(schema.assets.scope, "PERSONAL")
       )
     );
 

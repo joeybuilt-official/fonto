@@ -48,7 +48,9 @@ export async function GET() {
     .where(
       and(
         eq(schema.sharedAssets.targetWorkspaceId, targetWorkspaceId),
-        isNull(schema.sharedAssets.revokedAt)
+        isNull(schema.sharedAssets.revokedAt),
+        // ADR 0008 — SHOOT source assets never enter shares
+        eq(schema.assets.scope, "PERSONAL")
       )
     )
     .orderBy(desc(schema.sharedAssets.createdAt));

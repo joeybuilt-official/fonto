@@ -11,6 +11,7 @@
 
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import type { ScopeFilter } from "@/lib/scope";
 
 export interface NearestNeighborMatch {
   assetId: string;
@@ -62,11 +63,17 @@ export async function nearestNeighbors(
   // "queryVec.join is not a function" and the dedup job crash-loops.
   queryVec: number[] | string,
   limit: number,
-  threshold?: number
+  threshold?: number,
+  // ADR 0008 — restrict kNN to one scope. Omit / 'all' = scope-agnostic (the
+  // pre-partition behavior). Personal surfaces pass 'PERSONAL' so SHOOT assets
+  // never surface in personal search / "more like this".
+  scope?: ScopeFilter
 ): Promise<NearestNeighborMatch[]> {
   const vec = normalizeVector(queryVec);
   if (vec.length === 0) return [];
   const literal = `[${vec.join(",")}]`;
+  const scopeCond =
+    scope && scope !== "all" ? sql`AND scope = ${scope}` : sql``;
   // Drizzle has no first-class pgvector operator binding, so we drop to raw
   // SQL. Parameters are still safely bound by postgres-js.
   const rows = (await db.execute(sql`
@@ -76,6 +83,7 @@ export async function nearestNeighbors(
     FROM fonto.assets
     WHERE workspace_id = ${workspaceId}
       AND clip_vec IS NOT NULL
+      ${scopeCond}
     ORDER BY clip_vec <=> ${literal}::vector
     LIMIT ${limit}
   `)) as unknown as NearestNeighborRow[];

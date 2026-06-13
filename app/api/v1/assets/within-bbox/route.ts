@@ -28,6 +28,7 @@ import { and, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
+import { parseScopeParam, scopeCond } from "@/lib/scope";
 
 // Hard cap on rows returned in one response. Tuned with two competing
 // pressures in mind:
@@ -116,6 +117,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       and(
         eq(schema.assets.workspaceId, workspaceId),
         eq(schema.assets.lifecycleState, "active"),
+        // ADR 0008 — scope default
+        scopeCond(parseScopeParam(sp)),
         isNotNull(schema.assets.latitude),
         isNotNull(schema.assets.longitude),
         gte(schema.assets.latitude, minLat),

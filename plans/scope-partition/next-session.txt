@@ -1,0 +1,19 @@
+Fonto scope-partition (ADR 0008) — Phase 5 (UI) COMPLETE on branch feat/scope-partition. All five phases now done; the initiative is at the operator gate.
+
+Done this session (commit pending at session end):
+  - Read APIs: /api/v1/clients + /api/v1/shoots (GET/POST/PATCH/DELETE, soft-FK semantics, per-shoot stage counts).
+  - Asset feed gained ?shootId= + ?shootStage= filters (plus null/unstaged sentinels) for the shoot browser.
+  - /api/v1/assets/[id] PATCH learned shootStage (RAW|SELECTS|DELIVERED|REJECTS|null).
+  - Scope selector chip strip (PERSONAL/SHOOT/all) wired into /app/library; URL-only, PERSONAL strips the param to match the API default.
+  - Saved default-scope localStorage preference + hook + settings card under Account → "Library default".
+  - /app/shoots overview (Client cards w/ shoot rows + per-stage counts; Hobby = client-less group; inline new-client + new-shoot forms; bulk-reassign button).
+  - /app/shoots/[id] stage browser (tabs: All/RAW/SELECTS/DELIVERED/REJECTS/Unstaged; bulk-stage on selection via per-asset PATCH).
+  - BulkReassignDialog component (used in both shoot pages) — POST /api/v1/scope/reassign with selector picker (folder prefix / exact folder / source / asset IDs) + Undo last batch via /undo.
+  - Sidebar Shoots entry added.
+  - tsc --noEmit clean; harness scripts/_scope/phase5_ui_apis.test.ts (28 ok).
+
+Operator gates remaining for the whole initiative:
+  - Apply 0041_scope_partition.sql to prod pushd/fonto (Fonto deploy does not auto-migrate).
+  - Push feat/scope-partition + deploy.
+
+No further autonomous work is queued. Do NOT schedule another resume — this is the final phase.

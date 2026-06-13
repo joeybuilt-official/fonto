@@ -6,6 +6,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
+import { parseScopeParam, scopeCond } from "@/lib/scope";
 
 export async function GET(
   _request: NextRequest,
@@ -32,11 +33,13 @@ export async function GET(
 
   if (!collection.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // ADR 0008 — scope default
+  const __sc = scopeCond(parseScopeParam(new URL(_request.url).searchParams));
   const rows = await db
     .select({ asset: schema.assets })
     .from(schema.collectionAssets)
     .innerJoin(schema.assets, eq(schema.collectionAssets.assetId, schema.assets.id))
-    .where(eq(schema.collectionAssets.collectionId, collectionId));
+    .where(and(eq(schema.collectionAssets.collectionId, collectionId), __sc));
 
   return NextResponse.json({ assets: rows.map((r) => r.asset) });
 }

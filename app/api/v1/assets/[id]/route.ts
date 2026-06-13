@@ -8,6 +8,7 @@ import { eq, and, inArray, sql } from "drizzle-orm";
 import { assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { isStoragePolicy } from "@/lib/storage/policy";
+import { isShootStage } from "@/lib/scope";
 import { plexoPublishEvent } from "@/lib/plexo";
 import { nextSeq } from "@/lib/db/seq";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
@@ -72,6 +73,9 @@ export async function PATCH(
     // the override (asset follows the workspace default). C4: only r2_only +
     // mirror are selectable this initiative.
     storagePolicyOverride?: string | null;
+    // ADR 0008 — per-asset SHOOT stage (RAW|SELECTS|DELIVERED|REJECTS). `null`
+    // clears the stage (still scope='SHOOT' but no bucket).
+    shootStage?: string | null;
   };
 
   const updates: Record<string, unknown> = {};
@@ -163,6 +167,19 @@ export async function PATCH(
       );
     }
     overrideTouched = true;
+  }
+
+  if (body.shootStage !== undefined) {
+    if (body.shootStage === null) {
+      updates.shootStage = null;
+    } else if (!isShootStage(body.shootStage)) {
+      return NextResponse.json(
+        { error: "shootStage must be null or RAW|SELECTS|DELIVERED|REJECTS" },
+        { status: 400 }
+      );
+    } else {
+      updates.shootStage = body.shootStage;
+    }
   }
 
   if (Object.keys(updates).length === 0) {

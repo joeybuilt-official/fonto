@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
+  Camera,
   Compass,
   FolderOpen,
   Home,
@@ -52,6 +53,9 @@ const navItems = [
   { href: "/app/library",     label: "Library",     icon: Library },
   { href: "/app/explore",     label: "Explore",     icon: Compass },
   { href: "/app/collections", label: "Collections", icon: FolderOpen },
+  // ADR 0008 Phase 5 — shoot browser (deliberate sessions, hidden from
+  // the personal timeline by default).
+  { href: "/app/shoots",      label: "Shoots",      icon: Camera },
   { href: "/app/updates",     label: "Updates",     icon: Bell },
   { href: "/app/search",      label: "Search",      icon: Search },
   // Phase 4 (media import) — surface the Google Takeout / Amazon Photos
