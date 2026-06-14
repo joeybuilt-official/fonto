@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Camera, FolderPlus, Plus, Repeat, User as UserIcon } from "lucide-react";
+import { Camera, FolderPlus, Plus, Repeat, Trash2, User as UserIcon } from "lucide-react";
 import {
   Button,
   Card,
@@ -34,6 +34,7 @@ import {
   TextFieldLabel,
 } from "@/components/ui";
 import { BulkReassignDialog } from "./_components/bulk-reassign-dialog";
+import { DeleteShootDialog } from "./_components/delete-shoot-dialog";
 
 interface Client {
   id: string;
@@ -69,6 +70,7 @@ export default function ShootsPage() {
   const [createClientOpen, setCreateClientOpen] = useState(false);
   const [createShootOpen, setCreateShootOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [newClient, setNewClient] = useState({ name: "", notes: "" });
   const [newShoot, setNewShoot] = useState<{
     name: string;
@@ -97,6 +99,20 @@ export default function ShootsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const handleShootDeleted = useCallback(
+    (summary: { revertedAssets: number; batchId?: string }) => {
+      setNotice(
+        summary.revertedAssets > 0
+          ? `Shoot deleted. ${summary.revertedAssets} ${
+              summary.revertedAssets === 1 ? "photo" : "photos"
+            } returned to your personal library.`
+          : "Shoot deleted."
+      );
+      void load();
+    },
+    [load]
+  );
 
   const byClient = useMemo(() => {
     const map = new Map<string, Shoot[]>();
@@ -177,6 +193,15 @@ export default function ShootsPage() {
           </Button>
         </div>
       </div>
+
+      {notice && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-low)] px-3 py-2 text-[length:var(--ft-type-body-small-size)]">
+          <span>{notice}</span>
+          <Button variant="text" size="sm" onClick={() => setNotice(null)}>
+            Dismiss
+          </Button>
+        </div>
+      )}
 
       {createClientOpen && (
         <Card variant="outlined">
@@ -294,6 +319,7 @@ export default function ShootsPage() {
               key={c.id}
               client={c}
               shoots={byClient.map.get(c.id) ?? []}
+              onChanged={handleShootDeleted}
             />
           ))}
 
@@ -307,7 +333,7 @@ export default function ShootsPage() {
               <CardContent>
                 <div className="space-y-[var(--ft-space-2)]">
                   {byClient.hobby.map((s) => (
-                    <ShootRow key={s.id} shoot={s} />
+                    <ShootRow key={s.id} shoot={s} onChanged={handleShootDeleted} />
                   ))}
                 </div>
               </CardContent>
@@ -339,7 +365,15 @@ export default function ShootsPage() {
   );
 }
 
-function ClientBlock({ client, shoots }: { client: Client; shoots: Shoot[] }) {
+function ClientBlock({
+  client,
+  shoots,
+  onChanged,
+}: {
+  client: Client;
+  shoots: Shoot[];
+  onChanged?: (summary: { revertedAssets: number; batchId?: string }) => void;
+}) {
   return (
     <Card variant="outlined">
       <CardHeader>
@@ -358,7 +392,7 @@ function ClientBlock({ client, shoots }: { client: Client; shoots: Shoot[] }) {
         ) : (
           <div className="space-y-[var(--ft-space-2)]">
             {shoots.map((s) => (
-              <ShootRow key={s.id} shoot={s} />
+              <ShootRow key={s.id} shoot={s} onChanged={onChanged} />
             ))}
           </div>
         )}
@@ -367,35 +401,59 @@ function ClientBlock({ client, shoots }: { client: Client; shoots: Shoot[] }) {
   );
 }
 
-function ShootRow({ shoot }: { shoot: Shoot }) {
+function ShootRow({
+  shoot,
+  onChanged,
+}: {
+  shoot: Shoot;
+  onChanged?: (summary: { revertedAssets: number; batchId?: string }) => void;
+}) {
+  const [deleteOpen, setDeleteOpen] = useState(false);
   return (
-    <Link
-      href={`/app/shoots/${shoot.id}`}
-      className="flex items-center justify-between gap-[var(--ft-space-3)] rounded-lg border border-[var(--ft-color-outline-variant)] px-3 py-2 hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_4%,transparent)] transition-colors"
-    >
-      <div className="min-w-0 flex-1">
-        <p className="font-medium truncate">{shoot.name}</p>
-        <p className="text-xs text-[var(--ft-color-on-surface-variant)] truncate">
-          {[
-            shoot.shootDate ?? null,
-            shoot.kind ?? null,
-            shoot.paid ? "paid" : null,
-          ]
-            .filter(Boolean)
-            .join(" • ") || "—"}
-        </p>
-      </div>
-      <div className="flex items-center gap-[var(--ft-space-2)] flex-wrap justify-end">
-        {STAGE_KEYS.map((k) => (
-          <span
-            key={k}
-            className="inline-flex items-center gap-1 rounded-full bg-[var(--ft-color-surface-container-low)] px-2 py-0.5 text-xs text-[var(--ft-color-on-surface-variant)]"
-            title={STAGE_LABEL[k]}
-          >
-            {STAGE_LABEL[k]} {shoot.counts[k]}
-          </span>
-        ))}
-      </div>
-    </Link>
+    <div className="flex items-center gap-[var(--ft-space-2)] rounded-lg border border-[var(--ft-color-outline-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_4%,transparent)] transition-colors">
+      <Link
+        href={`/app/shoots/${shoot.id}`}
+        className="flex min-w-0 flex-1 items-center justify-between gap-[var(--ft-space-3)] px-3 py-2"
+      >
+        <div className="min-w-0 flex-1">
+          <p className="font-medium truncate">{shoot.name}</p>
+          <p className="text-xs text-[var(--ft-color-on-surface-variant)] truncate">
+            {[
+              shoot.shootDate ?? null,
+              shoot.kind ?? null,
+              shoot.paid ? "paid" : null,
+            ]
+              .filter(Boolean)
+              .join(" • ") || "—"}
+          </p>
+        </div>
+        <div className="flex items-center gap-[var(--ft-space-2)] flex-wrap justify-end">
+          {STAGE_KEYS.map((k) => (
+            <span
+              key={k}
+              className="inline-flex items-center gap-1 rounded-full bg-[var(--ft-color-surface-container-low)] px-2 py-0.5 text-xs text-[var(--ft-color-on-surface-variant)]"
+              title={STAGE_LABEL[k]}
+            >
+              {STAGE_LABEL[k]} {shoot.counts[k]}
+            </span>
+          ))}
+        </div>
+      </Link>
+      <Button
+        variant="text"
+        size="sm"
+        className="mr-1 text-destructive"
+        aria-label={`Delete shoot ${shoot.name}`}
+        onClick={() => setDeleteOpen(true)}
+      >
+        <Trash2 className="size-3.5" />
+      </Button>
+      <DeleteShootDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        shoot={{ id: shoot.id, name: shoot.name, total: shoot.counts.total }}
+        onDeleted={onChanged}
+      />
+    </div>
   );
 }

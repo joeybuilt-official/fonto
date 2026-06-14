@@ -84,3 +84,21 @@ export function parseScopeParam(searchParams: URLSearchParams): ScopeFilter {
 export function scopeCond(scope: ScopeFilter): SQL | undefined {
   return scope === "all" ? undefined : eq(assets.scope, scope);
 }
+
+/**
+ * Decide what an undo should restore an asset to, given the ledger's recorded
+ * from-state and the set of shoot ids that still exist. The edge this guards: a
+ * shoot DELETE records from_shoot_id = <the deleted shoot>; naively restoring
+ * that would re-orphan the asset (SHOOT-scoped, pointing at a gone shoot). When
+ * the recorded shoot no longer exists we keep the asset PERSONAL + unfiled
+ * instead of re-filing it into nothing.
+ */
+export function resolveUndoRestore(
+  fromScope: string,
+  fromShootId: string | null | undefined,
+  liveShootIds: Set<string>
+): { scope: string; shootId: string | null } {
+  const shootGone = fromShootId != null && !liveShootIds.has(fromShootId);
+  if (shootGone) return { scope: "PERSONAL", shootId: null };
+  return { scope: fromScope, shootId: fromShootId ?? null };
+}

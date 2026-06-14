@@ -11,7 +11,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Loader2, Repeat } from "lucide-react";
+import { ArrowLeft, Loader2, Repeat, Trash2 } from "lucide-react";
 import {
   Button,
   Card,
@@ -24,6 +24,7 @@ import { AssetGrid } from "../../_components/asset-grid";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 import { SHOOT_STAGES, type ShootStage } from "@/lib/scope";
 import { BulkReassignDialog } from "../_components/bulk-reassign-dialog";
+import { DeleteShootDialog } from "../_components/delete-shoot-dialog";
 
 interface Shoot {
   id: string;
@@ -71,6 +72,7 @@ function ShootDetailInner() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [reassignOpen, setReassignOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const toolbar = useToolbarState({
@@ -186,9 +188,20 @@ function ShootDetailInner() {
             )}
           </div>
         </div>
-        <Button variant="tonal" size="sm" onClick={() => setReassignOpen(true)}>
-          <Repeat className="size-3.5" /> File in / out
-        </Button>
+        <div className="flex items-center gap-[var(--ft-space-2)]">
+          <Button variant="tonal" size="sm" onClick={() => setReassignOpen(true)}>
+            <Repeat className="size-3.5" /> File in / out
+          </Button>
+          <Button
+            variant="text"
+            size="sm"
+            className="text-destructive"
+            onClick={() => setDeleteOpen(true)}
+            disabled={!shoot}
+          >
+            <Trash2 className="size-3.5" /> Delete shoot
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-[var(--ft-space-2)]">
@@ -270,6 +283,15 @@ function ShootDetailInner() {
         defaultTo="SHOOT"
         onApplied={() => setRefreshKey((k) => k + 1)}
       />
+
+      {shoot && (
+        <DeleteShootDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          shoot={{ id: shoot.id, name: shoot.name, total: shoot.counts.total }}
+          onDeleted={() => router.push("/app/shoots")}
+        />
+      )}
     </div>
   );
 }
