@@ -286,6 +286,13 @@ export const assets = fontoSchema.table(
     // the mirror/backfill workers). Derivatives are never localized (C2).
     storagePolicyOverride: text("storage_policy_override"),
     localOriginalStoredAt: timestamp("local_original_stored_at", { withTimezone: true }),
+    // Task #32 (rotate / crop transform). When a transform endpoint persists
+    // the result as a NEW asset (every crop, optionally a rotate), this points
+    // at the asset the user transformed from. NULL = an original ingest, never
+    // derived. Soft FK with ON DELETE SET NULL in SQL (migration 0042) so a
+    // hard-delete of the original leaves the derivative as a standalone row
+    // rather than cascade-deleting user-edited copies.
+    derivedFromAssetId: uuid("derived_from_asset_id"),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
@@ -349,6 +356,12 @@ export const assets = fontoSchema.table(
     index("assets_shoot_id_idx")
       .on(table.shootId)
       .where(sql`${table.shootId} IS NOT NULL`),
+    // Task #32 — reverse lookup "find children of asset X" (every crop /
+    // rotate-as-new derived from this asset). Partial on derived rows only so
+    // the BTree stays small (the vast majority of assets are originals).
+    index("assets_derived_from_idx")
+      .on(table.derivedFromAssetId)
+      .where(sql`${table.derivedFromAssetId} IS NOT NULL`),
   ]
 );
 
