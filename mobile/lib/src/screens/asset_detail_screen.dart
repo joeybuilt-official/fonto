@@ -7,9 +7,13 @@
 // lazily as the user scrolls — keeps the initial route push cheap.
 
 import "dart:math" show min, max;
+import "dart:typed_data" show Uint8List;
+import "dart:ui" as ui show instantiateImageCodec;
 
 import "package:cached_network_image/cached_network_image.dart";
+import "package:crop_your_image/crop_your_image.dart";
 import "package:flutter/material.dart";
+import "package:http/http.dart" as http;
 import "package:photo_view/photo_view.dart";
 import "package:photo_view/photo_view_gallery.dart";
 import "package:share_plus/share_plus.dart";
@@ -213,6 +217,140 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     }
   }
 
+  /// Task #34 — rotate the current asset in place by [degrees] (CW positive).
+  /// Server reuses the same id, so we just bust the image cache + refetch the
+  /// preview URL so the new pixels show. Faces + thumbnails regenerate
+  /// asynchronously on the worker.
+  Future<void> _rotate(int degrees) async {
+    if (_acting) return;
+    if (!_cur.mimeType.startsWith("image/")) return;
+    setState(() => _acting = true);
+    final id = _cur.id;
+    try {
+      await widget.client.transformRotate(id, degrees);
+      if (!mounted) return;
+      // Refresh preview URL + drop the cached image so the next paint pulls
+      // the rotated pixels. The face overlay is invalidated for the same id.
+      await CachedNetworkImage.evictFromCache(_previews[id] ?? "");
+      setState(() {
+        _previews.remove(id);
+        _previewFailed.remove(id);
+        _facesByAsset.remove(id);
+      });
+      await _ensurePreviews(_index);
+      await _ensureFaces(_index);
+      // Pull the freshly-rotated asset row so width/height swap is reflected
+      // in the face overlay's coordinate mapping.
+      try {
+        final fresh = await widget.client.getAsset(id);
+        if (!mounted) return;
+        setState(() => _assets[_index] = fresh);
+      } catch (_) {
+        /* refresh is best-effort */
+      }
+      if (!mounted) return;
+      _snack("Rotated");
+    } on ApiException catch (e) {
+      _snack("Rotate failed: ${e.status} ${e.message}");
+    } finally {
+      if (mounted) setState(() => _acting = false);
+    }
+  }
+
+  /// Task #34 — open the in-app cropper on the original bytes, POST the
+  /// resulting normalised rect to /transform, and navigate to the new asset.
+  /// Crops are always destructive on the server (`asNew=true`), so we mirror
+  /// the open-by-id navigation pattern used elsewhere.
+  Future<void> _crop() async {
+    if (_acting) return;
+    final a = _cur;
+    if (!a.mimeType.startsWith("image/")) return;
+    setState(() => _acting = true);
+    try {
+      // 1. Resolve original signed URL + pull bytes into memory. The cropper
+      //    needs the source bytes; we don't persist them to disk.
+      final urls = await widget.client.assetUrls([a.id], variant: "original");
+      final url = urls[a.id];
+      if (url == null) {
+        throw ApiException(404, "Original URL unavailable");
+      }
+      final res = await http.get(Uri.parse(url));
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw ApiException(res.statusCode, "Couldn't download original");
+      }
+      if (!mounted) return;
+      // 2. Push the cropper sheet. Returns the source-pixel rect the user
+      //    picked, or null on cancel.
+      final rect = await Navigator.of(context).push<Rect?>(
+        MaterialPageRoute<Rect?>(
+          fullscreenDialog: true,
+          builder: (_) => _CropScreen(bytes: res.bodyBytes),
+        ),
+      );
+      if (rect == null || !mounted) return;
+
+      // 3. Convert pixel rect → normalised (0..1). Source dims come from the
+      //    server-side metadata when available, otherwise we decode the bytes
+      //    we already have in hand.
+      Size? src;
+      if (a.widthPx != null && a.heightPx != null) {
+        src = Size(a.widthPx!.toDouble(), a.heightPx!.toDouble());
+      } else {
+        src = await _decodeImageSize(res.bodyBytes);
+      }
+      if (src == null) {
+        throw ApiException(500, "Couldn't measure source");
+      }
+      final nx = (rect.left / src.width).clamp(0.0, 1.0);
+      final ny = (rect.top / src.height).clamp(0.0, 1.0);
+      final nw = (rect.width / src.width).clamp(0.0, 1.0 - nx);
+      final nh = (rect.height / src.height).clamp(0.0, 1.0 - ny);
+      if (nw <= 0 || nh <= 0) {
+        throw ApiException(400, "Crop rect is empty");
+      }
+      final newId = await widget.client.transformCrop(a.id, nx, ny, nw, nh);
+
+      if (!mounted) return;
+      _snack("Saved cropped copy");
+      // 4. Mirror the open-by-id navigation used elsewhere in the app.
+      final fresh = await widget.client.getAsset(newId);
+      if (!mounted) return;
+      await Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => AssetDetailScreen(
+            client: widget.client,
+            assets: [fresh],
+            initialIndex: 0,
+            onPersonUpdated: widget.onPersonUpdated,
+          ),
+        ),
+      );
+    } on ApiException catch (e) {
+      _snack("Crop failed: ${e.status} ${e.message}");
+    } catch (e) {
+      _snack("Crop failed: $e");
+    } finally {
+      if (mounted) setState(() => _acting = false);
+    }
+  }
+
+  /// Decode just enough of [bytes] to recover image dimensions, using the
+  /// Flutter image pipeline (no extra deps).
+  Future<Size?> _decodeImageSize(List<int> bytes) async {
+    try {
+      final codec = await ui.instantiateImageCodec(
+        bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
+      );
+      final frame = await codec.getNextFrame();
+      final img = frame.image;
+      final size = Size(img.width.toDouble(), img.height.toDouble());
+      img.dispose();
+      return size;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _share() async {
     if (_acting) return;
     setState(() => _acting = true);
@@ -338,6 +476,61 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
               tooltip: "Tag people",
               icon: const Icon(Icons.face_outlined),
               onPressed: () => _showFaceTagger(),
+            ),
+          // Task #34 — rotate + crop live behind an Edit overflow so the
+          // toolbar doesn't sprout four more icons. Image-only.
+          if (_cur.mimeType.startsWith("image/"))
+            PopupMenuButton<String>(
+              tooltip: "Edit",
+              icon: const Icon(Icons.tune),
+              enabled: !_acting,
+              onSelected: (v) {
+                switch (v) {
+                  case "rotate_ccw":
+                    _rotate(-90);
+                    break;
+                  case "rotate_cw":
+                    _rotate(90);
+                    break;
+                  case "rotate_180":
+                    _rotate(180);
+                    break;
+                  case "crop":
+                    _crop();
+                    break;
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: "rotate_ccw",
+                  child: ListTile(
+                    leading: Icon(Icons.rotate_left),
+                    title: Text("Rotate left"),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: "rotate_cw",
+                  child: ListTile(
+                    leading: Icon(Icons.rotate_right),
+                    title: Text("Rotate right"),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: "rotate_180",
+                  child: ListTile(
+                    leading: Icon(Icons.flip_camera_android),
+                    title: Text("Rotate 180°"),
+                  ),
+                ),
+                PopupMenuDivider(),
+                PopupMenuItem(
+                  value: "crop",
+                  child: ListTile(
+                    leading: Icon(Icons.crop),
+                    title: Text("Crop…"),
+                  ),
+                ),
+              ],
             ),
           IconButton(
             tooltip: "Info",
@@ -1464,6 +1657,114 @@ class _FaceTaggingSheetState extends State<_FaceTaggingSheet> {
                 ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Task #34 — in-app cropper. crop_your_image renders the source bytes + a
+// draggable rect overlay; we expose the image-space rect via the controller
+// and pop it back to the caller, which converts to normalised coords + POSTs
+// to /transform.
+// ---------------------------------------------------------------------------
+
+class _CropScreen extends StatefulWidget {
+  const _CropScreen({required this.bytes});
+
+  final Uint8List bytes;
+
+  @override
+  State<_CropScreen> createState() => _CropScreenState();
+}
+
+class _CropScreenState extends State<_CropScreen> {
+  final CropController _controller = CropController();
+  // Image-space rect of the current crop area, tracked via `onMoved`. The
+  // CropController doesn't expose a getter for this, so we cache the latest
+  // value here and pop it on Save. Seeded with the full-image rect on first
+  // build so the user can hit Save immediately if they want everything (the
+  // server will be a no-op crop in that case).
+  Rect? _imageRect;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _decodeImageSize();
+  }
+
+  Future<void> _decodeImageSize() async {
+    try {
+      final codec = await ui.instantiateImageCodec(widget.bytes);
+      final frame = await codec.getNextFrame();
+      final img = frame.image;
+      if (!mounted) {
+        img.dispose();
+        return;
+      }
+      final size = Size(img.width.toDouble(), img.height.toDouble());
+      img.dispose();
+      setState(() {
+        // Seed the rect so Save is enabled even before the user touches the
+        // overlay — defaults to the full image (~no-op crop).
+        _imageRect = Rect.fromLTWH(0, 0, size.width, size.height);
+      });
+    } catch (_) {
+      /* Cropper still renders, but Save stays disabled until the user moves
+         the handles + onMoved fires. */
+    }
+  }
+
+  void _onConfirm() {
+    if (_busy) return;
+    setState(() => _busy = true);
+    Navigator.of(context).pop<Rect?>(_imageRect);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: const Text("Crop"),
+        actions: [
+          TextButton(
+            onPressed: (_busy || _imageRect == null) ? null : _onConfirm,
+            child: Text(
+              "Save",
+              style: TextStyle(
+                color: (_busy || _imageRect == null)
+                    ? Colors.white38
+                    : cs.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Crop(
+          controller: _controller,
+          image: widget.bytes,
+          baseColor: Colors.black,
+          maskColor: Colors.black54,
+          // No fixed aspect — operator picks freely. cornerDotBuilder gives a
+          // visible drag affordance on a dark photo background.
+          cornerDotBuilder: (size, edge) => DotControl(color: cs.primary),
+          onMoved: (_, imageRect) {
+            // Stash the source-pixel rect; the controller doesn't expose a
+            // getter, so this is the only read path.
+            _imageRect = imageRect;
+          },
+          onCropped: (_) {
+            // We don't use the cropped bytes — the server re-extracts from the
+            // original at the rect we send. crop() is never called.
+          },
         ),
       ),
     );

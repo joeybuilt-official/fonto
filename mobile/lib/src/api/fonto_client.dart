@@ -496,6 +496,37 @@ class FontoClient {
     await _postJson("/api/v1/assets/$id/reprocess", const {});
   }
 
+  /// Task #32 — rotate an image in-place (default) or as a new asset.
+  /// Mirrors POST /api/v1/assets/:id/transform { rotate, asNew }. Returns
+  /// the resulting asset id (same id for in-place, new id when [asNew]).
+  Future<String> transformRotate(
+    String assetId,
+    int degrees, {
+    bool asNew = false,
+  }) async {
+    final j = await _postJson("/api/v1/assets/$assetId/transform", {
+      "rotate": degrees,
+      "asNew": asNew,
+    });
+    return j["assetId"] as String;
+  }
+
+  /// Task #32 — crop an image to a normalised (0..1) rectangle. Always
+  /// produces a new asset; returns the new asset id. Mirrors POST
+  /// /api/v1/assets/:id/transform { crop }.
+  Future<String> transformCrop(
+    String assetId,
+    double x,
+    double y,
+    double w,
+    double h,
+  ) async {
+    final j = await _postJson("/api/v1/assets/$assetId/transform", {
+      "crop": {"x": x, "y": y, "w": w, "h": h},
+    });
+    return j["assetId"] as String;
+  }
+
   /// Bulk re-scan the workspace. `scope` ∈ all|images|failed. Returns the
   /// number of assets queued.
   Future<int> reprocessWorkspace({String scope = "all"}) async {

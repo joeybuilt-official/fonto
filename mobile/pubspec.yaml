@@ -38,6 +38,11 @@ dependencies:
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
   file_picker: ^8.1.2
+  # Task #34 — pure-Flutter cropper for the asset detail screen. Picked over
+  # image_cropper because it returns the source pixel rect (the latter only
+  # hands back the cropped bytes, which makes a "send rect to /transform"
+  # API impossible without re-deriving the rect).
+  crop_your_image: ^2.0.0
 
 dev_dependencies:
   flutter_test:
