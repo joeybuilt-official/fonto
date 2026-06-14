@@ -49,6 +49,10 @@ export interface Asset {
   // Phase 6.12 — extracted text layer (plain text / markdown / source file
   // contents). Populated on the per-asset detail endpoint, not the grid list.
   ocrText?: string | null;
+  // Task #32 — set on assets produced by /transform (crop / rotate-as-new);
+  // points back at the source asset so the lightbox can surface a "Derived
+  // from …" badge that navigates to the origin.
+  derivedFromAssetId?: string | null;
   // Phase 7b — populated when the asset is being rendered through a
   // cross-workspace share (i.e. in the recipient's grid). Absent for
   // assets the caller owns directly. Used to render the "shared from

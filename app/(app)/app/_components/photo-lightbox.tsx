@@ -3,18 +3,44 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
   Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star, Layers, MessageCircle,
-  ScanSearch, EyeOff
+  ScanSearch, EyeOff, RotateCcw, RotateCw, FlipVertical, Crop as CropIcon, CornerUpLeft
 } from "lucide-react";
+import ReactCrop, {
+  centerCrop,
+  makeAspectCrop,
+  type Crop as ReactCropValue,
+  type PixelCrop,
+} from "react-image-crop";
+import "react-image-crop/dist/ReactCrop.css";
 import type { Asset } from "./photo-card";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ConfirmButton } from "@/components/confirm-button";
 import { ShareDialog } from "./share-dialog";
 import { CommentsPanel } from "./comments-panel";
 import { AssetWorkspaceShare } from "./asset-workspace-share";
 import { VideoPlayer } from "./video-player";
 import { useSession } from "@/lib/auth/client";
+
+// Task #33 — tiny in-component toast queue. The repo doesn't ship a global
+// toast surface (uploads-section.tsx rolls its own), so we follow the same
+// pattern locally. Auto-dismisses after 3s; failure variants live longer so
+// the user can read the error before they leave.
+interface LightboxToast {
+  id: number;
+  kind: "success" | "error";
+  message: string;
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -503,6 +529,33 @@ export function PhotoLightbox({
   // those actions are stack-level by design. Reset on prop asset change.
   const [viewMemberId, setViewMemberId] = useState<string | null>(null);
 
+  // Task #33 — rotate / crop UX.
+  //   - cacheBust forces the <img> to refetch after an in-place rotate
+  //     (the URL endpoint returns the same presigned key, so we need a
+  //     query param the browser doesn't already have in its cache).
+  //   - transformBusy disables the rotate cluster + crop trigger while a
+  //     request is in flight to prevent stacking rotations.
+  //   - toasts: see LightboxToast above; rendered bottom-right.
+  //   - cropOpen / cropValue / cropPixel back the crop modal.
+  const router = useRouter();
+  const [cacheBust, setCacheBust] = useState(0);
+  const [transformBusy, setTransformBusy] = useState(false);
+  const [toasts, setToasts] = useState<LightboxToast[]>([]);
+  const [cropOpen, setCropOpen] = useState(false);
+  const [cropValue, setCropValue] = useState<ReactCropValue | undefined>(undefined);
+  const [cropPixel, setCropPixel] = useState<PixelCrop | undefined>(undefined);
+  const [cropSaving, setCropSaving] = useState(false);
+  const cropImgRef = useRef<HTMLImageElement>(null);
+
+  const pushToast = useCallback((kind: "success" | "error", message: string) => {
+    const id = Date.now() + Math.random();
+    setToasts((prev) => [...prev, { id, kind, message }]);
+    const ttl = kind === "error" ? 5000 : 3000;
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, ttl);
+  }, []);
+
   // Phase 2 (faces/UX) — name-tag overlay. Mirrors the Flutter `_showNames`
   // pattern: fetch the asset's faces, render name chips positioned over each
   // bbox, and tap the image to toggle the chips on/off. Faces are normalized
@@ -521,6 +574,11 @@ export function PhotoLightbox({
     setStackMembers(null);
     setStackOpen(false);
     setViewMemberId(null);
+    // Task #33 — drop any pending cache-bust + crop state on nav.
+    setCacheBust(0);
+    setCropOpen(false);
+    setCropValue(undefined);
+    setCropPixel(undefined);
   }, [asset.id, asset.isFavorite, asset.rating]);
 
   // Phase 5.5 — fetch the members of `asset.stackId` once, on demand.
@@ -851,6 +909,111 @@ export function PhotoLightbox({
     setShareCopied(false);
   }
 
+  // Task #33 — rotate in-place. POSTs to /transform with `asNew:false`,
+  // bumps cacheBust so the displayed <img> refetches, toasts on result.
+  const handleRotate = useCallback(
+    async (deg: 90 | 180 | 270 | -90) => {
+      if (transformBusy) return;
+      setTransformBusy(true);
+      try {
+        const res = await fetch(`/api/v1/assets/${asset.id}/transform`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rotate: deg }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Re-fetch the preview URL — the same endpoint may return a fresh
+        // presigned URL (and the worker is about to regenerate the
+        // preview key), so we both reset the URL and bump the cache-bust.
+        const fresh = await fetch(
+          `/api/v1/assets/${asset.id}/url?variant=preview`
+        );
+        if (fresh.ok) {
+          const data = (await fresh.json()) as { url?: string };
+          setUrl(data.url ?? null);
+        }
+        setCacheBust((n) => n + 1);
+        pushToast("success", "Rotated");
+      } catch {
+        pushToast("error", "Rotate failed");
+      } finally {
+        setTransformBusy(false);
+      }
+    },
+    [asset.id, transformBusy, pushToast]
+  );
+
+  // Task #33 — open the crop modal. Seeds a centered 80% crop so the user
+  // has something to drag. The actual selection is computed in onChange /
+  // onComplete from react-image-crop.
+  function openCropModal() {
+    if (transformBusy) return;
+    setCropValue(undefined);
+    setCropPixel(undefined);
+    setCropOpen(true);
+  }
+
+  // Compute the initial crop once the modal's <img> has loaded — react-
+  // image-crop needs the rendered dimensions to position handles.
+  function onCropImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
+    const { width, height } = e.currentTarget;
+    const initial = centerCrop(
+      makeAspectCrop({ unit: "%", width: 80 }, width / height, width, height),
+      width,
+      height
+    );
+    setCropValue(initial);
+    setCropPixel({
+      unit: "px",
+      x: (initial.x / 100) * width,
+      y: (initial.y / 100) * height,
+      width: (initial.width / 100) * width,
+      height: (initial.height / 100) * height,
+    });
+  }
+
+  // Task #33 — save the cropped copy. Converts the pixel selection to
+  // normalised 0..1 against the displayed image, POSTs to /transform, and
+  // navigates to the NEW asset on success.
+  async function handleCropSave() {
+    const img = cropImgRef.current;
+    if (!img || !cropPixel || cropPixel.width < 1 || cropPixel.height < 1) {
+      pushToast("error", "Drag a region to crop first");
+      return;
+    }
+    setCropSaving(true);
+    try {
+      const dispW = img.width;
+      const dispH = img.height;
+      const x = Math.max(0, Math.min(1, cropPixel.x / dispW));
+      const y = Math.max(0, Math.min(1, cropPixel.y / dispH));
+      const w = Math.max(0, Math.min(1 - x, cropPixel.width / dispW));
+      const h = Math.max(0, Math.min(1 - y, cropPixel.height / dispH));
+      if (w <= 0 || h <= 0) {
+        pushToast("error", "Crop region is empty");
+        return;
+      }
+      const res = await fetch(`/api/v1/assets/${asset.id}/transform`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ crop: { x, y, w, h } }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { assetId?: string };
+      if (!data.assetId) throw new Error("Missing assetId in response");
+      pushToast("success", "Saved cropped copy");
+      setCropOpen(false);
+      // Library is the canonical deep-link surface — `?lb=<id>` already
+      // mounts the lightbox for a specific asset id (see the directAsset
+      // fetch in app/library/page.tsx), and clears the current grid index.
+      router.push(`/app/library?lb=${data.assetId}`);
+    } catch {
+      pushToast("error", "Crop failed");
+    } finally {
+      setCropSaving(false);
+    }
+  }
+
   // Phase 2 (faces/UX, #9) — ignore ("not a face") a single detected face.
   // PATCH the face hidden:true, then drop its chip optimistically.
   async function handleIgnoreFace(faceId: string) {
@@ -990,6 +1153,68 @@ export function PhotoLightbox({
           </p>
         </div>
 
+        {/* Task #33 — rotate + crop cluster. Images only; hidden for video /
+            text / cross-workspace shares (the recipient doesn't own pixels). */}
+        {asset.mimeType.startsWith("image/") && !asset.sharedFrom && (
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button
+              onClick={() => void handleRotate(-90)}
+              disabled={transformBusy}
+              className="rounded-full p-1.5 text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+              title="Rotate 90° counter-clockwise"
+              aria-label="Rotate 90 degrees counter-clockwise"
+            >
+              <RotateCcw className="h-5 w-5" />
+            </button>
+            <button
+              onClick={() => void handleRotate(90)}
+              disabled={transformBusy}
+              className="rounded-full p-1.5 text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+              title="Rotate 90° clockwise"
+              aria-label="Rotate 90 degrees clockwise"
+            >
+              <RotateCw className="h-5 w-5" />
+            </button>
+            <button
+              onClick={() => void handleRotate(180)}
+              disabled={transformBusy}
+              className="rounded-full p-1.5 text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+              title="Rotate 180°"
+              aria-label="Rotate 180 degrees"
+            >
+              <FlipVertical className="h-5 w-5" />
+            </button>
+            <button
+              onClick={openCropModal}
+              disabled={transformBusy}
+              className="rounded-full p-1.5 text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+              title="Crop & save copy"
+              aria-label="Crop and save a copy"
+            >
+              <CropIcon className="h-5 w-5" />
+            </button>
+            {transformBusy && (
+              <Loader2 className="h-4 w-4 animate-spin text-white/60" />
+            )}
+          </div>
+        )}
+
+        {/* Task #33 — "Derived from" badge when this asset was produced by
+            /transform. Click jumps to the source asset via the library's
+            ?lb=<id> deep-link. */}
+        {asset.derivedFromAssetId && (
+          <button
+            onClick={() =>
+              router.push(`/app/library?lb=${asset.derivedFromAssetId}`)
+            }
+            className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[11px] text-white/80 hover:bg-white/20 hover:text-white transition-colors shrink-0"
+            title="Open the original this copy was derived from"
+          >
+            <CornerUpLeft className="h-3 w-3" />
+            Derived
+          </button>
+        )}
+
         {/* Phase 7b — share to another workspace. Hidden when the asset
             is being rendered through someone else's share (recipients
             can't re-share onward). */}
@@ -1068,7 +1293,11 @@ export function PhotoLightbox({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 ref={imgRef}
-                src={url}
+                // Task #33 — `cacheBust` is bumped after an in-place rotate
+                // so the browser refetches even when the presigned URL is
+                // byte-identical. Append `?v=N` (or `&v=N` if the URL
+                // already carries a query string).
+                src={cacheBust > 0 ? `${url}${url.includes("?") ? "&" : "?"}v=${cacheBust}` : url}
                 alt={asset.description ?? asset.filename}
                 className={`max-h-full max-w-full object-contain ${
                   faces.length > 0 ? "cursor-pointer" : ""
@@ -1214,6 +1443,87 @@ export function PhotoLightbox({
         targetType="asset"
         targetId={asset.id}
       />
+
+      {/* Task #33 — crop modal. Loads the same preview URL we display in the
+          main area, draws react-image-crop on top, posts a normalised 0..1
+          rect to /transform on save. */}
+      <Dialog
+        open={cropOpen}
+        onOpenChange={(open) => {
+          if (!cropSaving) setCropOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Crop & save copy</DialogTitle>
+          </DialogHeader>
+          <div className="flex max-h-[70vh] items-center justify-center overflow-auto rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container)] p-2">
+            {url ? (
+              <ReactCrop
+                crop={cropValue}
+                onChange={(pixel, percent) => {
+                  setCropValue(percent);
+                  setCropPixel(pixel);
+                }}
+                keepSelection
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  ref={cropImgRef}
+                  src={url}
+                  alt={asset.filename}
+                  onLoad={onCropImageLoad}
+                  className="max-h-[60vh] max-w-full object-contain"
+                />
+              </ReactCrop>
+            ) : (
+              <Loader2 className="h-8 w-8 animate-spin text-[var(--ft-color-on-surface-variant)]" />
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="text"
+              onClick={() => setCropOpen(false)}
+              disabled={cropSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="tonal"
+              onClick={() => void handleCropSave()}
+              disabled={cropSaving || !cropPixel || cropPixel.width < 1}
+            >
+              {cropSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                "Save copy"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Task #33 — bottom-right toast stack. */}
+      {toasts.length > 0 && (
+        <div className="pointer-events-none fixed bottom-6 right-6 z-[60] flex flex-col gap-2">
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              className={`pointer-events-auto rounded-[var(--ft-shape-medium)] px-4 py-2 text-sm shadow-[var(--ft-elev-2)] ${
+                t.kind === "success"
+                  ? "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+                  : "bg-[var(--ft-color-error-container)] text-[var(--ft-color-on-error-container)]"
+              }`}
+              role={t.kind === "error" ? "alert" : "status"}
+            >
+              {t.message}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
