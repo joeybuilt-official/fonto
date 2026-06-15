@@ -44,6 +44,8 @@ import {
   StorageSyncJobSchema,
   ExtractEvidenceJobSchema,
   BackfillEvidenceJobSchema,
+  InferDateJobSchema,
+  BackfillInferenceJobSchema,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
@@ -54,6 +56,7 @@ import {
   type ImportJob,
   type StorageSyncJob,
   type ExtractEvidenceJob,
+  type InferDateJob,
 } from "@/lib/queue/jobs";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
@@ -78,6 +81,8 @@ import { runImport } from "@/lib/import/runImport";
 import { syncAssetStorage } from "@/lib/storage/sync";
 import { extractAssetEvidence } from "@/lib/evidence/extractAssetEvidence";
 import { backfillEvidence, backfillVariantCandidates } from "@/lib/evidence/backfill";
+import { inferAssetDate } from "@/lib/fusion/inferAssetDate";
+import { backfillInference } from "@/lib/fusion/backfillInference";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -287,6 +292,27 @@ const VARIANT_CANDIDATES_ENABLED = ["1", "true", "yes"].includes(
 const VARIANT_CANDIDATES_INTERVAL_MS = Math.max(
   parseInt(process.env.BACKFILL_VARIANT_CANDIDATES_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
   1000
+);
+
+// Intelligence Core (Phase 4) — infer-date worker concurrency. Pure CPU + 2
+// small reads + 1 upsert per asset, so it can run several in flight.
+const INFER_DATE_CONCURRENCY = Math.max(
+  parseInt(process.env.INFER_DATE_CONCURRENCY ?? "4", 10),
+  1
+);
+// Intelligence Core (Phase 4) — inference backfill sweep. DEFAULT-OFF (env-gated),
+// mirrors the Phase 3 evidence sweep: enqueue infer-date for assets that have
+// evidence but no inference proposal yet.
+const BACKFILL_INFERENCE_ENABLED = ["1", "true", "yes"].includes(
+  (process.env.BACKFILL_INFERENCE ?? "").trim().toLowerCase()
+);
+const BACKFILL_INFERENCE_INTERVAL_MS = Math.max(
+  parseInt(process.env.BACKFILL_INFERENCE_INTERVAL_MS ?? `${5 * 60 * 1000}`, 10),
+  1000
+);
+const BACKFILL_INFERENCE_BATCH_SIZE = Math.max(
+  parseInt(process.env.BACKFILL_INFERENCE_BATCH_SIZE ?? "200", 10),
+  1
 );
 
 // Phase B5 (storage placement) — mirror backfill + reconcile sweeps. Both are
@@ -1138,6 +1164,48 @@ function startExtractEvidenceWorker(): Worker<ExtractEvidenceJob> {
 }
 
 /**
+ * Intelligence Core (Phase 4) — per-asset date-fusion worker. Reads the asset's
+ * evidence rows + stored captured_at, runs the pure fusion engine, and upserts
+ * one `fonto.image_date_inference` proposal. PROPOSE-DON'T-OVERWRITE: never
+ * touches captured_at and never clobbers a confirmed/overridden human decision.
+ */
+function startInferDateWorker(): Worker<InferDateJob> {
+  const w = new Worker<InferDateJob>(
+    QueueNames.InferDate,
+    async (job: Job<InferDateJob>) => {
+      const log = logger.child({
+        queue: QueueNames.InferDate,
+        jobId: job.id,
+        assetId: job.data?.assetId,
+        attempt: job.attemptsMade + 1,
+      });
+      const parsed = InferDateJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid infer-date payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      return await inferAssetDate(parsed.data.assetId);
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: INFER_DATE_CONCURRENCY,
+    }
+  );
+
+  w.on("failed", (job, err) =>
+    logger.error(
+      { queue: QueueNames.InferDate, jobId: job?.id, attempt: job?.attemptsMade, err: err.message },
+      "infer-date failed"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.InferDate, err: err.message }, "infer-date worker error")
+  );
+
+  return w;
+}
+
+/**
  * Phase 8b — HLS ladder transcode + sprite worker.
  *
  * One job per video. Steps:
@@ -1466,6 +1534,18 @@ function startMaintenanceWorker(): Worker {
         log.info(result, "variant-candidate backfill tick complete");
         return result;
       }
+      if (job.name === JobNames.BackfillInference) {
+        // Intelligence Core (Phase 4) — enqueue infer-date for one bounded batch
+        // of assets that have evidence but no inference proposal yet. Resumable.
+        const parsed = BackfillInferenceJobSchema.safeParse(job.data ?? {});
+        const batchSize = parsed.success
+          ? parsed.data.batchSize ?? BACKFILL_INFERENCE_BATCH_SIZE
+          : BACKFILL_INFERENCE_BATCH_SIZE;
+        log.info({ batchSize }, "inference backfill tick start");
+        const result = await backfillInference(batchSize);
+        log.info(result, "inference backfill tick complete");
+        return result;
+      }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");
       return null;
     },
@@ -1693,6 +1773,35 @@ async function ensureVariantCandidatesSchedule(): Promise<void> {
 }
 
 /**
+ * Intelligence Core (Phase 4) — register the recurring inference backfill on the
+ * maintenance queue. DEFAULT-OFF (BACKFILL_INFERENCE); same remove-on-disable
+ * pattern as the Phase 3 sweeps.
+ */
+async function ensureBackfillInferenceSchedule(): Promise<void> {
+  if (!BACKFILL_INFERENCE_ENABLED) {
+    await maintenanceQueue().removeJobScheduler(JobNames.BackfillInference);
+    logger.info({ jobName: JobNames.BackfillInference }, "inference backfill disabled (schedule removed)");
+    return;
+  }
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.BackfillInference,
+    { every: BACKFILL_INFERENCE_INTERVAL_MS },
+    {
+      name: JobNames.BackfillInference,
+      data: { batchSize: BACKFILL_INFERENCE_BATCH_SIZE } as unknown as Record<string, never>,
+    }
+  );
+  logger.info(
+    {
+      intervalMs: BACKFILL_INFERENCE_INTERVAL_MS,
+      batchSize: BACKFILL_INFERENCE_BATCH_SIZE,
+      jobName: JobNames.BackfillInference,
+    },
+    "inference backfill schedule registered"
+  );
+}
+
+/**
  * Phase B5 — register the throttled mirror-backfill sweep. DEFAULT-OFF: only
  * registered when STORAGE_BACKFILL is truthy AND LOCAL_STORAGE_ROOT is set;
  * otherwise actively remove any scheduler a prior boot left so flipping the flag
@@ -1833,6 +1942,8 @@ async function main(): Promise<void> {
   workers.push(startImportWorker());
   // Intelligence Core (Phase 3) — per-asset date-evidence extraction.
   workers.push(startExtractEvidenceWorker());
+  // Intelligence Core (Phase 4) — per-asset date fusion.
+  workers.push(startInferDateWorker());
   try {
     await ensureReaperSchedule();
   } catch (err) {
@@ -1911,6 +2022,14 @@ async function main(): Promise<void> {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
       "failed to register variant-candidate backfill schedule — backfill off until next boot"
+    );
+  }
+  try {
+    await ensureBackfillInferenceSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register inference backfill schedule — backfill off until next boot"
     );
   }
 

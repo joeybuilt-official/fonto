@@ -201,6 +201,21 @@ export type BackfillEvidenceJob = z.infer<typeof BackfillEvidenceJobSchema>;
 export const BackfillVariantCandidatesJobSchema = z.object({}).strict();
 export type BackfillVariantCandidatesJob = z.infer<typeof BackfillVariantCandidatesJobSchema>;
 
+// Intelligence Core — Phase 4 (infer-date). Tiny payload: the worker reads the
+// asset's evidence rows + stored captured_at and writes one
+// `fonto.image_date_inference` proposal (never touches captured_at).
+export const InferDateJobSchema = z.object({
+  assetId: z.string().uuid(),
+});
+export type InferDateJob = z.infer<typeof InferDateJobSchema>;
+
+// Intelligence Core — Phase 4 maintenance sweep: enqueue infer-date for a
+// bounded batch of assets that have evidence but no inference yet.
+export const BackfillInferenceJobSchema = z
+  .object({ batchSize: z.number().int().positive().max(2000).optional() })
+  .strict();
+export type BackfillInferenceJob = z.infer<typeof BackfillInferenceJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -260,6 +275,11 @@ export const JobNames = {
   BackfillEvidence: "backfill-evidence",
   // Intelligence Core (Phase 3) — recompute variant candidates per workspace.
   BackfillVariantCandidates: "backfill-variant-candidates",
+  // Intelligence Core (Phase 4) — per-asset date fusion (evidence -> inference).
+  InferDate: "infer-date",
+  // Intelligence Core (Phase 4) — bounded backfill: enqueue infer-date for assets
+  // with evidence but no inference yet.
+  BackfillInference: "backfill-inference",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

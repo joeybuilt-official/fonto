@@ -21,6 +21,7 @@ import type {
   ImportJob,
   StorageSyncJob,
   ExtractEvidenceJob,
+  InferDateJob,
 } from "./jobs";
 
 export const QueueNames = {
@@ -64,6 +65,9 @@ export const QueueNames = {
   // Postgres-bound + one optional Plexo label call; own queue so a vision
   // hiccup doesn't backlog the main pipeline.
   ExtractEvidence: "extract-evidence",
+  // Intelligence Core (Phase 4) — per-asset date fusion. Pure CPU + 2 small
+  // Postgres reads + 1 upsert; own queue so it never blocks ingest.
+  InferDate: "infer-date",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -334,6 +338,38 @@ export async function addExtractEvidenceJob(payload: ExtractEvidenceJob): Promis
   }
 }
 
+/**
+ * Intelligence Core (Phase 4) — date-fusion queue. Tiny payloads; the worker
+ * reads the asset's evidence rows + stored captured_at and upserts one
+ * inference proposal. CPU-light + idempotent, so a retry re-fuses to the same
+ * proposal.
+ */
+export function inferDateQueue(): Queue<InferDateJob> {
+  const name = QueueNames.InferDate;
+  const existing = cache.get(name);
+  if (existing) return existing as Queue<InferDateJob>;
+  const q = new Queue<InferDateJob>(name, {
+    connection: getRedisConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 3_000 },
+      removeOnComplete: 1000,
+      removeOnFail: 500,
+    },
+  });
+  cache.set(name, q);
+  return q;
+}
+
+/** Enqueue an infer-date job. Fire-and-forget; never throws, only logs. */
+export async function addInferDateJob(payload: InferDateJob): Promise<void> {
+  try {
+    await inferDateQueue().add(JobNames.InferDate, payload);
+  } catch (err) {
+    console.warn("[fonto] infer-date enqueue skipped:", err);
+  }
+}
+
 export function maintenanceQueue(): Queue<Record<string, never>> {
   const name = QueueNames.Maintenance;
   const existing = cache.get(name);
@@ -362,6 +398,7 @@ export function allQueues(): Queue[] {
   importQueue();
   storageSyncQueue();
   extractEvidenceQueue();
+  inferDateQueue();
   return Array.from(cache.values());
 }
 

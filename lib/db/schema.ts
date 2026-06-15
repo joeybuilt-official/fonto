@@ -1291,6 +1291,47 @@ export const variantGroups = fontoSchema.table(
   ]
 );
 
+// Intelligence Core (ADR-0002/0003 / migration 0045) — the inference (proposal)
+// store. ONE fused date proposal per asset, produced by the pure fusion engine
+// (lib/fusion) from the asset's image_date_evidence rows.
+//
+// PROPOSE-DON'T-OVERWRITE (ADR-0005): the asset's authoritative `captured_at` is
+// NEVER written from here. The proposal sits in its own table as `inferred`
+// until an operator confirms it in the Phase 6 review queue (-> `confirmed`),
+// which is the only path that may update the index. `depends_on` records what
+// produced the proposal so the Phase 7 re-audit can invalidate exactly the
+// touched assets on a fact/identity/model_version change (ADR-0006).
+export const imageDateInference = fontoSchema.table(
+  "image_date_inference",
+  {
+    assetId: uuid("asset_id").primaryKey(),
+    // MAP cell + derived precision. NULL only on a degenerate (no-evidence) fuse.
+    mapEstimate: date("map_estimate"),
+    mapPrecision: text("map_precision"), // year|month|day (CHECK in 0045)
+    // Bounding range of the 90% highest-density interval.
+    ciLow: date("ci_low"),
+    ciHigh: date("ci_high"),
+    // 0..1 — peak posterior mass, HDI-penalised. Flat/cold-start collapses low.
+    confidence: real("confidence").notNull().default(0),
+    // Stored captured_at falls outside the HDI (or density there < tau).
+    conflictFlag: boolean("conflict_flag").notNull().default(false),
+    conflictDetail: jsonb("conflict_detail"),
+    // inferred | confirmed | quarantined | overridden (CHECK in 0045).
+    status: text("status").notNull().default("inferred"),
+    // Ranked evidence contributions — the explanation artifact for the queue.
+    explanation: jsonb("explanation"),
+    // { personIds, factIds, modelVersions, neighborAssetIds } for re-audit keying.
+    dependsOn: jsonb("depends_on"),
+    computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("image_date_inference_status_idx").on(table.status),
+    index("image_date_inference_conflict_idx")
+      .on(table.status)
+      .where(sql`${table.conflictFlag} = true`),
+  ]
+);
+
 // Phase 3.3 — workspace invitations.
 //
 // Email-keyed invitations that produce `workspace_memberships` rows on
