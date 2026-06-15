@@ -134,6 +134,12 @@ export async function populateVariantCandidatesForWorkspace(
       const d = hammingDistance(ai.phash as bigint, aj.phash as bigint);
       if (d <= TH) edges.push({ a: ai.id, b: aj.id, w: 1 - d / 64 });
     }
+    // Yield the event loop periodically. This O(N²) pHash pass is otherwise a
+    // long synchronous block that exceeds BullMQ's lock → the job is marked
+    // stalled and re-run by a second worker, and the two concurrent recomputes
+    // race on the reset/insert (the Phase-5 prod symptom: a corrupt oversized
+    // group). Cooperative yielding keeps the lock alive + the run single.
+    if ((i & 127) === 0) await new Promise((r) => setImmediate(r));
   }
 
   // 3b. CLIP neighbours (HNSW). Only union neighbours that are themselves
