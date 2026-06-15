@@ -996,6 +996,15 @@ export const persons = fontoSchema.table(
     // Denormalised count of face_instances pointing at this person. Kept
     // in sync by the clusterer + merge/split route handlers.
     instanceCount: integer("instance_count").notNull().default(0),
+    // Intelligence Core (ADR-0002) — temporal anchors for date inference.
+    // Birth/death are attached to the PERSON, never the face cluster (a face
+    // at 4 vs 40 may not cluster). Stored as a partial date: the `*_date`
+    // column normalised to first-of-period + a precision tag {year|month|day}.
+    // year-only birthdays are the common case ("born 2004"). NULL = unknown.
+    birthDate: date("birth_date"),
+    birthPrecision: text("birth_precision"), // 'year' | 'month' | 'day' (CHECK in 0043)
+    deathDate: date("death_date"),
+    deathPrecision: text("death_precision"), // 'year' | 'month' | 'day' (CHECK in 0043)
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -1094,6 +1103,57 @@ export const personGroupMembers = fontoSchema.table(
   (table) => [
     index("pgm_group_id_idx").on(table.groupId),
     index("pgm_person_id_idx").on(table.personId),
+  ]
+);
+
+// Intelligence Core (ADR-0002) — the family fact base.
+//
+// Operator-authored (origin='human') and, later, machine-proposed
+// (origin='inferred') temporal facts that the date-fusion engine turns into
+// evidence: residences, trips, one-off events, recurring events (holidays,
+// anniversaries via an rrule string), and life milestones. The two origins are
+// a deliberate TIER SEPARATION — only `human` facts/dates ever propagate to a
+// neighbouring image's inference (ADR-0003 binding decision).
+//
+// Dates are partial: `*_date` normalised to first-of-period + a precision tag
+// (matches persons.birth_precision). `location_label` is a free-text place the
+// operator typed — NOT landmark recognition (absent in Plexo, ADR-0001 D5).
+// `person_ids` is a uuid[] of the persons the fact involves (who was on the
+// trip). Soft FKs throughout, matching the rest of the schema.
+export const temporalFacts = fontoSchema.table(
+  "temporal_facts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // 'residence' | 'trip' | 'event' | 'recurring_event' | 'life_milestone'
+    // (CHECK in 0043).
+    type: text("type").notNull(),
+    label: text("label").notNull(),
+    dateStart: date("date_start"),
+    dateStartPrecision: text("date_start_precision"), // year|month|day
+    dateEnd: date("date_end"),
+    dateEndPrecision: text("date_end_precision"), // year|month|day
+    // iCalendar RRULE string for recurring_event (e.g.
+    // 'FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=25'). NULL for one-off facts.
+    // Only the YEARLY subset is expanded today (lib/temporal/recurrence.ts).
+    recurrence: text("recurrence"),
+    locationLabel: text("location_label"),
+    personIds: uuid("person_ids").array().notNull().default(sql`'{}'::uuid[]`),
+    // Confidence in the fact itself. human facts default 1.0; inferred facts
+    // carry the engine's confidence. Fusion multiplies evidence weight by this.
+    confidence: real("confidence").notNull().default(1),
+    // Tier gate: 'human' | 'inferred' (CHECK in 0043). human-only propagation.
+    origin: text("origin").notNull().default("human"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // List/author facts for a workspace, newest first.
+    index("temporal_facts_workspace_idx").on(table.workspaceId, table.type),
+    // Re-audit (ADR-0006): when a person's facts change, find every fact that
+    // names them. GIN over the uuid[] keeps the `person_ids @> ARRAY[...]`
+    // membership probe cheap.
+    index("temporal_facts_person_ids_idx").using("gin", table.personIds),
   ]
 );
 

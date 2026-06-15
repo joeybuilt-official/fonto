@@ -553,6 +553,30 @@ export default function SettingsPage() {
       <Card variant="outlined" className={tabClass("account")}>
         <CardHeader>
           <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Timeline &amp; Facts
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Family fact base
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Residences, trips, events, and milestones that anchor photo
+                dates, places, and people.
+              </p>
+            </div>
+            <Button variant="outlined" size="sm" render={<Link href="/app/settings/timeline" />}>
+              Edit timeline
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card variant="outlined" className={tabClass("account")}>
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
             Members
           </CardTitle>
         </CardHeader>

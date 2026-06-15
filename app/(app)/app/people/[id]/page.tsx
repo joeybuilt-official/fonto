@@ -24,6 +24,48 @@ interface Person {
   instanceCount: number;
   hidden: boolean;
   groupIds?: string[];
+  // Intelligence Core — birth/death partial dates (split into date + precision
+  // columns server-side). Anchor the date-inference engine.
+  birthDate?: string | null;
+  birthPrecision?: string | null;
+  deathDate?: string | null;
+  deathPrecision?: string | null;
+}
+
+const LIFE_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+// Render the raw string a user would type back from the (date, precision) pair
+// the server returns — so the editor inputs prefill with "2014", "2014-08", or
+// "2014-08-11" rather than a normalised full date.
+function partialToInput(
+  date: string | null | undefined,
+  precision: string | null | undefined
+): string {
+  if (!date) return "";
+  const [y, m, d] = date.split("-");
+  if (precision === "day") return `${y}-${m}-${d}`;
+  if (precision === "month") return `${y}-${m}`;
+  return y ?? "";
+}
+
+// Friendly display label (day → "Aug 11, 2014", month → "Aug 2014", year →
+// "2014") for the read-only summary next to the editor.
+function partialToLabel(
+  date: string | null | undefined,
+  precision: string | null | undefined
+): string | null {
+  if (!date) return null;
+  const [y, m, d] = date.split("-");
+  if (precision === "day" && y && m && d) {
+    return `${LIFE_MONTHS[Number(m) - 1] ?? m} ${Number(d)}, ${y}`;
+  }
+  if (precision === "month" && y && m) {
+    return `${LIFE_MONTHS[Number(m) - 1] ?? m} ${y}`;
+  }
+  return y ?? date;
 }
 
 interface PersonGroup {
@@ -168,6 +210,10 @@ export default function PersonDetailPage({
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [savingName, setSavingName] = useState(false);
+  // Intelligence Core — birth/death editor. Holds the raw partial-date strings.
+  const [birth, setBirth] = useState("");
+  const [death, setDeath] = useState("");
+  const [savingLife, setSavingLife] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [acting, setActing] = useState(false);
 
@@ -222,6 +268,8 @@ export default function PersonDetailPage({
       const pData = (await pRes.json()) as { person: Person };
       setPerson(pData.person);
       setName(pData.person.name ?? "");
+      setBirth(partialToInput(pData.person.birthDate, pData.person.birthPrecision));
+      setDeath(partialToInput(pData.person.deathDate, pData.person.deathPrecision));
       setPersonGroupIds(pData.person.groupIds ?? []);
       if (fRes.ok) {
         const fData = (await fRes.json()) as { faces: FaceEntry[] };
@@ -351,6 +399,42 @@ export default function PersonDetailPage({
       setSavingName(false);
     }
   }, [person, router]);
+
+  // Intelligence Core — save birth/death partial dates. Sends the raw strings
+  // (or null to clear); the server splits them into date + precision columns.
+  const saveLife = useCallback(async () => {
+    if (!person) return;
+    setSavingLife(true);
+    try {
+      const res = await fetch(`/api/v1/persons/${person.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          birth: birth.trim() === "" ? null : birth.trim(),
+          death: death.trim() === "" ? null : death.trim(),
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { person: Person };
+        setPerson(data.person);
+        setBirth(partialToInput(data.person.birthDate, data.person.birthPrecision));
+        setDeath(partialToInput(data.person.deathDate, data.person.deathPrecision));
+      } else {
+        const body = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setError(
+          `Save dates failed (${res.status}): ${body?.error ?? "unknown error"}`
+        );
+      }
+    } catch (err) {
+      setError(
+        `Save dates failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setSavingLife(false);
+    }
+  }, [person, birth, death]);
 
   // #9 — ignore the whole person (junk cluster). Server cascades to its
   // faces. On success, navigate back to the grid (the tile is now hidden).
@@ -654,6 +738,66 @@ export default function PersonDetailPage({
               })}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Intelligence Core — Born / Died editor. Partial dates anchor the
+          date-inference engine; the server splits the raw string into
+          date + precision columns. */}
+      <div className="rounded-lg border border-border bg-background p-4 space-y-3 max-w-md">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Born / Died</h2>
+          {(() => {
+            const b = partialToLabel(person.birthDate, person.birthPrecision);
+            const d = partialToLabel(person.deathDate, person.deathPrecision);
+            if (!b && !d) return null;
+            return (
+              <p className="text-xs text-muted-foreground">
+                {b ? `Born ${b}` : ""}
+                {b && d ? " · " : ""}
+                {d ? `Died ${d}` : ""}
+              </p>
+            );
+          })()}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="space-y-1">
+            <span className="block text-xs font-medium text-muted-foreground uppercase">
+              Born
+            </span>
+            <input
+              type="text"
+              value={birth}
+              onChange={(e) => setBirth(e.target.value)}
+              placeholder="YYYY or YYYY-MM or YYYY-MM-DD"
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+              aria-label="Birth date"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="block text-xs font-medium text-muted-foreground uppercase">
+              Died
+            </span>
+            <input
+              type="text"
+              value={death}
+              onChange={(e) => setDeath(e.target.value)}
+              placeholder="YYYY or YYYY-MM or YYYY-MM-DD"
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+              aria-label="Death date"
+            />
+          </label>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void saveLife()}
+            disabled={savingLife}
+            className="inline-flex items-center gap-1 rounded border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-sidebar-accent disabled:opacity-60"
+          >
+            {savingLife ? "Saving…" : "Save dates"}
+          </button>
+          {savingLife && <Loader2 className="h-4 w-4 animate-spin" />}
         </div>
       </div>
 

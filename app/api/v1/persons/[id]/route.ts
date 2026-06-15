@@ -13,6 +13,7 @@ import { propagateNamedPerson } from "@/lib/faces/propagate";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
+import { parsePartialDate, toColumns } from "@/lib/temporal/precision";
 import { db, schema } from "@/lib/db";
 
 const DEFAULT_FACES_LIMIT = 24;
@@ -95,6 +96,10 @@ export async function GET(
       coverFaceId: person.coverFaceId,
       instanceCount: person.instanceCount,
       hidden: person.hidden,
+      birthDate: person.birthDate,
+      birthPrecision: person.birthPrecision,
+      deathDate: person.deathDate,
+      deathPrecision: person.deathPrecision,
       createdAt: person.createdAt.toISOString(),
       updatedAt: person.updatedAt.toISOString(),
       groupIds,
@@ -115,6 +120,10 @@ interface PatchBody {
   hidden?: unknown;
   cover_face_id?: unknown;
   coverFaceId?: unknown;
+  // Intelligence Core (ADR-0002) — partial-date strings (YYYY | YYYY-MM |
+  // YYYY-MM-DD) or null to clear. Birth/death anchor the date-inference engine.
+  birth?: unknown;
+  death?: unknown;
 }
 
 export async function PATCH(
@@ -145,8 +154,38 @@ export async function PATCH(
     name?: string | null;
     hidden?: boolean;
     coverFaceId?: string | null;
+    birthDate?: string | null;
+    birthPrecision?: string | null;
+    deathDate?: string | null;
+    deathPrecision?: string | null;
     updatedAt: Date;
   } = { updatedAt: new Date() };
+
+  // birth / death partial dates.
+  for (const [key, dateCol, precCol] of [
+    ["birth", "birthDate", "birthPrecision"],
+    ["death", "deathDate", "deathPrecision"],
+  ] as const) {
+    if (!(key in body)) continue;
+    const v = body[key];
+    if (v === null || v === "") {
+      patch[dateCol] = null;
+      patch[precCol] = null;
+    } else if (typeof v === "string") {
+      const parsed = parsePartialDate(v);
+      if (!parsed) {
+        return NextResponse.json(
+          { error: `${key} must be YYYY | YYYY-MM | YYYY-MM-DD or null` },
+          { status: 400 }
+        );
+      }
+      const cols = toColumns(parsed);
+      patch[dateCol] = cols.date;
+      patch[precCol] = cols.precision;
+    } else {
+      return NextResponse.json({ error: `${key} must be a string or null` }, { status: 400 });
+    }
+  }
 
   if ("name" in body) {
     if (body.name === null) patch.name = null;
