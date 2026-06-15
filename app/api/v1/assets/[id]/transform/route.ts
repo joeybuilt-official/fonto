@@ -21,6 +21,7 @@
 // Auth: better-auth session, then a workspace gate at the `editor` role.
 
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import sharp from "sharp";
@@ -34,6 +35,7 @@ import { storage } from "@/lib/storage";
 import { enqueueAssetProcessing, serializeAsset } from "@/lib/assets/createAssetRow";
 import { nextSeq } from "@/lib/db/seq";
 import { isScope } from "@/lib/scope";
+import { cacheInvalidate } from "@/lib/cache/valkey";
 
 const RotateSchema = z.union([
   z.literal(90),
@@ -217,6 +219,10 @@ export async function POST(
       mimeType: asset.mimeType,
     });
 
+    // T1.3' — evict every aggregate cache that embeds asset rows/counts.
+    revalidateTag(`ws:${asset.workspaceId}:assets`, "max");
+    void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
+
     return NextResponse.json({
       assetId: asset.id,
       action: "rotated-in-place",
@@ -324,6 +330,10 @@ export async function POST(
     filename: newFilename,
     mimeType: asset.mimeType,
   });
+
+  // T1.3' — a new asset row evicts every aggregate cache that embeds counts.
+  revalidateTag(`ws:${asset.workspaceId}:assets`, "max");
+  void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
 
   return NextResponse.json({
     assetId: newId,

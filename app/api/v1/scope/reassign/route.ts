@@ -20,6 +20,7 @@
 // POST /api/v1/scope/reassign/undo. No rename/delete — only the scope/shoot_id
 // columns move. seq is bumped so mobile clients re-sync the change.
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { randomUUID } from "crypto";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
@@ -28,6 +29,7 @@ import { db, schema } from "@/lib/db";
 import { and, eq, inArray, like, type SQL } from "drizzle-orm";
 import { nextSeq } from "@/lib/db/seq";
 import { isScope, type Scope } from "@/lib/scope";
+import { cacheInvalidate } from "@/lib/cache/valkey";
 
 interface Body {
   to?: unknown;
@@ -127,6 +129,12 @@ export async function POST(request: NextRequest) {
       })
       .onConflictDoNothing();
     reassigned += 1;
+  }
+
+  if (reassigned > 0) {
+    // T1.3' — evict every aggregate cache that embeds asset rows/counts.
+    revalidateTag(`ws:${workspaceId}:assets`, "max");
+    void cacheInvalidate(`ws:${workspaceId}:assets`);
   }
 
   return NextResponse.json({ batchId, reassigned, scanned: rows.length });

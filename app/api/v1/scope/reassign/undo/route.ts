@@ -11,6 +11,7 @@
 // bumps seq so clients re-sync, then deletes the batch's ledger rows (a clean
 // undo — the batchId can be reused afterwards).
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -18,6 +19,7 @@ import { db, schema } from "@/lib/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { nextSeq } from "@/lib/db/seq";
 import { resolveUndoRestore } from "@/lib/scope";
+import { cacheInvalidate } from "@/lib/cache/valkey";
 
 export async function POST(request: NextRequest) {
   const user = await getAuthUser();
@@ -93,6 +95,12 @@ export async function POST(request: NextRequest) {
         eq(schema.scopeReassignments.batchId, batchId)
       )
     );
+
+  if (restored > 0) {
+    // T1.3' — evict every aggregate cache that embeds asset rows/counts.
+    revalidateTag(`ws:${workspaceId}:assets`, "max");
+    void cacheInvalidate(`ws:${workspaceId}:assets`);
+  }
 
   return NextResponse.json({ restored, ...(skippedDeletedShoot > 0 ? { keptPersonalForDeletedShoot: skippedDeletedShoot } : {}) });
 }

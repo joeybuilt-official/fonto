@@ -13,6 +13,7 @@
 // final asset id — the final asset id lives on the row only after complete.
 
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
@@ -21,6 +22,7 @@ import { db, schema } from "@/lib/db";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { finalizeUpload } from "@/lib/uploads/finalizeUpload";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
+import { cacheInvalidate } from "@/lib/cache/valkey";
 
 const CompleteRequestSchema = z.object({
   // Optional, but accepted for symmetry with /init's response. We mainly
@@ -116,6 +118,10 @@ export async function POST(
     },
     request,
   });
+
+  // T1.3' — evict every aggregate cache that embeds asset rows/counts.
+  revalidateTag(`ws:${upload.workspaceId}:assets`, "max");
+  void cacheInvalidate(`ws:${upload.workspaceId}:assets`);
 
   const status = result.deduplicated ? 200 : 201;
   return NextResponse.json(

@@ -5,6 +5,7 @@
 // the same `share_links` schema with `targetType='asset'`, no password, and
 // `allowDownload=true` so existing clients continue to "just work".
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { randomBytes } from "crypto";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
@@ -13,6 +14,7 @@ import { eq, and, inArray, gt, desc, or, isNull } from "drizzle-orm";
 import { bumpAssetSeq } from "@/lib/db/seq";
 import { generateUniqueSlug } from "@/lib/share-links/slug";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
+import { cacheInvalidate } from "@/lib/cache/valkey";
 
 const DEFAULT_TTL_HOURS = 24;
 const MAX_TTL_HOURS = 24 * 30;
@@ -129,6 +131,11 @@ export async function POST(
     request,
   });
 
+  // T1.3' — share state is part of the asset's serialized payload (cached in
+  // collection-assets / smart-collection-assets); evict the assets aggregate.
+  revalidateTag(`ws:${asset.workspaceId}:assets`, "max");
+  void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
+
   return NextResponse.json({
     token: link.token,
     slug: link.slug,
@@ -187,6 +194,10 @@ export async function DELETE(
       metadata: { legacyRoute: true, scope: "all-for-asset" },
       request,
     });
+
+    // T1.3' — revocation flips serialized share state on the asset.
+    revalidateTag(`ws:${asset.workspaceId}:assets`, "max");
+    void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
   }
 
   return NextResponse.json({ revoked: true });

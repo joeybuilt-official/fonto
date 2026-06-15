@@ -529,6 +529,10 @@ function FoldersContent() {
           onNext={() => navLightbox(1)}
           hasPrev={lightboxIndex > 0}
           hasNext={lightboxIndex < assets.length - 1}
+          prevAssetId={lightboxIndex > 0 ? assets[lightboxIndex - 1]?.id ?? null : null}
+          nextAssetId={
+            lightboxIndex < assets.length - 1 ? assets[lightboxIndex + 1]?.id ?? null : null
+          }
         />
       )}
       </div>

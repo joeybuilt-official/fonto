@@ -89,6 +89,16 @@ export function SharedSection() {
           }
           hasPrev={openIndex !== null && openIndex > 0}
           hasNext={openIndex !== null && openIndex < assets.length - 1}
+          prevAssetId={
+            openIndex !== null && openIndex > 0
+              ? assets[openIndex - 1]?.id ?? null
+              : null
+          }
+          nextAssetId={
+            openIndex !== null && openIndex < assets.length - 1
+              ? assets[openIndex + 1]?.id ?? null
+              : null
+          }
         />
       )}
     </section>

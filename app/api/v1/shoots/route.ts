@@ -20,9 +20,15 @@
 // to scope_reassignments under one batch and is reflected in `revertedAssets` +
 // `batchId`. Other soft-FKs (correspondents / stacks) keep dangling-on-delete
 // semantics; shoots are special-cased because scope makes orphaning user-visible.
-export const dynamic = "force-dynamic";
+//
+// T1.3' (fonto-perf-audit.md) — class-B aggregate. GET embeds per-shoot asset
+// counts grouped by stage, so the cache is invalidated by BOTH the shoots tag
+// AND the assets tag (any asset-side mutation that changes shoot_id/stage must
+// fire `ws:<id>:assets`). See CACHE-CONVENTION.md.
+export const revalidate = 300;
 
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache, revalidateTag } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -47,6 +53,71 @@ interface ShootWithCounts {
   counts: Record<ShootStage | "UNSTAGED" | "total", number>;
 }
 
+const loadShoots = (workspaceId: string, clientFilter: string) =>
+  unstable_cache(
+    async (): Promise<ShootWithCounts[]> => {
+      const where = [eq(schema.shoots.workspaceId, workspaceId)];
+      if (clientFilter === "null") where.push(isNull(schema.shoots.clientId));
+      else if (clientFilter) where.push(eq(schema.shoots.clientId, clientFilter));
+
+      const shoots = await db
+        .select()
+        .from(schema.shoots)
+        .where(and(...where))
+        .orderBy(sql`${schema.shoots.shootDate} desc nulls last`, schema.shoots.name);
+
+      if (shoots.length === 0) return [];
+
+      const countRows = (await db.execute(sql`
+        SELECT shoot_id, shoot_stage, COUNT(*)::int AS n
+          FROM fonto.assets
+         WHERE workspace_id = ${workspaceId}
+           AND scope = 'SHOOT'
+           AND deleted_at IS NULL
+           AND shoot_id IS NOT NULL
+         GROUP BY shoot_id, shoot_stage
+      `)) as unknown as Array<{ shoot_id: string; shoot_stage: string | null; n: number }>;
+
+      const byShoot = new Map<string, ShootWithCounts["counts"]>();
+      for (const r of countRows) {
+        const bucket = byShoot.get(r.shoot_id) ?? {
+          RAW: 0,
+          SELECTS: 0,
+          DELIVERED: 0,
+          REJECTS: 0,
+          UNSTAGED: 0,
+          total: 0,
+        };
+        const stage = r.shoot_stage;
+        if (isShootStage(stage)) bucket[stage] += r.n;
+        else bucket.UNSTAGED += r.n;
+        bucket.total += r.n;
+        byShoot.set(r.shoot_id, bucket);
+      }
+
+      return shoots.map((s) => ({
+        ...s,
+        shootDate: s.shootDate as string | null,
+        createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString(),
+        counts:
+          byShoot.get(s.id) ?? {
+            RAW: 0,
+            SELECTS: 0,
+            DELIVERED: 0,
+            REJECTS: 0,
+            UNSTAGED: 0,
+            total: 0,
+          },
+      }));
+    },
+    ["shoots-list", workspaceId, clientFilter],
+    {
+      tags: [`ws:${workspaceId}:shoots`, `ws:${workspaceId}:assets`],
+      revalidate: 300,
+    },
+  )();
+
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -56,63 +127,9 @@ export async function GET(request: NextRequest) {
   const workspaceId = workspaces[0].id;
 
   const url = new URL(request.url);
-  const clientFilter = url.searchParams.get("clientId");
+  const clientFilter = url.searchParams.get("clientId") ?? "";
 
-  const where = [eq(schema.shoots.workspaceId, workspaceId)];
-  if (clientFilter === "null") where.push(isNull(schema.shoots.clientId));
-  else if (clientFilter) where.push(eq(schema.shoots.clientId, clientFilter));
-
-  const shoots = await db
-    .select()
-    .from(schema.shoots)
-    .where(and(...where))
-    .orderBy(sql`${schema.shoots.shootDate} desc nulls last`, schema.shoots.name);
-
-  if (shoots.length === 0) return NextResponse.json({ shoots: [] });
-
-  const countRows = (await db.execute(sql`
-    SELECT shoot_id, shoot_stage, COUNT(*)::int AS n
-      FROM fonto.assets
-     WHERE workspace_id = ${workspaceId}
-       AND scope = 'SHOOT'
-       AND deleted_at IS NULL
-       AND shoot_id IS NOT NULL
-     GROUP BY shoot_id, shoot_stage
-  `)) as unknown as Array<{ shoot_id: string; shoot_stage: string | null; n: number }>;
-
-  const byShoot = new Map<string, ShootWithCounts["counts"]>();
-  for (const r of countRows) {
-    const bucket = byShoot.get(r.shoot_id) ?? {
-      RAW: 0,
-      SELECTS: 0,
-      DELIVERED: 0,
-      REJECTS: 0,
-      UNSTAGED: 0,
-      total: 0,
-    };
-    const stage = r.shoot_stage;
-    if (isShootStage(stage)) bucket[stage] += r.n;
-    else bucket.UNSTAGED += r.n;
-    bucket.total += r.n;
-    byShoot.set(r.shoot_id, bucket);
-  }
-
-  const result: ShootWithCounts[] = shoots.map((s) => ({
-    ...s,
-    shootDate: s.shootDate as string | null,
-    createdAt: s.createdAt.toISOString(),
-    updatedAt: s.updatedAt.toISOString(),
-    counts:
-      byShoot.get(s.id) ?? {
-        RAW: 0,
-        SELECTS: 0,
-        DELIVERED: 0,
-        REJECTS: 0,
-        UNSTAGED: 0,
-        total: 0,
-      },
-  }));
-
+  const result = await loadShoots(workspaceId, clientFilter);
   return NextResponse.json({ shoots: result });
 }
 
@@ -170,6 +187,7 @@ export async function POST(request: NextRequest) {
     })
     .returning();
 
+  revalidateTag(`ws:${workspaceId}:shoots`, "max");
   return NextResponse.json({ shoot }, { status: 201 });
 }
 
@@ -237,6 +255,7 @@ export async function PATCH(request: NextRequest) {
     .returning();
 
   if (!shoot) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  revalidateTag(`ws:${workspaceId}:shoots`, "max");
   return NextResponse.json({ shoot });
 }
 
@@ -303,6 +322,11 @@ export async function DELETE(request: NextRequest) {
   await db
     .delete(schema.shoots)
     .where(and(eq(schema.shoots.id, body.id), eq(schema.shoots.workspaceId, workspaceId)));
+
+  // DELETE rewrites assets' scope/shoot_id (reverting to PERSONAL); both the
+  // shoots catalogue and any aggregate-asset cache need to evict.
+  revalidateTag(`ws:${workspaceId}:shoots`, "max");
+  if (revertedAssets > 0) revalidateTag(`ws:${workspaceId}:assets`, "max");
 
   return NextResponse.json({
     ok: true,

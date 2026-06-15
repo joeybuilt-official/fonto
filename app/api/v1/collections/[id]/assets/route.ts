@@ -1,12 +1,64 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
+//
+// T1.3' (fonto-perf-audit.md) — class-B aggregate. GET returns the assets
+// linked to a collection (one row per asset), so the cache key includes the
+// collection id + the resolved scope param, and the tag list covers BOTH
+// `:collections` (link table changes) AND `:assets` (asset CRUD).
+// See CACHE-CONVENTION.md.
+export const revalidate = 300;
+
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache, revalidateTag } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
-import { parseScopeParam, scopeCond } from "@/lib/scope";
+import { parseScopeParam, scopeCond, type ScopeFilter } from "@/lib/scope";
+
+const loadCollectionAssets = (
+  collectionId: string,
+  workspaceIds: string[],
+  scope: ScopeFilter,
+) => {
+  const sortedIds = [...workspaceIds].sort();
+  return unstable_cache(
+    async () => {
+      const collection = await db
+        .select()
+        .from(schema.collections)
+        .where(
+          and(
+            eq(schema.collections.id, collectionId),
+            inArray(schema.collections.workspaceId, workspaceIds)
+          )
+        )
+        .limit(1);
+
+      if (!collection.length) return { notFound: true as const };
+
+      // ADR 0008 — scope default; resolved from the cache-key arg so the
+      // filter lives in the key rather than a captured URLSearchParams.
+      const __sc = scopeCond(scope);
+      const rows = await db
+        .select({ asset: schema.assets })
+        .from(schema.collectionAssets)
+        .innerJoin(schema.assets, eq(schema.collectionAssets.assetId, schema.assets.id))
+        .where(and(eq(schema.collectionAssets.collectionId, collectionId), __sc));
+
+      return { assets: rows.map((r) => r.asset) };
+    },
+    ["collection-assets", collectionId, sortedIds.join(","), scope],
+    {
+      tags: sortedIds.flatMap((id) => [
+        `ws:${id}:collections`,
+        `ws:${id}:assets`,
+      ]),
+      revalidate: 300,
+    },
+  )();
+};
 
 export async function GET(
   _request: NextRequest,
@@ -20,28 +72,12 @@ export async function GET(
   if (!workspaces.length) return NextResponse.json({ assets: [] });
   const workspaceIds = workspaces.map((w) => w.id);
 
-  const collection = await db
-    .select()
-    .from(schema.collections)
-    .where(
-      and(
-        eq(schema.collections.id, collectionId),
-        inArray(schema.collections.workspaceId, workspaceIds)
-      )
-    )
-    .limit(1);
-
-  if (!collection.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  // ADR 0008 — scope default
-  const __sc = scopeCond(parseScopeParam(new URL(_request.url).searchParams));
-  const rows = await db
-    .select({ asset: schema.assets })
-    .from(schema.collectionAssets)
-    .innerJoin(schema.assets, eq(schema.collectionAssets.assetId, schema.assets.id))
-    .where(and(eq(schema.collectionAssets.collectionId, collectionId), __sc));
-
-  return NextResponse.json({ assets: rows.map((r) => r.asset) });
+  const scope = parseScopeParam(new URL(_request.url).searchParams);
+  const result = await loadCollectionAssets(collectionId, workspaceIds, scope);
+  if ("notFound" in result) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return NextResponse.json({ assets: result.assets });
 }
 
 export async function POST(
@@ -82,6 +118,9 @@ export async function POST(
     .onConflictDoNothing()
     .returning();
 
+  // T1.3' — adding an asset link changes the cached `collections/[id]/assets`
+  // payload (and `collections/stats` if we ever surface link counts there).
+  revalidateTag(`ws:${collection.workspaceId}:collections`, "max");
   return NextResponse.json({ link }, { status: 201 });
 }
 
@@ -127,5 +166,7 @@ export async function DELETE(
       )
     );
 
+  // T1.3' — removing an asset link changes the cached collection-assets list.
+  revalidateTag(`ws:${collection.workspaceId}:collections`, "max");
   return NextResponse.json({ removed: true });
 }

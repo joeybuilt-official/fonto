@@ -5,12 +5,55 @@
 // each with an active-asset count and a sample asset id for a thumbnail.
 // Backs the "Things" explore grid (auto labels + user tags surfaced as
 // browseable tiles).
+//
+// T1.3' (fonto-perf-audit.md) — class-B aggregate. Embeds per-tag asset
+// counts so it's tagged BOTH `:tags` (so tag CRUD evicts) AND `:assets`
+// (so asset CRUD / asset_tags link/unlink evicts). See CACHE-CONVENTION.md.
+export const revalidate = 300;
 
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+
+const loadTopTags = (workspaceIds: string[], limit: number) => {
+  const sortedIds = [...workspaceIds].sort();
+  return unstable_cache(
+    async () => {
+      const countExpr = sql<number>`count(distinct ${schema.assetTags.assetId})::int`;
+      return db
+        .select({
+          id: schema.tags.id,
+          name: schema.tags.name,
+          color: schema.tags.color,
+          aiSuggested: schema.tags.aiSuggested,
+          count: countExpr,
+          sampleAssetId: sql<
+            string | null
+          >`(array_agg(${schema.assetTags.assetId} ORDER BY ${schema.assetTags.addedAt} DESC))[1]`,
+        })
+        .from(schema.tags)
+        .innerJoin(schema.assetTags, eq(schema.assetTags.tagId, schema.tags.id))
+        .innerJoin(schema.assets, eq(schema.assets.id, schema.assetTags.assetId))
+        .where(
+          and(
+            inArray(schema.tags.workspaceId, workspaceIds),
+            eq(schema.assets.lifecycleState, "active")
+          )
+        )
+        .groupBy(schema.tags.id)
+        .orderBy(desc(countExpr))
+        .limit(limit);
+    },
+    ["tags-top", sortedIds.join(","), String(limit)],
+    {
+      tags: sortedIds.flatMap((id) => [`ws:${id}:tags`, `ws:${id}:assets`]),
+      revalidate: 300,
+    },
+  )();
+};
 
 export async function GET(req: NextRequest) {
   const user = await getAuthUser();
@@ -23,30 +66,6 @@ export async function GET(req: NextRequest) {
   const limitRaw = Number.parseInt(req.nextUrl.searchParams.get("limit") ?? "40", 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 40;
 
-  const countExpr = sql<number>`count(distinct ${schema.assetTags.assetId})::int`;
-  const rows = await db
-    .select({
-      id: schema.tags.id,
-      name: schema.tags.name,
-      color: schema.tags.color,
-      aiSuggested: schema.tags.aiSuggested,
-      count: countExpr,
-      sampleAssetId: sql<
-        string | null
-      >`(array_agg(${schema.assetTags.assetId} ORDER BY ${schema.assetTags.addedAt} DESC))[1]`,
-    })
-    .from(schema.tags)
-    .innerJoin(schema.assetTags, eq(schema.assetTags.tagId, schema.tags.id))
-    .innerJoin(schema.assets, eq(schema.assets.id, schema.assetTags.assetId))
-    .where(
-      and(
-        inArray(schema.tags.workspaceId, workspaceIds),
-        eq(schema.assets.lifecycleState, "active")
-      )
-    )
-    .groupBy(schema.tags.id)
-    .orderBy(desc(countExpr))
-    .limit(limit);
-
+  const rows = await loadTopTags(workspaceIds, limit);
   return NextResponse.json({ tags: rows });
 }

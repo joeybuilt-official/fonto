@@ -21,6 +21,7 @@ import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { propagateNamedPerson } from "@/lib/faces/propagate";
 import { db, schema } from "@/lib/db";
 import { cacheInvalidate, getCacheLayer } from "@/lib/cache/valkey";
+import { revalidateTag } from "next/cache";
 
 const PERSONS_CACHE_TTL_SEC = 300;
 
@@ -72,7 +73,9 @@ export async function GET(request: NextRequest) {
     {
       cacheName: "persons",
       workspaceId: primaryWorkspaceId,
-      tags: sortedIds.map((id) => `ws:${id}:persons`),
+      // T1.3' — instance_count comes off asset-side face_instance flows, so an
+      // asset-side mutation must also evict this cache. See CACHE-CONVENTION.md.
+      tags: sortedIds.flatMap((id) => [`ws:${id}:persons`, `ws:${id}:assets`]),
     },
   );
   return NextResponse.json(payload);
@@ -241,7 +244,9 @@ export async function POST(request: NextRequest) {
     propagateNamedPerson(person.id, person.workspaceId).catch(() => {});
   }
 
-  // T2.2 — invalidate persons-list cache for this workspace.
+  // T1.3' — Next-cache layer invalidate (per-pod unstable_cache).
+  revalidateTag(`ws:${workspaceId}:persons`, "max");
+  // T2.2 — invalidate persons-list cache for this workspace (cross-instance).
   void cacheInvalidate(`ws:${workspaceId}:persons`);
 
   return NextResponse.json({

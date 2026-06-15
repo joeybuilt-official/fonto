@@ -17,8 +17,16 @@
 // `paths` is ordered alphabetically. A workspace with a deeply nested
 // tree can hit thousands of rows but each is ~40 bytes; a 1k-folder
 // workspace fits in ~40KB which is fine for a single fetch.
+//
+// T1.3' (fonto-perf-audit.md) — class-B aggregate. Counts come from
+// `fonto.assets`, so any asset-side mutation that touches directory_path /
+// lifecycle_state evicts via `ws:<id>:assets`. The `ws:<id>:folders` tag is
+// the synthetic folder-catalogue tag (no folders table — the tree is derived).
+// See CACHE-CONVENTION.md.
+export const revalidate = 300;
 
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db } from "@/lib/db";
@@ -28,6 +36,45 @@ export interface FolderTreeResponse {
   paths: Array<{ path: string; assetCount: number }>;
   rootAssetCount: number;
 }
+
+const loadFolderTree = (workspaceId: string) =>
+  unstable_cache(
+    async (): Promise<FolderTreeResponse> => {
+      // One row per distinct directory_path. Counts are leaf-level (assets
+      // landing exactly at that path). Aggregate roll-ups are the client's
+      // job since it already has every parent path in the same response.
+      const rows = (await db.execute(sql`
+        SELECT directory_path AS path, COUNT(*)::int AS asset_count
+        FROM fonto.assets
+        WHERE workspace_id = ${workspaceId}
+          AND lifecycle_state = 'active'
+          AND directory_path IS NOT NULL
+        GROUP BY directory_path
+        ORDER BY directory_path ASC
+      `)) as unknown as Array<{ path: string; asset_count: number | string }>;
+
+      const rootRows = (await db.execute(sql`
+        SELECT COUNT(*)::int AS c
+        FROM fonto.assets
+        WHERE workspace_id = ${workspaceId}
+          AND lifecycle_state = 'active'
+          AND directory_path IS NULL
+      `)) as unknown as Array<{ c: number | string }>;
+
+      return {
+        paths: rows.map((r) => ({
+          path: r.path,
+          assetCount: Number(r.asset_count),
+        })),
+        rootAssetCount: Number(rootRows[0]?.c ?? 0),
+      };
+    },
+    ["folders-tree", workspaceId],
+    {
+      tags: [`ws:${workspaceId}:folders`, `ws:${workspaceId}:assets`],
+      revalidate: 300,
+    },
+  )();
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const user = await getAuthUser();
@@ -46,32 +93,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
   }
 
-  // One row per distinct directory_path. Counts are leaf-level (assets
-  // landing exactly at that path). Aggregate roll-ups are the client's
-  // job since it already has every parent path in the same response.
-  const rows = (await db.execute(sql`
-    SELECT directory_path AS path, COUNT(*)::int AS asset_count
-    FROM fonto.assets
-    WHERE workspace_id = ${workspace.id}
-      AND lifecycle_state = 'active'
-      AND directory_path IS NOT NULL
-    GROUP BY directory_path
-    ORDER BY directory_path ASC
-  `)) as unknown as Array<{ path: string; asset_count: number | string }>;
-
-  const rootRows = (await db.execute(sql`
-    SELECT COUNT(*)::int AS c
-    FROM fonto.assets
-    WHERE workspace_id = ${workspace.id}
-      AND lifecycle_state = 'active'
-      AND directory_path IS NULL
-  `)) as unknown as Array<{ c: number | string }>;
-
-  return NextResponse.json<FolderTreeResponse>({
-    paths: rows.map((r) => ({
-      path: r.path,
-      assetCount: Number(r.asset_count),
-    })),
-    rootAssetCount: Number(rootRows[0]?.c ?? 0),
-  });
+  const payload = await loadFolderTree(workspace.id);
+  return NextResponse.json<FolderTreeResponse>(payload);
 }

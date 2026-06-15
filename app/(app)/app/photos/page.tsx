@@ -336,6 +336,10 @@ function PhotosContent() {
           onNext={() => navLightbox(1)}
           hasPrev={lightboxIndex > 0}
           hasNext={lightboxIndex < photos.length - 1}
+          prevAssetId={lightboxIndex > 0 ? photos[lightboxIndex - 1]?.id ?? null : null}
+          nextAssetId={
+            lightboxIndex < photos.length - 1 ? photos[lightboxIndex + 1]?.id ?? null : null
+          }
           onTrash={handleLightboxTrash}
         />
       )}

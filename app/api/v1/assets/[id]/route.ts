@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -14,6 +15,7 @@ import { nextSeq } from "@/lib/db/seq";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
+import { cacheInvalidate } from "@/lib/cache/valkey";
 
 const LIFECYCLE_EVENTS: Record<string, string> = {
   archivable: "ext.fonto.asset.archivable",
@@ -277,6 +279,10 @@ export async function PATCH(
     request,
   });
 
+  // T1.3' — evict every aggregate cache that embeds asset rows/counts.
+  revalidateTag(`ws:${existing.workspaceId}:assets`, "max");
+  void cacheInvalidate(`ws:${existing.workspaceId}:assets`);
+
   return NextResponse.json({ asset: serializeAsset(updated) });
 }
 
@@ -348,6 +354,10 @@ export async function DELETE(
     },
     request,
   });
+
+  // T1.3' — evict every aggregate cache that embeds asset rows/counts.
+  revalidateTag(`ws:${asset.workspaceId}:assets`, "max");
+  void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
 
   return NextResponse.json({ deleted: true });
 }
