@@ -2,6 +2,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -64,6 +65,7 @@ export async function PATCH(
     .returning();
   if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  revalidateTag(`ws:${existing.workspaceId}:smart_collections`, "max");
   return NextResponse.json({ smartCollection: updated });
 }
 
@@ -95,5 +97,6 @@ export async function DELETE(
     .returning({ id: schema.smartCollections.id });
   if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  revalidateTag(`ws:${existing.workspaceId}:smart_collections`, "max");
   return NextResponse.json({ ok: true });
 }

@@ -2,11 +2,13 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
+import { cacheInvalidate } from "@/lib/cache/valkey";
 
 export async function GET(
   _req: NextRequest,
@@ -72,6 +74,7 @@ export async function PATCH(
     .returning();
   if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  revalidateTag(`ws:${existing.workspaceId}:projects`, "max");
   return NextResponse.json({ project: updated });
 }
 
@@ -109,5 +112,13 @@ export async function DELETE(
     .returning({ id: schema.projects.id });
   if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Project deletion detaches its collections (projectId → null) above, so
+  // both the projects and collections catalogues need to evict at the
+  // Next-cache level and the Valkey layer (T2.2 — collections has a Valkey
+  // overlay; projects does not yet, so the cacheInvalidate is a no-op
+  // there until that route gets wired).
+  revalidateTag(`ws:${existing.workspaceId}:projects`, "max");
+  revalidateTag(`ws:${existing.workspaceId}:collections`, "max");
+  void cacheInvalidate(`ws:${existing.workspaceId}:collections`);
   return NextResponse.json({ ok: true });
 }

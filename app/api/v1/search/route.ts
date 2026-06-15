@@ -2,6 +2,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
@@ -10,8 +11,42 @@ import { plexoMemorySearch } from "@/lib/plexo";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { deltaE76, parseHex, rgbToLab, type PaletteColor } from "@/lib/perceptual";
 import { parseScopeParam, scopeCond } from "@/lib/scope";
+import { getCacheLayer } from "@/lib/cache/valkey";
 
 const COLOR_DELTA_E_THRESHOLD = 30;
+const SEARCH_CACHE_TTL_SEC = 300;
+
+// T2.1 — search results cache.
+//
+// Mutation routes that MUST call cacheInvalidate(`ws:${workspaceId}:assets`)
+// when they touch asset rows (so cached search results don't go stale):
+//   - POST /api/v1/uploads/[assetId]/complete (canonical upload complete)
+//   - POST /api/v1/assets/[id]/complete       (legacy upload complete)
+//   - DELETE /api/v1/assets/[id]              (asset delete)
+//   - PATCH /api/v1/assets/[id]               (scope, classification, etc.)
+//   - POST /api/v1/scope/reassign             (bulk scope flip)
+//   - POST /api/v1/assets/[id]/tags           (tag a/dd remove on an asset)
+//   - The processing pipeline finish step in lib/processing/processAsset.ts
+// The parallel T1.3 work owns the actual wiring inside those handlers —
+// listed here so its agent and this one share the same tag convention.
+type CachedSearchResponse = {
+  assets: ReturnType<typeof serializeAsset>[];
+  total: number;
+};
+
+function stableStringify(input: unknown): string {
+  if (input === null || typeof input !== "object") return JSON.stringify(input);
+  if (Array.isArray(input)) {
+    return `[${input.map((v) => stableStringify(v)).join(",")}]`;
+  }
+  const keys = Object.keys(input as Record<string, unknown>).sort();
+  const obj = input as Record<string, unknown>;
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
+}
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -33,7 +68,50 @@ export async function GET(request: NextRequest) {
   const semantic = searchParams.get("semantic") === "true";
   const ocrOnly = searchParams.get("ocrOnly") === "true";
   const colorHex = searchParams.get("color")?.trim() ?? "";
+  const scopeParam = parseScopeParam(searchParams);
 
+  // Build the cache key from a STABLE digest of every input that affects the
+  // result. workspaceIds are sorted before hashing so a user whose membership
+  // returns in a different order still hits the same key. q is hashed
+  // separately (per spec — `normalised_query`) so the key reads cleanly.
+  const sortedWorkspaceIds = [...workspaceIds].sort();
+  const primaryWorkspaceId = sortedWorkspaceIds[0] ?? "none";
+  const queryHash = sha256(q.toLowerCase());
+  const filtersHash = sha256(
+    stableStringify({
+      workspaceIds: sortedWorkspaceIds,
+      mimeFilter,
+      classification,
+      tagId,
+      correspondentId,
+      documentTypeId,
+      dateFrom,
+      dateTo,
+      semantic,
+      ocrOnly,
+      colorHex: colorHex.toLowerCase(),
+      scope: scopeParam ?? "default",
+    }),
+  );
+  const cacheKey = `search:${primaryWorkspaceId}:${queryHash}:${filtersHash}`;
+
+  const cache = getCacheLayer<CachedSearchResponse>();
+  const payload = await cache.getOrCompute(
+    cacheKey,
+    SEARCH_CACHE_TTL_SEC,
+    () => runSearch(),
+    {
+      cacheName: "search",
+      workspaceId: primaryWorkspaceId,
+      // Tag with every workspace the result depends on so an asset mutation
+      // in any of them flushes this entry.
+      tags: sortedWorkspaceIds.map((id) => `ws:${id}:assets`),
+    },
+  );
+
+  return NextResponse.json(payload);
+
+  async function runSearch(): Promise<CachedSearchResponse> {
   const conditions = [
     inArray(schema.assets.workspaceId, workspaceIds),
     isNull(schema.assets.deletedAt),
@@ -82,7 +160,7 @@ export async function GET(request: NextRequest) {
       .from(schema.assetTags)
       .where(eq(schema.assetTags.tagId, tagId));
     assetIds = taggedAssets.map((r) => r.assetId);
-    if (!assetIds.length) return NextResponse.json({ assets: [], total: 0 });
+    if (!assetIds.length) return { assets: [], total: 0 };
     conditions.push(inArray(schema.assets.id, assetIds));
   }
 
@@ -137,5 +215,6 @@ export async function GET(request: NextRequest) {
   // 500'd every search.
   const trimmed = assets.slice(0, 100).map((a) => serializeAsset(a));
 
-  return NextResponse.json({ assets: trimmed, total: trimmed.length });
+    return { assets: trimmed, total: trimmed.length };
+  }
 }

@@ -37,6 +37,11 @@ const THUMB_LONG_EDGE_PX = 256;
 const PREVIEW_LONG_EDGE_PX = 1080;
 const THUMB_QUALITY = 80;
 const PREVIEW_QUALITY = 82;
+// T2.4 — tiny "Low Quality Image Placeholder" baked into the same encode pass.
+// 4x4 WebP @ q25 lands ~50–200 bytes; encoded inline as a data URL on the row
+// so the grid can render it as `background-image` while the 256px thumb loads.
+const LQIP_EDGE_PX = 4;
+const LQIP_QUALITY = 25;
 // One year, immutable. Derivative keys are content-addressed by (workspace,
 // asset, variant); regenerating produces the same bytes for the same input,
 // so clients can cache aggressively.
@@ -54,6 +59,8 @@ export interface GenerateThumbnailsResult {
   previewKey?: string;
   thumbBytes?: number;
   previewBytes?: number;
+  // T2.4 — encoded data URL (`data:image/webp;base64,…`) length, for logging.
+  lqipBytes?: number;
 }
 
 async function downloadOriginal(bucket: string, key: string): Promise<Buffer> {
@@ -203,10 +210,19 @@ export async function generateThumbnails(
 
   // Encode both variants in parallel — sharp pipelines are independent. CPU
   // contention is bounded by the worker's `THUMBNAIL_WORKER_CONCURRENCY`.
-  const [thumb, preview] = await Promise.all([
+  // T2.4 — the 4x4 LQIP rides along in the same Promise.all. It's a separate
+  // sharp pipeline (cover-fit, low effort) so the regular 256/1080 outputs
+  // are bit-identical to pre-T2.4 — LQIP is purely additive.
+  const [thumb, preview, lqipBuffer] = await Promise.all([
     encodeVariant(decodedBuffer, THUMB_LONG_EDGE_PX, THUMB_QUALITY),
     encodeVariant(decodedBuffer, PREVIEW_LONG_EDGE_PX, PREVIEW_QUALITY),
+    sharp(decodedBuffer, { failOn: "none" })
+      .rotate()
+      .resize(LQIP_EDGE_PX, LQIP_EDGE_PX, { fit: "cover" })
+      .webp({ quality: LQIP_QUALITY, effort: 3 })
+      .toBuffer(),
   ]);
+  const lqip = `data:image/webp;base64,${lqipBuffer.toString("base64")}`;
 
   const thumbnailKey = assetDerivativeKey(workspaceId, assetId, "thumb");
   const previewKey = assetDerivativeKey(workspaceId, assetId, "preview");
@@ -217,7 +233,7 @@ export async function generateThumbnails(
   ]);
 
   log.info(
-    { thumbBytes: thumb.length, previewBytes: preview.length },
+    { thumbBytes: thumb.length, previewBytes: preview.length, lqipBytes: lqip.length },
     "derivatives uploaded"
   );
 
@@ -227,6 +243,7 @@ export async function generateThumbnails(
       thumbnailKey,
       previewKey,
       thumbnailGeneratedAt: new Date(),
+      lqip,
     })
     .where(eq(schema.assets.id, assetId));
 
@@ -236,5 +253,6 @@ export async function generateThumbnails(
     previewKey,
     thumbBytes: thumb.length,
     previewBytes: preview.length,
+    lqipBytes: lqip.length,
   };
 }

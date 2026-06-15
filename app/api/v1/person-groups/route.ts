@@ -3,14 +3,43 @@
 //
 // GET  /api/v1/person-groups — built-in groups + workspace-custom groups
 // POST /api/v1/person-groups — create a custom group for the workspace
-export const dynamic = "force-dynamic";
+//
+// T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue. The "no
+// workspace" branch is keyed separately so it can never collide with a real
+// workspace cache row. See CACHE-CONVENTION.md.
+export const revalidate = 300;
 
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache, revalidateTag } from "next/cache";
 import { and, isNull, or, eq } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
+
+const loadGroups = (workspaceId: string | null) =>
+  unstable_cache(
+    async () =>
+      db
+        .select()
+        .from(schema.personGroups)
+        .where(
+          workspaceId
+            ? or(
+                isNull(schema.personGroups.workspaceId),
+                eq(schema.personGroups.workspaceId, workspaceId)
+              )
+            : isNull(schema.personGroups.workspaceId)
+        )
+        .orderBy(schema.personGroups.sortOrder, schema.personGroups.name),
+    ["person-groups-list", workspaceId ?? "__builtins__"],
+    {
+      tags: workspaceId
+        ? [`ws:${workspaceId}:person_groups`]
+        : ["person_groups:builtins"],
+      revalidate: 300,
+    }
+  )();
 
 export async function GET(_request: NextRequest) {
   const user = await getAuthUser();
@@ -19,16 +48,7 @@ export async function GET(_request: NextRequest) {
   const workspaces = await getUserWorkspaces(user.id);
   const workspaceId = workspaces[0]?.id ?? null;
 
-  // Built-ins (workspace_id IS NULL) + this workspace's custom groups.
-  const groups = await db
-    .select()
-    .from(schema.personGroups)
-    .where(
-      workspaceId
-        ? or(isNull(schema.personGroups.workspaceId), eq(schema.personGroups.workspaceId, workspaceId))
-        : isNull(schema.personGroups.workspaceId)
-    )
-    .orderBy(schema.personGroups.sortOrder, schema.personGroups.name);
+  const groups = await loadGroups(workspaceId);
 
   return NextResponse.json({
     groups: groups.map((g) => ({
@@ -86,6 +106,7 @@ export async function POST(request: NextRequest) {
     .values({ workspaceId, name, color })
     .returning();
 
+  revalidateTag(`ws:${workspaceId}:person_groups`, "max");
   return NextResponse.json(
     {
       group: {

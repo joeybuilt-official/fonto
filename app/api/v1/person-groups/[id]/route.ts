@@ -6,6 +6,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
@@ -66,6 +67,7 @@ export async function PATCH(
     .where(eq(schema.personGroups.id, id))
     .returning();
 
+  revalidateTag(`ws:${workspaceId}:person_groups`, "max");
   return NextResponse.json({
     group: {
       id: updated.id,
@@ -102,5 +104,6 @@ export async function DELETE(
   // FK cascade removes person_group_members rows automatically.
   await db.delete(schema.personGroups).where(eq(schema.personGroups.id, id));
 
+  revalidateTag(`ws:${workspaceId}:person_groups`, "max");
   return NextResponse.json({ ok: true as const });
 }

@@ -20,6 +20,11 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { propagateNamedPerson } from "@/lib/faces/propagate";
 import { db, schema } from "@/lib/db";
+import { cacheInvalidate, getCacheLayer } from "@/lib/cache/valkey";
+
+const PERSONS_CACHE_TTL_SEC = 300;
+
+type CachedPersonsResponse = { persons: PersonOut[] };
 
 interface PersonOut {
   id: string;
@@ -44,6 +49,8 @@ export async function GET(request: NextRequest) {
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) return NextResponse.json({ persons: [] });
   const workspaceIds = workspaces.map((w) => w.id);
+  const sortedIds = [...workspaceIds].sort();
+  const primaryWorkspaceId = sortedIds[0];
 
   const includeHidden = request.nextUrl.searchParams.get("hidden") === "true";
   const filterGroupId = request.nextUrl.searchParams.get("group_id");
@@ -55,6 +62,22 @@ export async function GET(request: NextRequest) {
   const includeSingletons =
     request.nextUrl.searchParams.get("include_singletons") === "true";
   const minInstances = includeSingletons ? 1 : 2;
+
+  const cacheKey = `persons:${sortedIds.join(",")}:h=${includeHidden ? 1 : 0}:g=${filterGroupId ?? ""}:s=${includeSingletons ? 1 : 0}`;
+  const cache = getCacheLayer<CachedPersonsResponse>();
+  const payload = await cache.getOrCompute(
+    cacheKey,
+    PERSONS_CACHE_TTL_SEC,
+    async () => ({ persons: await buildPersons() }),
+    {
+      cacheName: "persons",
+      workspaceId: primaryWorkspaceId,
+      tags: sortedIds.map((id) => `ws:${id}:persons`),
+    },
+  );
+  return NextResponse.json(payload);
+
+  async function buildPersons(): Promise<PersonOut[]> {
 
   // Default grid excludes hidden persons AND empty/singleton clusters.
   // A re-cluster zeroes-out persons whose faces were all detached (e.g.
@@ -173,7 +196,8 @@ export async function GET(request: NextRequest) {
     };
   });
 
-  return NextResponse.json({ persons });
+    return persons;
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -216,6 +240,9 @@ export async function POST(request: NextRequest) {
   if (name) {
     propagateNamedPerson(person.id, person.workspaceId).catch(() => {});
   }
+
+  // T2.2 — invalidate persons-list cache for this workspace.
+  void cacheInvalidate(`ws:${workspaceId}:persons`);
 
   return NextResponse.json({
     person: {

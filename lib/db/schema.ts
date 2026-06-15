@@ -181,6 +181,13 @@ export const assets = fontoSchema.table(
     thumbnailKey: text("thumbnail_key"),
     previewKey: text("preview_key"),
     thumbnailGeneratedAt: timestamp("thumbnail_generated_at", { withTimezone: true }),
+    // T2.4 (fonto-perf-audit 2026-06-15) — 4x4 WebP LQIP encoded as a data URL
+    // (~50–200 bytes). Rendered as `background-image` on the grid tile while
+    // the real thumb loads → removes the white flash + reduces CLS on fast
+    // scroll. Populated at thumbnail-time by the worker; backfilled for legacy
+    // rows via `scripts/backfill-lqip.ts`. NULL on non-image assets and on
+    // rows that pre-date the backfill (the UI tolerates either case).
+    lqip: text("lqip"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
     // Phase 2.3 — monotonic per-workspace delta-sync cursor. Allocated via
@@ -385,6 +392,17 @@ export const assets = fontoSchema.table(
     index("assets_trash_purge_at_idx")
       .on(table.trashPurgeAt)
       .where(sql`${table.trashPurgeAt} IS NOT NULL`),
+    // T1.5 perf-audit (migration 0045) — partial composite indexes for the
+    // 95th-percentile grid/search/timeline read. Every such query filters by
+    // workspace_id AND lifecycle_state='active' and orders by captured_at
+    // (or created_at) DESC; the partial composite gives a single direct path
+    // instead of bitmap-merge across the single-column lifecycle_state idx.
+    index("assets_workspace_captured_active_idx")
+      .on(table.workspaceId, sql`${table.capturedAt} desc`)
+      .where(sql`${table.lifecycleState} = 'active'`),
+    index("assets_workspace_created_active_idx")
+      .on(table.workspaceId, sql`${table.createdAt} desc`)
+      .where(sql`${table.lifecycleState} = 'active'`),
   ]
 );
 

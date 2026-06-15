@@ -13,14 +13,32 @@
 // away; shoots that referenced it are surfaced as hobby shoots in the
 // browser UI. This is intentional — a deleted client should not delete
 // a shoot's photos.
-export const dynamic = "force-dynamic";
+//
+// T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue. GET is
+// wrapped in `unstable_cache` keyed by workspaceId and tagged with
+// `ws:<id>:clients`; the matching POST/PATCH/DELETE call `revalidateTag`
+// on success so cached responses evict immediately. See CACHE-CONVENTION.md.
+export const revalidate = 300;
 
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache, revalidateTag } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
+
+const loadClients = (workspaceId: string) =>
+  unstable_cache(
+    async () =>
+      db
+        .select()
+        .from(schema.clients)
+        .where(eq(schema.clients.workspaceId, workspaceId))
+        .orderBy(schema.clients.name),
+    ["clients-list", workspaceId],
+    { tags: [`ws:${workspaceId}:clients`], revalidate: 300 }
+  )();
 
 export async function GET() {
   const user = await getAuthUser();
@@ -30,11 +48,7 @@ export async function GET() {
   if (!workspaces.length) return NextResponse.json({ clients: [] });
   const workspaceId = workspaces[0].id;
 
-  const clients = await db
-    .select()
-    .from(schema.clients)
-    .where(eq(schema.clients.workspaceId, workspaceId))
-    .orderBy(schema.clients.name);
+  const clients = await loadClients(workspaceId);
 
   return NextResponse.json({ clients });
 }
@@ -62,6 +76,7 @@ export async function POST(request: NextRequest) {
     .values({ workspaceId, userId: user.id, name, notes })
     .returning();
 
+  revalidateTag(`ws:${workspaceId}:clients`, "max");
   return NextResponse.json({ client }, { status: 201 });
 }
 
@@ -97,6 +112,7 @@ export async function PATCH(request: NextRequest) {
     .returning();
 
   if (!client) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  revalidateTag(`ws:${workspaceId}:clients`, "max");
   return NextResponse.json({ client });
 }
 
@@ -122,5 +138,6 @@ export async function DELETE(request: NextRequest) {
     .returning({ id: schema.clients.id });
 
   if (res.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  revalidateTag(`ws:${workspaceId}:clients`, "max");
   return NextResponse.json({ ok: true });
 }

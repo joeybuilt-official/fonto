@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
+// T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue. GET is
+// wrapped in `unstable_cache` keyed by workspaceId and tagged with
+// `ws:<id>:collections`; mutating routes (POST here, plus
+// /projects/[id] DELETE which detaches collections) call `revalidateTag`
+// on success. See CACHE-CONVENTION.md.
+export const revalidate = 300;
+
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache, revalidateTag } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -8,6 +16,25 @@ import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { nextSeq } from "@/lib/db/seq";
+import { cacheInvalidate, getCacheLayer } from "@/lib/cache/valkey";
+
+const COLLECTIONS_CACHE_TTL_SEC = 300;
+
+// Next.js per-instance cache (in-process). The Valkey layer below sits on
+// top and shares hits ACROSS instances + adds the stampede lock + metrics.
+const loadCollections = (workspaceId: string) =>
+  unstable_cache(
+    async () =>
+      db
+        .select()
+        .from(schema.collections)
+        .where(eq(schema.collections.workspaceId, workspaceId))
+        .orderBy(schema.collections.createdAt),
+    ["collections-list", workspaceId],
+    { tags: [`ws:${workspaceId}:collections`], revalidate: 300 }
+  )();
+
+type CachedCollectionsResponse = { collections: unknown[] };
 
 export async function GET() {
   const user = await getAuthUser();
@@ -15,14 +42,21 @@ export async function GET() {
 
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) return NextResponse.json({ collections: [] });
+  const workspaceId = workspaces[0].id;
 
-  const rows = await db
-    .select()
-    .from(schema.collections)
-    .where(eq(schema.collections.workspaceId, workspaces[0].id))
-    .orderBy(schema.collections.createdAt);
+  const cache = getCacheLayer<CachedCollectionsResponse>();
+  const payload = await cache.getOrCompute(
+    `collections:${workspaceId}`,
+    COLLECTIONS_CACHE_TTL_SEC,
+    async () => ({ collections: await loadCollections(workspaceId) }),
+    {
+      cacheName: "collections",
+      workspaceId,
+      tags: [`ws:${workspaceId}:collections`],
+    },
+  );
 
-  return NextResponse.json({ collections: rows });
+  return NextResponse.json(payload);
 }
 
 export async function POST(request: NextRequest) {
@@ -64,5 +98,9 @@ export async function POST(request: NextRequest) {
     createdAt: collection.createdAt.toISOString(),
   });
 
+  revalidateTag(`ws:${workspaces[0].id}:collections`, "max");
+  // T2.2 — also nuke the Valkey-layer entry (Next-cache only covers this
+  // pod's in-memory copy).
+  void cacheInvalidate(`ws:${workspaces[0].id}:collections`);
   return NextResponse.json({ collection }, { status: 201 });
 }

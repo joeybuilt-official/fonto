@@ -1,12 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-export const dynamic = "force-dynamic";
+//
+// T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue.
+// See CACHE-CONVENTION.md.
+export const revalidate = 300;
 
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache, revalidateTag } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
+
+const loadCorrespondents = (workspaceIds: string[]) => {
+  const key = [...workspaceIds].sort().join(",");
+  return unstable_cache(
+    async () =>
+      db
+        .select()
+        .from(schema.correspondents)
+        .where(inArray(schema.correspondents.workspaceId, workspaceIds))
+        .orderBy(schema.correspondents.name),
+    ["correspondents-list", key],
+    {
+      tags: workspaceIds.map((id) => `ws:${id}:correspondents`),
+      revalidate: 300,
+    }
+  )();
+};
 
 export async function GET() {
   const user = await getAuthUser();
@@ -16,11 +37,7 @@ export async function GET() {
   if (!workspaces.length) return NextResponse.json({ correspondents: [] });
   const workspaceIds = workspaces.map((w) => w.id);
 
-  const correspondents = await db
-    .select()
-    .from(schema.correspondents)
-    .where(inArray(schema.correspondents.workspaceId, workspaceIds))
-    .orderBy(schema.correspondents.name);
+  const correspondents = await loadCorrespondents(workspaceIds);
 
   return NextResponse.json({ correspondents });
 }
@@ -49,6 +66,7 @@ export async function POST(request: NextRequest) {
     })
     .returning();
 
+  revalidateTag(`ws:${workspaces[0].id}:correspondents`, "max");
   return NextResponse.json({ correspondent }, { status: 201 });
 }
 
@@ -78,5 +96,6 @@ export async function DELETE(request: NextRequest) {
     .delete(schema.correspondents)
     .where(and(eq(schema.correspondents.id, body.id), inArray(schema.correspondents.workspaceId, workspaceIds)));
 
+  revalidateTag(`ws:${existing.workspaceId}:correspondents`, "max");
   return NextResponse.json({ ok: true });
 }

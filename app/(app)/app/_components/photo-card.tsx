@@ -49,6 +49,12 @@ export interface Asset {
   // Phase 6.12 — extracted text layer (plain text / markdown / source file
   // contents). Populated on the per-asset detail endpoint, not the grid list.
   ocrText?: string | null;
+  // T2.4 (fonto-perf-audit) — 4x4 WebP LQIP as a data URL (`data:image/webp;
+  // base64,…`, ~50–200 bytes). Rendered as `background-image` under the lazy
+  // <img> so the tile shows a blurred placeholder during load → kills the
+  // white flash + reduces CLS on fast scroll. NULL on non-image assets and on
+  // rows that pre-date the backfill (UI tolerates either).
+  lqip?: string | null;
   // Task #32 — set on assets produced by /transform (crop / rotate-as-new);
   // points back at the source asset so the lightbox can surface a "Derived
   // from …" badge that navigates to the origin.
@@ -273,8 +279,22 @@ export function PhotoCard({
           : "ring-0"
       } ${isProcessing ? "animate-pulse ring-1 ring-[var(--ft-color-tertiary)]/50" : ""}`}
     >
-      {/* Image */}
-      <div className="aspect-square bg-[var(--ft-color-surface-container)]/30 flex items-center justify-center overflow-hidden">
+      {/* Image. T2.4 — the outer div carries the 4x4 WebP LQIP as a
+          background image (sized cover, blurred via filter) so the tile
+          shows a coloured placeholder during lazy-load instead of a white
+          flash. The real <img> sits on top and covers it once loaded. */}
+      <div
+        className="aspect-square bg-[var(--ft-color-surface-container)]/30 flex items-center justify-center overflow-hidden relative"
+        style={
+          asset.lqip
+            ? {
+                backgroundImage: `url(${asset.lqip})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }
+            : undefined
+        }
+      >
         {loading ? (
           <Loader2 className="h-5 w-5 animate-spin text-[var(--ft-color-on-surface-variant)]" />
         ) : url ? (
@@ -282,7 +302,7 @@ export function PhotoCard({
           <img
             src={url}
             alt={asset.description ?? asset.filename}
-            className="h-full w-full object-cover"
+            className="h-full w-full object-cover relative"
             loading="lazy"
             // Phase 3 perf — decode off-main-thread so a new month entering
             // the viewport doesn't block the scroll frame on image decode.

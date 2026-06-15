@@ -432,11 +432,15 @@ function VirtualList({
   onSelect,
 }: VirtualListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
+  // T2.5 (fonto-perf-audit 2026-06-15): dropped overscan 10 → 5. At 56px row
+  // height that's still ~280 px of pre-rendered DOM beyond the viewport edge
+  // (well past the safe pre-render budget for arrow-key scroll) while halving
+  // the offscreen DOM cost on low-end mobile rendering 10k+ asset feeds.
   const rowVirt = useVirtualizer({
     count: assets.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 56,
-    overscan: 10,
+    overscan: 5,
   });
 
   return (
