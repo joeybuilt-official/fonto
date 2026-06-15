@@ -34,15 +34,31 @@ function phashThreshold(): number {
 function clipThreshold(): number {
   const raw = process.env.VARIANT_CLIP_THRESHOLD;
   const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) && n > 0 && n <= 1 ? n : 0.92;
+  // 0.97, NOT the 0.92 upload-dedup default: a "variant" is a re-save / crop /
+  // RAW+JPEG of the SAME shot, far tighter than "same scene". 0.92 transitively
+  // chained the whole library into giant components (Phase 3 prod finding).
+  return Number.isFinite(n) && n > 0 && n <= 1 ? n : 0.97;
 }
-const CLIP_NEIGHBOURS = 8;
+const CLIP_NEIGHBOURS = 5;
+// Anti-chaining guard: a true consolidation variant group is small (RAW+JPEG, a
+// handful of edits/re-saves). A component larger than this is almost certainly a
+// transitive-similarity CHAIN or a burst (distinct frames) — neither is a
+// consolidation candidate, so we DON'T materialise it as one group. Stage-2
+// structural verify (Phase 5) is the real per-pair guard; this just keeps the
+// candidate set sane + bounded.
+function maxGroupSize(): number {
+  const raw = process.env.VARIANT_MAX_GROUP_SIZE;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n >= 2 ? Math.floor(n) : 12;
+}
 
 export interface VariantCandidateResult {
   workspaceId: string;
   eligibleAssets: number;
   groupsCreated: number;
   assetsGrouped: number;
+  /** Components exceeding the size cap — skipped as likely chains/bursts. */
+  oversizedSkipped: number;
 }
 
 interface EligibleAsset {
@@ -102,7 +118,7 @@ export async function populateVariantCandidatesForWorkspace(
 
   if (eligible.length < 2) {
     await resetCandidateGroups(workspaceId, preservedIds);
-    return { workspaceId, eligibleAssets: eligible.length, groupsCreated: 0, assetsGrouped: 0 };
+    return { workspaceId, eligibleAssets: eligible.length, groupsCreated: 0, assetsGrouped: 0, oversizedSkipped: 0 };
   }
 
   // 3. Build the similarity edge list.
@@ -143,7 +159,10 @@ export async function populateVariantCandidatesForWorkspace(
   // 4. Union-find → components, with a per-component max-edge confidence.
   const uf = new UnionFind(eligibleIds);
   for (const e of edges) uf.union(e.a, e.b);
-  const comps = uf.components(2);
+  const cap = maxGroupSize();
+  const allComps = uf.components(2);
+  const comps = allComps.filter((c) => c.length <= cap);
+  const oversizedSkipped = allComps.length - comps.length;
 
   const rootConfidence = new Map<string, number>();
   for (const e of edges) {
@@ -182,8 +201,11 @@ export async function populateVariantCandidatesForWorkspace(
     assetsGrouped += sorted.length;
   }
 
-  log.info({ eligible: eligible.length, groupsCreated, assetsGrouped }, "variant candidates recomputed");
-  return { workspaceId, eligibleAssets: eligible.length, groupsCreated, assetsGrouped };
+  log.info(
+    { eligible: eligible.length, groupsCreated, assetsGrouped, oversizedSkipped },
+    "variant candidates recomputed"
+  );
+  return { workspaceId, eligibleAssets: eligible.length, groupsCreated, assetsGrouped, oversizedSkipped };
 }
 
 /** Null candidate-group memberships + delete the candidate group rows. */

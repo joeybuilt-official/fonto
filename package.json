@@ -33,6 +33,7 @@
     "test:temporal": "tsx scripts/test-temporal.ts",
     "test:evidence": "tsx scripts/test-evidence.ts",
     "test:fusion": "tsx scripts/test-fusion.ts",
+    "test:variants": "tsx scripts/test-variants.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "conformance": "node scripts/conformance-guard.mjs"
