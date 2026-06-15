@@ -85,7 +85,7 @@ export function AssetGrid({
   const orderedIds = useMemo(() => assets.map((a) => a.id), [assets]);
   const lastClickedRef = useRef<string | null>(null);
 
-  const thumbUrls = useBatchThumbUrls(orderedIds);
+  const { thumbUrls, responsiveUrls } = useBatchThumbUrls(orderedIds);
 
   // Container width drives the column count. ResizeObserver is the only
   // source of truth — `window.innerWidth` would be wrong inside a split
@@ -174,6 +174,7 @@ export function AssetGrid({
           cols={cols}
           toolbar={toolbar}
           thumbUrls={thumbUrls}
+          responsiveUrls={responsiveUrls}
           onAssetClick={onAssetClick}
           onSelect={handleSelect}
           onAddToCollection={onAddToCollection}
@@ -189,6 +190,7 @@ export function AssetGrid({
               key={a.id}
               asset={a}
               thumbUrl={thumbUrls[a.id]}
+              responsiveUrls={responsiveUrls[a.id]}
               selected={toolbar.selectedIds.has(a.id)}
               selectMode={toolbar.selectMode}
               onSelect={(e) => handleSelect(a.id, e)}
@@ -205,11 +207,42 @@ export function AssetGrid({
 
 // ---- batched thumb URL fetch ---------------------------------------------
 
-/** Returns a stable {id: url|null} dictionary kept up-to-date with the
- *  current asset id list. Fetches in BATCH_URL_CHUNK-sized POSTs to the new
- *  /api/v1/assets/urls endpoint. Ids that are already known are not refetched. */
-function useBatchThumbUrls(ids: string[]): Record<string, string | null> {
-  const [urls, setUrls] = useState<Record<string, string | null>>({});
+/** T2.3b — responsive variant set sent on every batch request. The grid
+ *  cards render a <picture> w/ AVIF + WebP <source>s at 256/512/1024 so the
+ *  browser picks the smallest format it supports; including "thumb" (the
+ *  legacy 256 webp) covers two cases:
+ *    1. <img> fallback for ancient browsers and the AssetRow list view,
+ *    2. unbackfilled rows where the new responsive columns are still NULL
+ *       (the URL endpoint transparently falls through to thumb in that case).
+ */
+const RESPONSIVE_VARIANTS = [
+  "thumb",
+  "thumb-256-avif",
+  "thumb-512-webp",
+  "thumb-512-avif",
+  "thumb-1024-webp",
+  "thumb-1024-avif",
+] as const;
+
+interface BatchThumbUrls {
+  /** Legacy 256-webp URL per id. Kept around for the list view + as the
+   *  <img> fallback inside <picture>. */
+  thumbUrls: Record<string, string | null>;
+  /** Full per-variant URL map per id. Empty object ⇒ batch hasn't resolved
+   *  yet (or row is missing); PhotoCard treats empty as "render legacy
+   *  thumb path" via the thumbUrl prop. */
+  responsiveUrls: Record<string, Record<string, string>>;
+}
+
+/** Returns stable per-id URL maps kept up-to-date with the current asset id
+ *  list. Fetches in BATCH_URL_CHUNK-sized POSTs to /api/v1/assets/urls using
+ *  the multi-variant request shape. Ids that are already known are not
+ *  refetched. */
+function useBatchThumbUrls(ids: string[]): BatchThumbUrls {
+  const [thumbUrls, setThumbUrls] = useState<Record<string, string | null>>({});
+  const [responsiveUrls, setResponsiveUrls] = useState<
+    Record<string, Record<string, string>>
+  >({});
   // Snapshot the known keys so the effect deps stay stable; the id list is a
   // new array reference on every parent render.
   const knownRef = useRef<Set<string>>(new Set());
@@ -231,20 +264,33 @@ function useBatchThumbUrls(ids: string[]): Record<string, string | null> {
           const r = await fetch("/api/v1/assets/urls", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ids: chunk, variant: "thumb" }),
+            body: JSON.stringify({
+              ids: chunk,
+              variants: RESPONSIVE_VARIANTS,
+            }),
           });
           if (!r.ok) {
             // Mark the chunk as known-failed so we don't loop on a 500.
             for (const id of chunk) knownRef.current.add(id);
             continue;
           }
-          const d = (await r.json()) as { urls?: Record<string, string> };
+          const d = (await r.json()) as {
+            urls?: Record<string, Record<string, string>>;
+          };
           if (cancelled) return;
-          setUrls((prev) => {
+          setThumbUrls((prev) => {
             const next = { ...prev };
             for (const id of chunk) {
               knownRef.current.add(id);
-              next[id] = d.urls?.[id] ?? null;
+              next[id] = d.urls?.[id]?.["thumb"] ?? null;
+            }
+            return next;
+          });
+          setResponsiveUrls((prev) => {
+            const next = { ...prev };
+            for (const id of chunk) {
+              const m = d.urls?.[id];
+              if (m) next[id] = m;
             }
             return next;
           });
@@ -259,7 +305,7 @@ function useBatchThumbUrls(ids: string[]): Record<string, string | null> {
     };
   }, [ids]);
 
-  return urls;
+  return { thumbUrls, responsiveUrls };
 }
 
 // ---- list row -------------------------------------------------------------
@@ -329,6 +375,7 @@ interface VirtualGridProps {
   cols: number;
   toolbar: ToolbarStateAPI;
   thumbUrls: Record<string, string | null>;
+  responsiveUrls: Record<string, Record<string, string>>;
   onAssetClick?: (assetId: string, index: number) => void;
   onSelect: (assetId: string, e?: React.MouseEvent) => void;
   onAddToCollection?: (assetId: string) => void;
@@ -340,6 +387,7 @@ function VirtualGrid({
   cols,
   toolbar,
   thumbUrls,
+  responsiveUrls,
   onAssetClick,
   onSelect,
   onAddToCollection,
@@ -397,6 +445,7 @@ function VirtualGrid({
                     key={a.id}
                     asset={a}
                     thumbUrl={thumbUrls[a.id]}
+                    responsiveUrls={responsiveUrls[a.id]}
                     selected={toolbar.selectedIds.has(a.id)}
                     selectMode={toolbar.selectMode}
                     onSelect={(e) => onSelect(a.id, e)}

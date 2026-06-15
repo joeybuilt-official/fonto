@@ -51,6 +51,39 @@ export function assetDerivativeKey(
 }
 
 /**
+ * T2.3 (fonto-perf-audit 2026-06-15) — responsive derivative tiers.
+ *
+ * Per-asset srcset variants at 256/512/1024 (and 1080 for the lightbox
+ * preview), each in WebP + AVIF. Layout sits next to the legacy
+ * thumb.webp / preview.webp so the old keys keep working as fallbacks for
+ * assets that haven't been re-processed yet.
+ *
+ *   thumb_256.avif    thumb_512.webp   thumb_512.avif
+ *   thumb_1024.webp   thumb_1024.avif  preview.avif
+ *
+ * Stored on `assets.thumbnail_{256_avif,512_webp,512_avif,1024_webp,
+ * 1024_avif}_key` and `assets.preview_avif_key`. Content-addressed by
+ * (workspace, asset, variant) — same R2 cache policy as the legacy keys.
+ */
+export type ResponsiveDerivativeVariant =
+  | "thumb_256_avif"
+  | "thumb_512_webp"
+  | "thumb_512_avif"
+  | "thumb_1024_webp"
+  | "thumb_1024_avif"
+  | "preview_avif";
+
+export function assetResponsiveDerivativeKey(
+  workspaceId: string,
+  assetId: string,
+  variant: ResponsiveDerivativeVariant
+): string {
+  const ext = variant.endsWith("_avif") ? "avif" : "webp";
+  const stem = variant.replace(/_(webp|avif)$/, "");
+  return `fonto/${workspaceId}/${assetId}/derivatives/${stem}.${ext}`;
+}
+
+/**
  * Phase 1 (faces/UX) — dedicated face-crop derivative key.
  *
  * One square webp crop per detected face (sharp `.extract` of the bbox +

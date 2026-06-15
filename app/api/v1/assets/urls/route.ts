@@ -6,15 +6,23 @@
 // GET /api/v1/assets/:id/url per tile on render) with a single POST that
 // signs every URL in one call.
 //
-// Request:
-//   POST /api/v1/assets/urls
-//   { "ids": ["<uuid>", "<uuid>", ...],
-//     "variant": "thumb" | "preview" | "original" }  // optional, default "thumb"
+// Request shapes (backwards compatible):
 //
-// Response:
-//   { "urls": { "<id>": "<signed-url>", ... },
-//     "variants": { "<id>": "thumb" | "preview" | "original" },
-//     "expiresIn": 3600 }
+//   Single-variant (legacy):
+//     POST /api/v1/assets/urls
+//     { "ids": ["<uuid>", ...], "variant": "thumb" | "preview" | ... }
+//
+//     Response: { urls: { [id]: "<signed-url>" },
+//                 variants: { [id]: "<served-variant>" },
+//                 expiresIn: 3600 }
+//
+//   Multi-variant (T2.3b — fonto-perf-audit responsive thumbs):
+//     POST /api/v1/assets/urls
+//     { "ids": ["<uuid>", ...],
+//       "variants": ["thumb", "thumb-256-avif", "thumb-512-webp", ...] }
+//
+//     Response: { urls: { [id]: { [variant]: "<signed-url>" } },
+//                 expiresIn: 3600 }
 //
 // Workspace scoping mirrors the single-id route: any id the caller can't see
 // is silently dropped from `urls` (no error, no 404). This matches how the
@@ -27,12 +35,36 @@ import { db, schema } from "@/lib/db";
 import { and, inArray } from "drizzle-orm";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
+import { resolveVariantKey, type Variant } from "@/lib/assets/variants";
 
-type Variant = "thumb" | "preview" | "original";
+const KNOWN_VARIANTS: ReadonlySet<Variant> = new Set<Variant>([
+  "thumb",
+  "preview",
+  "original",
+  "thumb-256-avif",
+  "thumb-512-webp",
+  "thumb-512-avif",
+  "thumb-1024-webp",
+  "thumb-1024-avif",
+  "preview-avif",
+]);
 
 function parseVariant(raw: unknown): Variant {
-  if (raw === "thumb" || raw === "preview" || raw === "original") return raw;
+  if (typeof raw === "string" && KNOWN_VARIANTS.has(raw as Variant)) {
+    return raw as Variant;
+  }
   return "thumb";
+}
+
+function parseVariants(raw: unknown): Variant[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: Variant[] = [];
+  for (const v of raw) {
+    if (typeof v === "string" && KNOWN_VARIANTS.has(v as Variant)) {
+      out.push(v as Variant);
+    }
+  }
+  return out.length > 0 ? out : null;
 }
 
 // Cap on a single batch. The Flutter People grid loads cover thumbs for
@@ -69,10 +101,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Multi-variant request takes precedence when both are supplied. The
+  // multi-variant response shape differs (urls keyed by id → variant → url)
+  // so callers must opt in explicitly by sending `variants`.
+  const multiVariants = parseVariants((body as { variants?: unknown }).variants);
   const variant = parseVariant((body as { variant?: unknown }).variant);
 
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) {
+    if (multiVariants) {
+      return NextResponse.json({ urls: {}, expiresIn: 3600 });
+    }
     return NextResponse.json({ urls: {}, variants: {}, expiresIn: 3600 });
   }
   const workspaceIds = workspaces.map((w) => w.id);
@@ -84,6 +123,12 @@ export async function POST(request: NextRequest) {
       filename: schema.assets.filename,
       thumbnailKey: schema.assets.thumbnailKey,
       previewKey: schema.assets.previewKey,
+      thumbnail256AvifKey: schema.assets.thumbnail256AvifKey,
+      thumbnail512WebpKey: schema.assets.thumbnail512WebpKey,
+      thumbnail512AvifKey: schema.assets.thumbnail512AvifKey,
+      thumbnail1024WebpKey: schema.assets.thumbnail1024WebpKey,
+      thumbnail1024AvifKey: schema.assets.thumbnail1024AvifKey,
+      previewAvifKey: schema.assets.previewAvifKey,
     })
     .from(schema.assets)
     .where(
@@ -94,21 +139,55 @@ export async function POST(request: NextRequest) {
     );
 
   // Sign in parallel. The presigner is a pure crypto op (no network), so
-  // Promise.all is bounded by CPU not RTT; even at the 500-id cap this
-  // resolves in a handful of ms.
+  // Promise.all is bounded by CPU not RTT; even at the 5000-id cap this
+  // resolves in a handful of ms per variant.
+  async function signFor(
+    asset: (typeof rows)[number],
+    v: Variant
+  ): Promise<{ url: string; served: Variant }> {
+    const resolved = resolveVariantKey(asset, v);
+    const key = resolved.key
+      ? resolved.key
+      : assetStorageKey(asset.workspaceId, asset.id, asset.filename);
+    const served: Variant = resolved.key ? resolved.resolvedVariant : "original";
+    const url = await storage().presignGet(key, { expiresIn: 3600 });
+    return { url, served };
+  }
+
+  if (multiVariants) {
+    const entries = await Promise.all(
+      rows.map(async (asset) => {
+        const perVariant: Record<string, string> = {};
+        const signed = await Promise.all(
+          multiVariants.map((v) => signFor(asset, v))
+        );
+        // Key the response by the REQUESTED variant token, not the served
+        // one, so the client gets the keys it asked for. The fallback chain
+        // just transparently substitutes an older derivative under the hood.
+        multiVariants.forEach((v, idx) => {
+          perVariant[v] = signed[idx].url;
+        });
+        return [asset.id, perVariant] as const;
+      })
+    );
+
+    const urls: Record<string, Record<string, string>> = {};
+    for (const [id, perVariant] of entries) {
+      urls[id] = perVariant;
+    }
+
+    // Multi-variant responses are derivative-only by definition (the
+    // responsive set doesn't include `original`), so a long max-age is
+    // always safe.
+    return NextResponse.json(
+      { urls, expiresIn: 3600 },
+      { headers: { "Cache-Control": "private, max-age=3600" } }
+    );
+  }
+
   const entries = await Promise.all(
     rows.map(async (asset) => {
-      let key: string;
-      let served: Variant = variant;
-      if (variant === "thumb" && asset.thumbnailKey) {
-        key = asset.thumbnailKey;
-      } else if (variant === "preview" && asset.previewKey) {
-        key = asset.previewKey;
-      } else {
-        key = assetStorageKey(asset.workspaceId, asset.id, asset.filename);
-        served = "original";
-      }
-      const url = await storage().presignGet(key, { expiresIn: 3600 });
+      const { url, served } = await signFor(asset, variant);
       return [asset.id, { url, served }] as const;
     })
   );

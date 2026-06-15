@@ -23,7 +23,11 @@ import sharp from "sharp";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { assetDerivativeKey, assetStorageKey } from "@/lib/r2";
+import {
+  assetDerivativeKey,
+  assetResponsiveDerivativeKey,
+  assetStorageKey,
+} from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { decodeToBuffer } from "@/lib/processing/decode";
 import { probeVideo } from "@/lib/processing/probeVideo";
@@ -37,6 +41,13 @@ const THUMB_LONG_EDGE_PX = 256;
 const PREVIEW_LONG_EDGE_PX = 1080;
 const THUMB_QUALITY = 80;
 const PREVIEW_QUALITY = 82;
+// T2.3 (fonto-perf-audit 2026-06-15) — responsive tier sizes + AVIF quality.
+// AVIF at q50/effort4 lands ~25-35% smaller than equivalent WebP at q80, at
+// the cost of ~3-5× encode CPU on a 4MP photo. Effort 4 is the sweet spot;
+// effort 6+ doubles encode time for <5% size improvement.
+const THUMB_512_LONG_EDGE_PX = 512;
+const THUMB_1024_LONG_EDGE_PX = 1024;
+const AVIF_QUALITY = 50;
 // T2.4 — tiny "Low Quality Image Placeholder" baked into the same encode pass.
 // 4x4 WebP @ q25 lands ~50–200 bytes; encoded inline as a data URL on the row
 // so the grid can render it as `background-image` while the 256px thumb loads.
@@ -61,6 +72,13 @@ export interface GenerateThumbnailsResult {
   previewBytes?: number;
   // T2.4 — encoded data URL (`data:image/webp;base64,…`) length, for logging.
   lqipBytes?: number;
+  // T2.3 — responsive tier byte counts for logging / cost analysis.
+  thumb256AvifBytes?: number;
+  thumb512WebpBytes?: number;
+  thumb512AvifBytes?: number;
+  thumb1024WebpBytes?: number;
+  thumb1024AvifBytes?: number;
+  previewAvifBytes?: number;
 }
 
 async function downloadOriginal(bucket: string, key: string): Promise<Buffer> {
@@ -70,10 +88,11 @@ async function downloadOriginal(bucket: string, key: string): Promise<Buffer> {
 async function uploadDerivative(
   bucket: string,
   key: string,
-  body: Buffer
+  body: Buffer,
+  contentType: "image/webp" | "image/avif" = "image/webp"
 ): Promise<void> {
   await storage().put(key, body, {
-    contentType: "image/webp",
+    contentType,
     contentLength: body.length,
     cacheControl: DERIVATIVE_CACHE_CONTROL,
   });
@@ -98,6 +117,28 @@ async function encodeVariant(
       withoutEnlargement: true,
     })
     .webp({ quality, effort: 4 })
+    .toBuffer();
+}
+
+/**
+ * T2.3 — AVIF sibling of `encodeVariant()`. Same resize policy
+ * (`withoutEnlargement: true` so a 200×200 source doesn't get upscaled to
+ * 1024×1024), libavif effort 4 = encode-time sweet spot.
+ */
+async function encodeAvifVariant(
+  source: Buffer,
+  longEdgePx: number,
+  quality: number
+): Promise<Buffer> {
+  return sharp(source, { failOn: "none" })
+    .rotate()
+    .resize({
+      width: longEdgePx,
+      height: longEdgePx,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .avif({ quality, effort: 4 })
     .toBuffer();
 }
 
@@ -208,14 +249,34 @@ export async function generateThumbnails(
     decodedBuffer = decoded.buffer;
   }
 
-  // Encode both variants in parallel — sharp pipelines are independent. CPU
+  // Encode all variants in parallel — sharp pipelines are independent. CPU
   // contention is bounded by the worker's `THUMBNAIL_WORKER_CONCURRENCY`.
   // T2.4 — the 4x4 LQIP rides along in the same Promise.all. It's a separate
   // sharp pipeline (cover-fit, low effort) so the regular 256/1080 outputs
   // are bit-identical to pre-T2.4 — LQIP is purely additive.
-  const [thumb, preview, lqipBuffer] = await Promise.all([
+  // T2.3 — six new responsive variants (256@avif, 512@webp, 512@avif,
+  // 1024@webp, 1024@avif, 1080@avif) join the same Promise.all for a total
+  // of 9 sharp encode passes. CPU-bound; the 1024@avif pass dominates
+  // (~500-1500ms on a 4MP photo). Worker concurrency caps the queue depth.
+  const [
+    thumb256,
+    thumb256Avif,
+    thumb512,
+    thumb512Avif,
+    thumb1024,
+    thumb1024Avif,
+    preview,
+    previewAvif,
+    lqipBuffer,
+  ] = await Promise.all([
     encodeVariant(decodedBuffer, THUMB_LONG_EDGE_PX, THUMB_QUALITY),
+    encodeAvifVariant(decodedBuffer, THUMB_LONG_EDGE_PX, AVIF_QUALITY),
+    encodeVariant(decodedBuffer, THUMB_512_LONG_EDGE_PX, THUMB_QUALITY),
+    encodeAvifVariant(decodedBuffer, THUMB_512_LONG_EDGE_PX, AVIF_QUALITY),
+    encodeVariant(decodedBuffer, THUMB_1024_LONG_EDGE_PX, THUMB_QUALITY),
+    encodeAvifVariant(decodedBuffer, THUMB_1024_LONG_EDGE_PX, AVIF_QUALITY),
     encodeVariant(decodedBuffer, PREVIEW_LONG_EDGE_PX, PREVIEW_QUALITY),
+    encodeAvifVariant(decodedBuffer, PREVIEW_LONG_EDGE_PX, AVIF_QUALITY),
     sharp(decodedBuffer, { failOn: "none" })
       .rotate()
       .resize(LQIP_EDGE_PX, LQIP_EDGE_PX, { fit: "cover" })
@@ -226,14 +287,60 @@ export async function generateThumbnails(
 
   const thumbnailKey = assetDerivativeKey(workspaceId, assetId, "thumb");
   const previewKey = assetDerivativeKey(workspaceId, assetId, "preview");
+  const thumbnail256AvifKey = assetResponsiveDerivativeKey(
+    workspaceId,
+    assetId,
+    "thumb_256_avif"
+  );
+  const thumbnail512WebpKey = assetResponsiveDerivativeKey(
+    workspaceId,
+    assetId,
+    "thumb_512_webp"
+  );
+  const thumbnail512AvifKey = assetResponsiveDerivativeKey(
+    workspaceId,
+    assetId,
+    "thumb_512_avif"
+  );
+  const thumbnail1024WebpKey = assetResponsiveDerivativeKey(
+    workspaceId,
+    assetId,
+    "thumb_1024_webp"
+  );
+  const thumbnail1024AvifKey = assetResponsiveDerivativeKey(
+    workspaceId,
+    assetId,
+    "thumb_1024_avif"
+  );
+  const previewAvifKey = assetResponsiveDerivativeKey(
+    workspaceId,
+    assetId,
+    "preview_avif"
+  );
 
   await Promise.all([
-    uploadDerivative(bucket, thumbnailKey, thumb),
+    uploadDerivative(bucket, thumbnailKey, thumb256),
     uploadDerivative(bucket, previewKey, preview),
+    uploadDerivative(bucket, thumbnail256AvifKey, thumb256Avif, "image/avif"),
+    uploadDerivative(bucket, thumbnail512WebpKey, thumb512),
+    uploadDerivative(bucket, thumbnail512AvifKey, thumb512Avif, "image/avif"),
+    uploadDerivative(bucket, thumbnail1024WebpKey, thumb1024),
+    uploadDerivative(bucket, thumbnail1024AvifKey, thumb1024Avif, "image/avif"),
+    uploadDerivative(bucket, previewAvifKey, previewAvif, "image/avif"),
   ]);
 
   log.info(
-    { thumbBytes: thumb.length, previewBytes: preview.length, lqipBytes: lqip.length },
+    {
+      thumbBytes: thumb256.length,
+      previewBytes: preview.length,
+      lqipBytes: lqip.length,
+      thumb256AvifBytes: thumb256Avif.length,
+      thumb512WebpBytes: thumb512.length,
+      thumb512AvifBytes: thumb512Avif.length,
+      thumb1024WebpBytes: thumb1024.length,
+      thumb1024AvifBytes: thumb1024Avif.length,
+      previewAvifBytes: previewAvif.length,
+    },
     "derivatives uploaded"
   );
 
@@ -242,6 +349,12 @@ export async function generateThumbnails(
     .set({
       thumbnailKey,
       previewKey,
+      thumbnail256AvifKey,
+      thumbnail512WebpKey,
+      thumbnail512AvifKey,
+      thumbnail1024WebpKey,
+      thumbnail1024AvifKey,
+      previewAvifKey,
       thumbnailGeneratedAt: new Date(),
       lqip,
     })
@@ -251,8 +364,14 @@ export async function generateThumbnails(
     skipped: false,
     thumbnailKey,
     previewKey,
-    thumbBytes: thumb.length,
+    thumbBytes: thumb256.length,
     previewBytes: preview.length,
     lqipBytes: lqip.length,
+    thumb256AvifBytes: thumb256Avif.length,
+    thumb512WebpBytes: thumb512.length,
+    thumb512AvifBytes: thumb512Avif.length,
+    thumb1024WebpBytes: thumb1024.length,
+    thumb1024AvifBytes: thumb1024Avif.length,
+    previewAvifBytes: previewAvif.length,
   };
 }

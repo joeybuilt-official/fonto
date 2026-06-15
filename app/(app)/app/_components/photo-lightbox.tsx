@@ -753,21 +753,28 @@ export function PhotoLightbox({
     if (neighbours.length === 0) return;
     let cancelled = false;
     const linkEls: HTMLLinkElement[] = [];
+    // T2.3b — also warm the preview-avif variant. The URL endpoint falls
+    // back to legacy preview when preview-avif is NULL, so this is safe on
+    // unbackfilled rows. Browsers that don't support AVIF will ignore the
+    // <link rel=prefetch> mime hint and still pick the webp via the
+    // displayed image's own <picture> source negotiation when we render it.
     for (const id of neighbours) {
-      fetch(`/api/v1/assets/${id}/url?variant=preview`)
-        .then((r) => (r.ok ? r.json() : { url: null }))
-        .then((d: { url?: string | null }) => {
-          if (cancelled || !d?.url) return;
-          const link = document.createElement("link");
-          link.rel = "prefetch";
-          link.as = "image";
-          link.href = d.url;
-          document.head.appendChild(link);
-          linkEls.push(link);
-        })
-        .catch(() => {
-          /* ignore */
-        });
+      for (const variant of ["preview", "preview-avif"] as const) {
+        fetch(`/api/v1/assets/${id}/url?variant=${variant}`)
+          .then((r) => (r.ok ? r.json() : { url: null }))
+          .then((d: { url?: string | null }) => {
+            if (cancelled || !d?.url) return;
+            const link = document.createElement("link");
+            link.rel = "prefetch";
+            link.as = "image";
+            link.href = d.url;
+            document.head.appendChild(link);
+            linkEls.push(link);
+          })
+          .catch(() => {
+            /* ignore */
+          });
+      }
     }
     return () => {
       cancelled = true;

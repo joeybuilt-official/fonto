@@ -191,6 +191,13 @@ export interface PhotoCardProps {
    *  card skips its per-tile /api/v1/assets/:id/url fetch entirely. AssetGrid
    *  uses this; legacy call-sites that pass nothing keep the old behavior. */
   thumbUrl?: string | null;
+  /** T2.3b — per-variant URLs from the batch URL endpoint when called with
+   *  the responsive variant set (thumb-256-avif, thumb-512-{webp,avif},
+   *  thumb-1024-{webp,avif}, plus legacy thumb). When present the card
+   *  renders a <picture> with AVIF/WebP <source> srcsets so the browser
+   *  picks the smallest format it supports. Absent ⇒ falls back to the
+   *  single `thumbUrl` rendering. */
+  responsiveUrls?: Record<string, string> | null;
 }
 
 export function PhotoCard({
@@ -203,6 +210,7 @@ export function PhotoCard({
   onAddToCollection,
   onClick,
   thumbUrl,
+  responsiveUrls,
 }: PhotoCardProps) {
   // Two sources for the displayed url:
   //   - `thumbUrl` prop (UX-3 batch URL endpoint): supplied by AssetGrid, wins.
@@ -297,6 +305,60 @@ export function PhotoCard({
       >
         {loading ? (
           <Loader2 className="h-5 w-5 animate-spin text-[var(--ft-color-on-surface-variant)]" />
+        ) : responsiveUrls ? (
+          // T2.3b — <picture> w/ AVIF + WebP srcsets at 256/512/1024. The
+          // browser picks the smallest format it supports; ancient browsers
+          // hit the <img> fallback (which is always the legacy 256 webp so
+          // unbackfilled rows still render). `sizes` matches the grid tile
+          // width at each common breakpoint (the parent uses
+          // minmax(0, 1fr) cols so actual width depends on container width
+          // and column count — the values below are the ~p95 tile widths
+          // observed on the photos grid).
+          <picture>
+            {(() => {
+              const u256w = responsiveUrls["thumb"];
+              const u256a = responsiveUrls["thumb-256-avif"];
+              const u512w = responsiveUrls["thumb-512-webp"];
+              const u512a = responsiveUrls["thumb-512-avif"];
+              const u1024w = responsiveUrls["thumb-1024-webp"];
+              const u1024a = responsiveUrls["thumb-1024-avif"];
+              const avifSrcset = [
+                u256a && `${u256a} 256w`,
+                u512a && `${u512a} 512w`,
+                u1024a && `${u1024a} 1024w`,
+              ]
+                .filter(Boolean)
+                .join(", ");
+              const webpSrcset = [
+                u256w && `${u256w} 256w`,
+                u512w && `${u512w} 512w`,
+                u1024w && `${u1024w} 1024w`,
+              ]
+                .filter(Boolean)
+                .join(", ");
+              const sizes =
+                "(min-width: 1280px) 220px, (min-width: 768px) 180px, 33vw";
+              const fallback = u256w ?? url ?? "";
+              return (
+                <>
+                  {avifSrcset && (
+                    <source type="image/avif" srcSet={avifSrcset} sizes={sizes} />
+                  )}
+                  {webpSrcset && (
+                    <source type="image/webp" srcSet={webpSrcset} sizes={sizes} />
+                  )}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={fallback}
+                    alt={asset.description ?? asset.filename}
+                    className="h-full w-full object-cover relative"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </>
+              );
+            })()}
+          </picture>
         ) : url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img

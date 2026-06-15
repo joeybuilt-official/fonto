@@ -7,6 +7,7 @@ import { resolveAssetAccess } from "@/lib/assets/access";
 import { db, schema } from "@/lib/db";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
+import { resolveVariantKey, type Variant } from "@/lib/assets/variants";
 
 // Phase 1.1 — variant query param. `original` keeps the legacy behavior;
 // `thumb` / `preview` resolve the derivative R2 keys if present (and fall
@@ -14,17 +15,26 @@ import { storage } from "@/lib/storage";
 // backfill catches them).
 // Phase 1 (faces/UX) — `face` resolves a single face's dedicated crop key
 // (requires &faceId=…); the face must belong to this asset's workspace.
-type Variant = "thumb" | "preview" | "original" | "face";
+// T2.3b (fonto-perf-audit) — extended with responsive AVIF/WebP variants
+// (thumb-{256,512,1024}-{webp,avif}, preview-avif). The `resolveVariantKey`
+// helper centralises the fallback chain so the batch route shares behaviour.
 
 function parseVariant(raw: string | null): Variant {
-  if (
-    raw === "thumb" ||
-    raw === "preview" ||
-    raw === "original" ||
-    raw === "face"
-  )
-    return raw;
-  return "original";
+  switch (raw) {
+    case "thumb":
+    case "preview":
+    case "original":
+    case "face":
+    case "thumb-256-avif":
+    case "thumb-512-webp":
+    case "thumb-512-avif":
+    case "thumb-1024-webp":
+    case "thumb-1024-avif":
+    case "preview-avif":
+      return raw;
+    default:
+      return "original";
+  }
 }
 
 export async function GET(
@@ -46,8 +56,8 @@ export async function GET(
 
   // Pick the R2 key based on the requested variant. Derivatives may be NULL
   // for legacy / non-image / unbackfilled rows — fall through to the
-  // original key in that case so the client never sees a 404 because of an
-  // in-flight backfill.
+  // original key (or the next-best legacy variant) so the client never sees
+  // a 404 because of an in-flight backfill.
   let key: string;
   let servedVariant: Variant = variant;
   if (variant === "face") {
@@ -81,13 +91,15 @@ export async function GET(
         : assetStorageKey(asset.workspaceId, asset.id, asset.filename);
       servedVariant = asset.previewKey ? "preview" : "original";
     }
-  } else if (variant === "thumb" && asset.thumbnailKey) {
-    key = asset.thumbnailKey;
-  } else if (variant === "preview" && asset.previewKey) {
-    key = asset.previewKey;
   } else {
-    key = assetStorageKey(asset.workspaceId, asset.id, asset.filename);
-    servedVariant = "original";
+    const resolved = resolveVariantKey(asset, variant);
+    if (resolved.key) {
+      key = resolved.key;
+      servedVariant = resolved.resolvedVariant;
+    } else {
+      key = assetStorageKey(asset.workspaceId, asset.id, asset.filename);
+      servedVariant = "original";
+    }
   }
 
   const url = await storage().presignGet(key, { expiresIn: 3600 });

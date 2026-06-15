@@ -180,6 +180,18 @@ export const assets = fontoSchema.table(
     // last successful generation pass (same value applies to both).
     thumbnailKey: text("thumbnail_key"),
     previewKey: text("preview_key"),
+    // T2.3 (fonto-perf-audit 2026-06-15) — responsive derivative tiers.
+    // 256/512/1024 thumbs × {webp,avif} + a sibling 1080 AVIF preview, so the
+    // grid + lightbox can serve a responsive srcset and hi-DPI displays don't
+    // pay a 4× bandwidth tax. Populated alongside the legacy thumb/preview at
+    // generation time; NULL for legacy rows (the UI falls back to the legacy
+    // 256/1080 WebP keys above). See `assetResponsiveDerivativeKey()` in lib/r2.ts.
+    thumbnail256AvifKey: text("thumbnail_256_avif_key"),
+    thumbnail512WebpKey: text("thumbnail_512_webp_key"),
+    thumbnail512AvifKey: text("thumbnail_512_avif_key"),
+    thumbnail1024WebpKey: text("thumbnail_1024_webp_key"),
+    thumbnail1024AvifKey: text("thumbnail_1024_avif_key"),
+    previewAvifKey: text("preview_avif_key"),
     thumbnailGeneratedAt: timestamp("thumbnail_generated_at", { withTimezone: true }),
     // T2.4 (fonto-perf-audit 2026-06-15) — 4x4 WebP LQIP encoded as a data URL
     // (~50–200 bytes). Rendered as `background-image` on the grid tile while
