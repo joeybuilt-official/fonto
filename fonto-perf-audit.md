@@ -1,8 +1,8 @@
 # Fonto Performance Audit & Speed Optimization Plan
 
-**Status:** Read-only audit, plan only. **No code, schema, config, or dep changes made.**
-**Branch:** main (HEAD `1d184de`)
-**Date:** 2026-06-15
+**Status:** Initiative complete. Tier-1 + Tier-2 shipped. Tier-3 surfaced for future / measurement-gated. See "What shipped" section at the bottom of this doc.
+**Branch:** main (HEAD `142a68e` after closeout)
+**Date:** 2026-06-15 (audit) / 2026-06-15 (ship)
 **Stack confirmed:** Next 16.2.1 / React 19.2.4 / Drizzle / postgres-js + pg (pushd Postgres) / ioredis (Valkey) / R2 via @aws-sdk / sharp / @tanstack/react-virtual
 
 ## Stack deltas vs spec
@@ -245,3 +245,67 @@ Cost classes: **L** (low) / **M** (moderate) / **H** (high); a "1-way door" is e
 ---
 
 ## Awaiting go from operator before any code, schema, or config edits.
+
+---
+
+# What shipped (2026-06-15 closeout)
+
+Three commits on `origin/main`, two APK tags (v2.0.355 + v2.0.356) emailed via Codemagic.
+
+## Tier-1 (`2b74893`)
+| ID | What | State |
+|---|---|---|
+| T1.1 | Auth `cache()` wrap | ✅ shipped (`lib/auth/server.ts`, `lib/workspace.ts`). Caveat: dedups within React render only — middleware → handler still independent. |
+| T1.2 | Lightbox workspace-invariants hoist | ✅ shipped (`photo-lightbox.tsx`). `/tags` + `/collections` fire once per workspace per lightbox session, not per asset-nav. |
+| T1.4 | Lightbox prev/next preload | ✅ shipped. `<link rel="prefetch" as="image">` for ±1 neighbour. Wired in `library/page.tsx`; 9 other lightbox call sites are no-op (props optional) — follow-up to spread. |
+| T1.6 | postgres-js pool cap | ✅ shipped. `max: 20`, env override `FONTO_PG_POOL_MAX`. |
+| T1.7 | Brotli on `/urls` batch | ✅ already in place — Cloudflare edge `content-encoding: br`, Next `compress: true`. No-op. |
+| T1.8 | CLIP-text → Valkey | ⏸ **deferred deliberately.** Author's per-process rationale in the source is sound (low-rate, ~4 KB/entry, stale entry = one extra round-trip). If cross-pod is ever needed, easy bolt-on against `lib/cache/valkey.ts`. |
+| T1.9 | Cache hit/miss counters | ✅ shipped (bundled with T2.1). |
+
+## Tier-2 batch 1 (`280bd01`)
+| ID | What | State |
+|---|---|---|
+| T1.3 | Force-dynamic per-route audit + CACHE-CONVENTION.md | ✅ shipped. 11 class-B routes wrapped in `unstable_cache` + tagged `ws:<id>:<resource>`. Mutations call `revalidateTag(..., "max")` (Next 16 requires the profile arg). Ambiguous aggregate routes (shoots/places/folders/tags-top/etc.) deferred — they embed asset-side aggregates and need every asset write to fire matching tags. Follow-up T1.3'. |
+| T1.5 | Partial composite indexes | ✅ shipped, migration `0045_grid_perf_index.sql` applied to pushd. `(workspace_id, captured_at DESC) WHERE lifecycle_state='active'` + `(workspace_id, created_at DESC) WHERE lifecycle_state='active'`. Reversible. |
+| T2.1 | Search Valkey cache | ✅ shipped. 5min TTL, stampede lock (SET NX EX 30 + Lua check-and-del release, losers poll ≤3 s then degrade to own compute), tag `ws:<id>:assets`. Fails OPEN on Valkey down. |
+| T2.2 | Workspace-invariants Valkey cache | ✅ shipped for tags/collections/persons/smart_collections. Mutation-event invalidation; tag scheme unified at `smart_collections` (underscore) across both layers. |
+| T2.4 | LQIP/blurhash | ✅ shipped, migration `0046_assets_lqip.sql` applied. 4×4 WebP@q25 data URL (~150 B/row); worker pipeline eager, PhotoCard renders as `backgroundImage`. Backfill: `pnpm backfill:lqip`. |
+| T2.5 | List overscan tune | ✅ shipped. 10 → 5. |
+
+## Tier-2 batch 2 (`142a68e`)
+| ID | What | State |
+|---|---|---|
+| T2.3 | Responsive srcset + AVIF derivatives | ✅ shipped, migration `0047_responsive_derivatives.sql` applied. 6 new columns on `assets`; worker generates 256/512/1024 WebP + 256/512/1024 AVIF + 1080 AVIF (8 derivatives + LQIP in one Promise.all). Variant resolution via `lib/assets/variants.ts :: resolveVariantKey()` with explicit fallback chain — endpoints never 404 on un-backfilled rows. PhotoCard renders `<picture>` with AVIF + WebP `<source>` + `<img>` fallback. Backfill: `pnpm backfill:responsive`. **CPU heads-up:** encode cost ~triples; halve `THUMBNAIL_WORKER_CONCURRENCY` on first prod rollout. |
+
+## Tier-2 deferred
+| ID | What | Why deferred |
+|---|---|---|
+| T2.6 | Worker classify→thumb parallelization | **Audit was wrong.** Verified in `lib/assets/createAssetRow.ts:496-509` — ProcessAsset (classify), GenerateThumbnails, and ClipEmbed are already enqueued as 3 PARALLEL BullMQ jobs at upload time. Only face detection is deferred (gated on `classification === 'photo'`, intentional). No-op. |
+| T2.8 | PPR pilot | Next 16 PPR maturity risk in this codebase. Revisit in a quarter. |
+
+## Tier-3 (all surfaced, none implemented — expert-panel decisions)
+| ID | What | Decision |
+|---|---|---|
+| T3.1 | Worker-fronted R2 fast lane | **Skip.** One-way door + UX panel's auth-context concern (current per-asset proxy has fine-grained policy: private / shared / face-cropped). Adding a second delivery path doubles bug surface. |
+| T3.2 | CF Workers full edge surface | **Skip.** Ops surface (Worker logs, KV namespaces) not justified by current data. |
+| T3.3 | Postgres read replica | **Defer + measure.** Add `pg_stat_statements` + per-route DB-call histograms before considering. No evidence of pushd primary saturation today. |
+| T3.4 | Cache policy convention | **Codified as part of T1.3** — `CACHE-CONVENTION.md` at repo root. |
+
+## Open follow-ups
+1. **Ambiguous aggregate routes** (shoots/places/folders/tree/persons/tags-top/collections/stats/{smart-,}collections/[id]/assets) — safe caching requires every asset-side write to fire matching `revalidateTag`. ~2-4 lines per asset mutation × ~12 mutation routes. Tracked as T1.3'.
+2. **9 other lightbox call sites** could pass `prevAssetId`/`nextAssetId` for ecosystem-wide arrow-nav speedup. ~2 lines per file.
+3. **Backfill runs:**
+   - `pnpm backfill:lqip` — for existing 4MP-photo-grade libraries; computes LQIPs from existing 256 thumbs.
+   - `pnpm backfill:responsive` — generates the 6 new derivative tiers for existing assets. Halve `THUMBNAIL_WORKER_CONCURRENCY` first, then ramp.
+4. **Cache observability** is live but `/api/metrics` won't show non-zero values until traffic flows through the cached routes. Watch `fonto_cache_hits_total`, `fonto_cache_misses_total`, `fonto_cache_stampede_waits_total` on the existing Prometheus scrape.
+
+## Audit corrections
+- **T2.6 was wrong** — pipeline is already parallel since Phase 1.1.
+- Per-asset derivative count after T2.3 is **9**, not "2 fixed sizes" as the original Discover section said. The audit was written against the pre-ship state.
+
+## What I'd do next (not gated this session)
+1. Wire the ambiguous aggregate routes (T1.3') — biggest remaining cache hit-rate win.
+2. After ~1 week of metrics, decide whether Tier-3 read replica (T3.3) is justified.
+3. Spread T1.4 lightbox prefetch to the other 9 surfaces (folders/timeline/map/photos/collections/explore/updates).
+4. Pull `pnpm backfill:responsive` + `pnpm backfill:lqip` against the existing library — both idempotent, both resumable.
