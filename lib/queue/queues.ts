@@ -7,6 +7,7 @@
 
 import { Queue, type JobsOptions } from "bullmq";
 import { getRedisConnection } from "./connection";
+import { JobNames } from "./jobs";
 import type {
   ProcessAssetJob,
   OcrJob,
@@ -19,6 +20,7 @@ import type {
   VideoHlsTranscodeJob,
   ImportJob,
   StorageSyncJob,
+  ExtractEvidenceJob,
 } from "./jobs";
 
 export const QueueNames = {
@@ -58,6 +60,10 @@ export const QueueNames = {
   // `mirror`-policy workspaces. I/O-bound (R2 download + local write); own queue
   // so a large-file mirror never backlogs asset-processing.
   StorageSync: "storage-sync",
+  // Intelligence Core (Phase 3) — per-asset date-evidence extraction. Mostly
+  // Postgres-bound + one optional Plexo label call; own queue so a vision
+  // hiccup doesn't backlog the main pipeline.
+  ExtractEvidence: "extract-evidence",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -295,6 +301,39 @@ export async function tryEnqueueImport(payload: ImportJob): Promise<void> {
   await importQueue().add("media-import", payload);
 }
 
+/**
+ * Intelligence Core (Phase 3) — per-asset evidence extraction queue. Tiny
+ * payloads; the worker reads the asset from Postgres + presigns the preview for
+ * the optional scene-label call. 3 attempts with backoff (a transient vision /
+ * presign hiccup usually clears on retry); the Fonto-local adapters are
+ * deterministic so a retry re-derives the same rows idempotently.
+ */
+export function extractEvidenceQueue(): Queue<ExtractEvidenceJob> {
+  const name = QueueNames.ExtractEvidence;
+  const existing = cache.get(name);
+  if (existing) return existing as Queue<ExtractEvidenceJob>;
+  const q = new Queue<ExtractEvidenceJob>(name, {
+    connection: getRedisConnection(),
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: 1000,
+      removeOnFail: 500,
+    },
+  });
+  cache.set(name, q);
+  return q;
+}
+
+/** Enqueue an extract-evidence job. Fire-and-forget; never throws, only logs. */
+export async function addExtractEvidenceJob(payload: ExtractEvidenceJob): Promise<void> {
+  try {
+    await extractEvidenceQueue().add(JobNames.ExtractEvidence, payload);
+  } catch (err) {
+    console.warn("[fonto] extract-evidence enqueue skipped:", err);
+  }
+}
+
 export function maintenanceQueue(): Queue<Record<string, never>> {
   const name = QueueNames.Maintenance;
   const existing = cache.get(name);
@@ -321,6 +360,8 @@ export function allQueues(): Queue[] {
   faceDetectQueue();
   videoHlsTranscodeQueue();
   importQueue();
+  storageSyncQueue();
+  extractEvidenceQueue();
   return Array.from(cache.values());
 }
 

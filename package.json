@@ -29,6 +29,7 @@
     "autoscaler:start": "tsx ops/autoscaler/index.ts",
     "autoscaler:enqueue": "tsx ops/autoscaler/test-enqueue.ts",
     "test:temporal": "tsx scripts/test-temporal.ts",
+    "test:evidence": "tsx scripts/test-evidence.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "conformance": "node scripts/conformance-guard.mjs"

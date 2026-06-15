@@ -293,6 +293,19 @@ export const assets = fontoSchema.table(
     // hard-delete of the original leaves the derivative as a standalone row
     // rather than cascade-deleting user-edited copies.
     derivedFromAssetId: uuid("derived_from_asset_id"),
+    // Intelligence Core (ADR-0002 / migration 0044) — variant consolidation.
+    // `variantGroupId` is a soft FK to fonto.variant_groups: NULL = not (yet) a
+    // near-dup candidate. `isCanonical` marks the survivor Phase 5 picked.
+    // `qualityMetrics` is the deterministic scorer output { sharpness, artifact,
+    // bytesPerPixel, origVsDerived, score }. `consolidationState` + `trashPurgeAt`
+    // are kept SEPARATE from the deleted/archived/purged lifecycle so a variant
+    // purge never conflates with a user delete; 'trashed' rows wait out the grace
+    // window in `trashPurgeAt` before a Phase 5 hard purge.
+    variantGroupId: uuid("variant_group_id"),
+    isCanonical: boolean("is_canonical").notNull().default(false),
+    qualityMetrics: jsonb("quality_metrics"),
+    consolidationState: text("consolidation_state").notNull().default("none"),
+    trashPurgeAt: timestamp("trash_purge_at", { withTimezone: true }),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
@@ -362,6 +375,16 @@ export const assets = fontoSchema.table(
     index("assets_derived_from_idx")
       .on(table.derivedFromAssetId)
       .where(sql`${table.derivedFromAssetId} IS NOT NULL`),
+    // Intelligence Core (migration 0044) — list a variant group's members.
+    // Partial on grouped rows (the minority) keeps the BTree small.
+    index("assets_variant_group_idx")
+      .on(table.variantGroupId)
+      .where(sql`${table.variantGroupId} IS NOT NULL`),
+    // Intelligence Core (migration 0044) — Phase 5 purge sweep picks trashed
+    // variants past their grace window.
+    index("assets_trash_purge_at_idx")
+      .on(table.trashPurgeAt)
+      .where(sql`${table.trashPurgeAt} IS NOT NULL`),
   ]
 );
 
@@ -1154,6 +1177,87 @@ export const temporalFacts = fontoSchema.table(
     // names them. GIN over the uuid[] keeps the `person_ids @> ARRAY[...]`
     // membership probe cheap.
     index("temporal_facts_person_ids_idx").using("gin", table.personIds),
+  ]
+);
+
+// Intelligence Core (ADR-0002 / migration 0044) — the APPEND-ONLY evidence
+// ledger. Each row is one dated signal an extractor (Phase 3) pulled from an
+// asset: an identity bound, a scene-season hint, a parsed OCR date, the EXIF
+// capture stamp, a filename date, the fs-mtime floor, etc.
+//
+// Append-only: there is no UPDATE. When a producing model improves, the
+// extractor writes a NEW row with a newer `model_version`; the fusion engine
+// (Phase 4) filters to the current (evidence_type, model_version) per asset and
+// ignores the superseded rows (ADR-0006). `likelihood` is RESERVED and left NULL
+// in Phase 3 — the per-evidence monthly-grid likelihood vector is a property of
+// the fusion contract (ADR-0003), computed + cached by the Phase 4 engine from
+// `source_detail`, never by the extractor.
+//
+// `apparent_age` is a valid evidence_type with no producer in v1 (ADR-0001 D4).
+export const imageDateEvidence = fontoSchema.table(
+  "image_date_evidence",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    assetId: uuid("asset_id").notNull(),
+    // identity_bound | apparent_age | trip_match | scene_season | ocr_date |
+    // exif | filename | fs_mtime | cluster_propagation | co_occurrence
+    // (CHECK in 0044).
+    evidenceType: text("evidence_type").notNull(),
+    // Reserved sparse monthly-grid distribution (ADR-0003). NULL until fusion.
+    likelihood: jsonb("likelihood"),
+    // The structured raw signal the adapter extracted; the Phase 4 likelihood
+    // fns read this. Shape is per evidence_type (see lib/evidence/adapters/*).
+    sourceDetail: jsonb("source_detail").notNull(),
+    // Producing model/rule version. Perception-backed types carry the Plexo
+    // model id; Fonto-local rules carry a rule version string ("exif@1").
+    modelVersion: text("model_version").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // Fusion reads every current row for an asset; re-audit re-extracts one type.
+    index("image_date_evidence_asset_type_idx").on(
+      table.assetId,
+      table.evidenceType
+    ),
+    // Idempotent-replace probe used by the extractor before re-inserting a type
+    // at the same model_version.
+    index("image_date_evidence_asset_type_version_idx").on(
+      table.assetId,
+      table.evidenceType,
+      table.modelVersion
+    ),
+  ]
+);
+
+// Intelligence Core (ADR-0002 / migration 0044) — near-duplicate candidate
+// clusters seeded from existing pHash + CLIP neighbours (Phase 3). Phase 3 only
+// writes status='candidate'; the destructive consolidation (deterministic
+// canonical pick + sole-copy-safe purge, ADR-0004) is Phase 5 and operator-gated.
+//
+// Membership lives on `assets.variant_group_id` (soft FK, matching the rest of
+// the schema). `canonicalAssetId` stays NULL while 'candidate'.
+export const variantGroups = fontoSchema.table(
+  "variant_groups",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // Stable representative key (seed pHash hex / smallest member id). Diagnostic.
+    perceptualKey: text("perceptual_key"),
+    // The chosen survivor (Phase 5). NULL while 'candidate'. Soft FK to assets.id.
+    canonicalAssetId: uuid("canonical_asset_id"),
+    // Tightest pairwise similarity binding the group (0..1) — drives the Phase 5
+    // review-vs-auto gate.
+    groupingConfidence: real("grouping_confidence"),
+    // 'candidate' | 'confirmed' | 'consolidated' (CHECK in 0044).
+    status: text("status").notNull().default("candidate"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("variant_groups_workspace_status_idx").on(
+      table.workspaceId,
+      table.status
+    ),
   ]
 );
 

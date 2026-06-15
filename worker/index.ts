@@ -27,6 +27,7 @@ import {
   maintenanceQueue,
   webhookDeliveryQueue,
   clipDedupCheckQueue,
+  extractEvidenceQueue,
   closeAllQueues,
 } from "@/lib/queue/queues";
 import {
@@ -41,6 +42,8 @@ import {
   BackfillFaceCropsJobSchema,
   ImportJobSchema,
   StorageSyncJobSchema,
+  ExtractEvidenceJobSchema,
+  BackfillEvidenceJobSchema,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
@@ -50,6 +53,7 @@ import {
   type VideoHlsTranscodeJob,
   type ImportJob,
   type StorageSyncJob,
+  type ExtractEvidenceJob,
 } from "@/lib/queue/jobs";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
@@ -72,6 +76,8 @@ import {
 import { generateSpriteSheet } from "@/lib/processing/generateSpriteSheet";
 import { runImport } from "@/lib/import/runImport";
 import { syncAssetStorage } from "@/lib/storage/sync";
+import { extractAssetEvidence } from "@/lib/evidence/extractAssetEvidence";
+import { backfillEvidence, backfillVariantCandidates } from "@/lib/evidence/backfill";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -248,6 +254,39 @@ const BACKFILL_FACE_CROPS_BATCH_SIZE = Math.max(
     10
   ),
   1
+);
+
+// Intelligence Core (Phase 3) — extract-evidence worker concurrency. Mostly
+// Postgres-bound + one optional Plexo label call, so a few in flight is fine.
+const EVIDENCE_EXTRACT_CONCURRENCY = Math.max(
+  parseInt(process.env.EVIDENCE_EXTRACT_CONCURRENCY ?? "3", 10),
+  1
+);
+// Intelligence Core (Phase 3) — evidence + variant-candidate backfill sweeps.
+// Both DEFAULT-OFF (env-gated) like the face-crop backfill: the schedules are
+// only registered when the flag is truthy, so prod is untouched until the
+// operator opts in (or enqueues a one-off). The evidence sweep enqueues
+// extract-evidence in bounded batches; the variant sweep recomputes candidate
+// groups per workspace (idempotent).
+const BACKFILL_EVIDENCE_ENABLED = ["1", "true", "yes"].includes(
+  (process.env.BACKFILL_EVIDENCE ?? "").trim().toLowerCase()
+);
+const BACKFILL_EVIDENCE_INTERVAL_MS = Math.max(
+  parseInt(process.env.BACKFILL_EVIDENCE_INTERVAL_MS ?? `${5 * 60 * 1000}`, 10),
+  1000
+);
+const BACKFILL_EVIDENCE_BATCH_SIZE = Math.max(
+  parseInt(process.env.BACKFILL_EVIDENCE_BATCH_SIZE ?? "100", 10),
+  1
+);
+const VARIANT_CANDIDATES_ENABLED = ["1", "true", "yes"].includes(
+  (process.env.BACKFILL_VARIANT_CANDIDATES ?? "").trim().toLowerCase()
+);
+// Default daily — variant grouping is a whole-workspace recompute, not a
+// drain-by-batch sweep, so it runs far less often than the evidence backfill.
+const VARIANT_CANDIDATES_INTERVAL_MS = Math.max(
+  parseInt(process.env.BACKFILL_VARIANT_CANDIDATES_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
+  1000
 );
 
 // Phase B5 (storage placement) — mirror backfill + reconcile sweeps. Both are
@@ -1047,6 +1086,58 @@ function startFaceDetectWorker(): Worker<FaceDetectJob> {
 }
 
 /**
+ * Intelligence Core (Phase 3) — per-asset evidence extraction worker. Runs the
+ * Fonto-local adapters (identity bound, EXIF, filename, fs-mtime, OCR-date) plus
+ * the optional Plexo scene-label adapter for one asset, and writes
+ * `fonto.image_date_evidence` rows idempotently. No fusion here — that is Phase
+ * 4. Deterministic + idempotent, so a retry re-derives the same rows.
+ */
+function startExtractEvidenceWorker(): Worker<ExtractEvidenceJob> {
+  const w = new Worker<ExtractEvidenceJob>(
+    QueueNames.ExtractEvidence,
+    async (job: Job<ExtractEvidenceJob>) => {
+      const log = logger.child({
+        queue: QueueNames.ExtractEvidence,
+        jobId: job.id,
+        assetId: job.data?.assetId,
+        attempt: job.attemptsMade + 1,
+      });
+      const parsed = ExtractEvidenceJobSchema.safeParse(job.data);
+      if (!parsed.success) {
+        log.error({ err: parsed.error.flatten() }, "invalid extract-evidence payload");
+        throw new UnrecoverableError(`invalid payload: ${parsed.error.message}`);
+      }
+      const result = await extractAssetEvidence(parsed.data.assetId);
+      return result;
+    },
+    {
+      connection: getRedisConnection(),
+      concurrency: EVIDENCE_EXTRACT_CONCURRENCY,
+    }
+  );
+
+  w.on("completed", (job) =>
+    logger.info({ queue: QueueNames.ExtractEvidence, jobId: job.id }, "extract-evidence completed")
+  );
+  w.on("failed", (job, err) =>
+    logger.error(
+      {
+        queue: QueueNames.ExtractEvidence,
+        jobId: job?.id,
+        attempt: job?.attemptsMade,
+        err: err.message,
+      },
+      "extract-evidence failed"
+    )
+  );
+  w.on("error", (err) =>
+    logger.error({ queue: QueueNames.ExtractEvidence, err: err.message }, "extract-evidence worker error")
+  );
+
+  return w;
+}
+
+/**
  * Phase 8b — HLS ladder transcode + sprite worker.
  *
  * One job per video. Steps:
@@ -1355,6 +1446,26 @@ function startMaintenanceWorker(): Worker {
         log.info(result, "storage-mirror reconcile tick complete");
         return result;
       }
+      if (job.name === JobNames.BackfillEvidence) {
+        // Intelligence Core (Phase 3) — enqueue extract-evidence for one bounded
+        // batch of assets that have no evidence rows yet. Resumable + idempotent.
+        const parsed = BackfillEvidenceJobSchema.safeParse(job.data ?? {});
+        const batchSize = parsed.success
+          ? parsed.data.batchSize ?? BACKFILL_EVIDENCE_BATCH_SIZE
+          : BACKFILL_EVIDENCE_BATCH_SIZE;
+        log.info({ batchSize }, "evidence backfill tick start");
+        const result = await backfillEvidence(batchSize);
+        log.info(result, "evidence backfill tick complete");
+        return result;
+      }
+      if (job.name === JobNames.BackfillVariantCandidates) {
+        // Intelligence Core (Phase 3) — recompute candidate variant groups for
+        // every workspace with active image assets. Idempotent per workspace.
+        log.info("variant-candidate backfill tick start");
+        const result = await backfillVariantCandidates();
+        log.info(result, "variant-candidate backfill tick complete");
+        return result;
+      }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");
       return null;
     },
@@ -1523,6 +1634,65 @@ async function ensureBackfillFaceCropsSchedule(): Promise<void> {
 }
 
 /**
+ * Intelligence Core (Phase 3) — register the recurring evidence backfill on the
+ * maintenance queue. DEFAULT-OFF: only registered when BACKFILL_EVIDENCE is
+ * truthy. When off we actively remove any scheduler a prior boot registered so
+ * flipping the flag off stops the tick. One-off runs are always available by
+ * enqueueing JobNames.BackfillEvidence on the maintenance queue.
+ */
+async function ensureBackfillEvidenceSchedule(): Promise<void> {
+  if (!BACKFILL_EVIDENCE_ENABLED) {
+    await maintenanceQueue().removeJobScheduler(JobNames.BackfillEvidence);
+    logger.info({ jobName: JobNames.BackfillEvidence }, "evidence backfill disabled (schedule removed)");
+    return;
+  }
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.BackfillEvidence,
+    { every: BACKFILL_EVIDENCE_INTERVAL_MS },
+    {
+      name: JobNames.BackfillEvidence,
+      data: { batchSize: BACKFILL_EVIDENCE_BATCH_SIZE } as unknown as Record<string, never>,
+    }
+  );
+  logger.info(
+    {
+      intervalMs: BACKFILL_EVIDENCE_INTERVAL_MS,
+      batchSize: BACKFILL_EVIDENCE_BATCH_SIZE,
+      jobName: JobNames.BackfillEvidence,
+    },
+    "evidence backfill schedule registered"
+  );
+}
+
+/**
+ * Intelligence Core (Phase 3) — register the recurring variant-candidate
+ * recompute on the maintenance queue. DEFAULT-OFF (BACKFILL_VARIANT_CANDIDATES);
+ * same remove-on-disable pattern.
+ */
+async function ensureVariantCandidatesSchedule(): Promise<void> {
+  if (!VARIANT_CANDIDATES_ENABLED) {
+    await maintenanceQueue().removeJobScheduler(JobNames.BackfillVariantCandidates);
+    logger.info(
+      { jobName: JobNames.BackfillVariantCandidates },
+      "variant-candidate backfill disabled (schedule removed)"
+    );
+    return;
+  }
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.BackfillVariantCandidates,
+    { every: VARIANT_CANDIDATES_INTERVAL_MS },
+    { name: JobNames.BackfillVariantCandidates }
+  );
+  logger.info(
+    {
+      intervalMs: VARIANT_CANDIDATES_INTERVAL_MS,
+      jobName: JobNames.BackfillVariantCandidates,
+    },
+    "variant-candidate backfill schedule registered"
+  );
+}
+
+/**
  * Phase B5 — register the throttled mirror-backfill sweep. DEFAULT-OFF: only
  * registered when STORAGE_BACKFILL is truthy AND LOCAL_STORAGE_ROOT is set;
  * otherwise actively remove any scheduler a prior boot left so flipping the flag
@@ -1661,6 +1831,8 @@ async function main(): Promise<void> {
   workers.push(startVideoHlsTranscodeWorker());
   // Phase 2 (media import) — Google Takeout / Amazon Photos archive import.
   workers.push(startImportWorker());
+  // Intelligence Core (Phase 3) — per-asset date-evidence extraction.
+  workers.push(startExtractEvidenceWorker());
   try {
     await ensureReaperSchedule();
   } catch (err) {
@@ -1723,6 +1895,22 @@ async function main(): Promise<void> {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
       "failed to register storage-mirror reconcile schedule — reconcile off until next boot"
+    );
+  }
+  try {
+    await ensureBackfillEvidenceSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register evidence backfill schedule — backfill off until next boot"
+    );
+  }
+  try {
+    await ensureVariantCandidatesSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register variant-candidate backfill schedule — backfill off until next boot"
     );
   }
 

@@ -178,6 +178,29 @@ export const StorageSyncJobSchema = z.object({
 });
 export type StorageSyncJob = z.infer<typeof StorageSyncJobSchema>;
 
+// Intelligence Core — Phase 3 (extract-evidence). Tiny payload: the worker reads
+// the asset (+ faces/persons/exif/ocr) from Postgres and optionally presigns the
+// preview for the Plexo scene-label call. Writes `fonto.image_date_evidence`.
+export const ExtractEvidenceJobSchema = z.object({
+  assetId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+});
+export type ExtractEvidenceJob = z.infer<typeof ExtractEvidenceJobSchema>;
+
+// Intelligence Core — Phase 3 maintenance sweeps. Both empty-payload + read the
+// world from Postgres on each tick.
+//   - BackfillEvidence: enqueue extract-evidence for a bounded batch of assets
+//     with no evidence rows yet (resumable via NOT EXISTS).
+//   - BackfillVariantCandidates: recompute candidate variant groups per
+//     workspace (idempotent).
+export const BackfillEvidenceJobSchema = z
+  .object({ batchSize: z.number().int().positive().max(1000).optional() })
+  .strict();
+export type BackfillEvidenceJob = z.infer<typeof BackfillEvidenceJobSchema>;
+
+export const BackfillVariantCandidatesJobSchema = z.object({}).strict();
+export type BackfillVariantCandidatesJob = z.infer<typeof BackfillVariantCandidatesJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -230,6 +253,13 @@ export const JobNames = {
   // Phase B5 (storage placement) — nightly reconcile: repair R2↔local divergence
   // for stamped mirror assets (restore local, re-push to R2, or flag loss).
   ReconcileStorageMirror: "reconcile-storage-mirror",
+  // Intelligence Core (Phase 3) — per-asset date-evidence extraction.
+  ExtractEvidence: "extract-evidence",
+  // Intelligence Core (Phase 3) — bounded backfill: enqueue extract-evidence for
+  // assets with no evidence rows yet.
+  BackfillEvidence: "backfill-evidence",
+  // Intelligence Core (Phase 3) — recompute variant candidates per workspace.
+  BackfillVariantCandidates: "backfill-variant-candidates",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];
