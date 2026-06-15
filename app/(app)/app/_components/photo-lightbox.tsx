@@ -476,6 +476,12 @@ export interface PhotoLightboxProps {
   // sync with favorite/rating mutations (otherwise the grid would still show
   // the old badge state when the lightbox closes).
   onAssetUpdate?: (assetId: string, patch: { isFavorite?: boolean; rating?: number }) => void;
+  // T1.4 (perf audit) — optional neighbour asset ids. When provided the
+  // lightbox warms the preview URL endpoint + image bytes for them so arrow
+  // nav feels instant. Parent supplies these from its assets[lightboxIndex±1]
+  // since the lightbox itself has no list awareness. Absent ⇒ no prefetch.
+  prevAssetId?: string | null;
+  nextAssetId?: string | null;
 }
 
 export function PhotoLightbox({
@@ -487,6 +493,8 @@ export function PhotoLightbox({
   hasNext,
   onTrash,
   onAssetUpdate,
+  prevAssetId,
+  nextAssetId,
 }: PhotoLightboxProps) {
   const session = useSession();
   // Better Auth's hook shape: { data: { user: { id, ... } } | null, ... }
@@ -684,13 +692,6 @@ export function PhotoLightbox({
       .then((r) => (r.ok ? r.json() : { tags: [] }))
       .then((d) => setTags(d.tags ?? []))
       .catch(() => setTags([]));
-    fetch("/api/v1/tags")
-      .then((r) => (r.ok ? r.json() : { tags: [] }))
-      .then((d) => setAllTags(d.tags ?? []))
-      .catch(() => setAllTags([]));
-    fetch("/api/v1/collections")
-      .then((r) => r.json())
-      .then((d) => setCollections(d.collections ?? []));
     // Reset share state per asset; surface most recent active link
     setShareUrl(null);
     setShareCopied(false);
@@ -706,6 +707,75 @@ export function PhotoLightbox({
         /* ignore */
       });
   }, [asset.id]);
+
+  // T1.2 (perf audit) — `/api/v1/tags` and `/api/v1/collections` are
+  // workspace-scoped invariants; they don't change as the user arrows
+  // through assets. Fetch them once per workspace within the lightbox's
+  // lifecycle instead of on every asset-nav (was ~400-700 ms metadata-panel
+  // LCP per advance). asset.workspaceId is optional in the type but always
+  // present in practice for owned assets; we still key the effect on the
+  // value so cross-workspace shared assets refetch correctly.
+  const workspaceId = asset.workspaceId ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/v1/tags")
+      .then((r) => (r.ok ? r.json() : { tags: [] }))
+      .then((d) => {
+        if (!cancelled) setAllTags(d.tags ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setAllTags([]);
+      });
+    fetch("/api/v1/collections")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setCollections(d.collections ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setCollections([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  // T1.4 (perf audit) — warm the preview URL endpoint + image bytes for the
+  // immediate prev/next assets so arrow nav is ~30 ms perceived instead of
+  // ~300 ms. Bounded to 1 neighbour each side; no list-wide prefetch. We
+  // both (a) hit the URL endpoint so its cache entry is warm and (b) inject
+  // `<link rel="prefetch" as="image" href={url}>` so the browser fetches
+  // the bytes. Cleanup removes the link nodes when the active asset id
+  // changes or the lightbox unmounts.
+  useEffect(() => {
+    const neighbours = [prevAssetId, nextAssetId].filter(
+      (id): id is string => typeof id === "string" && id.length > 0 && id !== asset.id
+    );
+    if (neighbours.length === 0) return;
+    let cancelled = false;
+    const linkEls: HTMLLinkElement[] = [];
+    for (const id of neighbours) {
+      fetch(`/api/v1/assets/${id}/url?variant=preview`)
+        .then((r) => (r.ok ? r.json() : { url: null }))
+        .then((d: { url?: string | null }) => {
+          if (cancelled || !d?.url) return;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "image";
+          link.href = d.url;
+          document.head.appendChild(link);
+          linkEls.push(link);
+        })
+        .catch(() => {
+          /* ignore */
+        });
+    }
+    return () => {
+      cancelled = true;
+      for (const link of linkEls) {
+        if (link.parentNode) link.parentNode.removeChild(link);
+      }
+    };
+  }, [asset.id, prevAssetId, nextAssetId]);
 
   // Phase 3.4 — optimistic PATCH for { isFavorite } / { rating }. Flips the
   // local state first, fires the request, reverts on failure. Bubbles the

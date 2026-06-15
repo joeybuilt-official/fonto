@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Joeybuilt LLC
 import { db, schema } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
+import { cache } from "react";
 import type { WorkspaceRole } from "@/lib/authz";
 
 export async function ensurePersonalWorkspace(userId: string) {
@@ -73,9 +74,12 @@ export type UserWorkspace = typeof schema.workspaces.$inferSelect & {
  * single-user case this returns the same set; for shared workspaces the
  * caller sees every workspace they've been invited to.
  */
-export async function getUserWorkspaces(
+// T1.1 / fonto-perf-audit.md — React cache() memoises per-request keyed by
+// userId so repeated lookups in one render (layout + server components) share
+// the workspace fetch.
+const _getUserWorkspaces = async (
   userId: string
-): Promise<UserWorkspace[]> {
+): Promise<UserWorkspace[]> => {
   const rows = await db
     .select({
       workspace: schema.workspaces,
@@ -92,7 +96,9 @@ export async function getUserWorkspaces(
     ...r.workspace,
     role: r.role as WorkspaceRole,
   }));
-}
+};
+
+export const getUserWorkspaces = cache(_getUserWorkspaces);
 
 /**
  * List the members of a workspace. Used by `/api/v1/workspace/members`.

@@ -17,6 +17,7 @@
 // off it without a re-lookup.
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { cache } from "react";
 import type { User } from "./types";
 import {
   verifyPatFromHeaders,
@@ -42,7 +43,9 @@ export interface AuthContext {
  * Returns `null` when neither auth method succeeds, or when a PAT was
  * presented but the per-key rate limit is exceeded.
  */
-export async function getAuthContext(): Promise<AuthContext | null> {
+// T1.1 / fonto-perf-audit.md — React cache() memoises per-request so middleware,
+// server components, and route handlers in the same render share one auth lookup.
+async function _getAuthContext(): Promise<AuthContext | null> {
   try {
     const requestHeaders = await headers();
 
@@ -82,12 +85,18 @@ export async function getAuthContext(): Promise<AuthContext | null> {
   }
 }
 
+export const getAuthContext = cache(_getAuthContext);
+
 /**
  * Back-compat wrapper. Identical to `getAuthContext().then(c => c?.user ?? null)`
  * but exported under its historical name so existing call sites keep working
  * without touching every route.
  */
-export async function getAuthUser(): Promise<User | null> {
+// T1.1 / fonto-perf-audit.md — wrapped in cache() so repeated getAuthUser()
+// calls within one request share the underlying getAuthContext memo.
+const _getAuthUser = async (): Promise<User | null> => {
   const ctx = await getAuthContext();
   return ctx?.user ?? null;
-}
+};
+
+export const getAuthUser = cache(_getAuthUser);
