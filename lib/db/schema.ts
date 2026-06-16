@@ -1332,6 +1332,41 @@ export const imageDateInference = fontoSchema.table(
   ]
 );
 
+// Intelligence Core — Phase 5.5 (ADR-0002). Machine-generated questions whose
+// answers most sharpen the date/identity graph. Generated + ranked by
+// info_value; answered via a human-origin fact / date confirm. See
+// drizzle/migrations/0048_intelligence_elicitation.sql.
+export const elicitationQuestions = fontoSchema.table(
+  "elicitation_questions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    // identify_cluster | birth_year | merge_clusters | confirm_fact | confirm_date
+    kind: text("kind").notNull(),
+    // person | asset | cluster | fact
+    targetType: text("target_type").notNull(),
+    targetId: uuid("target_id"),
+    prompt: text("prompt").notNull(),
+    // Kind-specific context (proposed date, candidate ids, …).
+    payload: jsonb("payload"),
+    // 0..1 ranking score — higher is asked sooner.
+    infoValue: real("info_value").notNull().default(0),
+    // open | answered | dismissed
+    status: text("status").notNull().default("open"),
+    answer: jsonb("answer"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("elicitation_workspace_open_rank_idx").on(
+      table.workspaceId,
+      table.status,
+      sql`${table.infoValue} desc`
+    ),
+  ]
+);
+
 // Phase 3.3 — workspace invitations.
 //
 // Email-keyed invitations that produce `workspace_memberships` rows on

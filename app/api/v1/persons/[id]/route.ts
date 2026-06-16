@@ -15,6 +15,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { parsePartialDate, toColumns } from "@/lib/temporal/precision";
 import { db, schema } from "@/lib/db";
+import { invalidateByDependency } from "@/lib/reaudit/invalidate";
 
 const DEFAULT_FACES_LIMIT = 24;
 const MAX_FACES_LIMIT = 200;
@@ -254,6 +255,12 @@ export async function PATCH(
     propagateNamedPerson(updated.id, updated.workspaceId).catch(() => {});
   }
 
+  // Phase 7 — birth/death are the strongest identity_bound date anchors. A
+  // change re-audits every inference that leaned on this person.
+  if ("birth" in body || "death" in body) {
+    void invalidateByDependency({ workspaceId: person.workspaceId, personIds: [person.id] });
+  }
+
   return NextResponse.json({
     person: {
       ...updated,
@@ -295,6 +302,9 @@ export async function DELETE(
   // Touch persons.updated_at for any reciprocal denorms — currently a no-op
   // but kept to mirror the pattern from `/stacks` DELETE.
   await db.execute(sql`SELECT 1`);
+
+  // Phase 7 — dependents lose this person's date anchor; re-audit them.
+  void invalidateByDependency({ workspaceId: person.workspaceId, personIds: [person.id] });
 
   return NextResponse.json({ ok: true as const });
 }

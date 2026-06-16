@@ -216,6 +216,18 @@ export const BackfillInferenceJobSchema = z
   .strict();
 export type BackfillInferenceJob = z.infer<typeof BackfillInferenceJobSchema>;
 
+// Intelligence Core — Phase 8: one-off library-wide date reconcile. Carries the
+// target workspace + batch/cap knobs. Operator-enqueued (gated); never a
+// recurring schedule.
+export const BackfillReconcileJobSchema = z
+  .object({
+    workspaceId: z.string().uuid(),
+    batchSize: z.number().int().positive().max(1000).optional(),
+    maxRows: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type BackfillReconcileJob = z.infer<typeof BackfillReconcileJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -280,6 +292,10 @@ export const JobNames = {
   // Intelligence Core (Phase 4) — bounded backfill: enqueue infer-date for assets
   // with evidence but no inference yet.
   BackfillInference: "backfill-inference",
+  // Intelligence Core (Phase 8) — library-wide date reconcile: commit the
+  // auto-commit date band (status='inferred' -> 'confirmed' + captured_at).
+  // One-off, operator-enqueued; NOT a recurring schedule. Idempotent/resumable.
+  BackfillReconcile: "backfill-reconcile",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

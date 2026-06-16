@@ -22,6 +22,7 @@ import type {
   StorageSyncJob,
   ExtractEvidenceJob,
   InferDateJob,
+  BackfillReconcileJob,
 } from "./jobs";
 
 export const QueueNames = {
@@ -380,6 +381,25 @@ export function maintenanceQueue(): Queue<Record<string, never>> {
   });
   cache.set(name, q);
   return q;
+}
+
+/**
+ * Intelligence Core (Phase 8) — enqueue the one-off, operator-gated date
+ * reconcile on the maintenance queue with a typed payload. The maintenance
+ * queue is heterogeneous (declared as Record<string,never>); this helper is the
+ * typed door for the BackfillReconcile job specifically.
+ */
+export async function addBackfillReconcileJob(
+  payload: BackfillReconcileJob,
+  opts: { jobId?: string } = {}
+): Promise<string | undefined> {
+  const q = maintenanceQueue() as unknown as Queue<BackfillReconcileJob>;
+  const job = await q.add(JobNames.BackfillReconcile, payload, {
+    jobId: opts.jobId,
+    removeOnComplete: true,
+    removeOnFail: 50,
+  });
+  return job.id;
 }
 
 /** Iterate all queues (handy for bull-board, graceful shutdown, metrics). */

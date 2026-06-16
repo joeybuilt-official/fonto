@@ -4,9 +4,8 @@
 // Intelligence Core — Phase 2 (ADR-0002): /api/v1/temporal-facts/:id
 //   PATCH  — edit any subset of a fact's fields (validated, partial-date aware).
 //   DELETE — remove a fact.
-// A fact edit is a dependency change that the re-audit layer (Phase 7) will key
-// invalidation on — for now the write is plain; the invalidation hook lands
-// with Phase 7.
+// A fact edit/removal is a dependency change; the re-audit layer (Phase 7) keys
+// invalidation on the fact + its persons and re-queues the affected inferences.
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
@@ -16,6 +15,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { validateFactInput } from "@/lib/temporal/factInput";
 import { db, schema } from "@/lib/db";
+import { invalidateByDependency } from "@/lib/reaudit/invalidate";
 
 async function loadFactInWorkspaces(id: string, workspaceIds: string[]) {
   const [row] = await db
@@ -59,6 +59,14 @@ export async function PATCH(
     .where(eq(schema.temporalFacts.id, fact.id))
     .returning();
 
+  // Phase 7 — re-audit on edit. Cover both the pre- and post-edit person sets
+  // (a fact re-pointed to different people invalidates inferences on both).
+  void invalidateByDependency({
+    workspaceId: fact.workspaceId,
+    factIds: [fact.id],
+    personIds: [...new Set([...(fact.personIds ?? []), ...(updated.personIds ?? [])])],
+  });
+
   return NextResponse.json({
     fact: {
       ...updated,
@@ -87,5 +95,13 @@ export async function DELETE(
   if (!gate.ok) return gate.response;
 
   await db.delete(schema.temporalFacts).where(eq(schema.temporalFacts.id, fact.id));
+
+  // Phase 7 — removing a fact drops its evidence; re-audit the dependents.
+  void invalidateByDependency({
+    workspaceId: fact.workspaceId,
+    factIds: [fact.id],
+    personIds: fact.personIds ?? [],
+  });
+
   return NextResponse.json({ ok: true as const });
 }

@@ -46,6 +46,7 @@ import {
   BackfillEvidenceJobSchema,
   InferDateJobSchema,
   BackfillInferenceJobSchema,
+  BackfillReconcileJobSchema,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
@@ -83,6 +84,7 @@ import { extractAssetEvidence } from "@/lib/evidence/extractAssetEvidence";
 import { backfillEvidence, backfillVariantCandidates } from "@/lib/evidence/backfill";
 import { inferAssetDate } from "@/lib/fusion/inferAssetDate";
 import { backfillInference } from "@/lib/fusion/backfillInference";
+import { applyDateBackfill } from "@/lib/reconcile/dateBackfill";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -1544,6 +1546,24 @@ function startMaintenanceWorker(): Worker {
         log.info({ batchSize }, "inference backfill tick start");
         const result = await backfillInference(batchSize);
         log.info(result, "inference backfill tick complete");
+        return result;
+      }
+      if (job.name === JobNames.BackfillReconcile) {
+        // Intelligence Core (Phase 8) — library-wide date reconcile. Commits the
+        // auto-commit date band for one workspace, idempotently + resumably.
+        // Operator-enqueued only (gated mass commit).
+        const parsed = BackfillReconcileJobSchema.safeParse(job.data ?? {});
+        if (!parsed.success) {
+          log.warn({ issues: parsed.error.issues }, "backfill-reconcile bad payload — ignoring");
+          return null;
+        }
+        log.info({ workspaceId: parsed.data.workspaceId }, "date reconcile start");
+        const result = await applyDateBackfill(parsed.data.workspaceId, {
+          dryRun: false,
+          batchSize: parsed.data.batchSize,
+          maxRows: parsed.data.maxRows,
+        });
+        log.info(result, "date reconcile complete");
         return result;
       }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");

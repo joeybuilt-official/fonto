@@ -14,6 +14,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { validateFactInput, FACT_TYPES, type FactType } from "@/lib/temporal/factInput";
 import { db, schema } from "@/lib/db";
+import { invalidateByDependency } from "@/lib/reaudit/invalidate";
 
 function serialize(f: typeof schema.temporalFacts.$inferSelect) {
   return {
@@ -88,6 +89,13 @@ export async function POST(request: NextRequest) {
       origin: "human",
     })
     .returning();
+
+  // Phase 7 — re-audit any inference that leans on this fact's persons.
+  void invalidateByDependency({
+    workspaceId,
+    factIds: [fact.id],
+    personIds: fact.personIds ?? [],
+  });
 
   return NextResponse.json({ fact: serialize(fact) }, { status: 201 });
 }
