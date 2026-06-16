@@ -20,12 +20,12 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth/server";
 import { ensurePersonalWorkspace } from "@/lib/workspace";
 import { requireWorkspaceOwner } from "@/lib/authz";
-import { gateDecision, DEFAULT_GATE_THRESHOLDS } from "@/lib/fusion/gate";
+import { DEFAULT_GATE_THRESHOLDS } from "@/lib/fusion/gate";
 import { buildWorkspaceManifests } from "@/lib/variants/consolidate";
 
 const DATE_LANE_LIMIT = 60;
@@ -62,66 +62,66 @@ export async function GET(request: NextRequest) {
   );
 
   // ── Date lane ──────────────────────────────────────────────────────────
-  // Pull un-actioned proposals for this workspace's assets, then partition with
-  // the same gate the worker used. Surface only the rows the gate sent to a
-  // human (review band + any conflict); count the auto-commit band separately.
-  const inferenceRows = await db
+  // The gate (lib/fusion/gate) routes a date to: auto-commit (conf >= HIGH, no
+  // conflict) · review (conflict with conf >= LOW, or LOW <= conf < HIGH) ·
+  // leave (the rest). We push the review predicate straight into SQL — a naive
+  // "fetch top-N by confidence then partition" starves the review band, since
+  // thousands of auto-commit rows outrank it.
+  const HIGH = DEFAULT_GATE_THRESHOLDS.date.high;
+  const LOW = DEFAULT_GATE_THRESHOLDS.date.low;
+  const conf = schema.imageDateInference.confidence;
+  const conflictCol = schema.imageDateInference.conflictFlag;
+  const baseDateWhere = and(
+    eq(schema.assets.workspaceId, workspace.id),
+    eq(schema.assets.lifecycleState, "active"),
+    eq(schema.imageDateInference.status, "inferred")
+  );
+  const reviewBand = sql`((${conflictCol} and ${conf} >= ${LOW}) or (not ${conflictCol} and ${conf} >= ${LOW} and ${conf} < ${HIGH}))`;
+
+  const [dateCounts] = await db
+    .select({
+      autoCommit: sql<number>`count(*) filter (where not ${conflictCol} and ${conf} >= ${HIGH})::int`,
+      review: sql<number>`count(*) filter (where ${reviewBand})::int`,
+      leave: sql<number>`count(*) filter (where not ${conflictCol} and ${conf} < ${LOW})::int`,
+    })
+    .from(schema.imageDateInference)
+    .innerJoin(schema.assets, eq(schema.assets.id, schema.imageDateInference.assetId))
+    .where(baseDateWhere);
+
+  const reviewRows = await db
     .select({
       assetId: schema.imageDateInference.assetId,
       mapEstimate: schema.imageDateInference.mapEstimate,
       mapPrecision: schema.imageDateInference.mapPrecision,
       ciLow: schema.imageDateInference.ciLow,
       ciHigh: schema.imageDateInference.ciHigh,
-      confidence: schema.imageDateInference.confidence,
-      conflictFlag: schema.imageDateInference.conflictFlag,
+      confidence: conf,
+      conflictFlag: conflictCol,
       explanation: schema.imageDateInference.explanation,
       filename: schema.assets.filename,
       capturedAt: schema.assets.capturedAt,
     })
     .from(schema.imageDateInference)
     .innerJoin(schema.assets, eq(schema.assets.id, schema.imageDateInference.assetId))
-    .where(
-      and(
-        eq(schema.assets.workspaceId, workspace.id),
-        eq(schema.imageDateInference.status, "inferred"),
-        eq(schema.assets.lifecycleState, "active")
-      )
-    )
-    .orderBy(desc(schema.imageDateInference.confidence))
-    .limit(500);
+    .where(and(baseDateWhere, reviewBand))
+    // Conflicts first (most actionable), then most-uncertain.
+    .orderBy(desc(conflictCol), asc(conf))
+    .limit(DATE_LANE_LIMIT);
 
-  const dateReview: DateItem[] = [];
-  let dateAutoCommit = 0;
-  let dateLeave = 0;
-  for (const r of inferenceRows) {
-    const decision = gateDecision({
-      score: r.confidence,
-      action: "date",
-      conflict: r.conflictFlag,
-    });
-    if (decision === "auto-commit") {
-      dateAutoCommit++;
-      continue;
-    }
-    if (decision === "leave") {
-      dateLeave++;
-      continue;
-    }
-    if (dateReview.length < DATE_LANE_LIMIT) {
-      dateReview.push({
-        assetId: r.assetId,
-        filename: r.filename,
-        capturedAt: r.capturedAt ? new Date(r.capturedAt).toISOString() : null,
-        mapEstimate: r.mapEstimate ? String(r.mapEstimate) : null,
-        mapPrecision: r.mapPrecision,
-        ciLow: r.ciLow ? String(r.ciLow) : null,
-        ciHigh: r.ciHigh ? String(r.ciHigh) : null,
-        confidence: Number(r.confidence.toFixed(3)),
-        conflict: r.conflictFlag,
-        reasons: topReasons(r.explanation),
-      });
-    }
-  }
+  const dateReview: DateItem[] = reviewRows.map((r) => ({
+    assetId: r.assetId,
+    filename: r.filename,
+    capturedAt: r.capturedAt ? new Date(r.capturedAt).toISOString() : null,
+    mapEstimate: r.mapEstimate ? String(r.mapEstimate) : null,
+    mapPrecision: r.mapPrecision,
+    ciLow: r.ciLow ? String(r.ciLow) : null,
+    ciHigh: r.ciHigh ? String(r.ciHigh) : null,
+    confidence: Number(r.confidence.toFixed(3)),
+    conflict: r.conflictFlag,
+    reasons: topReasons(r.explanation),
+  }));
+  const dateAutoCommit = dateCounts?.autoCommit ?? 0;
+  const dateLeave = dateCounts?.leave ?? 0;
 
   // ── Variant lane ───────────────────────────────────────────────────────
   const manifests = await buildWorkspaceManifests(workspace.id, variantLimit);
