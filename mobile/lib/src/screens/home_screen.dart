@@ -27,8 +27,10 @@ import "asset_detail_screen.dart";
 import "settings_screen.dart";
 import "transfers_screen.dart";
 import "../state/camera_roll_scanner.dart";
+import "../state/device_photos.dart";
 import "../state/push_notifications.dart";
 import "../state/settings_store.dart";
+import "package:photo_manager/photo_manager.dart";
 
 const _kPageSize = 60;
 
@@ -67,6 +69,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // the asset grid is refreshed; null while the first load is still pending.
   List<AssetBucket> _buckets = const [];
 
+  // Local camera-roll recents for the "On this device" section. Populated only
+  // when photo access is already granted (we never prompt here). Shown above
+  // the server grid while offline, or whenever auto-import is on and there are
+  // device photos pending upload. These are purely local thumbnails — they
+  // render with no network. Viewing them also enqueues them for upload via the
+  // existing CameraRollScanner / UploadQueue path.
+  List<AssetEntity> _devicePhotos = const [];
+
   /// `null` → workspace root view (all assets, no filter).
   /// Otherwise filters via directoryPathPrefix.
   String? _folder;
@@ -94,6 +104,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _kickDrain();
     _kickDriveDrain();
     _maybeScanCameraRoll();
+    _maybeLoadDevicePhotos();
   }
 
   @override
@@ -310,7 +321,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final cached = await cache.queryPage(folderPrefix: _folder, limit: _kPageSize);
       if (!mounted) return;
       if (cached.assets.isEmpty) {
-        _fail(networkError);
+        // Blank slate: network is down and nothing's cached. Rather than a hard
+        // error, mark offline + clear the loading flag so the body can still
+        // render the "On this device" section (the phone's own camera roll)
+        // while the error/empty placeholder shows for the server grid.
+        setState(() {
+          _error = networkError;
+          _offline = true;
+          _loadingFirst = false;
+        });
+        if (_devicePhotos.isEmpty) unawaited(_maybeLoadDevicePhotos());
         return;
       }
       final last = cached.assets.last;
@@ -329,6 +349,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _offHasMore = cached.assets.length == _kPageSize;
         _loadingFirst = false;
       });
+      // Now that we know we're offline, surface the phone's own camera roll in
+      // the library even on a blank-slate launch (no cached server assets path
+      // hits _fail below; this path has at least the cache but device photos
+      // are additive). Re-runs the gated loader which is idempotent.
+      if (_devicePhotos.isEmpty) unawaited(_maybeLoadDevicePhotos());
     } catch (_) {
       _fail(networkError);
     }
@@ -689,6 +714,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// Load the device camera-roll recents that back the "On this device"
+  /// section, then ensure they're queued for upload. Only runs when photo
+  /// access is already granted (we never prompt here) — so a blank-slate /
+  /// offline launch shows the phone's own photos in the library and they
+  /// upload via the existing queue when connectivity returns.
+  ///
+  /// Auto-queue: we reuse [CameraRollScanner.scanAndEnqueue] (the same
+  /// hash + sha256-deduped [UploadQueue.enqueue] path the auto-import uses)
+  /// rather than writing a second uploader. The scanner is idempotent, so
+  /// calling it here on top of `_maybeScanCameraRoll` never double-queues.
+  Future<void> _maybeLoadDevicePhotos() async {
+    if (!await DevicePhotos.hasPermission()) return;
+    // Surface the strip when offline OR when auto-import is on (the user opted
+    // into camera-roll backup, so showing what's pending is expected).
+    final autoImport = await SettingsStore.getAutoImport();
+    if (!_offline && !autoImport) return;
+    final recents = await DevicePhotos.recent(limit: 120);
+    if (!mounted || recents.isEmpty) return;
+    setState(() => _devicePhotos = recents);
+    // Enqueue what the user is now looking at so it backs up when online.
+    // Best-effort + fire-and-forget: the existing drain (resume / foreground
+    // service / WorkManager) does the actual upload.
+    final n = await CameraRollScanner.scanAndEnqueue();
+    if (!mounted) return;
+    if (n > 0) {
+      await _refreshQueueBadge();
+      UploadQueue.drain().then((ok) {
+        if (!mounted) return;
+        _refreshQueueBadge();
+        if (ok > 0) _softRefresh();
+      });
+    }
+  }
+
   Future<void> _maybeScanCameraRoll() async {
     final enabled = await SettingsStore.getAutoImport();
     if (!enabled) return;
@@ -850,6 +909,68 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   bool get _hasNonLensFilter => _folder != null;
 
+  /// Slivers for the "On this device" section: a header + a 3-col grid of
+  /// local camera-roll thumbnails. Empty when there are no device recents. The
+  /// caption only appears offline, where it's the user's cue that these will
+  /// back up later. Lives above the server grid.
+  List<Widget> _deviceSlivers() {
+    if (_devicePhotos.isEmpty) return const [];
+    return [
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.smartphone_outlined,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    "On this device",
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ],
+              ),
+              if (_offline)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, left: 26),
+                  child: Text(
+                    "These upload to Fonto when you're back online.",
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
+        sliver: SliverGrid(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 4,
+            mainAxisSpacing: 4,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (context, i) => RepaintBoundary(
+              child: _DeviceTile(entity: _devicePhotos[i]),
+            ),
+            childCount: _devicePhotos.length,
+          ),
+        ),
+      ),
+    ];
+  }
+
   Widget _buildBody() {
     if (_loadingFirst) {
       return Column(
@@ -860,6 +981,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
     }
     if (_error != null) {
+      // Even when the server grid can't load, still surface the phone's own
+      // camera roll (offline blank slate) so the user sees their photos and
+      // knows they'll upload once back online.
+      if (_devicePhotos.isNotEmpty) {
+        return Column(
+          children: [
+            _LensSelector(active: _lens, onChange: _setLens),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _refresh,
+                child: CustomScrollView(
+                  controller: _scroll,
+                  slivers: [
+                    ..._deviceSlivers(),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+                        child: Text(
+                          "Your Fonto library will appear here once you're "
+                          "back online. Pull to retry.",
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      }
       return Column(
         children: [
           _LensSelector(active: _lens, onChange: _setLens),
@@ -910,6 +1067,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
+          // "On this device" — local camera-roll recents, above the server
+          // grid. Only the root view (no folder filter) shows it.
+          if (_folder == null) ..._deviceSlivers(),
           if (_stats != null && _folder == null)
             SliverToBoxAdapter(child: _StatsBar(stats: _stats!)),
           if (_assets.isEmpty)
@@ -1650,6 +1810,58 @@ class _AssetTile extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// A single local camera-roll photo in the "On this device" grid. Renders the
+/// thumbnail straight from the device via [AssetEntity.thumbnailDataWithSize]
+/// — fully offline, no network. A cloud-arrow-up badge signals it's pending
+/// upload to Fonto.
+class _DeviceTile extends StatelessWidget {
+  const _DeviceTile({required this.entity});
+  final AssetEntity entity;
+
+  @override
+  Widget build(BuildContext context) {
+    final placeholderColor =
+        Theme.of(context).colorScheme.surfaceContainerHighest;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        FutureBuilder<Uint8List?>(
+          future: entity.thumbnailDataWithSize(const ThumbnailSize.square(260)),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return Container(color: placeholderColor);
+            }
+            final data = snapshot.data;
+            if (data == null) {
+              return ColoredBox(
+                color: placeholderColor,
+                child: const Icon(Icons.broken_image),
+              );
+            }
+            return Image.memory(data, fit: BoxFit.cover);
+          },
+        ),
+        Positioned(
+          right: 4,
+          bottom: 4,
+          child: Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Icon(
+              Icons.cloud_upload_outlined,
+              size: 14,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
