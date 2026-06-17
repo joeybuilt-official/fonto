@@ -15,6 +15,9 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   image_picker: ^1.1.0
   cached_network_image: ^3.4.0
+  # Explicit (also transitive via cached_network_image) — we instantiate custom
+  # bounded CacheManagers for the offline thumb/preview stores.
+  flutter_cache_manager: ^3.3.1
   path: ^1.9.0
   photo_view: ^0.15.0
   share_plus: ^10.0.0

@@ -17,6 +17,8 @@ import "package:image_picker/image_picker.dart";
 import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "../state/auth_store.dart";
+import "../state/asset_cache.dart";
+import "../state/offline_cache.dart";
 import "../state/drive_download_queue.dart";
 import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
@@ -53,6 +55,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final List<Asset> _assets = [];
   final Map<String, String> _thumbs = {};
   AssetCursor? _cursor;
+  // Offline mode — the grid is being served from the on-device cache because
+  // the network is unreachable. Drives the offline banner + cache pagination.
+  bool _offline = false;
+  int? _offBeforeTs;
+  String? _offBeforeId;
+  bool _offHasMore = false;
   bool _uploading = false;
   Timer? _processingPoll;
   // Full-library month buckets for the scrubber's domain. Refreshed any time
@@ -186,7 +194,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _scroll.position.maxScrollExtent - 600) {
       return;
     }
-    if (_loadingMore || _cursor == null) return;
+    if (_loadingMore) return;
+    if (_offline) {
+      _loadMoreOffline();
+      return;
+    }
+    if (_cursor == null) return;
     _loadMore();
   }
 
@@ -265,13 +278,87 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _assets.addAll(page.assets);
         _thumbs.addAll(thumbs);
         _cursor = page.nextCursor;
+        _offline = false;
         _loadingFirst = false;
       });
+      // Persist this page so the grid still renders next time the network is
+      // down. Fire-and-forget — a cache write must never block the UI.
+      unawaited(_persist(page.assets, thumbs));
       if (stats.processing > 0) _ensureProcessingPoll();
     } on ApiException catch (e) {
-      _fail("${e.status}: ${e.message}");
+      await _fallbackToCache("${e.status}: ${e.message}");
     } catch (e) {
-      _fail(e.toString());
+      await _fallbackToCache(e.toString());
+    }
+  }
+
+  Future<void> _persist(List<Asset> assets, Map<String, String> thumbs) async {
+    try {
+      final cache = await AssetCache.open();
+      await cache.upsertAll(assets, thumbs: thumbs);
+    } catch (_) {
+      // Cache write failure is non-fatal.
+    }
+  }
+
+  /// Network refresh failed — serve the first page from the on-device cache so
+  /// the user isn't stranded with a blank grid. Falls through to the error
+  /// state only when there's genuinely nothing cached.
+  Future<void> _fallbackToCache(String networkError) async {
+    try {
+      final cache = await AssetCache.open();
+      final cached = await cache.queryPage(folderPrefix: _folder, limit: _kPageSize);
+      if (!mounted) return;
+      if (cached.assets.isEmpty) {
+        _fail(networkError);
+        return;
+      }
+      final last = cached.assets.last;
+      setState(() {
+        _error = null;
+        _offline = true;
+        _assets
+          ..clear()
+          ..addAll(cached.assets);
+        _thumbs
+          ..clear()
+          ..addAll(cached.thumbs);
+        _cursor = null;
+        _offBeforeTs = (last.capturedAt ?? last.createdAt).millisecondsSinceEpoch;
+        _offBeforeId = last.id;
+        _offHasMore = cached.assets.length == _kPageSize;
+        _loadingFirst = false;
+      });
+    } catch (_) {
+      _fail(networkError);
+    }
+  }
+
+  Future<void> _loadMoreOffline() async {
+    if (!_offHasMore || _offBeforeTs == null || _offBeforeId == null) return;
+    setState(() => _loadingMore = true);
+    try {
+      final cache = await AssetCache.open();
+      final cached = await cache.queryPage(
+        beforeSortTs: _offBeforeTs,
+        beforeId: _offBeforeId,
+        folderPrefix: _folder,
+        limit: _kPageSize,
+      );
+      if (!mounted) return;
+      setState(() {
+        _assets.addAll(cached.assets);
+        _thumbs.addAll(cached.thumbs);
+        if (cached.assets.isNotEmpty) {
+          final last = cached.assets.last;
+          _offBeforeTs = (last.capturedAt ?? last.createdAt).millisecondsSinceEpoch;
+          _offBeforeId = last.id;
+        }
+        _offHasMore = cached.assets.length == _kPageSize;
+        _loadingMore = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingMore = false);
     }
   }
 
@@ -298,6 +385,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _cursor = page.nextCursor;
         _loadingMore = false;
       });
+      unawaited(_persist(page.assets, newThumbs));
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _loadingMore = false);
@@ -792,6 +880,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       child: CustomScrollView(
         controller: _scroll,
         slivers: [
+          if (_offline)
+            SliverToBoxAdapter(
+              child: Container(
+                width: double.infinity,
+                color: Theme.of(context).colorScheme.secondaryContainer,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.cloud_off,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.onSecondaryContainer,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        "Offline — showing your saved library. Pull to retry.",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSecondaryContainer,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           if (_stats != null && _folder == null)
             SliverToBoxAdapter(child: _StatsBar(stats: _stats!)),
           if (_assets.isEmpty)
@@ -1472,6 +1590,10 @@ class _AssetTile extends StatelessWidget {
         tag: asset.id,
         child: CachedNetworkImage(
           imageUrl: url!,
+          // Key the disk cache by asset id (not the rotating signed URL) so
+          // cached bytes still resolve offline after the URL expires.
+          cacheManager: OfflineCache.thumbs,
+          cacheKey: asset.id,
           fit: BoxFit.cover,
           // Decode at grid-tile resolution to cap per-tile memory ~130×130px.
           memCacheWidth: 260,
@@ -1493,6 +1615,8 @@ class _AssetTile extends StatelessWidget {
         tag: asset.id,
         child: CachedNetworkImage(
           imageUrl: url!,
+          cacheManager: OfflineCache.thumbs,
+          cacheKey: asset.id,
           fit: BoxFit.cover,
           memCacheWidth: 260,
           memCacheHeight: 260,

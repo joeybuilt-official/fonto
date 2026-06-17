@@ -20,6 +20,7 @@ import "package:share_plus/share_plus.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../state/offline_cache.dart";
 import "../widgets/asset_video_player.dart";
 
 class AssetDetailScreen extends StatefulWidget {
@@ -1032,6 +1033,7 @@ class _FaceTaggingScreenState extends State<_FaceTaggingScreen> {
                                 maxScale: 8.0,
                                 child: _FaceImageOverlay(
                                   imageUrl: _resolvedUrl!,
+                                  cacheKey: widget.asset.id,
                                   faces: _faces,
                                   imageDims: _imageDims,
                                   activeId: _faces.isNotEmpty
@@ -1128,6 +1130,7 @@ class _FaceImageOverlay extends StatelessWidget {
     required this.showNames,
     required this.onImageTapped,
     this.activeId,
+    this.cacheKey,
   });
 
   final String imageUrl;
@@ -1139,6 +1142,9 @@ class _FaceImageOverlay extends StatelessWidget {
   final VoidCallback onImageTapped;
   // When set, this face circle renders larger + brighter (active in nav mode).
   final String? activeId;
+  // Stable per-asset disk-cache key so the full-res preview resolves offline
+  // after its signed URL expires (served from OfflineCache.previews).
+  final String? cacheKey;
 
   @override
   Widget build(BuildContext context) {
@@ -1155,6 +1161,8 @@ class _FaceImageOverlay extends StatelessWidget {
           ),
           CachedNetworkImage(
             imageUrl: imageUrl,
+            cacheManager: OfflineCache.previews,
+            cacheKey: cacheKey,
             fit: BoxFit.contain,
             imageBuilder: (ctx, imageProvider) {
               imageProvider.resolve(ImageConfiguration.empty).addListener(

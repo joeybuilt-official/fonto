@@ -30,6 +30,7 @@ import "src/state/auth_store.dart";
 import "src/theme/app_theme.dart";
 import "src/state/drive_download_queue.dart";
 import "src/state/push_notifications.dart";
+import "src/state/offline_prefetch.dart";
 import "src/state/settings_store.dart";
 import "src/state/sync_service.dart";
 import "src/state/upload_queue.dart";
@@ -93,6 +94,9 @@ Future<void> main() async {
     await registerUploadDrain();
     // Don't block first paint on permission dialogs / network.
     unawaited(PushNotifications.register(auth));
+    // Warm the on-device offline cache (recent library) when on Wi-Fi. Best
+    // effort, self-gated on connectivity — never blocks startup.
+    unawaited(OfflinePrefetch.run(auth));
   }
   runApp(FontoApp(auth: auth));
 }
