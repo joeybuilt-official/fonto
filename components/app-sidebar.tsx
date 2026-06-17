@@ -4,9 +4,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   Bell,
   Camera,
+  ClipboardCheck,
   Compass,
   FolderOpen,
   Home,
@@ -86,6 +88,23 @@ export function AppSidebar({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+
+  // Intelligence Core (Phase 6) — owner-only "Review" entry. The count endpoint
+  // 403s for non-owners, so a null result hides the link entirely. Cheap (no
+  // SSIM); the badge headline is the actionable date-decision queue.
+  const [reviewCount, setReviewCount] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/admin/review-queue/count", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (alive && d?.ok) setReviewCount(typeof d.total === "number" ? d.total : 0);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   async function handleSignOut() {
     await signOut();
@@ -170,6 +189,34 @@ export function AppSidebar({
             </div>
           );
         })}
+
+        {/* Intelligence Core (Phase 6) — owner-only Review entry with a count
+            badge. Hidden entirely for non-owners (count endpoint 403s). */}
+        {reviewCount !== null && (
+          <div className="mt-[var(--ft-space-2)] border-t border-[var(--ft-color-outline-variant)] pt-[var(--ft-space-2)]">
+            <Link
+              href="/admin/review"
+              onClick={onClose}
+              aria-current={
+                pathname === "/admin/review" || pathname.startsWith("/admin/review/")
+                  ? "page"
+                  : undefined
+              }
+              className={cn(
+                navItemBase,
+                pathname.startsWith("/admin/review") ? navItemActive : navItemInactive,
+              )}
+            >
+              <ClipboardCheck className="h-4 w-4 shrink-0" />
+              <span className="flex-1">Review</span>
+              {reviewCount > 0 && (
+                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-[var(--ft-shape-full)] bg-[var(--ft-color-error)] px-1.5 text-[length:var(--ft-type-label-small-size)] font-semibold text-[var(--ft-color-on-error)]">
+                  {reviewCount > 99 ? "99+" : reviewCount}
+                </span>
+              )}
+            </Link>
+          </div>
+        )}
       </nav>
 
       <div className="space-y-[var(--ft-space-2)] border-t border-[var(--ft-color-outline-variant)] px-[var(--ft-space-3)] py-[var(--ft-space-3)]">

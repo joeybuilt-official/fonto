@@ -9,6 +9,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { AppMobileBottomBar } from "@/components/app-mobile-bottom-bar";
 import { AppMobileAvatarMenu } from "@/components/app-mobile-avatar-menu";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
+import { ReviewNudge } from "@/components/review-nudge";
 import { UiV2ChangelogDialog } from "@/app/(app)/app/_components/ui-v2-changelog-dialog";
 import type { User } from "@/lib/auth/types";
 import type { RecentAlbum } from "@/lib/sidebar/recent-albums";
@@ -86,6 +87,8 @@ export function AppShell({
           dialog. Self-gated on a localStorage flag; renders nothing
           after dismissal. */}
       <UiV2ChangelogDialog />
+      {/* Intelligence Core (Phase 6) — owner-only load-time review nudge. */}
+      <ReviewNudge />
     </div>
   );
 }
