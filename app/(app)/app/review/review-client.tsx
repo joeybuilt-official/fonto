@@ -63,9 +63,18 @@ interface QueueResponse {
     review: DateItem[];
     counts: { review: number; autoCommit: number; leave: number };
   };
-  variant: { groups: VariantGroup[]; limit: number };
+  variant: { count: number; groups: VariantGroup[] };
   identity: { clusters: IdentityCluster[] };
 }
+
+interface VariantBatchResponse {
+  groups: VariantGroup[];
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+const VARIANT_PAGE_SIZE = 6;
 
 type Section = "date" | "variant" | "identity";
 
@@ -134,6 +143,14 @@ export function TidyUpClient(): React.ReactElement {
   const [section, setSection] = useState<Section>("date");
   const [toast, setToast] = useState<string | null>(null);
 
+  // Variant lane is fetched lazily + paged (the SSIM manifest build is the slow
+  // tail), so it lives in its own state rather than on `data`.
+  const [variantGroupsState, setVariantGroupsState] = useState<VariantGroup[]>([]);
+  const [variantOffset, setVariantOffset] = useState(0);
+  const [variantHasMore, setVariantHasMore] = useState(false);
+  const [variantLoading, setVariantLoading] = useState(false);
+  const [variantLoaded, setVariantLoaded] = useState(false);
+
   // Optimistically removed ids so an actioned card vanishes before the refetch
   // lands. Cleared on every successful load.
   const [hiddenDates, setHiddenDates] = useState<Set<string>>(new Set());
@@ -144,6 +161,26 @@ export function TidyUpClient(): React.ReactElement {
     window.setTimeout(() => setToast(null), 4000);
   }, []);
 
+  // Merge a fresh batch of thumbnail URLs in for the given asset ids.
+  const fetchThumbs = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return;
+    try {
+      const ures = await fetch("/api/v1/assets/urls", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids, variant: "thumb" }),
+      });
+      if (ures.ok) {
+        const ujson = (await ures.json()) as { urls?: Record<string, string> };
+        if (ujson.urls) setUrls((prev) => ({ ...prev, ...ujson.urls }));
+      }
+    } catch {
+      // Thumbs are best-effort; the card renders a placeholder without them.
+    }
+  }, []);
+
+  // The main feed: fast SQL only (dates + identity + the variant COUNT). The
+  // variant manifests are NOT here anymore — they load lazily below.
   const load = useCallback(async () => {
     setError(null);
     try {
@@ -157,31 +194,62 @@ export function TidyUpClient(): React.ReactElement {
       setHiddenDates(new Set());
       setHiddenGroups(new Set());
 
-      const ids = new Set<string>();
-      json.date.review.forEach((d) => ids.add(d.assetId));
-      json.variant.groups.forEach((g) => {
-        ids.add(g.canonicalAssetId);
-        g.trashCandidates.forEach((c) => ids.add(c.assetId));
-      });
-      if (ids.size > 0) {
-        const ures = await fetch("/api/v1/assets/urls", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ids: [...ids], variant: "thumb" }),
-        });
-        if (ures.ok) {
-          const ujson = (await ures.json()) as { urls?: Record<string, string> };
-          setUrls(ujson.urls ?? {});
-        }
-      }
+      const dateIds = json.date.review.map((d) => d.assetId);
+      await fetchThumbs(dateIds);
     } catch {
       setError("We couldn't reach the server. Check your connection and retry.");
     }
-  }, []);
+  }, [fetchThumbs]);
+
+  // Fetch one page of variant manifests. `reset` starts from offset 0 and
+  // replaces the list (used on first open / after an action refetch); otherwise
+  // it appends the next page ("Show more look-alikes").
+  const loadVariantBatch = useCallback(
+    async (reset: boolean) => {
+      setVariantLoading(true);
+      const offset = reset ? 0 : variantOffset;
+      try {
+        const res = await fetch(
+          `/api/admin/review-queue/variants?limit=${VARIANT_PAGE_SIZE}&offset=${offset}`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) {
+          showToast("We couldn't load the look-alikes just now. Try again?");
+          return;
+        }
+        const json = (await res.json()) as VariantBatchResponse;
+        setVariantGroupsState((prev) =>
+          reset ? json.groups : [...prev, ...json.groups]
+        );
+        setVariantOffset(json.offset + json.limit);
+        setVariantHasMore(json.hasMore);
+        setVariantLoaded(true);
+
+        const ids: string[] = [];
+        json.groups.forEach((g) => {
+          ids.push(g.canonicalAssetId);
+          g.trashCandidates.forEach((c) => ids.push(c.assetId));
+        });
+        await fetchThumbs(ids);
+      } catch {
+        showToast("We lost the connection loading look-alikes — please retry.");
+      } finally {
+        setVariantLoading(false);
+      }
+    },
+    [variantOffset, fetchThumbs, showToast]
+  );
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // First time the operator opens the look-alikes chip, pull the first batch.
+  useEffect(() => {
+    if (section === "variant" && !variantLoaded && !variantLoading) {
+      void loadVariantBatch(true);
+    }
+  }, [section, variantLoaded, variantLoading, loadVariantBatch]);
 
   const submit = useCallback(
     async (
@@ -245,18 +313,27 @@ export function TidyUpClient(): React.ReactElement {
     [data, hiddenDates]
   );
   const variantGroups = useMemo(
-    () => (data?.variant.groups ?? []).filter((g) => !hiddenGroups.has(g.groupId)),
-    [data, hiddenGroups]
+    () => variantGroupsState.filter((g) => !hiddenGroups.has(g.groupId)),
+    [variantGroupsState, hiddenGroups]
   );
   const clusters = data?.identity.clusters ?? [];
+
+  // The chip shows the server's candidate COUNT (cheap, available immediately)
+  // minus anything the operator has already actioned this session, so it stays
+  // honest before the SSIM batches stream in.
+  const variantCount = useMemo(() => {
+    const base = data?.variant.count ?? 0;
+    const actioned = hiddenGroups.size;
+    return Math.max(0, base - actioned);
+  }, [data, hiddenGroups]);
 
   const counts = useMemo(
     () => ({
       date: dateItems.length,
-      variant: variantGroups.length,
+      variant: variantCount,
       identity: clusters.length,
     }),
-    [dateItems, variantGroups, clusters]
+    [dateItems, variantCount, clusters]
   );
 
   const allClear =
@@ -363,6 +440,10 @@ export function TidyUpClient(): React.ReactElement {
               groups={variantGroups}
               urls={urls}
               busy={busy}
+              loading={variantLoading}
+              loaded={variantLoaded}
+              hasMore={variantHasMore}
+              onShowMore={() => void loadVariantBatch(false)}
               onTidy={(groupId, trashCount) =>
                 submit(
                   { variant: [{ groupId, action: "commit" }] },
@@ -564,14 +645,27 @@ function VariantsSection({
   groups,
   urls,
   busy,
+  loading,
+  loaded,
+  hasMore,
+  onShowMore,
   onTidy,
 }: {
   groups: VariantGroup[];
   urls: Record<string, string>;
   busy: boolean;
+  loading: boolean;
+  loaded: boolean;
+  hasMore: boolean;
+  onShowMore: () => void;
   onTidy: (groupId: string, trashCount: number) => void;
 }) {
-  if (groups.length === 0) {
+  // First open: nothing fetched yet, manifests are building (the slow SSIM
+  // pass). Show a small skeleton instead of the empty state.
+  if (!loaded && loading) {
+    return <VariantSkeleton />;
+  }
+  if (loaded && groups.length === 0) {
     return <SectionEmpty text="No look-alikes to tidy right now." />;
   }
 
@@ -585,6 +679,40 @@ function VariantsSection({
           busy={busy}
           onTidy={onTidy}
         />
+      ))}
+
+      {loading && loaded && <VariantSkeleton />}
+
+      {hasMore && !loading && (
+        <Button
+          variant="tonal"
+          disabled={busy}
+          onClick={onShowMore}
+          className="w-full justify-center sm:w-auto"
+        >
+          <Copy className="h-4 w-4" />
+          Show more look-alikes
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function VariantSkeleton() {
+  return (
+    <div className="space-y-[var(--ft-space-3)]">
+      {[0, 1].map((i) => (
+        <div
+          key={i}
+          className="rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container-low)] p-[var(--ft-space-4)]"
+        >
+          <div className="mb-[var(--ft-space-4)] h-5 w-3/4 animate-pulse rounded-[var(--ft-shape-small)] bg-[var(--ft-color-surface-container-highest)]" />
+          <div className="flex gap-[var(--ft-space-4)]">
+            <div className="h-28 w-28 animate-pulse rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container-highest)]" />
+            <div className="h-20 w-20 animate-pulse rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container-highest)]" />
+            <div className="h-20 w-20 animate-pulse rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container-highest)]" />
+          </div>
+        </div>
       ))}
     </div>
   );

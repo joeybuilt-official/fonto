@@ -19,17 +19,15 @@
 
 export const dynamic = "force-dynamic";
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth/server";
 import { ensurePersonalWorkspace } from "@/lib/workspace";
 import { requireWorkspaceOwner } from "@/lib/authz";
 import { DEFAULT_GATE_THRESHOLDS } from "@/lib/fusion/gate";
-import { buildWorkspaceManifests } from "@/lib/variants/consolidate";
 
 const DATE_LANE_LIMIT = 60;
-const VARIANT_LANE_LIMIT = 30;
 const IDENTITY_LANE_LIMIT = 40;
 
 interface DateItem {
@@ -45,7 +43,7 @@ interface DateItem {
   reasons: string[];
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -54,12 +52,6 @@ export async function GET(request: NextRequest) {
 
   const authz = await requireWorkspaceOwner(workspace.id);
   if (!authz.ok) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-  const { searchParams } = new URL(request.url);
-  const variantLimit = Math.max(
-    1,
-    Math.min(VARIANT_LANE_LIMIT, Number(searchParams.get("variantLimit")) || VARIANT_LANE_LIMIT)
-  );
 
   // ── Date lane ──────────────────────────────────────────────────────────
   // The gate (lib/fusion/gate) routes a date to: auto-commit (conf >= HIGH, no
@@ -123,22 +115,19 @@ export async function GET(request: NextRequest) {
   const dateAutoCommit = dateCounts?.autoCommit ?? 0;
   const dateLeave = dateCounts?.leave ?? 0;
 
-  // ── Variant lane ───────────────────────────────────────────────────────
-  const manifests = await buildWorkspaceManifests(workspace.id, variantLimit);
-  const variantGroups = manifests
-    .filter((m) => m.decision !== "leave" && m.trashCandidates.length > 0)
-    .map((m) => ({
-      groupId: m.groupId,
-      canonicalAssetId: m.canonicalAssetId,
-      canonicalScore: Number(m.canonicalMetrics.score.toFixed(3)),
-      confidence: Number(m.confidence.toFixed(3)),
-      decision: m.decision,
-      trashCandidates: m.trashCandidates.map((c) => ({
-        assetId: c.assetId,
-        ssim: Number((c.ssimToCanonical ?? 0).toFixed(3)),
-      })),
-      keptDistinct: m.keptDistinct.map((c) => c.assetId),
-    }));
+  // ── Variant lane (cheap COUNT only) ─────────────────────────────────────
+  // The SSIM-heavy manifests are built lazily + paged by the dedicated
+  // /api/admin/review-queue/variants endpoint when the operator opens the
+  // "Tidy up look-alikes" chip. Here we just surface the candidate count.
+  const [variantRow] = await db
+    .select({ candidates: sql<number>`count(*)::int` })
+    .from(schema.variantGroups)
+    .where(
+      and(
+        eq(schema.variantGroups.workspaceId, workspace.id),
+        eq(schema.variantGroups.status, "candidate")
+      )
+    );
 
   // ── Identity lane (informational) ──────────────────────────────────────
   const unnamed = await db
@@ -167,8 +156,8 @@ export async function GET(request: NextRequest) {
       counts: { review: dateReview.length, autoCommit: dateAutoCommit, leave: dateLeave },
     },
     variant: {
-      groups: variantGroups,
-      limit: variantLimit,
+      count: variantRow?.candidates ?? 0,
+      groups: [],
     },
     identity: {
       clusters: unnamed.map((p) => ({
