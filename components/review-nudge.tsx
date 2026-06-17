@@ -66,7 +66,7 @@ export function ReviewNudge(): React.ReactElement | null {
         {count} photo{count === 1 ? "" : "s"} need a date review.
       </span>
       <Link
-        href="/admin/review"
+        href="/app/review"
         onClick={dismiss}
         className="shrink-0 rounded-[var(--ft-shape-full)] px-[var(--ft-space-3)] py-[var(--ft-space-1)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-inverse-primary)] hover:bg-[color-mix(in_srgb,var(--ft-color-inverse-primary)_8%,transparent)]"
       >

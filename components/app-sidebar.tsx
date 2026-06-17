@@ -195,16 +195,16 @@ export function AppSidebar({
         {reviewCount !== null && (
           <div className="mt-[var(--ft-space-2)] border-t border-[var(--ft-color-outline-variant)] pt-[var(--ft-space-2)]">
             <Link
-              href="/admin/review"
+              href="/app/review"
               onClick={onClose}
               aria-current={
-                pathname === "/admin/review" || pathname.startsWith("/admin/review/")
+                pathname === "/app/review" || pathname.startsWith("/app/review/")
                   ? "page"
                   : undefined
               }
               className={cn(
                 navItemBase,
-                pathname.startsWith("/admin/review") ? navItemActive : navItemInactive,
+                pathname.startsWith("/app/review") ? navItemActive : navItemInactive,
               )}
             >
               <ClipboardCheck className="h-4 w-4 shrink-0" />
