@@ -17,10 +17,22 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 
-const loadGroups = (workspaceId: string | null) =>
+interface CachedGroup {
+  id: string;
+  workspaceId: string | null;
+  name: string;
+  color: string;
+  sortOrder: number;
+  createdAtIso: string;
+}
+
+// unstable_cache serialises via JSON, so any Date objects in the return value
+// come back as strings on a cache hit, breaking .toISOString() at the call
+// site. Pre-serialise here so the cache stores plain strings.
+const loadGroups = (workspaceId: string | null): Promise<CachedGroup[]> =>
   unstable_cache(
-    async () =>
-      db
+    async () => {
+      const rows = await db
         .select()
         .from(schema.personGroups)
         .where(
@@ -31,7 +43,16 @@ const loadGroups = (workspaceId: string | null) =>
               )
             : isNull(schema.personGroups.workspaceId)
         )
-        .orderBy(schema.personGroups.sortOrder, schema.personGroups.name),
+        .orderBy(schema.personGroups.sortOrder, schema.personGroups.name);
+      return rows.map((g) => ({
+        id: g.id,
+        workspaceId: g.workspaceId,
+        name: g.name,
+        color: g.color,
+        sortOrder: g.sortOrder,
+        createdAtIso: g.createdAt.toISOString(),
+      }));
+    },
     ["person-groups-list", workspaceId ?? "__builtins__"],
     {
       tags: workspaceId
@@ -58,7 +79,7 @@ export async function GET(_request: NextRequest) {
       color: g.color,
       sortOrder: g.sortOrder,
       builtin: g.workspaceId === null,
-      createdAt: g.createdAt.toISOString(),
+      createdAt: g.createdAtIso,
     })),
   });
 }

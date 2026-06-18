@@ -28,6 +28,7 @@ import {
   isWhiteboardCapture,
   isPhotoOfArt,
   ocrLooksLikePaperDocument,
+  hasOverlayText,
 } from "../processing/classifyHelpers";
 
 export const KIND = ["moment", "screenshot", "graphics", "document", "video"] as const;
@@ -116,6 +117,9 @@ export interface KindInput {
  *   8. isWhiteboardCapture() OCR heuristic → document
  *   9. classification ∈ GRAPHICS_CLASSIFICATIONS AND !looksLikeCameraPhoto → graphics
  *  10. image/* AND looksLikeCameraPhoto → moment
+ *  10.5. image/* AND !looksLikeCameraPhoto AND hasOverlayText(ocr) → graphics
+ *        (2026-06-16: catches CLIP-low-confidence memes/captioned-screenshots
+ *        the LLM fallback defaulted to "photo")
  *  11. image/* fallback → moment
  *  12. unknown mime → moment
  *
@@ -210,6 +214,23 @@ export function deriveKind(asset: KindInput): Kind {
   // Rule 10 — image with positive camera evidence → moment.
   if (mimeType.startsWith("image/") && looksLikeCameraPhoto(filename, mimeType, exif)) {
     return "moment";
+  }
+  // Rule 10.5 (2026-06-16) — overlay-text fallback: the classifier defaulted
+  // to "photo" (often because CLIP confidence was low and the LLM fallback
+  // returned the safe "photo" default), but there's no camera-capture
+  // evidence AND the image carries substantial overlay text. That pattern is
+  // a meme, captioned screenshot, social-share, or chat clip — never a
+  // candid camera moment. Demote to graphics so Moments stays clean.
+  //
+  // Asymmetry stays consistent with rule 9 (graphics requires no EXIF) — a
+  // real photo with a sign in frame is gated out one rule earlier by
+  // looksLikeCameraPhoto. Single-word signs ("STOP") don't trip hasOverlayText.
+  if (
+    mimeType.startsWith("image/") &&
+    !looksLikeCameraPhoto(filename, mimeType, exif) &&
+    hasOverlayText(ocrText)
+  ) {
+    return "graphics";
   }
   // Rule 11 — operator policy (2026-06-10): an unknown image is a photo →
   // moment. Logos/icons/etc. route to graphics via classification (rule 9);

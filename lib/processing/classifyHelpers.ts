@@ -90,6 +90,25 @@ export function isDocumentByOcr(ocrText: string | null): boolean {
   return distinct.size >= 12;
 }
 
+// Lower-bar OCR signal: "this image carries enough text to look like a meme,
+// captioned graphic, social-share screenshot, or chat clip — definitely not
+// a candid camera moment." Used by deriveKind to demote photo→graphics when
+// the classifier defaulted to 'photo' (low CLIP confidence + LLM fallback)
+// but the image has overlay text AND lacks any positive camera evidence.
+//
+// Threshold tuning: 40+ chars + 5+ distinct alphanumeric tokens ≥ 2 chars.
+// Single-word signs ("STOP", "EXIT") in real-world photos don't trip this.
+// Real camera photos with text gate out at the looksLikeCameraPhoto check
+// in deriveKind before this fires, so a wedding-sign or street-scene photo
+// stays a moment.
+export function hasOverlayText(ocrText: string | null): boolean {
+  if (!ocrText) return false;
+  if (ocrText.length < 40) return false;
+  const tokens = ocrText.toLowerCase().match(/[a-z0-9][a-z0-9'$.,/-]*/g) ?? [];
+  const distinct = new Set(tokens.filter((t) => t.length >= 2));
+  return distinct.size >= 5;
+}
+
 export function hasRealCameraSignals(exif: CameraEvidence): boolean {
   return Boolean(
     (exif.exposureTime !== null && exif.exposureTime !== undefined && exif.exposureTime !== "") ||
