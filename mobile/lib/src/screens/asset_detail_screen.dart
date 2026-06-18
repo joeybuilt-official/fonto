@@ -20,7 +20,9 @@ import "package:share_plus/share_plus.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../state/asset_cache.dart";
 import "../state/offline_cache.dart";
+import "../state/pending_mutations.dart";
 import "../widgets/asset_video_player.dart";
 
 class AssetDetailScreen extends StatefulWidget {
@@ -100,11 +102,35 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
         _previewFailed.removeAll(ids);
       });
     } catch (_) {
+      // Offline / fetch failed: fall back to the last-known signed URLs the
+      // AssetCache persisted for these ids (preview if we have it, else the
+      // thumb). The image layer keys its disk cache by asset id, so the warmed
+      // bytes still render even though the signed URL itself is stale. Only the
+      // ids with no cached URL stay "failed" (→ retry affordance).
+      final cached = await _cachedUrls(ids);
       if (!mounted) return;
-      // Mark these ids as failed so the view shows a retry affordance
-      // instead of an endless spinner. Asset is still usable via thumb.
-      setState(() => _previewFailed.addAll(ids));
+      setState(() {
+        _previews.addAll(cached);
+        _previewFailed.addAll(ids.where((id) => !cached.containsKey(id)));
+      });
     }
+  }
+
+  /// Pull the last-known preview/thumb URLs for [ids] from the on-device
+  /// AssetCache. Best-effort — returns whatever's cached. Used when the live
+  /// preview-URL fetch fails so a viewer opened offline still shows an image.
+  Future<Map<String, String>> _cachedUrls(List<String> ids) async {
+    final out = <String, String>{};
+    try {
+      final cache = await AssetCache.open();
+      for (final id in ids) {
+        final url = await cache.urlForAsset(id);
+        if (url != null) out[id] = url;
+      }
+    } catch (_) {
+      // No cache / read error — leave empty so the ids show the retry state.
+    }
+    return out;
   }
 
   void _onPageChanged(int i) {
@@ -154,16 +180,47 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   Future<void> _toggleFavorite() async {
     if (_acting) return;
     setState(() => _acting = true);
+    final id = _cur.id;
     final next = !(_cur.isFavorite ?? false);
     try {
-      final updated = await widget.client.setFavorite(_cur.id, next);
+      final updated = await widget.client.setFavorite(id, next);
       if (!mounted) return;
       setState(() => _assets[_index] = updated);
     } on ApiException catch (e) {
-      _snack("Favorite failed: ${e.status} ${e.message}");
+      // A 4xx is a real server rejection — surface it. Anything else is
+      // treated as a transient/offline failure and queued for replay.
+      if (e.status >= 400 && e.status < 500) {
+        _snack("Favorite failed: ${e.status} ${e.message}");
+      } else {
+        await _queueFavoriteOffline(id, next);
+      }
+    } catch (_) {
+      // Network down — optimistic + queued replay on reconnect.
+      await _queueFavoriteOffline(id, next);
     } finally {
       if (mounted) setState(() => _acting = false);
     }
+  }
+
+  /// Offline favorite: optimistically flip the local row and persist the edit
+  /// to the pending-mutations queue, which replays on reconnect.
+  Future<void> _queueFavoriteOffline(String id, bool next) async {
+    try {
+      final q = await PendingMutations.open();
+      await q.enqueue(
+        assetId: id,
+        field: "isFavorite",
+        value: next ? "true" : "false",
+      );
+    } catch (_) {
+      // Queue write failed — still reflect the change locally.
+    }
+    if (!mounted) return;
+    final i = _assets.indexWhere((a) => a.id == id);
+    if (i >= 0) {
+      setState(() => _assets[i] = _assets[i].copyWith(isFavorite: next));
+    }
+    _snack("Saved offline — will sync when you're back online.");
   }
 
   Future<void> _reprocess() async {

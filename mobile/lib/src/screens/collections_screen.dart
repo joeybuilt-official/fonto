@@ -10,11 +10,14 @@
 // + co-located `_components/`). Web/mobile parity is enforced so the user
 // has one mental model across surfaces.
 
+import "dart:async";
+
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../state/collection_cache.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 import "filtered_assets_screen.dart";
@@ -117,6 +120,7 @@ class _AlbumsTab extends StatefulWidget {
 class _AlbumsTabState extends State<_AlbumsTab> {
   bool _loading = true;
   String? _error;
+  bool _offline = false;
   List<Collection> _items = const [];
 
   @override
@@ -135,26 +139,60 @@ class _AlbumsTabState extends State<_AlbumsTab> {
       if (!mounted) return;
       setState(() {
         _items = items;
+        _offline = false;
         _loading = false;
       });
+      // Persist for the next offline launch. Fire-and-forget.
+      unawaited(_persist(items));
     } on ApiException catch (e) {
-      _fail("${e.status}: ${e.message}");
+      await _fallbackToCache("${e.status}: ${e.message}");
     } catch (e) {
-      _fail(e.toString());
+      await _fallbackToCache(e.toString());
     }
   }
 
-  void _fail(String msg) {
-    if (!mounted) return;
-    setState(() {
-      _error = msg;
-      _loading = false;
-    });
+  Future<void> _persist(List<Collection> items) async {
+    try {
+      final cache = await CollectionCache.open();
+      await cache.upsertAll(items);
+    } catch (_) {
+      // Cache write failure is non-fatal.
+    }
+  }
+
+  /// Network fetch failed — serve the album list from the on-device cache so
+  /// the tab isn't blank. Mirrors home_screen's _fallbackToCache. Only falls
+  /// through to the error state when nothing is cached.
+  Future<void> _fallbackToCache(String networkError) async {
+    try {
+      final cache = await CollectionCache.open();
+      final cached = await cache.all();
+      if (!mounted) return;
+      if (cached.isEmpty) {
+        setState(() {
+          _error = networkError;
+          _loading = false;
+        });
+        return;
+      }
+      setState(() {
+        _error = null;
+        _offline = true;
+        _items = cached;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = networkError;
+        _loading = false;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return _stateScaffold(
+    final list = _stateScaffold(
       loading: _loading,
       error: _error,
       isEmpty: _items.isEmpty,
@@ -173,6 +211,43 @@ class _AlbumsTabState extends State<_AlbumsTab> {
                 : Text(c.description!, overflow: TextOverflow.ellipsis),
           );
         },
+      ),
+    );
+    if (!_offline) return list;
+    return Column(
+      children: [
+        const _OfflineBanner(),
+        Expanded(child: list),
+      ],
+    );
+  }
+}
+
+/// Shared offline strip — mirrors the home_screen offline banner copy/colours.
+class _OfflineBanner extends StatelessWidget {
+  const _OfflineBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      color: scheme.secondaryContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_off, size: 16, color: scheme.onSecondaryContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "Offline — showing your saved albums. Pull to retry.",
+              style: TextStyle(
+                fontSize: 12,
+                color: scheme.onSecondaryContainer,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

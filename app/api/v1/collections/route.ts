@@ -13,7 +13,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { nextSeq } from "@/lib/db/seq";
 import { cacheInvalidate, getCacheLayer } from "@/lib/cache/valkey";
@@ -28,7 +28,8 @@ const loadCollections = (workspaceId: string) =>
       db
         .select()
         .from(schema.collections)
-        .where(eq(schema.collections.workspaceId, workspaceId))
+        // Hide soft-deleted collections; the /sync feed still tombstones them.
+        .where(and(eq(schema.collections.workspaceId, workspaceId), isNull(schema.collections.deletedAt)))
         .orderBy(schema.collections.createdAt),
     ["collections-list", workspaceId],
     { tags: [`ws:${workspaceId}:collections`], revalidate: 300 }

@@ -6,7 +6,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { timingSafeEqual } from "node:crypto"
 import { z } from "zod"
 import { db, schema } from "@/lib/db"
-import { and, desc, eq, ilike, or } from "drizzle-orm"
+import { and, desc, eq, ilike, isNull, or } from "drizzle-orm"
+import { bumpCollectionSeq } from "@/lib/db/seq"
 
 function isServiceKeyRequest(req: NextRequest): boolean {
   const svcKey = process.env.PLEXO_SERVICE_KEY
@@ -163,7 +164,7 @@ export async function GET(request: NextRequest) {
         createdAt: schema.collections.createdAt,
       })
         .from(schema.collections)
-        .where(and(eq(schema.collections.workspaceId, workspaceId), eq(schema.collections.id, id)))
+        .where(and(eq(schema.collections.workspaceId, workspaceId), eq(schema.collections.id, id), isNull(schema.collections.deletedAt)))
         .limit(1)
       if (!collection) return NextResponse.json({ error: "Collection not found" }, { status: 404 })
       return NextResponse.json({ collection })
@@ -176,7 +177,7 @@ export async function GET(request: NextRequest) {
       createdAt: schema.collections.createdAt,
     })
       .from(schema.collections)
-      .where(eq(schema.collections.workspaceId, workspaceId))
+      .where(and(eq(schema.collections.workspaceId, workspaceId), isNull(schema.collections.deletedAt)))
       .orderBy(desc(schema.collections.createdAt))
 
     return NextResponse.json({ collections, total: collections.length })
@@ -410,8 +411,14 @@ export async function POST(request: NextRequest) {
       .limit(1)
     if (!existing) return NextResponse.json({ error: "Collection not found" }, { status: 404 })
 
+    // Soft-delete (delta-sync): drop the join rows but keep the collection
+    // row, stamping deleted_at + bumping seq so it surfaces as a `delete`
+    // tombstone on /sync/collections instead of vanishing.
     await db.delete(schema.collectionAssets).where(eq(schema.collectionAssets.collectionId, v.data.id))
-    await db.delete(schema.collections).where(eq(schema.collections.id, v.data.id))
+    await db.update(schema.collections)
+      .set({ deletedAt: new Date() })
+      .where(eq(schema.collections.id, v.data.id))
+    await bumpCollectionSeq(workspaceId, v.data.id)
 
     return NextResponse.json({ deleted: true })
   }

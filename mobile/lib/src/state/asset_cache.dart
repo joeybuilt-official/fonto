@@ -158,6 +158,26 @@ class AssetCache {
     return (r.first["c"] as int?) ?? 0;
   }
 
+  /// Last-known signed image URL for a single asset — preview if we have one,
+  /// else the thumb. Returns null when the asset isn't cached or carries no
+  /// URL. Used by the detail viewer to render offline when the live presign
+  /// fetch fails.
+  Future<String?> urlForAsset(String id) async {
+    final rows = await _db.query(
+      "cached_assets",
+      columns: ["thumb_url", "preview_url"],
+      where: "id = ?",
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final preview = rows.first["preview_url"] as String?;
+    if (preview != null && preview.isNotEmpty) return preview;
+    final thumb = rows.first["thumb_url"] as String?;
+    if (thumb != null && thumb.isNotEmpty) return thumb;
+    return null;
+  }
+
   static Asset _fromRow(Map<String, Object?> r) {
     DateTime? at(String k) {
       final v = r[k] as int?;

@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { eq, and, inArray, count } from "drizzle-orm";
+import { eq, and, inArray, count, isNull } from "drizzle-orm";
 
 export async function GET(
   _request: NextRequest,
@@ -24,7 +24,8 @@ export async function GET(
     .where(
       and(
         eq(schema.collections.id, collectionId),
-        inArray(schema.collections.workspaceId, workspaceIds)
+        inArray(schema.collections.workspaceId, workspaceIds),
+        isNull(schema.collections.deletedAt)
       )
     )
     .limit(1);

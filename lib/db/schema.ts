@@ -467,6 +467,8 @@ export const collections = fontoSchema.table(
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    // Delta-sync tombstone marker; see assets.deletedAt.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     // Phase 2.3 — delta-sync cursor; see assets.seq.
     seq: bigint("seq", { mode: "bigint" }),
   },
@@ -604,8 +606,15 @@ export const projects = fontoSchema.table(
     color: text("color").notNull().default("#6366f1"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    // Delta-sync tombstone marker; see assets.deletedAt.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    // Phase 2.3 — delta-sync cursor; see collections.seq / assets.seq.
+    seq: bigint("seq", { mode: "bigint" }),
   },
-  (table) => [index("projects_workspace_id_idx").on(table.workspaceId)]
+  (table) => [
+    index("projects_workspace_id_idx").on(table.workspaceId),
+    index("projects_workspace_seq_idx").on(table.workspaceId, table.seq),
+  ]
 );
 
 // ADR 0008 — scope partition: SHOOT organization (Client? -> Shoot -> Stage).

@@ -6,6 +6,7 @@
 // expose a cursor) — capped at whatever the server returns in one shot.
 
 import "package:cached_network_image/cached_network_image.dart";
+import "package:connectivity_plus/connectivity_plus.dart";
 import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
@@ -26,6 +27,10 @@ class _SearchScreenState extends State<SearchScreen> {
   final _ctrl = TextEditingController();
   bool _busy = false;
   String? _error;
+  // Search results aren't cached (the endpoint has no clean offline shape), so
+  // when a query fails offline we show a dedicated "needs connection" state
+  // rather than a generic error.
+  bool _offline = false;
   List<Asset> _results = const [];
   Map<String, String> _thumbs = const {};
 
@@ -48,6 +53,7 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() {
       _busy = true;
       _error = null;
+      _offline = false;
     });
     try {
       final assets = await widget.client.search(q);
@@ -64,17 +70,28 @@ class _SearchScreenState extends State<SearchScreen> {
         _busy = false;
       });
     } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = "${e.status}: ${e.message}";
-        _busy = false;
-      });
+      await _fail("${e.status}: ${e.message}");
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _busy = false;
-      });
+      await _fail(e.toString());
+    }
+  }
+
+  Future<void> _fail(String msg) async {
+    final offline = await _isOffline();
+    if (!mounted) return;
+    setState(() {
+      _offline = offline;
+      _error = msg;
+      _busy = false;
+    });
+  }
+
+  Future<bool> _isOffline() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return !results.any((r) => r != ConnectivityResult.none);
+    } catch (_) {
+      return false;
     }
   }
 
@@ -126,7 +143,10 @@ class _SearchScreenState extends State<SearchScreen> {
     if (_busy) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
       return ListErrorState(
-        message: "Couldn't run that search. Check your connection and retry.",
+        message: _offline
+            ? "You're offline — search needs a connection. "
+                "Your saved library is still available on the Library tab."
+            : "Couldn't run that search. Check your connection and retry.",
         onRetry: _run,
       );
     }

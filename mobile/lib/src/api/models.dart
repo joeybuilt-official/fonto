@@ -56,6 +56,26 @@ class Asset {
       processingState != "ready" &&
       processingState != "failed";
 
+  /// Local-only copy with a field changed — used for optimistic UI when an
+  /// edit is queued offline (the server row arrives on the next sync).
+  Asset copyWith({bool? isFavorite, int? rating}) => Asset(
+        id: id,
+        filename: filename,
+        mimeType: mimeType,
+        sizeBytes: sizeBytes,
+        createdAt: createdAt,
+        description: description,
+        classification: classification,
+        capturedAt: capturedAt,
+        directoryPath: directoryPath,
+        isFavorite: isFavorite ?? this.isFavorite,
+        rating: rating ?? this.rating,
+        ocrText: ocrText,
+        processingState: processingState,
+        widthPx: widthPx,
+        heightPx: heightPx,
+      );
+
   static Asset fromJson(Map<String, dynamic> j) => Asset(
         id: j["id"] as String,
         filename: j["filename"] as String,

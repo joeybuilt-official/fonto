@@ -9,6 +9,7 @@ import "dart:async";
 import "dart:io";
 
 import "package:cached_network_image/cached_network_image.dart";
+import "package:connectivity_plus/connectivity_plus.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter_doc_scanner/flutter_doc_scanner.dart";
@@ -19,6 +20,8 @@ import "../api/models.dart";
 import "../state/auth_store.dart";
 import "../state/asset_cache.dart";
 import "../state/offline_cache.dart";
+import "../state/offline_prefetch.dart";
+import "../state/pending_mutations.dart";
 import "../state/drive_download_queue.dart";
 import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
@@ -65,6 +68,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _offHasMore = false;
   bool _uploading = false;
   Timer? _processingPoll;
+  // Re-run the offline prefetch when connectivity returns / the app resumes,
+  // debounced so a burst of connectivity events (Wi-Fi handshake flapping)
+  // only fires one pass.
+  StreamSubscription<List<ConnectivityResult>>? _connSub;
+  Timer? _prefetchDebounce;
+  bool _wasOffline = false;
   // Full-library month buckets for the scrubber's domain. Refreshed any time
   // the asset grid is refreshed; null while the first load is still pending.
   List<AssetBucket> _buckets = const [];
@@ -96,6 +105,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     UploadQueue.progress.addListener(_onUploadProgress);
     DriveDownloadQueue.pending.addListener(_onDrivePendingChange);
     _refresh();
+    // Re-run the offline prefetch (+ recover the grid) whenever connectivity
+    // comes back. The metadata phase is what fills the cache so the next
+    // offline open isn't blank.
+    _connSub = Connectivity().onConnectivityChanged.listen(_onConnectivity);
+    // Cold launch with a backlog of offline edits (favorite toggles made last
+    // session, app reopened online): replay them now. No-op when empty/offline.
+    _drainPendingMutations();
     // Cold launch: push any existing backlog. The background WorkManager task
     // is heavily throttled by Android, and opening the app previously only
     // drained when a camera-roll scan found NEW files — so a backlog could sit
@@ -113,9 +129,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     UploadQueue.progress.removeListener(_onUploadProgress);
     DriveDownloadQueue.pending.removeListener(_onDrivePendingChange);
     _processingPoll?.cancel();
+    _prefetchDebounce?.cancel();
+    _connSub?.cancel();
     _scroll.dispose();
     _client.close();
     super.dispose();
+  }
+
+  /// Connectivity changed. When we transition (back) onto a usable connection,
+  /// debounce-kick the offline prefetch so the on-device cache stays warm, and
+  /// — if the grid is currently showing the offline fallback — pull a fresh
+  /// page so the user sees live content again.
+  void _onConnectivity(List<ConnectivityResult> results) {
+    final online = results.any((r) => r != ConnectivityResult.none);
+    if (!online) {
+      _wasOffline = true;
+      return;
+    }
+    final cameBackOnline = _wasOffline || _offline;
+    _wasOffline = false;
+    _kickPrefetch();
+    if (cameBackOnline && mounted) _refresh();
+  }
+
+  /// Debounced unawaited prefetch kick. OfflinePrefetch.run is itself
+  /// idempotent + guarded against concurrent passes; the debounce just avoids
+  /// scheduling a flurry on connectivity flap.
+  void _kickPrefetch() {
+    _prefetchDebounce?.cancel();
+    _prefetchDebounce = Timer(const Duration(seconds: 2), () {
+      OfflinePrefetch.run(widget.auth);
+      // Replay any edits made offline (favorite toggles). Best-effort.
+      _drainPendingMutations();
+    });
+  }
+
+  Future<void> _drainPendingMutations() async {
+    try {
+      final q = await PendingMutations.open();
+      final n = await q.drain(widget.auth);
+      if (mounted && n > 0) _softRefresh();
+    } catch (_) {
+      // Best-effort — the next reconnect retries.
+    }
   }
 
   void _onUploadProgress() {
@@ -169,6 +225,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       _kickDrain();
       _kickDriveDrain();
+      // Resumed — refresh the offline cache in the background. Idempotent +
+      // self-gated on connectivity, so it's a no-op offline.
+      _kickPrefetch();
     }
   }
 

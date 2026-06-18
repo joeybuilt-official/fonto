@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Phase 2.3 — GET /api/v1/sync/collections?cursor=<seq>&limit=500
+// GET /api/v1/sync/projects?cursor=<seq>&limit=500
 //
-// Cursor-based delta sync for collections. Same shape as /sync/assets.
-// Collections carry a `deleted_at` tombstone column, so a soft-deleted
-// collection is emitted as a `delete` entry (mirrors assets/projects).
+// Cursor-based delta sync for projects. Same shape as /sync/assets and
+// /sync/collections. Projects carry a `deleted_at` tombstone column, so a
+// soft-deleted project is emitted as a `delete` entry (mirrors assets).
 //
 // TODO: register sync routes in 2.2 registry (lib/openapi/routes.ts)
 // once Phase 2.2 lands its registry module.
@@ -44,15 +44,15 @@ export async function GET(request: NextRequest) {
 
   const rows = await db
     .select()
-    .from(schema.collections)
+    .from(schema.projects)
     .where(
       and(
-        inArray(schema.collections.workspaceId, workspaceIds),
-        isNotNull(schema.collections.seq),
-        gt(schema.collections.seq, cursor)
+        inArray(schema.projects.workspaceId, workspaceIds),
+        isNotNull(schema.projects.seq),
+        gt(schema.projects.seq, cursor)
       )
     )
-    .orderBy(asc(schema.collections.seq))
+    .orderBy(asc(schema.projects.seq))
     .limit(limit + 1);
 
   const hasMore = rows.length > limit;
@@ -60,10 +60,11 @@ export async function GET(request: NextRequest) {
 
   const entries: Array<SyncDeleteEntry | SyncUpsertEntry<unknown>> = pageRows.map((row) => {
     const seqStr = row.seq != null ? row.seq.toString() : "0";
-    if (row.deletedAt != null) {
+    const isTombstone = row.deletedAt != null;
+    if (isTombstone) {
       return { op: "delete", id: row.id, seq: seqStr };
     }
-    return { op: "upsert", seq: seqStr, collection: row };
+    return { op: "upsert", seq: seqStr, project: row };
   });
 
   const lastSeq = pageRows.length

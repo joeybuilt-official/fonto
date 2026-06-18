@@ -23,12 +23,13 @@
 import { sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 
-export type SeqKind = "asset" | "tag" | "collection";
+export type SeqKind = "asset" | "tag" | "collection" | "project";
 
-const COLUMN_BY_KIND: Record<SeqKind, "asset_seq" | "tag_seq" | "collection_seq"> = {
+const COLUMN_BY_KIND: Record<SeqKind, "asset_seq" | "tag_seq" | "collection_seq" | "project_seq"> = {
   asset: "asset_seq",
   tag: "tag_seq",
   collection: "collection_seq",
+  project: "project_seq",
 };
 
 /**
@@ -90,5 +91,17 @@ export async function bumpCollectionSeq(
     .update(schema.collections)
     .set({ seq, updatedAt: new Date() })
     .where(sql`${schema.collections.id} = ${collectionId}`);
+  return seq;
+}
+
+export async function bumpProjectSeq(
+  workspaceId: string,
+  projectId: string
+): Promise<bigint> {
+  const seq = await nextSeq(workspaceId, "project");
+  await db
+    .update(schema.projects)
+    .set({ seq, updatedAt: new Date() })
+    .where(sql`${schema.projects.id} = ${projectId}`);
   return seq;
 }

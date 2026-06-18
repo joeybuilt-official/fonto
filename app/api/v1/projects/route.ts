@@ -10,7 +10,8 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, inArray, desc } from "drizzle-orm";
+import { eq, and, inArray, desc, isNull } from "drizzle-orm";
+import { nextSeq } from "@/lib/db/seq";
 
 const loadProjects = (workspaceIds: string[]) => {
   const key = [...workspaceIds].sort().join(",");
@@ -19,7 +20,9 @@ const loadProjects = (workspaceIds: string[]) => {
       db
         .select()
         .from(schema.projects)
-        .where(inArray(schema.projects.workspaceId, workspaceIds))
+        // Hide soft-deleted projects from the catalogue; the /sync feed
+        // still surfaces them as tombstones.
+        .where(and(inArray(schema.projects.workspaceId, workspaceIds), isNull(schema.projects.deletedAt)))
         .orderBy(desc(schema.projects.updatedAt)),
     ["projects-list", key],
     {
@@ -57,6 +60,8 @@ export async function POST(request: NextRequest) {
   const name = String(body.name ?? "").trim();
   if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
 
+  // Delta-sync: allocate a seq for this new project.
+  const seq = await nextSeq(workspaces[0].id, "project");
   const [project] = await db
     .insert(schema.projects)
     .values({
@@ -65,6 +70,7 @@ export async function POST(request: NextRequest) {
       name,
       description: String(body.description ?? ""),
       color: body.color ?? "#6366f1",
+      seq,
     })
     .returning();
 

@@ -7,8 +7,9 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, and, inArray, desc } from "drizzle-orm";
+import { eq, and, inArray, desc, isNull } from "drizzle-orm";
 import { cacheInvalidate } from "@/lib/cache/valkey";
+import { nextSeq } from "@/lib/db/seq";
 
 export async function GET(
   _req: NextRequest,
@@ -25,14 +26,26 @@ export async function GET(
   const [project] = await db
     .select()
     .from(schema.projects)
-    .where(and(eq(schema.projects.id, id), inArray(schema.projects.workspaceId, workspaceIds)))
+    .where(
+      and(
+        eq(schema.projects.id, id),
+        inArray(schema.projects.workspaceId, workspaceIds),
+        isNull(schema.projects.deletedAt)
+      )
+    )
     .limit(1);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const collections = await db
     .select()
     .from(schema.collections)
-    .where(and(eq(schema.collections.projectId, id), inArray(schema.collections.workspaceId, workspaceIds)))
+    .where(
+      and(
+        eq(schema.collections.projectId, id),
+        inArray(schema.collections.workspaceId, workspaceIds),
+        isNull(schema.collections.deletedAt)
+      )
+    )
     .orderBy(schema.collections.sortOrder, schema.collections.createdAt);
 
   return NextResponse.json({ project, collections });
@@ -51,18 +64,27 @@ export async function PATCH(
   const workspaceIds = workspaces.map((w) => w.id);
 
   // Phase 3.1 — editor required to mutate a project. Look up the row first
-  // so we can scope the gate to the right workspace.
+  // so we can scope the gate to the right workspace. Soft-deleted projects
+  // are not mutable.
   const [existing] = await db
     .select({ workspaceId: schema.projects.workspaceId })
     .from(schema.projects)
-    .where(and(eq(schema.projects.id, id), inArray(schema.projects.workspaceId, workspaceIds)))
+    .where(
+      and(
+        eq(schema.projects.id, id),
+        inArray(schema.projects.workspaceId, workspaceIds),
+        isNull(schema.projects.deletedAt)
+      )
+    )
     .limit(1);
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
   if (!gate.ok) return gate.response;
 
   const body = await request.json() as { name?: string; description?: string; color?: string };
-  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  // Delta-sync: bump seq so the edit surfaces on /sync/projects.
+  const seq = await nextSeq(existing.workspaceId, "project");
+  const updates: Record<string, unknown> = { updatedAt: new Date(), seq };
   if (body.name !== undefined) updates.name = String(body.name).trim();
   if (body.description !== undefined) updates.description = String(body.description);
   if (body.color !== undefined) updates.color = body.color;
@@ -90,24 +112,35 @@ export async function DELETE(
   if (!workspaces.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const workspaceIds = workspaces.map((w) => w.id);
 
-  // Phase 3.1 — editor required to delete a project.
+  // Phase 3.1 — editor required to delete a project. Already-deleted
+  // projects 404 (idempotent soft-delete).
   const [existing] = await db
     .select({ workspaceId: schema.projects.workspaceId })
     .from(schema.projects)
-    .where(and(eq(schema.projects.id, id), inArray(schema.projects.workspaceId, workspaceIds)))
+    .where(
+      and(
+        eq(schema.projects.id, id),
+        inArray(schema.projects.workspaceId, workspaceIds),
+        isNull(schema.projects.deletedAt)
+      )
+    )
     .limit(1);
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
   if (!gate.ok) return gate.response;
 
-  // Detach collections from project before deleting
+  // Detach collections from project before soft-deleting it.
   await db
     .update(schema.collections)
     .set({ projectId: null })
     .where(and(eq(schema.collections.projectId, id), inArray(schema.collections.workspaceId, workspaceIds)));
 
+  // Soft-delete (delta-sync): stamp deleted_at and bump seq so the row
+  // surfaces as a `delete` tombstone on /sync/projects instead of vanishing.
+  const seq = await nextSeq(existing.workspaceId, "project");
   const [deleted] = await db
-    .delete(schema.projects)
+    .update(schema.projects)
+    .set({ deletedAt: new Date(), seq, updatedAt: new Date() })
     .where(and(eq(schema.projects.id, id), inArray(schema.projects.workspaceId, workspaceIds)))
     .returning({ id: schema.projects.id });
   if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });

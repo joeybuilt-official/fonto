@@ -94,8 +94,11 @@ Future<void> main() async {
     await registerUploadDrain();
     // Don't block first paint on permission dialogs / network.
     unawaited(PushNotifications.register(auth));
-    // Warm the on-device offline cache (recent library) when on Wi-Fi. Best
-    // effort, self-gated on connectivity — never blocks startup.
+    // Populate the on-device offline cache (recent library + collections) so
+    // the app has content with no internet. The metadata phase runs whenever
+    // online regardless of the Wi-Fi-only setting; only image-byte warming is
+    // Wi-Fi-gated. Best-effort, self-gated on connectivity, never blocks
+    // startup, and re-triggered on reconnect/resume from home_screen.
     unawaited(OfflinePrefetch.run(auth));
   }
   runApp(FontoApp(auth: auth));
