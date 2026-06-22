@@ -141,7 +141,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // count reflects what actually uploaded without waiting for an event.
     UploadQueue.progress.addListener(_onUploadProgress);
     DriveDownloadQueue.pending.addListener(_onDrivePendingChange);
-    _refresh();
+    _bootstrap();
     // Re-run the offline prefetch (+ recover the grid) whenever connectivity
     // comes back. The metadata phase is what fills the cache so the next
     // offline open isn't blank.
@@ -157,8 +157,43 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _kickDrain();
     _kickDriveDrain();
     _maybeScanCameraRoll();
-    _maybeLoadDevicePhotos();
     _loadSplitConfig();
+  }
+
+  /// Cold-start sequence optimized for instant first paint:
+  ///   1. local camera-roll strip — no network, renders immediately;
+  ///   2. cached server page — instant grid if we have one (stale-while-revalidate);
+  ///   3. fresh server data in the background, which swaps in without blanking
+  ///      what's already on screen.
+  Future<void> _bootstrap() async {
+    // Fire the local-photos load first so the "On this device" strip paints
+    // before any network call resolves.
+    unawaited(_maybeLoadDevicePhotos());
+    final primed = await _primeFromCache();
+    await _refresh(background: primed);
+  }
+
+  /// Paint the last-cached page instantly so the grid is never a blank spinner
+  /// when we have something to show. Returns true when it rendered cached rows.
+  Future<bool> _primeFromCache() async {
+    try {
+      final cache = await AssetCache.open();
+      final cached =
+          await cache.queryPage(folderPrefix: _folder, limit: _kPageSize);
+      if (!mounted || cached.assets.isEmpty) return false;
+      setState(() {
+        _assets
+          ..clear()
+          ..addAll(cached.assets);
+        _thumbs
+          ..clear()
+          ..addAll(cached.thumbs);
+        _loadingFirst = false;
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Read the Photos-Files split flag + last-used surface. Best-effort; on any
@@ -418,27 +453,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _refresh() async {
+  /// Pull fresh server data. Never blanks the grid: the spinner only shows on a
+  /// truly empty cold start (`background` false AND nothing already rendered);
+  /// otherwise the existing rows (cache-primed or prior) stay visible until the
+  /// new page swaps in. The four top-level fetches are independent, so they run
+  /// concurrently rather than in series.
+  Future<void> _refresh({bool background = false}) async {
     setState(() {
-      _loadingFirst = true;
       _error = null;
-      _assets.clear();
-      _thumbs.clear();
-      _cursor = null;
+      if (!background && _assets.isEmpty) _loadingFirst = true;
     });
     try {
-      // Tree + stats + scrubber buckets fetched once per refresh; not per-page.
       // assetBuckets() failure is non-fatal — the timeline still works, the
       // scrubber just doesn't render.
-      final tree = await _client.folderTree();
-      final stats = await _client.stats();
-      final buckets = await _client.assetBuckets().catchError((_) => <AssetBucket>[]);
-      final page = await _client.listAssets(
-        limit: _kPageSize,
-        directoryPathPrefix: _folder,
-        kind: _effectiveKind(),
-        unclassified: _isUnsorted,
-      );
+      final results = await Future.wait<Object>([
+        _client.folderTree(),
+        _client.stats(),
+        _client.assetBuckets().catchError((_) => <AssetBucket>[]),
+        _client.listAssets(
+          limit: _kPageSize,
+          directoryPathPrefix: _folder,
+          kind: _effectiveKind(),
+          unclassified: _isUnsorted,
+        ),
+      ]);
+      final tree = results[0] as FolderTree;
+      final stats = results[1] as WorkspaceStats;
+      final buckets = results[2] as List<AssetBucket>;
+      final page = results[3] as AssetPage;
       final thumbs = page.assets.isEmpty
           ? <String, String>{}
           : await _client.assetUrls(
@@ -450,8 +492,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _stats = stats;
         _tree = tree;
         _buckets = buckets;
-        _assets.addAll(page.assets);
-        _thumbs.addAll(thumbs);
+        _assets
+          ..clear()
+          ..addAll(page.assets);
+        _thumbs
+          ..clear()
+          ..addAll(thumbs);
         _cursor = page.nextCursor;
         _offline = false;
         _loadingFirst = false;
@@ -910,10 +956,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// calling it here on top of `_maybeScanCameraRoll` never double-queues.
   Future<void> _maybeLoadDevicePhotos() async {
     if (!await DevicePhotos.hasPermission()) return;
-    // Surface the strip when offline OR when auto-import is on (the user opted
-    // into camera-roll backup, so showing what's pending is expected).
-    final autoImport = await SettingsStore.getAutoImport();
-    if (!_offline && !autoImport) return;
+    // Always surface the strip when access is granted — the operator wants the
+    // phone's own photos visible IMMEDIATELY, online or off, regardless of the
+    // auto-import setting. Reading recents + resolving KIND is purely local
+    // (no network), so this paints well before any server call resolves.
     final recents = await DevicePhotos.recent(limit: 120);
     if (!mounted || recents.isEmpty) return;
     // Resolve KIND for the strip before showing it so the lens filter is
@@ -925,6 +971,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _devicePhotos = recents;
       _deviceKindById = kinds;
     });
+    // Auto-enqueue for upload ONLY when the user opted into camera-roll backup.
+    // Showing the strip is display-only; we never upload without consent.
+    final autoImport = await SettingsStore.getAutoImport();
+    if (!autoImport) return;
     // Enqueue what the user is now looking at so it backs up when online.
     // Best-effort + fire-and-forget: the existing drain (resume / foreground
     // service / WorkManager) does the actual upload.
@@ -1202,10 +1252,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
     }
     if (_loadingFirst) {
+      // Cold start with nothing cached yet: still paint the local camera-roll
+      // strip immediately (no network) above a small loading indicator for the
+      // server grid, so the user sees their phone's photos right away instead
+      // of a blank spinner.
       return Column(
         children: [
           _libraryHeader(),
-          const Expanded(child: Center(child: CircularProgressIndicator())),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: CustomScrollView(
+                controller: _scroll,
+                slivers: [
+                  if (_folder == null && _isPhotos) ..._deviceSlivers(),
+                  const SliverToBoxAdapter(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       );
     }
