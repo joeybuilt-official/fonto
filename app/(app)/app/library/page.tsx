@@ -158,7 +158,7 @@ function LibraryContent() {
   const splitOn = flags.librarySurfaceSplit;
   const surfaceParam = searchParams.get("surface");
   const surface: LibrarySurface = splitOn
-    ? surfaceParam === "files" || surfaceParam === "inbox" || surfaceParam === "photos"
+    ? surfaceParam === "files" || surfaceParam === "unsorted" || surfaceParam === "photos"
       ? surfaceParam
       : "photos"
     : "photos";
@@ -182,7 +182,7 @@ function LibraryContent() {
   // Active lens — a missing ?kind= resolves to the default "Moments" lens.
   const activeLens = toolbar.filters.kind ?? "moment";
 
-  const [inboxCount, setInboxCount] = useState(0);
+  const [unsortedCount, setUnsortedCount] = useState(0);
 
   // First-paint surface restore: when the flag is on and the URL carries no
   // ?surface=, hop to the last-used surface (persisted) without a hydration
@@ -195,7 +195,7 @@ function LibraryContent() {
     } catch {
       /* private mode */
     }
-    if (last === "files" || last === "inbox") {
+    if (last === "files" || last === "unsorted") {
       const sp = new URLSearchParams(searchParams.toString());
       sp.set("surface", last);
       router.replace(`${pathname}?${sp.toString()}`);
@@ -209,7 +209,7 @@ function LibraryContent() {
     fetch("/api/v1/assets/buckets?unclassified=1")
       .then((r) => (r.ok ? r.json() : { buckets: [] }))
       .then((d: { buckets?: { count: number }[] }) => {
-        if (alive) setInboxCount((d.buckets ?? []).reduce((s, b) => s + b.count, 0));
+        if (alive) setUnsortedCount((d.buckets ?? []).reduce((s, b) => s + b.count, 0));
       })
       .catch(() => undefined);
     return () => {
@@ -508,7 +508,7 @@ function LibraryContent() {
       setLoadError(false);
       const sp = new URLSearchParams();
       sp.set("lifecycle", toolbar.filters.lifecycle);
-      if (splitOn && surface === "inbox") {
+      if (splitOn && surface === "unsorted") {
         sp.set("unclassified", "1");
       } else if (splitOn) {
         if (splitKind) sp.set("kind", splitKind);
@@ -679,7 +679,7 @@ function LibraryContent() {
           <LibrarySurfaceControl
             surface={surface}
             lens={splitLens}
-            inboxCount={inboxCount}
+            unsortedCount={unsortedCount}
             onSurface={setSurface}
             onLens={setSplitLens}
           />

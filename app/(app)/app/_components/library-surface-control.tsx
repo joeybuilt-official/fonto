@@ -10,7 +10,7 @@
 import {
   Images,
   Files as FilesIcon,
-  Inbox as InboxIcon,
+  FileQuestion,
   Image as ImageIcon,
   Film,
   Smartphone,
@@ -19,7 +19,7 @@ import {
   LayoutGrid,
 } from "lucide-react";
 
-export type LibrarySurface = "photos" | "files" | "inbox";
+export type LibrarySurface = "photos" | "files" | "unsorted";
 
 export interface LensOption {
   value: string;
@@ -49,7 +49,7 @@ export function computeKindParam(
   surface: LibrarySurface,
   lens: string
 ): string | null {
-  if (surface === "inbox") return null;
+  if (surface === "unsorted") return null;
   if (surface === "photos") {
     if (lens === "moment") return "moment";
     if (lens === "video") return "video";
@@ -85,40 +85,40 @@ function chipBtn(active: boolean): string {
 export function LibrarySurfaceControl({
   surface,
   lens,
-  inboxCount,
+  unsortedCount,
   onSurface,
   onLens,
 }: {
   surface: LibrarySurface;
   lens: string;
-  inboxCount: number;
+  unsortedCount: number;
   onSurface: (s: LibrarySurface) => void;
   onLens: (lens: string) => void;
 }) {
   const lenses = lensesForSurface(surface);
-  const inInbox = surface === "inbox";
+  const inUnsorted = surface === "unsorted";
 
   return (
     <div className="space-y-3">
-      {/* Inbox banner — only when there are unclassified assets to triage, or
-          while the user is inside the Inbox surface (so they can leave it). */}
-      {(inboxCount > 0 || inInbox) && (
+      {/* Unsorted banner — only when there are unclassified assets to triage, or
+          while the user is inside the Unsorted surface (so they can leave it). */}
+      {(unsortedCount > 0 || inUnsorted) && (
         <button
-          onClick={() => onSurface(inInbox ? "photos" : "inbox")}
+          onClick={() => onSurface(inUnsorted ? "photos" : "unsorted")}
           className={`flex w-full items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-medium)] border px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-left text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium transition-colors ${
-            inInbox
+            inUnsorted
               ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
               : "border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container)] text-[var(--ft-color-on-surface)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_6%,transparent)]"
           }`}
         >
-          <InboxIcon className="h-4 w-4" />
-          <span>Inbox</span>
-          {inboxCount > 0 && (
+          <FileQuestion className="h-4 w-4" />
+          <span>Unsorted</span>
+          {unsortedCount > 0 && (
             <span className="ml-auto rounded-[var(--ft-shape-full)] bg-[var(--ft-color-primary)] px-2 py-0.5 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-primary)]">
-              {inboxCount} pending
+              {unsortedCount} pending
             </span>
           )}
-          {inInbox && <span className="ml-auto text-[length:var(--ft-type-label-medium-size)]">Done</span>}
+          {inUnsorted && <span className="ml-auto text-[length:var(--ft-type-label-medium-size)]">Done</span>}
         </button>
       )}
 
@@ -148,8 +148,8 @@ export function LibrarySurfaceControl({
         </button>
       </div>
 
-      {/* Surface-scoped lens chips. Hidden inside the Inbox surface. */}
-      {!inInbox && (
+      {/* Surface-scoped lens chips. Hidden inside the Unsorted surface. */}
+      {!inUnsorted && (
         <div
           className="flex items-center gap-1 overflow-x-auto pb-0.5"
           role="tablist"
