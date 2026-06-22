@@ -16,6 +16,10 @@ export interface Asset {
   sizeBytes: number;
   description: string | null;
   classification: string | null;
+  // Task 20 / Photos-Files split — KIND partition. moment|screenshot|graphics|
+  // document|video, or null when unclassified (Inbox surface). Serialized
+  // straight from the row.
+  kind?: string | null;
   processingState: string;
   capturedAt: string | null;
   createdAt: string;

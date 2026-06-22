@@ -27,6 +27,7 @@ import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
+import "files_surface.dart";
 import "settings_screen.dart";
 import "transfers_screen.dart";
 import "../state/camera_roll_scanner.dart";
@@ -102,6 +103,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// 1:1 to `?kind=` on /api/v1/assets.
   String _lens = "moment";
 
+  // Photos-Files split (feature-flagged via /api/v1/config). When ON, the flat
+  // lens row becomes a Photos/Files segmented control + an Inbox holding area
+  // for unclassified assets. When OFF, every split field below is inert and the
+  // grid behaves exactly as before. See plans/photos-vs-files-split/plan.md.
+  bool _splitOn = false;
+  String _surface = "photos"; // photos | files | inbox
+  String _splitLens = "all"; // surface-scoped lens (all + per-kind)
+  int _inboxCount = 0;
+
+  bool get _isFiles => _splitOn && _surface == "files";
+  bool get _isInbox => _splitOn && _surface == "inbox";
+  bool get _isPhotos => !_splitOn || _surface == "photos";
+
+  /// `?kind=` value for the active (surface, lens). Comma list for the union
+  /// "All" lenses; null for Inbox (uses `unclassified=1`) and the legacy "all".
+  String? _effectiveKind() {
+    if (!_splitOn) return _lens == "all" ? null : _lens;
+    if (_surface == "inbox") return null;
+    if (_surface == "photos") {
+      if (_splitLens == "moment") return "moment";
+      if (_splitLens == "video") return "video";
+      return "moment,video";
+    }
+    if (_splitLens == "screenshot") return "screenshot";
+    if (_splitLens == "graphics") return "graphics";
+    if (_splitLens == "document") return "document";
+    return "screenshot,graphics,document";
+  }
+
   @override
   void initState() {
     super.initState();
@@ -128,6 +158,72 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _kickDriveDrain();
     _maybeScanCameraRoll();
     _maybeLoadDevicePhotos();
+    _loadSplitConfig();
+  }
+
+  /// Read the Photos-Files split flag + last-used surface. Best-effort; on any
+  /// failure the legacy lens row stays.
+  Future<void> _loadSplitConfig() async {
+    try {
+      final flags = await _client.featureFlags();
+      final on = flags["librarySurfaceSplit"] == true;
+      final last = await SettingsStore.getLastSurface();
+      if (!mounted) return;
+      setState(() {
+        _splitOn = on;
+        if (on) _surface = last;
+      });
+      if (on) {
+        _refreshInboxCount();
+        // The legacy initial _refresh() ran with the old single-lens kind; when
+        // the restored surface differs (Files/Inbox), refetch with split params.
+        if (last != "photos") _refresh();
+      }
+    } catch (_) {
+      // Leave legacy behaviour.
+    }
+  }
+
+  Future<void> _refreshInboxCount() async {
+    final n = await _client.inboxCount();
+    if (mounted) setState(() => _inboxCount = n);
+  }
+
+  Future<void> _setSurface(String s) async {
+    if (_surface == s) return;
+    setState(() {
+      _surface = s;
+      _splitLens = "all";
+    });
+    if (s == "photos" || s == "files") {
+      await SettingsStore.setLastSurface(s);
+    }
+    // Files self-fetches via the FilesSurface widget; Photos/Inbox use the grid.
+    if (s != "files") await _refresh();
+    _refreshInboxCount();
+  }
+
+  void _setSplitLens(String lens) {
+    if (_splitLens == lens) return;
+    setState(() => _splitLens = lens);
+    // Photos/Inbox grid needs a refetch; FilesSurface reacts via its widget
+    // params (didUpdateWidget) on the rebuild this setState triggers.
+    if (!_isFiles) _refresh();
+  }
+
+  /// Library header: the surface segmented control + Inbox banner + scoped lens
+  /// chips when the split flag is on; otherwise the legacy flat lens row.
+  Widget _libraryHeader() {
+    if (_splitOn) {
+      return _SurfaceSelector(
+        surface: _surface,
+        lens: _splitLens,
+        inboxCount: _inboxCount,
+        onSurface: _setSurface,
+        onLens: _setSplitLens,
+      );
+    }
+    return _LensSelector(active: _lens, onChange: _setLens);
   }
 
   @override
@@ -290,7 +386,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final page = await _client.listAssets(
         limit: _kPageSize,
         directoryPathPrefix: _folder,
-        kind: _lens == "all" ? null : _lens,
+        kind: _effectiveKind(),
+        unclassified: _isInbox,
       );
       if (!mounted) return;
       final existingIds = {for (final a in _assets) a.id};
@@ -339,7 +436,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final page = await _client.listAssets(
         limit: _kPageSize,
         directoryPathPrefix: _folder,
-        kind: _lens == "all" ? null : _lens,
+        kind: _effectiveKind(),
+        unclassified: _isInbox,
       );
       final thumbs = page.assets.isEmpty
           ? <String, String>{}
@@ -480,7 +578,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         limit: _kPageSize,
         after: _cursor,
         directoryPathPrefix: _folder,
-        kind: _lens == "all" ? null : _lens,
+        kind: _effectiveKind(),
+        unclassified: _isInbox,
       );
       final newThumbs = page.assets.isEmpty
           ? <String, String>{}
@@ -1011,6 +1110,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// in moment for unknown / default images, so this only matters during the
   /// short window before kinds are computed).
   bool _deviceTileMatchesLens(AssetEntity e) {
+    if (_splitOn) {
+      // The device strip only renders on the Photos surface (see the gate in
+      // the grid build). Photos lenses are all / moment / video.
+      final k = _deviceKindById[e.id];
+      if (_splitLens == "moment") return k == null || k == kindMoment;
+      if (_splitLens == "video") return k == kindVideo;
+      return k == null || k == kindMoment || k == kindVideo; // all
+    }
     if (_lens == "all") return true;
     final k = _deviceKindById[e.id];
     if (k == null) return _lens == "moment";
@@ -1078,10 +1185,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildBody() {
+    // Files surface owns its own fetch + list rendering (FilesSurface); it
+    // bypasses the grid/timeline machinery entirely.
+    if (_isFiles) {
+      return Column(
+        children: [
+          _libraryHeader(),
+          Expanded(
+            child: FilesSurface(
+              client: _client,
+              kindParam: _effectiveKind(),
+              directoryPathPrefix: _folder,
+            ),
+          ),
+        ],
+      );
+    }
     if (_loadingFirst) {
       return Column(
         children: [
-          _LensSelector(active: _lens, onChange: _setLens),
+          _libraryHeader(),
           const Expanded(child: Center(child: CircularProgressIndicator())),
         ],
       );
@@ -1093,7 +1216,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (_devicePhotos.isNotEmpty) {
         return Column(
           children: [
-            _LensSelector(active: _lens, onChange: _setLens),
+            _libraryHeader(),
             Expanded(
               child: RefreshIndicator(
                 onRefresh: _refresh,
@@ -1125,7 +1248,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
       return Column(
         children: [
-          _LensSelector(active: _lens, onChange: _setLens),
+          _libraryHeader(),
           Expanded(child: ListErrorState(onRetry: _refresh)),
         ],
       );
@@ -1175,7 +1298,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           // "On this device" — local camera-roll recents, above the server
           // grid. Only the root view (no folder filter) shows it.
-          if (_folder == null) ..._deviceSlivers(),
+          if (_folder == null && _isPhotos) ..._deviceSlivers(),
           if (_stats != null && _folder == null)
             SliverToBoxAdapter(child: _StatsBar(stats: _stats!)),
           if (_assets.isEmpty)
@@ -1268,7 +1391,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // active value drives ?kind= on refresh/loadMore.
     return Column(
       children: [
-        _LensSelector(active: _lens, onChange: _setLens),
+        _libraryHeader(),
         Expanded(child: timeline),
       ],
     );
@@ -1342,6 +1465,208 @@ class _LensSelector extends StatelessWidget {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+/// Photos-Files split — surface segmented control + Inbox banner + scoped lens
+/// chips. Mirrors the web LibrarySurfaceControl. Rendered only when the
+/// `librarySurfaceSplit` flag is on.
+class _SurfaceSelector extends StatelessWidget {
+  const _SurfaceSelector({
+    required this.surface,
+    required this.lens,
+    required this.inboxCount,
+    required this.onSurface,
+    required this.onLens,
+  });
+
+  final String surface; // photos | files | inbox
+  final String lens;
+  final int inboxCount;
+  final ValueChanged<String> onSurface;
+  final ValueChanged<String> onLens;
+
+  static const _photoLenses = <(String, String, IconData)>[
+    ("all", "All", Icons.grid_view_outlined),
+    ("moment", "Moments", Icons.photo_outlined),
+    ("video", "Videos", Icons.videocam_outlined),
+  ];
+  static const _fileLenses = <(String, String, IconData)>[
+    ("all", "All", Icons.grid_view_outlined),
+    ("screenshot", "Screenshots", Icons.smartphone_outlined),
+    ("graphics", "Graphics", Icons.palette_outlined),
+    ("document", "Documents", Icons.description_outlined),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final inInbox = surface == "inbox";
+    final lenses = surface == "files" ? _fileLenses : _photoLenses;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Inbox banner — only when there is something to triage, or while the
+        // user is inside the Inbox surface (so they can leave it).
+        if (inboxCount > 0 || inInbox)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Material(
+              color: inInbox
+                  ? theme.colorScheme.secondaryContainer
+                  : theme.colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => onSurface(inInbox ? "photos" : "inbox"),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.inbox_outlined,
+                          size: 18,
+                          color: inInbox
+                              ? theme.colorScheme.onSecondaryContainer
+                              : theme.colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 8),
+                      Text("Inbox",
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            color: inInbox
+                                ? theme.colorScheme.onSecondaryContainer
+                                : theme.colorScheme.onSurface,
+                          )),
+                      const Spacer(),
+                      if (inInbox)
+                        Text("Done",
+                            style: theme.textTheme.labelMedium?.copyWith(
+                                color:
+                                    theme.colorScheme.onSecondaryContainer))
+                      else
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text("$inboxCount pending",
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onPrimary)),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+        // Segmented control — Photos / Files.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: theme.colorScheme.outlineVariant),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            padding: const EdgeInsets.all(3),
+            child: Row(
+              children: [
+                _seg(theme, "photos", "Photos", Icons.photo_library_outlined),
+                _seg(theme, "files", "Files", Icons.folder_outlined),
+              ],
+            ),
+          ),
+        ),
+
+        // Surface-scoped lens chips (hidden inside Inbox).
+        if (!inInbox)
+          SizedBox(
+            height: 44,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              itemCount: lenses.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, i) {
+                final (value, label, icon) = lenses[i];
+                final isActive = value == lens;
+                return InkWell(
+                  onTap: () => onLens(value),
+                  borderRadius: const BorderRadius.all(Radius.circular(20)),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isActive
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: const BorderRadius.all(Radius.circular(20)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(icon,
+                            size: 16,
+                            color: isActive
+                                ? theme.colorScheme.onPrimary
+                                : theme.colorScheme.onSurfaceVariant),
+                        const SizedBox(width: 6),
+                        Text(label,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: isActive
+                                  ? theme.colorScheme.onPrimary
+                                  : theme.colorScheme.onSurface,
+                              fontWeight:
+                                  isActive ? FontWeight.w600 : FontWeight.w500,
+                            )),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _seg(ThemeData theme, String value, String label, IconData icon) {
+    final isActive = surface == value;
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => onSurface(value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: isActive
+                ? theme.colorScheme.secondaryContainer
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon,
+                  size: 18,
+                  color: isActive
+                      ? theme.colorScheme.onSecondaryContainer
+                      : theme.colorScheme.onSurfaceVariant),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: isActive
+                        ? theme.colorScheme.onSecondaryContainer
+                        : theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  )),
+            ],
+          ),
+        ),
       ),
     );
   }

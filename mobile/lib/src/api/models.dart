@@ -22,6 +22,8 @@ class Asset {
     this.processingState,
     this.widthPx,
     this.heightPx,
+    this.kind,
+    this.source,
   });
 
   final String id;
@@ -50,6 +52,11 @@ class Asset {
   // normalised bbox coordinates to screen positions.
   final int? widthPx;
   final int? heightPx;
+  // Task 20 / Photos-Files split — KIND partition (moment|screenshot|graphics|
+  // document|video) or null when unclassified (Inbox surface). Source-app the
+  // asset was imported from (e.g. "web-upload", "drive").
+  final String? kind;
+  final String? source;
 
   bool get isProcessing =>
       processingState != null &&
@@ -74,6 +81,8 @@ class Asset {
         processingState: processingState,
         widthPx: widthPx,
         heightPx: heightPx,
+        kind: kind,
+        source: source,
       );
 
   static Asset fromJson(Map<String, dynamic> j) => Asset(
@@ -94,6 +103,8 @@ class Asset {
         processingState: j["processingState"] as String?,
         widthPx: (j["widthPx"] as num?)?.toInt(),
         heightPx: (j["heightPx"] as num?)?.toInt(),
+        kind: j["kind"] as String?,
+        source: j["source"] as String?,
       );
 }
 
