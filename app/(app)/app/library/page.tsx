@@ -34,6 +34,16 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ProcessingNotice } from "../_components/processing-notice";
 import { ScopeSelector } from "../shoots/_components/scope-selector";
 import { useSavedScopeDefault } from "@/lib/hooks/use-saved-scope-default";
+import { useFeatureFlags } from "@/lib/hooks/use-feature-flags";
+import { trackLibrary } from "@/lib/telemetry/library";
+import {
+  LibrarySurfaceControl,
+  computeKindParam,
+  type LibrarySurface,
+} from "../_components/library-surface-control";
+import { LibraryFilesView } from "../_components/library-files-view";
+
+const SURFACE_LS_KEY = "fonto:library:surface";
 
 interface LifecycleOption {
   value: Lifecycle;
@@ -138,9 +148,28 @@ function LibraryContent() {
   // expressible by the month-bucket scrubber / per-month windowed fetch).
   // Every other chip (lifecycle / mime / type / favorite / rating / folder)
   // maps to server-side params the timeline + buckets endpoints both honour.
+  // Photos/Files split (feature-flagged). Computed up here because it gates the
+  // timeline machinery below. When ON, the flat KIND lens row is replaced by a
+  // Photos/Files segmented control + an Inbox holding area for unclassified
+  // assets; only the Photos surface drives the timeline. When OFF, everything
+  // is inert and the page behaves exactly as before. See
+  // plans/photos-vs-files-split/plan.md.
+  const flags = useFeatureFlags();
+  const splitOn = flags.librarySurfaceSplit;
+  const surfaceParam = searchParams.get("surface");
+  const surface: LibrarySurface = splitOn
+    ? surfaceParam === "files" || surfaceParam === "inbox" || surfaceParam === "photos"
+      ? surfaceParam
+      : "photos"
+    : "photos";
+  const splitLens = searchParams.get("lens") ?? "all";
+  const splitKind = splitOn ? computeKindParam(surface, splitLens) : null;
+  const photosActive = !splitOn || surface === "photos";
+
   const timelineSort =
     toolbar.filters.sort === "newest" || toolbar.filters.sort === "oldest";
   const timelineMode =
+    photosActive &&
     !toolbar.filters.q &&
     !toolbar.filters.from &&
     !toolbar.filters.to &&
@@ -153,6 +182,70 @@ function LibraryContent() {
   // Active lens — a missing ?kind= resolves to the default "Moments" lens.
   const activeLens = toolbar.filters.kind ?? "moment";
 
+  const [inboxCount, setInboxCount] = useState(0);
+
+  // First-paint surface restore: when the flag is on and the URL carries no
+  // ?surface=, hop to the last-used surface (persisted) without a hydration
+  // mismatch (the initial render is always "photos").
+  useEffect(() => {
+    if (!splitOn || surfaceParam) return;
+    let last: string | null = null;
+    try {
+      last = window.localStorage.getItem(SURFACE_LS_KEY);
+    } catch {
+      /* private mode */
+    }
+    if (last === "files" || last === "inbox") {
+      const sp = new URLSearchParams(searchParams.toString());
+      sp.set("surface", last);
+      router.replace(`${pathname}?${sp.toString()}`);
+    }
+  }, [splitOn, surfaceParam, searchParams, router, pathname]);
+
+  // Inbox pending count for the banner badge (exact, via the buckets sum).
+  useEffect(() => {
+    if (!splitOn) return;
+    let alive = true;
+    fetch("/api/v1/assets/buckets?unclassified=1")
+      .then((r) => (r.ok ? r.json() : { buckets: [] }))
+      .then((d: { buckets?: { count: number }[] }) => {
+        if (alive) setInboxCount((d.buckets ?? []).reduce((s, b) => s + b.count, 0));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [splitOn, surface]);
+
+  const setSurface = useCallback(
+    (s: LibrarySurface) => {
+      try {
+        window.localStorage.setItem(SURFACE_LS_KEY, s);
+      } catch {
+        /* private mode */
+      }
+      const sp = new URLSearchParams(searchParams.toString());
+      sp.set("surface", s);
+      sp.delete("lens");
+      sp.delete("kind");
+      if (s !== "files") sp.delete("q");
+      router.replace(`${pathname}?${sp.toString()}`);
+      trackLibrary("library_surface_toggle", { to: s });
+    },
+    [searchParams, router, pathname]
+  );
+
+  const setSplitLens = useCallback(
+    (lens: string) => {
+      const sp = new URLSearchParams(searchParams.toString());
+      if (lens === "all") sp.delete("lens");
+      else sp.set("lens", lens);
+      router.replace(`${pathname}?${sp.toString()}`);
+      trackLibrary("library_lens_select", { surface, lens });
+    },
+    [searchParams, router, pathname, surface]
+  );
+
   // ADR 0008 Phase 5 — apply the saved default-scope preference on first paint
   // when no `?scope=` is in the URL. The selector chip strip takes over once
   // the user clicks; this hook only fires when the URL is unset.
@@ -164,9 +257,14 @@ function LibraryContent() {
   const baseParams = useCallback(() => {
     const sp = new URLSearchParams();
     sp.set("lifecycle", toolbar.filters.lifecycle);
-    // Task 20 — lens. Missing ?kind= => default "Moments"; "all" clears it.
-    const lensKind = toolbar.filters.kind ?? "moment";
-    if (lensKind !== "all") sp.set("kind", lensKind);
+    if (splitOn) {
+      // Photos surface: "all" → moment,video; single lens → that kind.
+      if (splitKind) sp.set("kind", splitKind);
+    } else {
+      // Task 20 — lens. Missing ?kind= => default "Moments"; "all" clears it.
+      const lensKind = toolbar.filters.kind ?? "moment";
+      if (lensKind !== "all") sp.set("kind", lensKind);
+    }
     if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
     if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
     if (toolbar.filters.favorite) sp.set("favorite", "1");
@@ -187,6 +285,8 @@ function LibraryContent() {
     }
     return sp;
   }, [
+    splitOn,
+    splitKind,
     toolbar.filters.lifecycle,
     toolbar.filters.kind,
     toolbar.filters.mime,
@@ -399,13 +499,23 @@ function LibraryContent() {
   // non-timeline surface. Loads the whole filtered set + filters client-side.
   useEffect(() => {
     if (timelineMode) return;
+    // The Files surface owns its own fetch (LibraryFilesView). The flat grid
+    // here serves the legacy view, the Inbox surface, and the search/date-range
+    // fallback for Photos.
+    if (splitOn && surface === "files") return;
     void (async () => {
       setLoading(true);
       setLoadError(false);
       const sp = new URLSearchParams();
       sp.set("lifecycle", toolbar.filters.lifecycle);
-      const lensKind = toolbar.filters.kind ?? "moment";
-      if (lensKind !== "all") sp.set("kind", lensKind);
+      if (splitOn && surface === "inbox") {
+        sp.set("unclassified", "1");
+      } else if (splitOn) {
+        if (splitKind) sp.set("kind", splitKind);
+      } else {
+        const lensKind = toolbar.filters.kind ?? "moment";
+        if (lensKind !== "all") sp.set("kind", lensKind);
+      }
       if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
       if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
       if (toolbar.filters.favorite) sp.set("favorite", "1");
@@ -471,6 +581,9 @@ function LibraryContent() {
     })();
   }, [
     timelineMode,
+    splitOn,
+    surface,
+    splitKind,
     toolbar.filters.lifecycle,
     toolbar.filters.kind,
     toolbar.filters.mime,
@@ -562,18 +675,31 @@ function LibraryContent() {
 
       <div className="px-4 space-y-3">
         <ScopeSelector />
-        <LensSelector
-          active={activeLens}
-          onChange={(value) =>
-            toolbar.setFilters({ kind: value === "moment" ? null : value })
-          }
-        />
+        {splitOn ? (
+          <LibrarySurfaceControl
+            surface={surface}
+            lens={splitLens}
+            inboxCount={inboxCount}
+            onSurface={setSurface}
+            onLens={setSplitLens}
+          />
+        ) : (
+          <LensSelector
+            active={activeLens}
+            onChange={(value) =>
+              toolbar.setFilters({ kind: value === "moment" ? null : value })
+            }
+          />
+        )}
         <LibraryActivePills toolbar={toolbar} />
         {/* Mobile uses the toolbar's Filter popover (lifecycle/mime/type/etc. all live there).
-            Desktop keeps the inline chip strip for one-tap toggles. */}
-        <div className="hidden md:block">
-          <LibraryChipStrip toolbar={toolbar} />
-        </div>
+            Desktop keeps the inline chip strip for one-tap toggles. The chip
+            strip is Photos-only under the split (Files has its own search). */}
+        {photosActive && (
+          <div className="hidden md:block">
+            <LibraryChipStrip toolbar={toolbar} />
+          </div>
+        )}
         {isTrash && (
           <div className="flex items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-small)] bg-[var(--ft-color-error-container)] px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] text-[var(--ft-color-on-error-container)]">
             <Trash2 className="h-3.5 w-3.5" />
@@ -583,7 +709,15 @@ function LibraryContent() {
         )}
       </div>
 
-      {timelineMode ? (
+      {splitOn && surface === "files" ? (
+        <LibraryFilesView
+          kindParam={splitKind}
+          directoryPathPrefix={toolbar.filters.directoryPathPrefix}
+          onOpenFolder={(path) =>
+            toolbar.setFilters({ directoryPathPrefix: path, directoryPath: null })
+          }
+        />
+      ) : timelineMode ? (
         bucketsLoading && buckets.length === 0 ? (
           <div className="flex items-center gap-[var(--ft-space-2)] px-[var(--ft-space-4)] py-[var(--ft-space-4)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
             <Loader2 className="h-4 w-4 animate-spin" />

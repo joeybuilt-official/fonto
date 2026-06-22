@@ -236,8 +236,16 @@ async function main(): Promise<void> {
   if (!workspaceId) throw new Error("--workspace-id=<uuid> required");
 
   const scopeRaw = arg("scope");
-  const scope: "moments-only" | "all-images" =
-    scopeRaw === "all-images" ? "all-images" : "moments-only";
+  // `presplit` (Photos/Files split) targets only the rows that could land on
+  // the WRONG surface: unclassified (kind IS NULL) + png/gif "moment"s that the
+  // shape-fallback may re-bucket to screenshot/graphics. See
+  // plans/photos-vs-files-split/plan.md and scripts/photos-vs-files-presplit-sweep.ts.
+  const scope: "moments-only" | "all-images" | "presplit" =
+    scopeRaw === "all-images"
+      ? "all-images"
+      : scopeRaw === "presplit"
+        ? "presplit"
+        : "moments-only";
   const dryRun = !!arg("dry-run");
   // Default off — bulk reprocess is too rate-limit-hostile w/ HTTP per
   // uncertain row. Pass --llm-fallback to opt in for diagnostic runs.
@@ -294,66 +302,45 @@ async function main(): Promise<void> {
 
   // Build the candidate query. clip_vec column is pgvector; postgres-js
   // returns it as the text repr "[...]". We parse it client-side.
-  // Both scopes require: active, image mime, clip_vec NOT NULL, workspace match.
-  const candidateRows = (
+  // All scopes require: active, image mime, clip_vec NOT NULL, workspace match.
+  // The scope only narrows further via this fragment:
+  //   moments-only : kind='moment' AND classification='photo'
+  //   all-images   : (no extra predicate)
+  //   presplit     : kind IS NULL OR (kind='moment' AND mime png/gif)
+  const scopeWhere =
     scope === "moments-only"
-      ? await sql`
-          SELECT
-            id,
-            workspace_id,
-            filename,
-            mime_type,
-            classification,
-            kind,
-            clip_vec::text AS clip_vec_text,
-            width_px,
-            height_px,
-            camera_make,
-            camera_model,
-            exposure_time,
-            f_number,
-            iso,
-            focal_length,
-            lens_model,
-            ocr_text
-          FROM fonto.assets
-          WHERE workspace_id = ${workspaceId}
-            AND lifecycle_state = 'active'
-            AND mime_type LIKE 'image/%'
-            AND kind = 'moment'
-            AND classification = 'photo'
-            AND clip_vec IS NOT NULL
-          ORDER BY created_at DESC
-          LIMIT ${limit === Number.POSITIVE_INFINITY ? 100_000_000 : limit}
-        `
-      : await sql`
-          SELECT
-            id,
-            workspace_id,
-            filename,
-            mime_type,
-            classification,
-            kind,
-            clip_vec::text AS clip_vec_text,
-            width_px,
-            height_px,
-            camera_make,
-            camera_model,
-            exposure_time,
-            f_number,
-            iso,
-            focal_length,
-            lens_model,
-            ocr_text
-          FROM fonto.assets
-          WHERE workspace_id = ${workspaceId}
-            AND lifecycle_state = 'active'
-            AND mime_type LIKE 'image/%'
-            AND clip_vec IS NOT NULL
-          ORDER BY created_at DESC
-          LIMIT ${limit === Number.POSITIVE_INFINITY ? 100_000_000 : limit}
-        `
-  ) as unknown as Array<Row & { clip_vec_text: string | null }>;
+      ? sql`AND kind = 'moment' AND classification = 'photo'`
+      : scope === "presplit"
+        ? sql`AND (kind IS NULL OR (kind = 'moment' AND mime_type IN ('image/png', 'image/gif')))`
+        : sql``;
+  const candidateRows = (await sql`
+    SELECT
+      id,
+      workspace_id,
+      filename,
+      mime_type,
+      classification,
+      kind,
+      clip_vec::text AS clip_vec_text,
+      width_px,
+      height_px,
+      camera_make,
+      camera_model,
+      exposure_time,
+      f_number,
+      iso,
+      focal_length,
+      lens_model,
+      ocr_text
+    FROM fonto.assets
+    WHERE workspace_id = ${workspaceId}
+      AND lifecycle_state = 'active'
+      AND mime_type LIKE 'image/%'
+      AND clip_vec IS NOT NULL
+      ${scopeWhere}
+    ORDER BY created_at DESC
+    LIMIT ${limit === Number.POSITIVE_INFINITY ? 100_000_000 : limit}
+  `) as unknown as Array<Row & { clip_vec_text: string | null }>;
 
   console.log(`[classify-rerun] candidates: ${candidateRows.length}`);
 

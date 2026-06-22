@@ -4,7 +4,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, and, desc, gte, isNull, isNotNull, lt, or, sql, SQL, like, exists } from "drizzle-orm";
+import { eq, and, desc, gte, isNull, isNotNull, lt, or, sql, SQL, like, ilike, inArray, exists } from "drizzle-orm";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
@@ -115,12 +115,51 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Task 20 — KIND lens filter (moment | screenshot | document | video).
-  // Server-side so keyset pagination + the /buckets scrubber counts stay
-  // exact. Backed by assets_workspace_kind_idx. Unknown values are ignored.
+  // Task 20 + Photos/Files split — KIND lens filter. Accepts a single kind
+  // (moment | screenshot | graphics | document | video) OR a comma-separated
+  // set (e.g. "moment,video" for the Photos "All" lens, "screenshot,graphics,
+  // document" for Files "All"). Server-side so keyset pagination + the /buckets
+  // scrubber counts stay exact. Backed by assets_workspace_kind_idx. Unknown
+  // tokens are dropped; if none remain valid the filter is skipped.
   const kindFilter = searchParams.get("kind");
-  if (kindFilter && isKind(kindFilter)) {
-    where.push(eq(schema.assets.kind, kindFilter));
+  if (kindFilter) {
+    const kinds = kindFilter
+      .split(",")
+      .map((k) => k.trim())
+      .filter((k) => isKind(k));
+    if (kinds.length === 1) {
+      where.push(eq(schema.assets.kind, kinds[0]));
+    } else if (kinds.length > 1) {
+      where.push(inArray(schema.assets.kind, kinds));
+    }
+  }
+
+  // Photos/Files split — Inbox surface. `?unclassified=1` returns only assets
+  // with no KIND yet (kind IS NULL). Drives the Inbox holding area above the
+  // Photos/Files segmented control; it self-hides once the classifier drains
+  // NULL to zero. Mutually exclusive with ?kind= in practice (the Inbox never
+  // sends a kind lens).
+  const unclassifiedParam = searchParams.get("unclassified");
+  if (unclassifiedParam === "1" || unclassifiedParam === "true") {
+    where.push(isNull(schema.assets.kind));
+  }
+
+  // Photos/Files split — Files surface server-side search. `?q=` matches
+  // filename, OCR text, or source-app (case-insensitive substring). Pushed
+  // into the DB WHERE (unlike the legacy client post-fetch q) so the Files
+  // list paginates correctly over the full result set. The Photos surface
+  // does not use this path — it relies on visual/person/place search elsewhere.
+  const qRaw = searchParams.get("q");
+  const q = qRaw == null ? "" : qRaw.trim();
+  if (q !== "") {
+    const pat = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    where.push(
+      or(
+        ilike(schema.assets.filename, pat),
+        ilike(schema.assets.ocrText, pat),
+        ilike(schema.assets.source, pat)
+      )!
+    );
   }
 
   // Capture-date segregation for the dated timeline. The month grid only wants

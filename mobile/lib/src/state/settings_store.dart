@@ -13,6 +13,20 @@ class SettingsStore {
   static const _kLastImportTs = "fonto.last_import_ts";
   static const _kSelectedAlbums = "fonto.selected_album_ids";
   static const _kWifiOnly = "fonto.sync_wifi_only";
+  static const _kLastSurface = "fonto.last_library_surface";
+
+  /// Photos-Files split — last-used Library surface ("photos" | "files").
+  /// Inbox is never persisted (it is transient triage). Defaults to "photos".
+  static Future<String> getLastSurface() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_kLastSurface) ?? "photos";
+  }
+
+  static Future<void> setLastSurface(String surface) async {
+    if (surface != "photos" && surface != "files") return;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_kLastSurface, surface);
+  }
 
   static Future<bool> getAutoImport() async {
     final p = await SharedPreferences.getInstance();

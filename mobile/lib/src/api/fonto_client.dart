@@ -136,16 +136,25 @@ class FontoClient {
     String? kind,
     String? lifecycle,
     String? place,
+    // Photos-Files split. `sort` defaults to capture-date (Photos); the Files
+    // surface passes "created" (imported-at). `unclassified` drives the Inbox
+    // surface (kind IS NULL). `q` is the server-side Files search.
+    String sort = "captured",
+    bool unclassified = false,
+    String? q,
   }) async {
-    final query = <String, String>{"limit": "$limit", "sort": "captured"};
+    final query = <String, String>{"limit": "$limit", "sort": sort};
     if (mime != null) query["mime"] = mime;
     if (hasGeo) query["hasGeo"] = "1";
     if (favorite) query["favorite"] = "1";
     if (kind != null && kind.isNotEmpty) query["kind"] = kind;
+    if (unclassified) query["unclassified"] = "1";
+    if (q != null && q.isNotEmpty) query["q"] = q;
     if (lifecycle != null && lifecycle.isNotEmpty) query["lifecycle"] = lifecycle;
     if (place != null && place.isNotEmpty) query["place"] = place;
     if (after != null) {
-      query["capturedBefore"] = after.before;
+      // Cursor param name tracks the sort axis (server keys created vs captured).
+      query[sort == "created" ? "createdBefore" : "capturedBefore"] = after.before;
       query["idBefore"] = after.idBefore;
     }
     if (directoryPathPrefix != null && directoryPathPrefix.isNotEmpty) {
@@ -167,6 +176,30 @@ class FontoClient {
     final j = await _getJson("/api/v1/assets/buckets");
     final raw = (j["buckets"] as List? ?? const []).cast<Map<String, dynamic>>();
     return raw.map(AssetBucket.fromJson).toList();
+  }
+
+  /// Photos-Files split — server feature flags. Returns the `features` map
+  /// from /api/v1/config (booleans only). Defaults to an empty map on error so
+  /// callers fall back to the pre-flag experience.
+  Future<Map<String, dynamic>> featureFlags() async {
+    try {
+      final j = await _getJson("/api/v1/config");
+      return (j["features"] as Map<String, dynamic>?) ?? const {};
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  /// Photos-Files split — exact count of unclassified (NULL-kind) assets for
+  /// the Inbox banner badge. Sums the unclassified month buckets.
+  Future<int> inboxCount() async {
+    try {
+      final j = await _getJson("/api/v1/assets/buckets", {"unclassified": "1"});
+      final raw = (j["buckets"] as List? ?? const []).cast<Map<String, dynamic>>();
+      return raw.fold<int>(0, (s, b) => s + ((b["count"] as num?)?.toInt() ?? 0));
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// Text search across filename / description / OCR. Single page; the

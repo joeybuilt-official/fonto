@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { and, eq, exists, gte, isNull, like, or, sql, SQL } from "drizzle-orm";
+import { and, eq, exists, gte, isNull, inArray, like, or, sql, SQL } from "drizzle-orm";
 import { isKind } from "@/lib/classify/kind";
 import { parseScopeParam, scopeCond } from "@/lib/scope";
 
@@ -78,10 +78,23 @@ export async function GET(request: NextRequest) {
   const subtypeFilter = searchParams.get("subtype");
   if (subtypeFilter) where.push(eq(schema.assets.classification, subtypeFilter));
 
-  // Task 20 — KIND lens filter; keeps the scrubber domain in lockstep with
-  // the list route's ?kind= lens. Backed by assets_workspace_kind_idx.
+  // Task 20 + Photos/Files split — KIND lens filter; keeps the scrubber domain
+  // in lockstep with the list route's ?kind= lens. Accepts a single kind or a
+  // comma-separated set (Photos "All" = "moment,video"). Backed by
+  // assets_workspace_kind_idx.
   const kindFilter = searchParams.get("kind");
-  if (kindFilter && isKind(kindFilter)) where.push(eq(schema.assets.kind, kindFilter));
+  if (kindFilter) {
+    const kinds = kindFilter.split(",").map((k) => k.trim()).filter((k) => isKind(k));
+    if (kinds.length === 1) where.push(eq(schema.assets.kind, kinds[0]));
+    else if (kinds.length > 1) where.push(inArray(schema.assets.kind, kinds));
+  }
+
+  // Photos/Files split — Inbox count. `?unclassified=1` restricts to NULL-kind
+  // assets so the Library can show an exact "N pending" badge.
+  const unclassifiedParam = searchParams.get("unclassified");
+  if (unclassifiedParam === "1" || unclassifiedParam === "true") {
+    where.push(isNull(schema.assets.kind));
+  }
 
   const directoryPathRaw = searchParams.get("directoryPath");
   const directoryPathPrefixRaw = searchParams.get("directoryPathPrefix");
