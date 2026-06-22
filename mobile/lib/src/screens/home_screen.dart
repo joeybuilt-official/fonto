@@ -108,19 +108,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // for unclassified assets. When OFF, every split field below is inert and the
   // grid behaves exactly as before. See plans/photos-vs-files-split/plan.md.
   bool _splitOn = false;
-  String _surface = "photos"; // photos | files | inbox
+  String _surface = "photos"; // photos | files | unsorted
   String _splitLens = "all"; // surface-scoped lens (all + per-kind)
-  int _inboxCount = 0;
+  int _unsortedCount = 0;
 
   bool get _isFiles => _splitOn && _surface == "files";
-  bool get _isInbox => _splitOn && _surface == "inbox";
+  bool get _isUnsorted => _splitOn && _surface == "unsorted";
   bool get _isPhotos => !_splitOn || _surface == "photos";
 
   /// `?kind=` value for the active (surface, lens). Comma list for the union
   /// "All" lenses; null for Inbox (uses `unclassified=1`) and the legacy "all".
   String? _effectiveKind() {
     if (!_splitOn) return _lens == "all" ? null : _lens;
-    if (_surface == "inbox") return null;
+    if (_surface == "unsorted") return null;
     if (_surface == "photos") {
       if (_splitLens == "moment") return "moment";
       if (_splitLens == "video") return "video";
@@ -174,7 +174,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (on) _surface = last;
       });
       if (on) {
-        _refreshInboxCount();
+        _refreshUnsortedCount();
         // The legacy initial _refresh() ran with the old single-lens kind; when
         // the restored surface differs (Files/Inbox), refetch with split params.
         if (last != "photos") _refresh();
@@ -184,9 +184,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _refreshInboxCount() async {
+  Future<void> _refreshUnsortedCount() async {
     final n = await _client.inboxCount();
-    if (mounted) setState(() => _inboxCount = n);
+    if (mounted) setState(() => _unsortedCount = n);
   }
 
   Future<void> _setSurface(String s) async {
@@ -200,7 +200,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     // Files self-fetches via the FilesSurface widget; Photos/Inbox use the grid.
     if (s != "files") await _refresh();
-    _refreshInboxCount();
+    _refreshUnsortedCount();
   }
 
   void _setSplitLens(String lens) {
@@ -218,7 +218,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return _SurfaceSelector(
         surface: _surface,
         lens: _splitLens,
-        inboxCount: _inboxCount,
+        unsortedCount: _unsortedCount,
         onSurface: _setSurface,
         onLens: _setSplitLens,
       );
@@ -387,7 +387,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         limit: _kPageSize,
         directoryPathPrefix: _folder,
         kind: _effectiveKind(),
-        unclassified: _isInbox,
+        unclassified: _isUnsorted,
       );
       if (!mounted) return;
       final existingIds = {for (final a in _assets) a.id};
@@ -437,7 +437,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         limit: _kPageSize,
         directoryPathPrefix: _folder,
         kind: _effectiveKind(),
-        unclassified: _isInbox,
+        unclassified: _isUnsorted,
       );
       final thumbs = page.assets.isEmpty
           ? <String, String>{}
@@ -579,7 +579,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         after: _cursor,
         directoryPathPrefix: _folder,
         kind: _effectiveKind(),
-        unclassified: _isInbox,
+        unclassified: _isUnsorted,
       );
       final newThumbs = page.assets.isEmpty
           ? <String, String>{}
@@ -1477,14 +1477,14 @@ class _SurfaceSelector extends StatelessWidget {
   const _SurfaceSelector({
     required this.surface,
     required this.lens,
-    required this.inboxCount,
+    required this.unsortedCount,
     required this.onSurface,
     required this.onLens,
   });
 
-  final String surface; // photos | files | inbox
+  final String surface; // photos | files | unsorted
   final String lens;
-  final int inboxCount;
+  final int unsortedCount;
   final ValueChanged<String> onSurface;
   final ValueChanged<String> onLens;
 
@@ -1503,7 +1503,7 @@ class _SurfaceSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final inInbox = surface == "inbox";
+    final inUnsorted = surface == "unsorted";
     final lenses = surface == "files" ? _fileLenses : _photoLenses;
 
     return Column(
@@ -1511,36 +1511,36 @@ class _SurfaceSelector extends StatelessWidget {
       children: [
         // Inbox banner — only when there is something to triage, or while the
         // user is inside the Inbox surface (so they can leave it).
-        if (inboxCount > 0 || inInbox)
+        if (unsortedCount > 0 || inUnsorted)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: Material(
-              color: inInbox
+              color: inUnsorted
                   ? theme.colorScheme.secondaryContainer
                   : theme.colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(12),
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
-                onTap: () => onSurface(inInbox ? "photos" : "inbox"),
+                onTap: () => onSurface(inUnsorted ? "photos" : "unsorted"),
                 child: Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   child: Row(
                     children: [
-                      Icon(Icons.inbox_outlined,
+                      Icon(Icons.help_outline,
                           size: 18,
-                          color: inInbox
+                          color: inUnsorted
                               ? theme.colorScheme.onSecondaryContainer
                               : theme.colorScheme.onSurfaceVariant),
                       const SizedBox(width: 8),
-                      Text("Inbox",
+                      Text("Unsorted",
                           style: theme.textTheme.labelLarge?.copyWith(
-                            color: inInbox
+                            color: inUnsorted
                                 ? theme.colorScheme.onSecondaryContainer
                                 : theme.colorScheme.onSurface,
                           )),
                       const Spacer(),
-                      if (inInbox)
+                      if (inUnsorted)
                         Text("Done",
                             style: theme.textTheme.labelMedium?.copyWith(
                                 color:
@@ -1553,7 +1553,7 @@ class _SurfaceSelector extends StatelessWidget {
                             color: theme.colorScheme.primary,
                             borderRadius: BorderRadius.circular(20),
                           ),
-                          child: Text("$inboxCount pending",
+                          child: Text("$unsortedCount pending",
                               style: theme.textTheme.labelSmall?.copyWith(
                                   color: theme.colorScheme.onPrimary)),
                         ),
@@ -1583,7 +1583,7 @@ class _SurfaceSelector extends StatelessWidget {
         ),
 
         // Surface-scoped lens chips (hidden inside Inbox).
-        if (!inInbox)
+        if (!inUnsorted)
           SizedBox(
             height: 44,
             child: ListView.separated(

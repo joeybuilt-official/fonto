@@ -21,6 +21,9 @@ import {
   Users,
   ChevronDown,
   RotateCcw,
+  FileQuestion,
+  Layers,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
@@ -142,6 +145,12 @@ export function TidyUpClient(): React.ReactElement {
   const [busy, setBusy] = useState(false);
   const [section, setSection] = useState<Section>("date");
   const [toast, setToast] = useState<string | null>(null);
+  // Aggregator hub — counts for the queues that live on OTHER surfaces, so this
+  // page is the single "needs attention" overview. Unsorted = unclassified
+  // (kind IS NULL) library assets; Stacks = AI stack suggestions. Both deep-link
+  // out to their native surface. See plans/photos-vs-files-split.
+  const [unsortedCount, setUnsortedCount] = useState(0);
+  const [stackCount, setStackCount] = useState(0);
 
   // Variant lane is fetched lazily + paged (the SSIM manifest build is the slow
   // tail), so it lives in its own state rather than on `data`.
@@ -244,6 +253,32 @@ export function TidyUpClient(): React.ReactElement {
     void load();
   }, [load]);
 
+  // Off-page queue counts for the attention summary (best-effort, parallel).
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/v1/assets/buckets?unclassified=1", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { buckets: [] }))
+      .then((d: { buckets?: { count: number }[] }) => {
+        if (alive) setUnsortedCount((d.buckets ?? []).reduce((s, b) => s + b.count, 0));
+      })
+      .catch(() => {});
+    fetch("/api/v1/stacks/suggestions", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { suggestions?: unknown[] } | unknown[] | null) => {
+        if (!alive || !d) return;
+        const n = Array.isArray(d)
+          ? d.length
+          : Array.isArray((d as { suggestions?: unknown[] }).suggestions)
+            ? (d as { suggestions: unknown[] }).suggestions.length
+            : 0;
+        setStackCount(n);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // First time the operator opens the look-alikes chip, pull the first batch.
   useEffect(() => {
     if (section === "variant" && !variantLoaded && !variantLoading) {
@@ -336,8 +371,9 @@ export function TidyUpClient(): React.ReactElement {
     [dateItems, variantCount, clusters]
   );
 
-  const allClear =
+  const nativeClear =
     !!data && counts.date === 0 && counts.variant === 0 && counts.identity === 0;
+  const allClear = nativeClear && unsortedCount === 0 && stackCount === 0;
 
   return (
     <div>
@@ -366,7 +402,10 @@ export function TidyUpClient(): React.ReactElement {
         </Card>
       ) : !data ? (
         <LoadingSkeleton />
-      ) : allClear ? (
+      ) : (
+        <>
+          <AttentionSummary unsorted={unsortedCount} stacks={stackCount} />
+          {allClear ? (
         <div className="flex flex-col items-center gap-[var(--ft-space-3)] py-20 text-center">
           <span className="flex h-14 w-14 items-center justify-center rounded-[var(--ft-shape-full)] bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]">
             <Check className="h-7 w-7" />
@@ -375,6 +414,10 @@ export function TidyUpClient(): React.ReactElement {
             You&apos;re all caught up
           </p>
         </div>
+      ) : nativeClear ? (
+        <p className="py-10 text-center text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+          Nothing to confirm here — see the items above.
+        </p>
       ) : (
         <>
           <div className="-mx-1 mb-[var(--ft-space-5)] flex items-center gap-[var(--ft-space-2)] overflow-x-auto px-1 pb-1">
@@ -456,6 +499,8 @@ export function TidyUpClient(): React.ReactElement {
           )}
 
           {section === "identity" && <IdentitySection clusters={clusters} />}
+            </>
+          )}
         </>
       )}
 
@@ -468,6 +513,77 @@ export function TidyUpClient(): React.ReactElement {
           <span className="flex-1">{toast}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// Aggregator hub — deep-link cards for queues that live on other surfaces, so
+// Review is the single "needs attention" overview. Renders nothing when both
+// counts are zero (the native lanes below carry the rest).
+function AttentionSummary({
+  unsorted,
+  stacks,
+}: {
+  unsorted: number;
+  stacks: number;
+}) {
+  const cards: {
+    key: string;
+    href: string;
+    label: string;
+    hint: string;
+    n: number;
+    icon: React.ComponentType<{ className?: string }>;
+  }[] = [];
+  if (unsorted > 0)
+    cards.push({
+      key: "unsorted",
+      href: "/app/library?surface=unsorted",
+      label: "Unsorted",
+      hint: "Waiting to be sorted into Photos or Files",
+      n: unsorted,
+      icon: FileQuestion,
+    });
+  if (stacks > 0)
+    cards.push({
+      key: "stacks",
+      href: "/app/collections?tab=stacks",
+      label: "Stack suggestions",
+      hint: "Group bursts + look-alikes into stacks",
+      n: stacks,
+      icon: Layers,
+    });
+  if (cards.length === 0) return null;
+
+  return (
+    <div className="mb-[var(--ft-space-5)] space-y-[var(--ft-space-2)]">
+      <p className="text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
+        Also needs your attention
+      </p>
+      {cards.map((c) => (
+        <Link key={c.key} href={c.href} className="block">
+          <Card
+            variant="outlined"
+            className="flex flex-row items-center gap-[var(--ft-space-3)] p-[var(--ft-space-3)] transition-colors hover:bg-[var(--ft-color-surface-container-low)]"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--ft-shape-small)] bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]">
+              <c.icon className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[length:var(--ft-type-title-small-size)] leading-[var(--ft-type-title-small-line)] font-medium text-[var(--ft-color-on-surface)]">
+                {c.label}
+              </span>
+              <span className="block text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                {c.hint}
+              </span>
+            </span>
+            <span className="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-[var(--ft-shape-full)] bg-[var(--ft-color-primary)] px-1.5 text-[length:var(--ft-type-label-small-size)] font-semibold text-[var(--ft-color-on-primary)]">
+              {c.n > 99 ? "99+" : c.n}
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-[var(--ft-color-on-surface-variant)]" />
+          </Card>
+        </Link>
+      ))}
     </div>
   );
 }
