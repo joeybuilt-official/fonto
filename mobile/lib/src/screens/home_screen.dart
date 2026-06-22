@@ -378,6 +378,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// True only when the device has no usable connectivity. The grid falls back
+  /// to cached content on ANY API failure (500, auth flap, transient timeout),
+  /// but the "Offline — showing your saved library" banner should fire ONLY
+  /// when the phone is actually offline. Without this gate, a single server
+  /// 5xx pinned the banner on even though the radio was happy, which is
+  /// exactly what the operator reported on 2026-06-22.
+  Future<bool> _isReallyOffline() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return !results.any((r) => r != ConnectivityResult.none);
+    } catch (_) {
+      // Connectivity probe itself failed — fall back to the conservative
+      // assumption that the network is up, so we don't lie to the user.
+      return false;
+    }
+  }
+
   /// Network refresh failed — serve the first page from the on-device cache so
   /// the user isn't stranded with a blank grid. Falls through to the error
   /// state only when there's genuinely nothing cached.
@@ -386,6 +403,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final cache = await AssetCache.open();
       final cached = await cache.queryPage(folderPrefix: _folder, limit: _kPageSize);
       if (!mounted) return;
+      final reallyOffline = await _isReallyOffline();
+      if (!mounted) return;
       if (cached.assets.isEmpty) {
         // Blank slate: network is down and nothing's cached. Rather than a hard
         // error, mark offline + clear the loading flag so the body can still
@@ -393,7 +412,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         // while the error/empty placeholder shows for the server grid.
         setState(() {
           _error = networkError;
-          _offline = true;
+          _offline = reallyOffline;
           _loadingFirst = false;
         });
         if (_devicePhotos.isEmpty) unawaited(_maybeLoadDevicePhotos());
@@ -402,7 +421,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final last = cached.assets.last;
       setState(() {
         _error = null;
-        _offline = true;
+        _offline = reallyOffline;
         _assets
           ..clear()
           ..addAll(cached.assets);

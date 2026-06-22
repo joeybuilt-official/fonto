@@ -13,6 +13,7 @@
 import "dart:async";
 
 import "package:cached_network_image/cached_network_image.dart";
+import "package:connectivity_plus/connectivity_plus.dart";
 import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
@@ -160,6 +161,19 @@ class _AlbumsTabState extends State<_AlbumsTab> {
     }
   }
 
+  /// True only when the device has no usable connectivity. Mirrors
+  /// HomeScreen._isReallyOffline — the cache fallback fires on ANY API
+  /// failure (5xx, auth flap, transient timeout) but the "Offline" banner
+  /// must only appear when the radio is actually down.
+  Future<bool> _isReallyOffline() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return !results.any((r) => r != ConnectivityResult.none);
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Network fetch failed — serve the album list from the on-device cache so
   /// the tab isn't blank. Mirrors home_screen's _fallbackToCache. Only falls
   /// through to the error state when nothing is cached.
@@ -167,6 +181,8 @@ class _AlbumsTabState extends State<_AlbumsTab> {
     try {
       final cache = await CollectionCache.open();
       final cached = await cache.all();
+      if (!mounted) return;
+      final reallyOffline = await _isReallyOffline();
       if (!mounted) return;
       if (cached.isEmpty) {
         setState(() {
@@ -177,7 +193,7 @@ class _AlbumsTabState extends State<_AlbumsTab> {
       }
       setState(() {
         _error = null;
-        _offline = true;
+        _offline = reallyOffline;
         _items = cached;
         _loading = false;
       });
