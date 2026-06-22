@@ -31,6 +31,7 @@ import "settings_screen.dart";
 import "transfers_screen.dart";
 import "../state/camera_roll_scanner.dart";
 import "../state/device_photos.dart";
+import "../state/device_kind.dart";
 import "../state/push_notifications.dart";
 import "../state/settings_store.dart";
 import "package:photo_manager/photo_manager.dart";
@@ -85,6 +86,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // render with no network. Viewing them also enqueues them for upload via the
   // existing CameraRollScanner / UploadQueue path.
   List<AssetEntity> _devicePhotos = const [];
+
+  // Per-entity KIND for the "On this device" strip, populated once the
+  // recents list is known. Filters the strip by the active lens (Moments /
+  // Screenshots / Graphics / Videos) so the device section respects the same
+  // partition the server grid does. Keyed by AssetEntity.id.
+  Map<String, String> _deviceKindById = const <String, String>{};
 
   /// `null` → workspace root view (all assets, no filter).
   /// Otherwise filters via directoryPathPrefix.
@@ -791,7 +798,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!_offline && !autoImport) return;
     final recents = await DevicePhotos.recent(limit: 120);
     if (!mounted || recents.isEmpty) return;
-    setState(() => _devicePhotos = recents);
+    // Resolve KIND for the strip before showing it so the lens filter is
+    // honored on first paint (otherwise the unfiltered list flashes through
+    // the Moments tab — exactly the bug this section is here to prevent).
+    final kinds = await DeviceKind.resolveAll(recents);
+    if (!mounted) return;
+    setState(() {
+      _devicePhotos = recents;
+      _deviceKindById = kinds;
+    });
     // Enqueue what the user is now looking at so it backs up when online.
     // Best-effort + fire-and-forget: the existing drain (resume / foreground
     // service / WorkManager) does the actual upload.
@@ -972,8 +987,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// local camera-roll thumbnails. Empty when there are no device recents. The
   /// caption only appears offline, where it's the user's cue that these will
   /// back up later. Lives above the server grid.
+  /// True when the on-device kind matches the active lens. "all" passes
+  /// everything; "moment" also matches unresolved tiles (the resolver fills
+  /// in moment for unknown / default images, so this only matters during the
+  /// short window before kinds are computed).
+  bool _deviceTileMatchesLens(AssetEntity e) {
+    if (_lens == "all") return true;
+    final k = _deviceKindById[e.id];
+    if (k == null) return _lens == "moment";
+    return k == _lens;
+  }
+
   List<Widget> _deviceSlivers() {
     if (_devicePhotos.isEmpty) return const [];
+    final shown = _devicePhotos.where(_deviceTileMatchesLens).toList();
+    if (shown.isEmpty) return const [];
     return [
       SliverToBoxAdapter(
         child: Padding(
@@ -1021,9 +1049,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           delegate: SliverChildBuilderDelegate(
             (context, i) => RepaintBoundary(
-              child: _DeviceTile(entity: _devicePhotos[i]),
+              child: _DeviceTile(entity: shown[i]),
             ),
-            childCount: _devicePhotos.length,
+            childCount: shown.length,
           ),
         ),
       ),
