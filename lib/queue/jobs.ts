@@ -219,11 +219,21 @@ export type BackfillInferenceJob = z.infer<typeof BackfillInferenceJobSchema>;
 // Intelligence Core — Phase 8: one-off library-wide date reconcile. Carries the
 // target workspace + batch/cap knobs. Operator-enqueued (gated); never a
 // recurring schedule.
+// M15.1 (ADR 0012) — when `bucket` is present the job applies a reversible
+// action to one reason-bucket of the REVIEW band (apply-to-bucket); without it
+// the job commits the auto-commit band (the original Phase-8 behaviour).
 export const BackfillReconcileJobSchema = z
   .object({
     workspaceId: z.string().uuid(),
     batchSize: z.number().int().positive().max(1000).optional(),
     maxRows: z.number().int().nonnegative().optional(),
+    bucket: z
+      .object({
+        evidenceSource: z.string().nullable(),
+        conflict: z.boolean(),
+        action: z.enum(["confirm", "reject", "quarantine"]),
+      })
+      .optional(),
   })
   .strict();
 export type BackfillReconcileJob = z.infer<typeof BackfillReconcileJobSchema>;

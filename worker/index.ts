@@ -85,6 +85,7 @@ import { backfillEvidence, backfillVariantCandidates } from "@/lib/evidence/back
 import { inferAssetDate } from "@/lib/fusion/inferAssetDate";
 import { backfillInference } from "@/lib/fusion/backfillInference";
 import { applyDateBackfill } from "@/lib/reconcile/dateBackfill";
+import { applyBucketReconcile } from "@/lib/reconcile/bucketReview";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -1556,6 +1557,21 @@ function startMaintenanceWorker(): Worker {
         if (!parsed.success) {
           log.warn({ issues: parsed.error.issues }, "backfill-reconcile bad payload — ignoring");
           return null;
+        }
+        // M15.1 (ADR 0012) — apply-to-bucket variant: reversible action over one
+        // reason-bucket of the review band. Predicate re-resolved each batch.
+        if (parsed.data.bucket) {
+          const b = parsed.data.bucket;
+          log.info({ workspaceId: parsed.data.workspaceId, bucket: b }, "bucket reconcile start");
+          const bres = await applyBucketReconcile(parsed.data.workspaceId, {
+            evidenceSource: b.evidenceSource,
+            conflict: b.conflict,
+            action: b.action,
+            batchSize: parsed.data.batchSize,
+            maxRows: parsed.data.maxRows,
+          });
+          log.info(bres, "bucket reconcile complete");
+          return bres;
         }
         log.info({ workspaceId: parsed.data.workspaceId }, "date reconcile start");
         const result = await applyDateBackfill(parsed.data.workspaceId, {

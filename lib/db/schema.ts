@@ -1329,6 +1329,10 @@ export const imageDateInference = fontoSchema.table(
     status: text("status").notNull().default("inferred"),
     // Ranked evidence contributions — the explanation artifact for the queue.
     explanation: jsonb("explanation"),
+    // M15.1 (ADR 0012) — denormalised dominant evidence source for reason
+    // bucketing. STORED GENERATED column over explanation[0].evidenceType
+    // (migration 0050); never written by app code, read-only here.
+    dominantEvidenceSource: text("dominant_evidence_source"),
     // { personIds, factIds, modelVersions, neighborAssetIds } for re-audit keying.
     dependsOn: jsonb("depends_on"),
     computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow().notNull(),
@@ -1338,6 +1342,12 @@ export const imageDateInference = fontoSchema.table(
     index("image_date_inference_conflict_idx")
       .on(table.status)
       .where(sql`${table.conflictFlag} = true`),
+    // M15.1 — bucket grouping (status, conflict, dominant evidence source).
+    index("image_date_inference_bucket_idx").on(
+      table.status,
+      table.conflictFlag,
+      table.dominantEvidenceSource
+    ),
   ]
 );
 
