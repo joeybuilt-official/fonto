@@ -923,3 +923,84 @@ class StoragePlacement {
     );
   }
 }
+
+// M15.3 — reason-bucketed date review (Tidy Up). Mirrors the web bucket
+// contract from GET /api/admin/review-queue/buckets.
+class ReviewBucketSample {
+  ReviewBucketSample({
+    required this.assetId,
+    required this.filename,
+    this.capturedAt,
+    this.mapEstimate,
+    this.mapPrecision,
+  });
+
+  final String assetId;
+  final String filename;
+  final String? capturedAt;
+  final String? mapEstimate;
+  final String? mapPrecision;
+
+  static ReviewBucketSample fromJson(Map<String, dynamic> j) => ReviewBucketSample(
+        assetId: j["assetId"] as String,
+        filename: (j["filename"] as String?) ?? "",
+        capturedAt: j["capturedAt"] as String?,
+        mapEstimate: j["mapEstimate"] as String?,
+        mapPrecision: j["mapPrecision"] as String?,
+      );
+}
+
+class ReviewBucket {
+  ReviewBucket({
+    required this.bucketId,
+    required this.evidenceSource,
+    required this.conflict,
+    required this.count,
+    required this.confidenceTier,
+    required this.sample,
+  });
+
+  final String bucketId;
+  final String? evidenceSource;
+  final bool conflict;
+  final int count;
+  final String confidenceTier; // high | medium | low
+  final List<ReviewBucketSample> sample;
+
+  static ReviewBucket fromJson(Map<String, dynamic> j) => ReviewBucket(
+        bucketId: j["bucketId"] as String,
+        evidenceSource: j["evidenceSource"] as String?,
+        conflict: (j["conflict"] as bool?) ?? false,
+        count: (j["count"] as num?)?.toInt() ?? 0,
+        confidenceTier: (j["confidenceTier"] as String?) ?? "low",
+        sample: ((j["sample"] as List<dynamic>?) ?? const [])
+            .map((e) => ReviewBucketSample.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+class ReviewBuckets {
+  ReviewBuckets({
+    required this.buckets,
+    required this.totalReview,
+    this.progressSorted,
+    this.progressTotal,
+  });
+
+  final List<ReviewBucket> buckets;
+  final int totalReview;
+  final int? progressSorted;
+  final int? progressTotal;
+
+  static ReviewBuckets fromJson(Map<String, dynamic> j) {
+    final prog = j["progress"] as Map<String, dynamic>?;
+    return ReviewBuckets(
+      buckets: ((j["buckets"] as List<dynamic>?) ?? const [])
+          .map((e) => ReviewBucket.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      totalReview: (j["totalReview"] as num?)?.toInt() ?? 0,
+      progressSorted: (prog?["sorted"] as num?)?.toInt(),
+      progressTotal: (prog?["total"] as num?)?.toInt(),
+    );
+  }
+}

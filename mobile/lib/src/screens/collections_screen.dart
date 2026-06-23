@@ -23,6 +23,7 @@ import "../state/collection_cache.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 import "duplicates_screen.dart";
+import "tidy_up_screen.dart";
 import "filtered_assets_screen.dart";
 import "shoots_screen.dart";
 
@@ -65,8 +66,14 @@ class CollectionsScreen extends StatelessWidget {
             ),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                 child: _DuplicatesEntry(client: client),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: _TidyUpEntry(client: client),
               ),
             ),
           ],
@@ -1430,6 +1437,37 @@ class _DuplicatesEntry extends StatelessWidget {
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder: (_) => DuplicatesScreen(client: client),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Collections-header entry into the Tidy Up review screen (M15.3). Owner-only;
+/// non-owners see the owner-only message inside the screen.
+class _TidyUpEntry extends StatelessWidget {
+  const _TidyUpEntry({required this.client});
+
+  final FontoClient client;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: theme.colorScheme.secondaryContainer,
+          child: Icon(Icons.auto_fix_high_outlined,
+              color: theme.colorScheme.onSecondaryContainer),
+        ),
+        title: const Text("Tidy up"),
+        subtitle: const Text("Fix photo dates in bulk"),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => TidyUpScreen(client: client),
           ),
         ),
       ),

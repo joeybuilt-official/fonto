@@ -701,6 +701,44 @@ class FontoClient {
     return file;
   }
 
+  // M15.3 — Tidy Up (reason-bucketed date review). Owner-gated server-side:
+  // a non-owner caller gets ApiException(403), which the screen surfaces.
+  Future<ReviewBuckets> listReviewBuckets() async {
+    final j = await _getJson("/api/admin/review-queue/buckets");
+    return ReviewBuckets.fromJson(j);
+  }
+
+  Future<void> applyReviewBucket({
+    required String? evidenceSource,
+    required bool conflict,
+    required String action,
+  }) async {
+    await _postJson("/api/admin/review-queue/confirm-bucket", {
+      "evidenceSource": evidenceSource,
+      "conflict": conflict,
+      "action": action,
+    });
+  }
+
+  Future<void> undoReviewBucket({
+    required String? evidenceSource,
+    required bool conflict,
+  }) async {
+    await _postJson("/api/admin/review-queue/undo-bucket", {
+      "evidenceSource": evidenceSource,
+      "conflict": conflict,
+    });
+  }
+
+  // Per-item action for the "review one by one" drill-down.
+  Future<void> confirmReviewItem(String assetId, String action) async {
+    await _postJson("/api/admin/review-queue/confirm", {
+      "date": [
+        {"assetId": assetId, "action": action},
+      ],
+    });
+  }
+
   Future<String> createAssetShare(String id) async {
     final j = await _postJson("/api/v1/shares", {
       "targetType": "asset",
