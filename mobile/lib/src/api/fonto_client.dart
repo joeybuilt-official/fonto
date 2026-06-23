@@ -202,12 +202,48 @@ class FontoClient {
     }
   }
 
-  /// Text search across filename / description / OCR. Single page; the
-  /// search endpoint doesn't paginate today.
-  Future<List<Asset>> search(String q) async {
-    final j = await _getJson("/api/v1/search", {"q": q});
-    final raw = (j["assets"] as List).cast<Map<String, dynamic>>();
+  /// Text search across filename / description / OCR, with the same optional
+  /// filters the web search page exposes (classification, date range, color,
+  /// tag) plus the semantic re-rank and OCR-only toggles. Single page; the
+  /// search endpoint doesn't paginate today. `color` carries the chip *name*
+  /// (e.g. "red"), matching the web FilterPopover contract.
+  Future<List<Asset>> search(
+    String q, {
+    String? classification,
+    String? tagId,
+    String? dateFrom,
+    String? dateTo,
+    String? color,
+    bool semantic = false,
+    bool ocrOnly = false,
+  }) async {
+    final query = <String, String>{};
+    if (q.isNotEmpty) query["q"] = q;
+    if (classification != null && classification.isNotEmpty) {
+      query["classification"] = classification;
+    }
+    if (tagId != null && tagId.isNotEmpty) query["tagId"] = tagId;
+    if (dateFrom != null && dateFrom.isNotEmpty) query["dateFrom"] = dateFrom;
+    if (dateTo != null && dateTo.isNotEmpty) query["dateTo"] = dateTo;
+    if (color != null && color.isNotEmpty) query["color"] = color;
+    if (semantic) query["semantic"] = "true";
+    if (ocrOnly) query["ocrOnly"] = "true";
+    final j = await _getJson("/api/v1/search", query);
+    final raw = (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
     return raw.map(Asset.fromJson).toList();
+  }
+
+  /// Text→image CLIP semantic search (`/api/v1/search/clip`), best-match-first.
+  /// Returns an empty list when the Plexo vision sidecar is unconfigured or
+  /// errors (server replies `{unavailable:true}`) so callers degrade quietly,
+  /// exactly like the web search page.
+  Future<List<Asset>> searchClip(String q, {int limit = 24}) async {
+    final j = await _getJson("/api/v1/search/clip", {"q": q, "limit": "$limit"});
+    if (j["unavailable"] == true) return const [];
+    final raw = (j["results"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw
+        .map((r) => Asset.fromJson(r["asset"] as Map<String, dynamic>))
+        .toList();
   }
 
   /// Folder tree — flat list `[{path, assetCount}]` plus a separate
