@@ -12,7 +12,7 @@ import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { ensurePersonalWorkspace } from "@/lib/workspace";
 import { requireWorkspaceOwner } from "@/lib/authz";
-import { listDateBuckets } from "@/lib/reconcile/bucketReview";
+import { listDateBuckets, getSortingProgress } from "@/lib/reconcile/bucketReview";
 
 export async function GET() {
   const user = await getAuthUser();
@@ -24,6 +24,9 @@ export async function GET() {
   const authz = await requireWorkspaceOwner(workspace.id);
   if (!authz.ok) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const { buckets, totalReview } = await listDateBuckets(workspace.id);
-  return NextResponse.json({ workspaceId: workspace.id, buckets, totalReview });
+  const [{ buckets, totalReview }, progress] = await Promise.all([
+    listDateBuckets(workspace.id),
+    getSortingProgress(workspace.id),
+  ]);
+  return NextResponse.json({ workspaceId: workspace.id, buckets, totalReview, progress });
 }

@@ -79,6 +79,53 @@ interface VariantBatchResponse {
 
 const VARIANT_PAGE_SIZE = 6;
 
+// M15.2 — reason-bucket contract (GET /api/admin/review-queue/buckets).
+interface DateBucketSample {
+  assetId: string;
+  filename: string;
+  capturedAt: string | null;
+  mapEstimate: string | null;
+  mapPrecision: string | null;
+  confidence: number;
+}
+type Tier = "high" | "medium" | "low";
+interface DateBucket {
+  bucketId: string;
+  evidenceSource: string | null;
+  conflict: boolean;
+  reasonLabel: string;
+  count: number;
+  confidenceTier: Tier;
+  sample: DateBucketSample[];
+}
+interface BucketsResponse {
+  buckets: DateBucket[];
+  totalReview: number;
+  progress: { sorted: number; total: number } | null;
+}
+
+// Plain-language source phrases (signed-off copy). Used in "from {phrase}".
+const SOURCE_PHRASE: Record<string, string> = {
+  exif: "the photo's own info",
+  filename: "the file name",
+  ocr_date: "a date printed in the photo",
+  fs_mtime: "the file's saved date",
+  identity_bound: "who's in the photo",
+  apparent_age: "people's ages",
+  trip_match: "a matching trip",
+  scene_season: "the season it looks like",
+  cluster_propagation: "similar photos nearby",
+  co_occurrence: "photos taken around it",
+};
+function sourcePhrase(s: string | null): string {
+  return (s && SOURCE_PHRASE[s]) || "other clues";
+}
+const TIER_LABEL: Record<Tier, string> = {
+  high: "Very likely right",
+  medium: "Probably right",
+  low: "Worth a look",
+};
+
 type Section = "date" | "variant" | "identity";
 
 // "Taken March 2024" — the headline phrasing. Precision narrows it to a year
@@ -144,7 +191,11 @@ export function TidyUpClient(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [section, setSection] = useState<Section>("date");
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; undo?: () => void } | null>(null);
+  // M15.2 — reason buckets + onboarding progress for the date lane.
+  const [buckets, setBuckets] = useState<DateBucket[] | null>(null);
+  const [progress, setProgress] = useState<{ sorted: number; total: number } | null>(null);
+  const [hiddenBuckets, setHiddenBuckets] = useState<Set<string>>(new Set());
   // Aggregator hub — counts for the queues that live on OTHER surfaces, so this
   // page is the single "needs attention" overview. Unsorted = unclassified
   // (kind IS NULL) library assets; Stacks = AI stack suggestions. Both deep-link
@@ -165,9 +216,9 @@ export function TidyUpClient(): React.ReactElement {
   const [hiddenDates, setHiddenDates] = useState<Set<string>>(new Set());
   const [hiddenGroups, setHiddenGroups] = useState<Set<string>>(new Set());
 
-  const showToast = useCallback((msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 4000);
+  const showToast = useCallback((msg: string, undo?: () => void) => {
+    setToast({ msg, undo });
+    window.setTimeout(() => setToast(null), undo ? 8000 : 4000);
   }, []);
 
   // Merge a fresh batch of thumbnail URLs in for the given asset ids.
@@ -202,9 +253,21 @@ export function TidyUpClient(): React.ReactElement {
       setData(json);
       setHiddenDates(new Set());
       setHiddenGroups(new Set());
+      setHiddenBuckets(new Set());
 
-      const dateIds = json.date.review.map((d) => d.assetId);
-      await fetchThumbs(dateIds);
+      // M15.2 — the date lane is now reason-bucketed. Pull the buckets +
+      // onboarding progress, and warm thumbs for every sample.
+      try {
+        const bres = await fetch("/api/admin/review-queue/buckets", { cache: "no-store" });
+        if (bres.ok) {
+          const bj = (await bres.json()) as BucketsResponse;
+          setBuckets(bj.buckets);
+          setProgress(bj.progress);
+          await fetchThumbs(bj.buckets.flatMap((b) => b.sample.map((s) => s.assetId)));
+        }
+      } catch {
+        // Buckets are best-effort; the rest of the page still renders.
+      }
     } catch {
       setError("We couldn't reach the server. Check your connection and retry.");
     }
@@ -343,9 +406,67 @@ export function TidyUpClient(): React.ReactElement {
     [load, showToast]
   );
 
-  const dateItems = useMemo(
-    () => (data?.date.review ?? []).filter((d) => !hiddenDates.has(d.assetId)),
-    [data, hiddenDates]
+  // M15.2 — reverse the most recent bulk action on a bucket (snackbar Undo).
+  const undoBucket = useCallback(
+    async (b: DateBucket) => {
+      setBusy(true);
+      try {
+        await fetch("/api/admin/review-queue/undo-bucket", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ evidenceSource: b.evidenceSource, conflict: b.conflict }),
+        });
+        showToast("Undone.");
+        await load();
+      } catch {
+        showToast("We couldn't undo just now — please retry.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load, showToast]
+  );
+
+  // Apply a reversible action to a whole bucket. Hides it optimistically and
+  // leaves an Undo in the snackbar; the actual write runs in the worker.
+  const applyBucket = useCallback(
+    async (b: DateBucket, action: "confirm" | "reject") => {
+      setBusy(true);
+      setHiddenBuckets((prev) => new Set(prev).add(b.bucketId));
+      try {
+        const res = await fetch("/api/admin/review-queue/confirm-bucket", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ evidenceSource: b.evidenceSource, conflict: b.conflict, action }),
+        });
+        if (!res.ok) {
+          showToast("That didn't go through. Nothing changed — please retry.");
+          await load();
+          return;
+        }
+        const n = b.count.toLocaleString();
+        const msg =
+          action === "confirm"
+            ? `Fixing ${n} date${b.count === 1 ? "" : "s"}`
+            : `Keeping the saved date for ${n} photo${b.count === 1 ? "" : "s"}`;
+        showToast(msg, () => void undoBucket(b));
+      } catch {
+        showToast("We lost the connection. Please retry.");
+        await load();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load, showToast, undoBucket]
+  );
+
+  const visibleBuckets = useMemo(
+    () => (buckets ?? []).filter((b) => !hiddenBuckets.has(b.bucketId)),
+    [buckets, hiddenBuckets]
+  );
+  const bucketTotal = useMemo(
+    () => visibleBuckets.reduce((a, b) => a + b.count, 0),
+    [visibleBuckets]
   );
   const variantGroups = useMemo(
     () => variantGroupsState.filter((g) => !hiddenGroups.has(g.groupId)),
@@ -364,11 +485,11 @@ export function TidyUpClient(): React.ReactElement {
 
   const counts = useMemo(
     () => ({
-      date: dateItems.length,
+      date: bucketTotal,
       variant: variantCount,
       identity: clusters.length,
     }),
-    [dateItems, variantCount, clusters]
+    [bucketTotal, variantCount, clusters]
   );
 
   const nativeClear =
@@ -451,28 +572,18 @@ export function TidyUpClient(): React.ReactElement {
           </div>
 
           {section === "date" && (
-            <DatesSection
-              items={dateItems}
+            <BucketsSection
+              buckets={visibleBuckets}
               urls={urls}
               busy={busy}
-              onAction={(assetId, action) =>
+              progress={progress}
+              hiddenItems={hiddenDates}
+              onApply={applyBucket}
+              onReviewItem={(assetId, action) =>
                 submit(
                   { date: [{ assetId, action }] },
                   { dates: [assetId] },
                   () => "Updated"
-                )
-              }
-              onBatchConfirm={() =>
-                submit(
-                  {
-                    date: dateItems.map((it) => ({
-                      assetId: it.assetId,
-                      action: "confirm" as const,
-                    })),
-                  },
-                  { dates: dateItems.map((it) => it.assetId) },
-                  ({ dateOk }) =>
-                    `Updated ${dateOk} photo${dateOk === 1 ? "" : "s"}`
                 )
               }
             />
@@ -510,7 +621,20 @@ export function TidyUpClient(): React.ReactElement {
           className="fixed bottom-[calc(var(--ft-space-4)+env(safe-area-inset-bottom)+72px)] left-1/2 z-[60] flex w-[min(560px,calc(100vw-2*var(--ft-space-4)))] -translate-x-1/2 items-center gap-[var(--ft-space-3)] rounded-[var(--ft-shape-small)] bg-[var(--ft-color-inverse-surface)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-inverse-surface)] shadow-[var(--ft-elev-3)] sm:bottom-[var(--ft-space-6)]"
         >
           <Check className="h-5 w-5 shrink-0 text-[var(--ft-color-inverse-primary)]" />
-          <span className="flex-1">{toast}</span>
+          <span className="flex-1">{toast.msg}</span>
+          {toast.undo && (
+            <button
+              type="button"
+              onClick={() => {
+                const fn = toast.undo;
+                setToast(null);
+                fn?.();
+              }}
+              className="shrink-0 font-medium text-[var(--ft-color-inverse-primary)] underline underline-offset-2"
+            >
+              Undo
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -624,52 +748,211 @@ function LoadingSkeleton() {
   );
 }
 
-function DatesSection({
-  items,
+const TIER_CHIP: Record<Tier, string> = {
+  high: "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]",
+  medium: "bg-[var(--ft-color-tertiary-container,#ffe082)] text-[var(--ft-color-on-tertiary-container,#5f4400)]",
+  low: "bg-[var(--ft-color-surface-container-highest)] text-[var(--ft-color-on-surface-variant)]",
+};
+
+function BucketsSection({
+  buckets,
   urls,
   busy,
-  onAction,
-  onBatchConfirm,
+  progress,
+  hiddenItems,
+  onApply,
+  onReviewItem,
 }: {
-  items: DateItem[];
+  buckets: DateBucket[];
   urls: Record<string, string>;
   busy: boolean;
-  onAction: (assetId: string, action: "confirm" | "reject") => void;
-  onBatchConfirm: () => void;
+  progress: { sorted: number; total: number } | null;
+  hiddenItems: Set<string>;
+  onApply: (bucket: DateBucket, action: "confirm" | "reject") => void;
+  onReviewItem: (assetId: string, action: "confirm" | "reject") => void;
 }) {
-  if (items.length === 0) {
-    return (
-      <SectionEmpty text="No dates to double-check right now." />
-    );
-  }
+  const sorting = progress && progress.total > 0 && progress.sorted < progress.total;
 
   return (
     <div className="space-y-[var(--ft-space-3)]">
-      {items.map((it) => (
-        <DateCard
-          key={it.assetId}
-          item={it}
-          url={urls[it.assetId]}
-          busy={busy}
-          onAction={onAction}
-        />
-      ))}
-
-      {items.length > 1 && (
-        <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+72px)] z-30 sm:bottom-[var(--ft-space-4)]">
-          <Button
-            variant="filled"
-            size="lg"
-            disabled={busy}
-            onClick={onBatchConfirm}
-            className="w-full justify-center shadow-[var(--ft-elev-2)] sm:w-auto"
-          >
-            <Check className="h-4 w-4" />
-            Looks good — apply to all {items.length}
-          </Button>
-        </div>
+      {sorting && (
+        <Card variant="filled">
+          <CardContent className="flex flex-col gap-[var(--ft-space-2)]">
+            <p className="text-[length:var(--ft-type-title-small-size)] leading-[var(--ft-type-title-small-line)] font-medium text-[var(--ft-color-on-surface)]">
+              Sorting your library… {progress!.sorted.toLocaleString()} of{" "}
+              {progress!.total.toLocaleString()} photos
+            </p>
+            <div className="h-1.5 overflow-hidden rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-highest)]">
+              <div
+                className="h-full rounded-[var(--ft-shape-full)] bg-[var(--ft-color-primary)]"
+                style={{ width: `${Math.round((progress!.sorted / progress!.total) * 100)}%` }}
+              />
+            </div>
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+              We&apos;re working out when each photo was taken. More to review will appear as
+              this finishes — nothing you need to do yet.
+            </p>
+          </CardContent>
+        </Card>
       )}
+
+      {buckets.length === 0 ? (
+        <SectionEmpty
+          text={
+            sorting
+              ? "Nothing to check yet — come back as more photos finish sorting."
+              : "No dates to double-check right now."
+          }
+        />
+      ) : (
+        buckets.map((b) => (
+          <BucketCard
+            key={b.bucketId}
+            bucket={b}
+            urls={urls}
+            busy={busy}
+            hiddenItems={hiddenItems}
+            onApply={onApply}
+            onReviewItem={onReviewItem}
+          />
+        ))
+      )}
+
+      <p className="flex items-center gap-[var(--ft-space-2)] pt-[var(--ft-space-1)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+        <Check className="h-4 w-4 shrink-0 text-[var(--ft-color-primary)]" />
+        Nothing is deleted here. Date changes can be undone any time.
+      </p>
     </div>
+  );
+}
+
+function BucketCard({
+  bucket: b,
+  urls,
+  busy,
+  hiddenItems,
+  onApply,
+  onReviewItem,
+}: {
+  bucket: DateBucket;
+  urls: Record<string, string>;
+  busy: boolean;
+  hiddenItems: Set<string>;
+  onApply: (bucket: DateBucket, action: "confirm" | "reject") => void;
+  onReviewItem: (assetId: string, action: "confirm" | "reject") => void;
+}) {
+  const [reviewing, setReviewing] = useState(false);
+  const phrase = sourcePhrase(b.evidenceSource);
+  const title = b.conflict
+    ? "The saved date looks wrong for these"
+    : `These got their date from ${phrase}`;
+  const sub = b.conflict
+    ? `We think the right date comes from ${phrase}.`
+    : b.confidenceTier === "high"
+      ? null
+      : "Peek before you apply.";
+  const strip = b.sample.slice(0, 5);
+  const remainder = b.count - strip.length;
+  const first = b.sample[0];
+
+  return (
+    <Card variant="outlined">
+      <CardContent className="flex flex-col gap-[var(--ft-space-3)]">
+        <div className="flex items-start justify-between gap-[var(--ft-space-2)]">
+          <span className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)] font-medium text-[var(--ft-color-on-surface)]">
+            {title}
+          </span>
+          <span
+            className={`shrink-0 rounded-[var(--ft-shape-full)] px-[var(--ft-space-2)] py-0.5 text-[length:var(--ft-type-label-small-size)] font-medium ${TIER_CHIP[b.confidenceTier]}`}
+          >
+            {TIER_LABEL[b.confidenceTier]}
+          </span>
+        </div>
+        {sub && (
+          <p className="-mt-[var(--ft-space-1)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+            {sub}
+          </p>
+        )}
+
+        <div className="flex items-center gap-[var(--ft-space-2)] overflow-hidden">
+          {strip.map((s) => (
+            <Thumb
+              key={s.assetId}
+              url={urls[s.assetId]}
+              alt={s.filename}
+              className="h-14 w-14 shrink-0 rounded-[var(--ft-shape-medium)]"
+            />
+          ))}
+          {remainder > 0 && (
+            <span className="flex h-14 shrink-0 items-center rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container-highest)] px-[var(--ft-space-3)] text-[length:var(--ft-type-label-medium-size)] font-medium text-[var(--ft-color-on-surface-variant)]">
+              +{remainder.toLocaleString()}
+            </span>
+          )}
+        </div>
+
+        {b.conflict && first && (
+          <div className="inline-flex w-fit items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-small)] bg-[var(--ft-color-surface-container)] px-[var(--ft-space-3)] py-[var(--ft-space-1)] text-[length:var(--ft-type-body-small-size)] text-[var(--ft-color-on-surface-variant)]">
+            <span>Saved {fmtFiled(first.capturedAt)}</span>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+            <span>
+              Photo says{" "}
+              <span className="font-medium text-[var(--ft-color-on-surface)]">
+                {fmtTaken(first.mapEstimate, first.mapPrecision)}
+              </span>
+            </span>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-[var(--ft-space-2)]">
+          <Button variant="filled" disabled={busy} onClick={() => onApply(b, "confirm")}>
+            <Check className="h-4 w-4" />
+            {b.conflict ? `Looks right — fix all ${b.count.toLocaleString()}` : "Use these dates"}
+          </Button>
+          {b.conflict && (
+            <Button variant="outlined" disabled={busy} onClick={() => onApply(b, "reject")}>
+              Keep saved dates
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={() => setReviewing((v) => !v)}
+            className="text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium text-[var(--ft-color-primary-text)] underline-offset-2 hover:underline"
+          >
+            {reviewing ? "Hide" : "Review one by one"}
+          </button>
+        </div>
+
+        {reviewing && (
+          <div className="space-y-[var(--ft-space-3)] border-t border-[var(--ft-color-outline-variant)] pt-[var(--ft-space-3)]">
+            {b.sample
+              .filter((s) => !hiddenItems.has(s.assetId))
+              .map((s) => (
+                <DateCard
+                  key={s.assetId}
+                  item={{
+                    assetId: s.assetId,
+                    filename: s.filename,
+                    capturedAt: s.capturedAt,
+                    mapEstimate: s.mapEstimate,
+                    mapPrecision: s.mapPrecision,
+                    ciLow: null,
+                    ciHigh: null,
+                    confidence: s.confidence,
+                    conflict: b.conflict,
+                    reasons: [],
+                  }}
+                  url={urls[s.assetId]}
+                  busy={busy}
+                  onAction={onReviewItem}
+                />
+              ))}
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+              Showing a sample. &ldquo;{b.conflict ? `Looks right — fix all ${b.count.toLocaleString()}` : "Use these dates"}&rdquo; applies to all {b.count.toLocaleString()}.
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

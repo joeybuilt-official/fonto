@@ -172,6 +172,28 @@ export async function listDateBuckets(workspaceId: string): Promise<{
   return { buckets, totalReview };
 }
 
+/**
+ * Onboarding progress — how far inference has drained for this workspace's
+ * images. Drives the "Sorting your library… X of Y" banner. `sorted` counts
+ * active image assets that have an inference row (any status); `total` counts
+ * all active image assets.
+ */
+export async function getSortingProgress(
+  workspaceId: string
+): Promise<{ sorted: number; total: number }> {
+  const isImage = sql`${schema.assets.mimeType} like 'image/%'`;
+  const [t] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.assets)
+    .where(and(eq(schema.assets.workspaceId, workspaceId), eq(schema.assets.lifecycleState, "active"), isImage));
+  const [s] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.imageDateInference)
+    .innerJoin(schema.assets, eq(schema.assets.id, schema.imageDateInference.assetId))
+    .where(and(eq(schema.assets.workspaceId, workspaceId), eq(schema.assets.lifecycleState, "active"), isImage));
+  return { sorted: s?.n ?? 0, total: t?.n ?? 0 };
+}
+
 export interface BucketApplyOpts {
   evidenceSource: string | null;
   conflict: boolean;
