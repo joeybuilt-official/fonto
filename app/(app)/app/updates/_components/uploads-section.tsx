@@ -25,7 +25,13 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { directUploadEnabled, uploadDirect } from "@/lib/upload-client";
+import { uploadTus } from "@/lib/upload-client-tus";
 import { MemoryCard } from "../../_components/memory-card";
+
+// M9 — files at/above this size use the resumable tus path; smaller ones use
+// the single-shot direct PUT. 100 MB matches the client-checksum cutoff in
+// upload-client.ts and keeps the common photo upload on the cheaper path.
+const LARGE_FILE_BYTES = 100 * 1024 * 1024;
 
 interface Asset {
   id: string;
@@ -225,7 +231,18 @@ export function UploadsSection() {
       };
       let data: UploadData | null = null;
 
-      if (directUploadEnabled()) {
+      // M9 — large files go through the resumable tus path (survives a dropped
+      // connection / reload); small files keep the cheaper single-shot direct
+      // PUT (or legacy multipart). tus returns only an assetId, so we re-fetch
+      // the row for the UI; dedup banners stay a small-file nicety.
+      if (file.size >= LARGE_FILE_BYTES) {
+        const { assetId } = await uploadTus(file, { metadata: { source } });
+        const ares = await fetch(`/api/v1/assets/${assetId}`);
+        if (ares.ok) {
+          const aj = (await ares.json()) as { asset: Asset };
+          data = { asset: aj.asset };
+        }
+      } else if (directUploadEnabled()) {
         const res = await uploadDirect(file, { source });
         data = res as unknown as UploadData;
       } else {

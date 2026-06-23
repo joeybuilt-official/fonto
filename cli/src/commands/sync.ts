@@ -57,6 +57,11 @@ interface SyncStateV2 {
   version: 2;
   cursor: string;
   entries: Record<string, StateEntry>;
+  // M9 — in-progress resumable (tus) uploads: relPath → tus upload URL. An
+  // entry here means a large upload was started but not finished; the next run
+  // HEADs the URL and continues from the server-reported offset. Cleared on
+  // completion.
+  tusResume?: Record<string, string>;
 }
 
 type SyncState = SyncStateV2;
@@ -64,8 +69,15 @@ type SyncState = SyncStateV2;
 const HARD_IGNORE = new Set([".git", "node_modules", ".DS_Store", "Thumbs.db", ".fonto-sync.json"]);
 
 function emptyState(): SyncState {
-  return { version: 2, cursor: "0", entries: {} };
+  return { version: 2, cursor: "0", entries: {}, tusResume: {} };
 }
+
+// M9 — files at/above this size upload via the resumable tus protocol instead
+// of the single-shot multipart POST (which the server caps at 50MB and which
+// can't resume a dropped connection). 50MB matches that server cap.
+const LARGE_FILE_BYTES = 50 * 1024 * 1024;
+// Match the server's S3 multipart part size (lib/tus/server.ts PART_SIZE_BYTES).
+const TUS_CHUNK_BYTES = 8 * 1024 * 1024;
 
 function loadState(p: string): SyncState {
   if (!fs.existsSync(p)) return emptyState();
@@ -77,6 +89,7 @@ function loadState(p: string): SyncState {
         version: 2,
         cursor: typeof v2.cursor === "string" ? v2.cursor : "0",
         entries: v2.entries ?? {},
+        tusResume: v2.tusResume ?? {},
       };
     }
     // v1 — flat map. Wrap.
@@ -222,6 +235,114 @@ async function uploadOne(
   return { assetId: body.asset.id, deduplicated: !!body.deduplicated };
 }
 
+function tusMetadata(filename: string, mimeType: string, remotePath: string): string {
+  const enc = (v: string) => Buffer.from(v, "utf8").toString("base64");
+  return [
+    `filename ${enc(filename)}`,
+    `filetype ${enc(mimeType)}`,
+    `path ${enc(remotePath)}`,
+  ].join(",");
+}
+
+function guessMime(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  const map: Record<string, string> = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".gif": "image/gif", ".webp": "image/webp", ".heic": "image/heic",
+    ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
+    ".pdf": "application/pdf",
+  };
+  return map[ext] ?? "application/octet-stream";
+}
+
+/**
+ * M9 — resumable large-file upload over the tus protocol, dependency-free.
+ * Persists the tus upload URL in the state file so an interrupted run resumes
+ * from the server-reported offset on the next invocation. Returns the asset id
+ * (from the final response's X-Fonto-Asset-Id header).
+ */
+async function uploadOneTus(
+  file: WalkedFile,
+  remotePath: string,
+  state: SyncState,
+  statePath: string
+): Promise<{ assetId: string | null; deduplicated: boolean }> {
+  const cfg = getConfig();
+  if (!cfg.pat) throw new Error("No PAT — run `fonto login --pat <token>` first.");
+  const auth = { Authorization: `Bearer ${cfg.pat}`, "Tus-Resumable": "1.0.0" };
+  const filename = path.basename(file.abs);
+  state.tusResume ??= {};
+
+  // Reuse a stored URL if a prior run started this file.
+  let url: string | null = state.tusResume[file.rel] ?? null;
+  let offset = 0;
+  if (url) {
+    const head = await fetch(url, { method: "HEAD", headers: auth });
+    if (head.ok) {
+      offset = Number(head.headers.get("Upload-Offset") ?? "0") || 0;
+    } else {
+      url = null; // expired/unknown — recreate
+    }
+  }
+
+  // Create the upload if we don't have a live URL.
+  if (!url) {
+    const create = await fetch(`${cfg.baseUrl}/api/v1/uploads/tus`, {
+      method: "POST",
+      headers: {
+        ...auth,
+        "Upload-Length": String(file.size),
+        "Upload-Metadata": tusMetadata(filename, guessMime(filename), remotePath),
+        "Content-Length": "0",
+      },
+    });
+    if (create.status !== 201) {
+      const text = await create.text();
+      throw new ApiError(create.status, text, `tus create ${create.status}`);
+    }
+    const loc = create.headers.get("Location");
+    if (!loc) throw new Error("tus create returned no Location");
+    url = new URL(loc, cfg.baseUrl).toString();
+    offset = 0;
+    state.tusResume[file.rel] = url;
+    saveState(statePath, state);
+  }
+
+  // PATCH sequential chunks from the current offset to EOF.
+  let assetId: string | null = null;
+  const fh = await fs.promises.open(file.abs, "r");
+  try {
+    while (offset < file.size) {
+      const len = Math.min(TUS_CHUNK_BYTES, file.size - offset);
+      const buf = Buffer.allocUnsafe(len);
+      await fh.read(buf, 0, len, offset);
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: {
+          ...auth,
+          "Content-Type": "application/offset+octet-stream",
+          "Upload-Offset": String(offset),
+        },
+        body: new Uint8Array(buf),
+      });
+      if (res.status !== 204 && res.status !== 200) {
+        const text = await res.text();
+        throw new ApiError(res.status, text, `tus PATCH ${res.status}`);
+      }
+      offset = Number(res.headers.get("Upload-Offset") ?? String(offset + len));
+      const idHeader = res.headers.get("X-Fonto-Asset-Id");
+      if (idHeader) assetId = idHeader;
+    }
+  } finally {
+    await fh.close();
+  }
+
+  // Done — drop the resume marker.
+  delete state.tusResume[file.rel];
+  saveState(statePath, state);
+  return { assetId, deduplicated: false };
+}
+
 export async function sync(dir: string, opts: SyncOpts): Promise<void> {
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     console.error(chalk.red(`✗ not a directory: ${dir}`));
@@ -296,7 +417,16 @@ export async function sync(dir: string, opts: SyncOpts): Promise<void> {
     const f = upload[i];
     const s = ora(`[${i + 1}/${upload.length}] ${f.rel}`).start();
     try {
-      const { assetId, deduplicated } = await uploadOne(f, remotePrefix);
+      // M9 — large files take the resumable tus path; the helper needs the
+      // composed remote path the same way uploadOne derives it.
+      const relDir = path.dirname(f.rel).replace(/\\/g, "/");
+      const composed =
+        remotePrefix.replace(/\/+$/, "") + (relDir === "." ? "" : "/" + relDir);
+      const remotePath = composed === "" ? "/" : composed;
+      const { assetId, deduplicated } =
+        f.size >= LARGE_FILE_BYTES
+          ? await uploadOneTus(f, remotePath, state, statePath)
+          : await uploadOne(f, remotePrefix);
       const sha = await sha256(f.abs);
       state.entries[f.rel] = {
         size: f.size,

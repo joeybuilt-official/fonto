@@ -15,6 +15,7 @@
 // the App Router's standard Request/Response to tus via `server.handleWeb`,
 // which @tus/server v2 exposes natively — no Node http adapter required.
 
+import { randomUUID } from "crypto";
 import { Server } from "@tus/server";
 import { S3Store } from "@tus/s3-store";
 import { headers } from "next/headers";
@@ -24,8 +25,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
-import { dateFromFilename } from "@/lib/exif";
-import { assetProcessingQueue, thumbnailQueue, storageSyncQueue, JobNames } from "@/lib/queue";
+import { createAssetRow } from "@/lib/assets/createAssetRow";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -143,6 +143,23 @@ export function getTusServer(): Server {
       }
       const workspaceId = workspaces[0].id;
 
+      // M9 — quota preflight, matching the /assets/init + multipart paths.
+      // Reject the upload BEFORE the multipart is created so an over-quota
+      // large file never streams a single byte. NULL quota = unlimited.
+      if (upload.size != null) {
+        const [ws] = await db
+          .select({
+            quotaBytes: schema.workspaces.quotaBytes,
+            usageBytes: schema.workspaces.usageBytes,
+          })
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.id, workspaceId))
+          .limit(1);
+        if (ws?.quotaBytes != null && (ws.usageBytes ?? 0) + upload.size > ws.quotaBytes) {
+          throw tusReject(413, "Storage quota exceeded");
+        }
+      }
+
       // tus-js-client encodes Upload-Metadata as base64-decoded key/value
       // pairs. We expect at least `filename` and `filetype` (the standard
       // tus-js-client defaults). Anything else (e.g. `source`) is optional.
@@ -225,60 +242,64 @@ export function getTusServer(): Server {
         throw tusReject(500, "Upload finalize failed: missing identity metadata");
       }
 
-      // TODO: replace with shared helper from Phase 1.2 (lib/assets/createAssetRow.ts)
-      // For now, mirror the columns the POST /api/v1/assets route writes
-      // post-upload (sync_state=synced, processing_state=captured, etc).
-      // Phase 1.4 does not compute pHash / EXIF here — the worker pipeline
-      // will fold those in once we surface a way to read the R2 object
-      // from the worker. (Phase 1.2 will land a streaming version.)
-      const [asset] = await db
-        .insert(schema.assets)
-        .values({
-          workspaceId,
-          filename,
-          mimeType,
-          sizeBytes: upload.size ?? 0,
-          // sha256 is required by the schema. tus does not expose a chunk
-          // checksum we can reuse, so we stamp the tus upload id under the
-          // sha256: prefix as a unique placeholder; the worker can compute
-          // the real digest on first read and update the row.
-          sha256: `tus:${upload.id}`,
-          syncState: "synced",
-          processingState: "captured",
-          lifecycleState: "active",
-          source: "tus",
-          // Placeholder from the filename only (no EXIF read on this path yet —
-          // the worker folds real EXIF in later). Never "now": that floods the
-          // current month for date-less assets. Null ⇒ undated until processed.
-          capturedAt: dateFromFilename(filename),
-          ocrState: mimeType.startsWith("image/") ? "pending" : "skipped",
-          directoryPath,
-        })
-        .returning();
-
+      // M9 — funnel tus uploads through the SAME shared helper as the legacy
+      // multipart + presigned-PUT paths, so dedup (real SHA-256), EXIF/pHash,
+      // scope, activity/webhook events, and the full processing enqueue all
+      // behave identically. createAssetRow needs (a) the bytes in memory and
+      // (b) the object already at its canonical key (it does not move R2
+      // objects). So we mirror the presigned-PUT contract: pre-reserve the
+      // asset id, copy temp→canonical, then insert with preReservedId.
       const tempKey = upload.storage?.path ?? `${TUS_TEMP_PREFIX}/${upload.id}`;
-      const finalKey = assetStorageKey(workspaceId, asset.id, filename);
 
+      let buffer: Buffer;
       try {
-        await storage().copy(tempKey, finalKey, { contentType: mimeType });
-
-        // Best-effort temp cleanup. We don't fail the upload if either of
-        // these 404 — the tus internal .info sidecar key isn't part of the
-        // public contract.
-        await Promise.allSettled([
-          storage().delete(tempKey),
-          storage().delete(`${tempKey}.info`),
-        ]);
+        buffer = await storage().getBuffer(tempKey);
       } catch (err) {
-        console.error("[fonto-tus] failed to move object to final key:", err);
-        // Roll the asset row back to error so the worker doesn't try to
-        // process a missing object.
-        await db
-          .update(schema.assets)
-          .set({ syncState: "error" })
-          .where(eq(schema.assets.id, asset.id));
+        console.error("[fonto-tus] failed to read assembled tus object:", err);
         throw tusReject(500, "Failed to finalize upload");
       }
+
+      const reservedId = randomUUID();
+      const finalKey = assetStorageKey(workspaceId, reservedId, filename);
+      try {
+        await storage().copy(tempKey, finalKey, { contentType: mimeType });
+      } catch (err) {
+        console.error("[fonto-tus] failed to move object to final key:", err);
+        throw tusReject(500, "Failed to finalize upload");
+      }
+
+      let result;
+      try {
+        result = await createAssetRow({
+          workspaceId,
+          userId,
+          filename,
+          mimeType,
+          sizeBytes: upload.size ?? buffer.length,
+          buffer,
+          source: "tus",
+          directoryPath,
+          preReservedId: reservedId,
+        });
+      } catch (err) {
+        console.error("[fonto-tus] createAssetRow failed:", err);
+        // Roll back the canonical copy we just made so we don't orphan bytes.
+        await storage().delete(finalKey).catch(() => {});
+        throw tusReject(500, "Failed to finalize upload");
+      }
+      const asset = result.asset;
+
+      // On SHA-256 dedup createAssetRow returns the EXISTING row and ignores
+      // preReservedId — so the canonical copy we made under reservedId is an
+      // orphan. Drop it (and always drop the tus temp object + .info sidecar).
+      const cleanup: Promise<unknown>[] = [
+        storage().delete(tempKey).catch(() => {}),
+        storage().delete(`${tempKey}.info`).catch(() => {}),
+      ];
+      if (result.deduplicated && asset.id !== reservedId) {
+        cleanup.push(storage().delete(finalKey).catch(() => {}));
+      }
+      await Promise.allSettled(cleanup);
 
       // Mark the tus_uploads row completed so a subsequent HEAD can find
       // the asset id. (Best-effort — a missing row just means the original
@@ -290,47 +311,6 @@ export function getTusServer(): Server {
           .where(eq(schema.tusUploads.uploadId, upload.id));
       } catch (err) {
         console.error("[fonto-tus] failed to mark tus_uploads completed:", err);
-      }
-
-      // Enqueue the same downstream jobs as the regular upload path.
-      try {
-        await assetProcessingQueue().add(JobNames.ProcessAsset, {
-          assetId: asset.id,
-          workspaceId,
-          userId,
-          filename,
-          mimeType,
-          extractedText: null,
-        });
-      } catch (err) {
-        console.error("[fonto-tus] failed to enqueue process-asset:", err);
-      }
-
-      // Thumbnail queue exists once Phase 1.1 lands. Guard the enqueue so
-      // we don't crash here if the queue handle hasn't been wired yet.
-      try {
-        if (typeof thumbnailQueue === "function") {
-          await thumbnailQueue().add(JobNames.Thumbnail, {
-            assetId: asset.id,
-            workspaceId,
-          });
-        }
-      } catch (err) {
-        console.error("[fonto-tus] failed to enqueue thumbnail:", err);
-      }
-
-      // Phase B3 — mirror the original to local for `mirror`-policy workspaces.
-      // tus inserts the asset row directly here (it does not go through
-      // createAssetRow.enqueueAssetProcessing), so it needs its own enqueue or
-      // tus uploads would silently never mirror. No mime filter; the handler
-      // reads the effective policy and no-ops for non-mirror workspaces.
-      try {
-        await storageSyncQueue().add(JobNames.StorageSync, {
-          assetId: asset.id,
-          workspaceId,
-        });
-      } catch (err) {
-        console.error("[fonto-tus] failed to enqueue storage-sync:", err);
       }
 
       // tus's HEAD response normally has no body. We surface the new asset
