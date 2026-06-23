@@ -1333,6 +1333,9 @@ export const imageDateInference = fontoSchema.table(
     // bucketing. STORED GENERATED column over explanation[0].evidenceType
     // (migration 0050); never written by app code, read-only here.
     dominantEvidenceSource: text("dominant_evidence_source"),
+    // M15.2 — undo snapshot for a bulk bucket action ({priorStatus,
+    // priorCapturedAt}); non-null = the row was bulk-actioned and is undoable.
+    reviewUndo: jsonb("review_undo"),
     // { personIds, factIds, modelVersions, neighborAssetIds } for re-audit keying.
     dependsOn: jsonb("depends_on"),
     computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow().notNull(),

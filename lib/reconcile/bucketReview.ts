@@ -221,6 +221,7 @@ export async function applyBucketReconcile(
       .select({
         assetId: schema.imageDateInference.assetId,
         mapEstimate: schema.imageDateInference.mapEstimate,
+        capturedAt: schema.assets.capturedAt,
       })
       .from(schema.imageDateInference)
       .innerJoin(schema.assets, eq(schema.assets.id, schema.imageDateInference.assetId))
@@ -230,10 +231,15 @@ export async function applyBucketReconcile(
 
     await db.transaction(async (tx) => {
       for (const row of batch) {
+        // Snapshot the pre-action state so the UI can undo this bulk apply.
+        const undo = {
+          priorStatus: "inferred",
+          priorCapturedAt: row.capturedAt ? new Date(row.capturedAt).toISOString() : null,
+        };
         // Only act if WE flip the row (guards a racing apply / re-fuse).
         const upd = await tx
           .update(schema.imageDateInference)
-          .set({ status: ACTION_STATUS[action] })
+          .set({ status: ACTION_STATUS[action], reviewUndo: undo })
           .where(
             and(
               eq(schema.imageDateInference.assetId, row.assetId),
@@ -256,4 +262,72 @@ export async function applyBucketReconcile(
 
   log.info({ applied, evidenceSource, conflict }, "bucket reconcile applied");
   return { workspaceId, bucketId: bucketId(evidenceSource, conflict), action, applied };
+}
+
+/**
+ * Reverse the most recent bulk action on a bucket: every row carrying an undo
+ * snapshot (review_undo) for this bucket is restored to its prior status +
+ * captured_at, and the snapshot is cleared. Batched + resumable, mirroring the
+ * forward apply. Only rows we bulk-actioned (review_undo IS NOT NULL) move.
+ */
+export async function applyBucketUndo(
+  workspaceId: string,
+  opts: { evidenceSource: string | null; conflict: boolean; batchSize?: number }
+): Promise<{ workspaceId: string; bucketId: string; reverted: number }> {
+  const { evidenceSource, conflict } = opts;
+  const batchSize = Math.max(1, Math.min(1000, opts.batchSize ?? 200));
+  const log = logger.child({ component: "reconcile.bucketUndo", workspaceId });
+
+  const conflictCol = schema.imageDateInference.conflictFlag;
+  const sourceCol = schema.imageDateInference.dominantEvidenceSource;
+  const sourcePred = evidenceSource === null ? isNull(sourceCol) : eq(sourceCol, evidenceSource);
+  const matchWhere = and(
+    eq(schema.assets.workspaceId, workspaceId),
+    eq(conflictCol, conflict),
+    sourcePred,
+    sql`${schema.imageDateInference.reviewUndo} is not null`
+  );
+
+  let reverted = 0;
+  for (;;) {
+    const batch = await db
+      .select({
+        assetId: schema.imageDateInference.assetId,
+        reviewUndo: schema.imageDateInference.reviewUndo,
+      })
+      .from(schema.imageDateInference)
+      .innerJoin(schema.assets, eq(schema.assets.id, schema.imageDateInference.assetId))
+      .where(matchWhere)
+      .limit(batchSize);
+    if (batch.length === 0) break;
+
+    await db.transaction(async (tx) => {
+      for (const row of batch) {
+        const u = (row.reviewUndo ?? {}) as { priorStatus?: string; priorCapturedAt?: string | null };
+        const priorStatus = u.priorStatus ?? "inferred";
+        const upd = await tx
+          .update(schema.imageDateInference)
+          .set({ status: priorStatus, reviewUndo: null })
+          .where(
+            and(
+              eq(schema.imageDateInference.assetId, row.assetId),
+              sql`${schema.imageDateInference.reviewUndo} is not null`
+            )
+          )
+          .returning({ assetId: schema.imageDateInference.assetId });
+        if (upd.length === 0) continue;
+        // Restore the pre-action captured_at (a no-op for reject/quarantine,
+        // which never wrote it; restores the overwritten date for confirm).
+        await tx
+          .update(schema.assets)
+          .set({ capturedAt: u.priorCapturedAt ? new Date(u.priorCapturedAt) : null })
+          .where(and(eq(schema.assets.id, row.assetId), eq(schema.assets.workspaceId, workspaceId)));
+        reverted++;
+      }
+    });
+    if (batch.length < batchSize) break;
+  }
+
+  log.info({ reverted, evidenceSource, conflict }, "bucket undo applied");
+  return { workspaceId, bucketId: bucketId(evidenceSource, conflict), reverted };
 }

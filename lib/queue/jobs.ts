@@ -232,6 +232,9 @@ export const BackfillReconcileJobSchema = z
         evidenceSource: z.string().nullable(),
         conflict: z.boolean(),
         action: z.enum(["confirm", "reject", "quarantine"]),
+        // M15.2 — when true, reverse the most recent bulk action on this bucket
+        // (the snackbar Undo) instead of applying `action`.
+        undo: z.boolean().optional(),
       })
       .optional(),
   })

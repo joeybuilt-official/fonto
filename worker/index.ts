@@ -85,7 +85,7 @@ import { backfillEvidence, backfillVariantCandidates } from "@/lib/evidence/back
 import { inferAssetDate } from "@/lib/fusion/inferAssetDate";
 import { backfillInference } from "@/lib/fusion/backfillInference";
 import { applyDateBackfill } from "@/lib/reconcile/dateBackfill";
-import { applyBucketReconcile } from "@/lib/reconcile/bucketReview";
+import { applyBucketReconcile, applyBucketUndo } from "@/lib/reconcile/bucketReview";
 import { register as metricsRegister } from "@/lib/metrics";
 import { startOtel } from "@/lib/otel";
 
@@ -1562,6 +1562,16 @@ function startMaintenanceWorker(): Worker {
         // reason-bucket of the review band. Predicate re-resolved each batch.
         if (parsed.data.bucket) {
           const b = parsed.data.bucket;
+          if (b.undo) {
+            log.info({ workspaceId: parsed.data.workspaceId, bucket: b }, "bucket undo start");
+            const ures = await applyBucketUndo(parsed.data.workspaceId, {
+              evidenceSource: b.evidenceSource,
+              conflict: b.conflict,
+              batchSize: parsed.data.batchSize,
+            });
+            log.info(ures, "bucket undo complete");
+            return ures;
+          }
           log.info({ workspaceId: parsed.data.workspaceId, bucket: b }, "bucket reconcile start");
           const bres = await applyBucketReconcile(parsed.data.workspaceId, {
             evidenceSource: b.evidenceSource,
