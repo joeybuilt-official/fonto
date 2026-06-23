@@ -16,6 +16,25 @@ import { getCacheLayer } from "@/lib/cache/valkey";
 const COLOR_DELTA_E_THRESHOLD = 30;
 const SEARCH_CACHE_TTL_SEC = 300;
 
+// Chip names from the web filter popover + mobile filter sheet arrive as the
+// color *name* (e.g. "red"); parseHex only understands hex, so map known names
+// to their canonical hex before parsing. Keep in sync with COLOR_CHIPS in
+// app/(app)/app/_components/filter-popover.tsx.
+const COLOR_NAME_HEX: Record<string, string> = {
+  red: "#ef4444",
+  orange: "#f97316",
+  yellow: "#eab308",
+  green: "#22c55e",
+  teal: "#14b8a6",
+  blue: "#3b82f6",
+  purple: "#a855f7",
+  pink: "#ec4899",
+  brown: "#92400e",
+  gray: "#6b7280",
+  black: "#0a0a0a",
+  white: "#fafafa",
+};
+
 // T2.1 — search results cache.
 //
 // Mutation routes that MUST call cacheInvalidate(`ws:${workspaceId}:assets`)
@@ -175,7 +194,8 @@ export async function GET(request: NextRequest) {
   // efficiently compute Lab ΔE in pure SQL. Limit raised to 500 above so
   // the JS filter has enough headroom; we still cap output at 100.
   if (colorHex) {
-    const rgb = parseHex(colorHex);
+    const resolved = COLOR_NAME_HEX[colorHex.toLowerCase()] ?? colorHex;
+    const rgb = parseHex(resolved);
     if (rgb) {
       const targetLab = rgbToLab(rgb[0], rgb[1], rgb[2]);
       assets = assets.filter((a) => {
