@@ -100,6 +100,7 @@ interface MetadataPanelProps {
   shareState: { url: string | null; copied: boolean; loading: boolean };
   onRevokeShare: () => Promise<void>;
   onOpenShareDialog: () => void;
+  onOpenSimilar: (id: string) => void;
 }
 
 function MetadataPanel({
@@ -117,8 +118,37 @@ function MetadataPanel({
   shareState,
   onRevokeShare,
   onOpenShareDialog,
+  onOpenSimilar,
 }: MetadataPanelProps) {
   const [addingTag, setAddingTag] = useState(false);
+  // "More like this" — CLIP image kNN over the asset's own embedding
+  // (GET /api/v1/assets/:id/similar). Falls back to same-classification
+  // server-side when no embedding exists yet.
+  const [similar, setSimilar] = useState<Asset[] | null>(null);
+  const [similarLoading, setSimilarLoading] = useState(false);
+
+  useEffect(() => {
+    if (!asset.mimeType.startsWith("image/")) {
+      setSimilar(null);
+      return;
+    }
+    let cancelled = false;
+    setSimilarLoading(true);
+    fetch(`/api/v1/assets/${asset.id}/similar`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { assets?: Asset[] } | null) => {
+        if (!cancelled) setSimilar(d?.assets ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setSimilar([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSimilarLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [asset.id, asset.mimeType]);
   const [tagInput, setTagInput] = useState("");
   const [showCollections, setShowCollections] = useState(false);
   const [rescanState, setRescanState] = useState<"idle" | "loading" | "done">("idle");
@@ -338,6 +368,32 @@ function MetadataPanel({
             )}
           </div>
         </div>
+
+        {/* MORE LIKE THIS — CLIP visual neighbours */}
+        {asset.mimeType.startsWith("image/") &&
+          (similarLoading || (similar && similar.length > 0)) && (
+            <div>
+              <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-widest text-[var(--ft-color-on-surface-variant)] mb-2">
+                More like this
+              </p>
+              {similarLoading ? (
+                <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                  Finding…
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {similar!.map((m) => (
+                    <StackThumb
+                      key={m.id}
+                      asset={m}
+                      active={false}
+                      onClick={() => onOpenSimilar(m.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
         {/* ACTIONS */}
         <div>
@@ -1504,6 +1560,7 @@ export function PhotoLightbox({
             shareState={{ url: shareUrl, copied: shareCopied, loading: shareLoading }}
             onRevokeShare={handleRevokeShare}
             onOpenShareDialog={() => setShareDialogOpen(true)}
+            onOpenSimilar={(id) => setViewMemberId(id === asset.id ? null : id)}
           />
         )}
         {showComments && (

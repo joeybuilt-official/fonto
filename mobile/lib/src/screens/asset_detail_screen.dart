@@ -507,6 +507,23 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
                   ),
                 ),
               ),
+              if (a.mimeType.startsWith("image/"))
+                _SimilarStrip(
+                  client: widget.client,
+                  assetId: a.id,
+                  onTap: (asset) {
+                    Navigator.of(context).pop(); // close sheet
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => AssetDetailScreen(
+                          client: widget.client,
+                          assets: [asset],
+                          initialIndex: 0,
+                        ),
+                      ),
+                    );
+                  },
+                ),
             ],
           ),
         ),
@@ -1832,6 +1849,115 @@ class _CropScreenState extends State<_CropScreen> {
           },
         ),
       ),
+    );
+  }
+}
+
+/// "More like this" — horizontal strip of CLIP visual neighbours shown in the
+/// asset info sheet. Loads similar assets + their thumbnails lazily; renders
+/// nothing while empty so the sheet stays compact for non-matching assets.
+class _SimilarStrip extends StatefulWidget {
+  const _SimilarStrip({
+    required this.client,
+    required this.assetId,
+    required this.onTap,
+  });
+
+  final FontoClient client;
+  final String assetId;
+  final void Function(Asset) onTap;
+
+  @override
+  State<_SimilarStrip> createState() => _SimilarStripState();
+}
+
+class _SimilarStripState extends State<_SimilarStrip> {
+  bool _loading = true;
+  List<Asset> _assets = const [];
+  Map<String, String> _thumbs = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final neighbours = await widget.client.similarAssets(widget.assetId);
+      Map<String, String> thumbs = const {};
+      if (neighbours.isNotEmpty) {
+        thumbs = await widget.client
+            .assetUrls(neighbours.map((a) => a.id).toList(), variant: "thumb");
+      }
+      if (!mounted) return;
+      setState(() {
+        _assets = neighbours;
+        _thumbs = thumbs;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 16),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_assets.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        Text(
+          "More like this",
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.outline,
+              ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 72,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _assets.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (_, i) {
+              final a = _assets[i];
+              final url = _thumbs[a.id];
+              return GestureDetector(
+                onTap: () => widget.onTap(a),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    width: 72,
+                    height: 72,
+                    child: url == null
+                        ? Container(color: Theme.of(context).colorScheme.surfaceContainerHighest)
+                        : CachedNetworkImage(
+                            imageUrl: url,
+                            fit: BoxFit.cover,
+                            memCacheWidth: 200,
+                            placeholder: (_, __) => Container(
+                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                            ),
+                            errorWidget: (_, __, ___) => Container(
+                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                            ),
+                          ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

@@ -308,6 +308,15 @@ class FontoClient {
         .toList();
   }
 
+  /// "More like this" — CLIP visual neighbours via the asset's own embedding
+  /// (GET /api/v1/assets/:id/similar). Server falls back to same-classification
+  /// when the asset has no embedding yet; empty list when nothing matches.
+  Future<List<Asset>> similarAssets(String id) async {
+    final j = await _getJson("/api/v1/assets/$id/similar");
+    final raw = (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(Asset.fromJson).toList();
+  }
+
   /// Stacks (near-duplicate groups). Full list; no pagination.
   Future<List<AssetStack>> listStacks() async {
     final j = await _getJson("/api/v1/stacks");
