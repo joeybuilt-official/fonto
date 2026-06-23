@@ -17,6 +17,7 @@ import "package:image_picker/image_picker.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../services/zip_export.dart";
 import "../state/auth_store.dart";
 import "../state/asset_cache.dart";
 import "../state/offline_cache.dart";
@@ -63,6 +64,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final List<Asset> _assets = [];
   final Map<String, String> _thumbs = {};
   AssetCursor? _cursor;
+  // M8 — multi-select export. Long-press a tile to enter selection.
+  bool _selecting = false;
+  final Set<String> _selected = {};
   // Offline mode — the grid is being served from the on-device cache because
   // the network is unreachable. Drives the offline banner + cache pagination.
   bool _offline = false;
@@ -1039,6 +1043,55 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  // M8 — multi-select helpers.
+  void _toggleSelect(String id) {
+    setState(() {
+      if (_selected.remove(id)) {
+        if (_selected.isEmpty) _selecting = false;
+      } else {
+        _selected.add(id);
+      }
+    });
+  }
+
+  void _enterSelect(String id) {
+    setState(() {
+      _selecting = true;
+      _selected.add(id);
+    });
+  }
+
+  void _exitSelect() {
+    setState(() {
+      _selecting = false;
+      _selected.clear();
+    });
+  }
+
+  PreferredSizeWidget _selectionAppBar() {
+    return AppBar(
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        tooltip: "Cancel selection",
+        onPressed: _exitSelect,
+      ),
+      title: Text("${_selected.length} selected"),
+      actions: [
+        IconButton(
+          tooltip: "Export zip",
+          icon: const Icon(Icons.archive_outlined),
+          onPressed: _selected.isEmpty
+              ? null
+              : () => exportAndShareZip(
+                    context,
+                    _client,
+                    ids: _selected.toList(),
+                  ),
+        ),
+      ],
+    );
+  }
+
   void _selectFolder(String? folder) {
     Navigator.of(context).pop(); // close drawer
     if (folder == _folder) return;
@@ -1050,7 +1103,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final title = _folder == null ? "Fonto" : _folder!;
     return Scaffold(
-      appBar: AppBar(
+      appBar: _selecting
+          ? _selectionAppBar()
+          : AppBar(
         // Inside a folder, show a back affordance to return to the root view
         // (otherwise the only way back was via the drawer). null leading keeps
         // the default drawer hamburger at the root.
@@ -1429,8 +1484,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         child: _AssetTile(
                           asset: asset,
                           url: _thumbs[asset.id],
-                          onTap: () =>
-                              _openDetail(flatIdxById[asset.id] ?? 0),
+                          selected: _selected.contains(asset.id),
+                          onTap: () {
+                            if (_selecting) {
+                              _toggleSelect(asset.id);
+                              return;
+                            }
+                            _openDetail(flatIdxById[asset.id] ?? 0);
+                          },
+                          onLongPress: () => _enterSelect(asset.id),
                         ),
                       );
                     },
@@ -2244,10 +2306,14 @@ class _AssetTile extends StatelessWidget {
     required this.asset,
     required this.url,
     required this.onTap,
+    this.onLongPress,
+    this.selected = false,
   });
   final Asset asset;
   final String? url;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final bool selected;
 
   bool get _isImage => asset.mimeType.startsWith("image/");
   bool get _isVideo => asset.mimeType.startsWith("video/");
@@ -2305,6 +2371,7 @@ class _AssetTile extends StatelessWidget {
 
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -2324,6 +2391,13 @@ class _AssetTile extends StatelessWidget {
               right: 4,
               bottom: 4,
               child: _ProcessingBadge(),
+            ),
+          if (selected)
+            Container(
+              color: Colors.black.withValues(alpha: 0.4),
+              alignment: Alignment.topRight,
+              padding: const EdgeInsets.all(4),
+              child: const Icon(Icons.check_circle, color: Colors.white),
             ),
         ],
       ),

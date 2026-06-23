@@ -7,7 +7,8 @@ import { useRouter } from "next/navigation";
 import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
   Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star, Layers, MessageCircle,
-  ScanSearch, EyeOff, RotateCcw, RotateCw, FlipVertical, Crop as CropIcon, CornerUpLeft
+  ScanSearch, EyeOff, RotateCcw, RotateCw, FlipVertical, Crop as CropIcon, CornerUpLeft,
+  Play, Pause
 } from "lucide-react";
 import ReactCrop, {
   centerCrop,
@@ -41,6 +42,9 @@ interface LightboxToast {
   kind: "success" | "error";
   message: string;
 }
+
+// M8 — slideshow dwell per slide.
+const SLIDESHOW_MS = 4000;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -563,6 +567,9 @@ export function PhotoLightbox({
   const [textContent, setTextContent] = useState<string | null>(null);
   const [textLoading, setTextLoading] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
+  // M8 — slideshow auto-advance. When on, advance to the next asset every
+  // SLIDESHOW_MS; stops automatically at the end of the list.
+  const [slideshow, setSlideshow] = useState(false);
   // Phase 7a — comments side-drawer toggle. Coexists with the info panel
   // so both can be open simultaneously on wide viewports; keyboard 'c'
   // shortcut wired below for parity with 'i' (info).
@@ -881,6 +888,18 @@ export function PhotoLightbox({
     [mutateAsset, rating]
   );
 
+  // M8 — slideshow timer. Re-armed on every asset change (full dwell per
+  // slide) and torn down when paused or at the end of the list.
+  useEffect(() => {
+    if (!slideshow) return;
+    if (!hasNext) {
+      setSlideshow(false);
+      return;
+    }
+    const t = setTimeout(() => onNext(), SLIDESHOW_MS);
+    return () => clearTimeout(t);
+  }, [slideshow, hasNext, onNext, asset.id]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // Phase 3.4 — never swallow keystrokes when the user is typing into a
@@ -911,6 +930,12 @@ export function PhotoLightbox({
       }
       if (e.key === "i") {
         setShowPanel((v) => !v);
+        return;
+      }
+      // M8 — spacebar toggles the slideshow.
+      if (e.key === " ") {
+        e.preventDefault();
+        setSlideshow((v) => !v);
         return;
       }
       if (e.key === "c") {
@@ -1354,6 +1379,19 @@ export function PhotoLightbox({
         {!asset.sharedFrom && asset.workspaceId && (
           <AssetWorkspaceShare assetId={asset.id} sourceWorkspaceId={asset.workspaceId} />
         )}
+        {/* M8 — slideshow play/pause. Disabled at the end of the list. */}
+        <button
+          onClick={() => setSlideshow((v) => !v)}
+          disabled={!slideshow && !hasNext}
+          className={`rounded-full p-1.5 transition-colors shrink-0 disabled:opacity-40 ${
+            slideshow ? "text-white bg-white/15" : "text-white/70 hover:text-white hover:bg-white/10"
+          }`}
+          title={slideshow ? "Pause slideshow (space)" : "Play slideshow (space)"}
+          aria-label={slideshow ? "Pause slideshow" : "Play slideshow"}
+          aria-pressed={slideshow}
+        >
+          {slideshow ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+        </button>
         <button
           onClick={() => setShowComments((v) => !v)}
           className={`rounded-full p-1.5 transition-colors shrink-0 ${

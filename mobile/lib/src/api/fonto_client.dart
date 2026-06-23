@@ -9,6 +9,7 @@ import "dart:convert";
 import "dart:io";
 import "package:http/http.dart" as http;
 import "package:path/path.dart" as p;
+import "package:path_provider/path_provider.dart";
 
 import "../state/auth_store.dart";
 import "models.dart";
@@ -676,6 +677,30 @@ class FontoClient {
 
   /// POST /shares — mints a public share link for one asset. Returns
   /// the full URL ready for OS share-intent.
+  /// M8 — bulk zip export (ADR 0011). Streams the server-built zip straight
+  /// to a temp file (bounded memory) and returns it for sharing/saving. Pass
+  /// either [ids] (multi-select) or [collectionId] (whole collection).
+  Future<File> downloadExportZip({
+    List<String>? ids,
+    String? collectionId,
+  }) async {
+    final req = http.Request("POST", _uri("/api/v1/assets/export/zip"));
+    req.headers.addAll({..._headers, "Content-Type": "application/json"});
+    req.body = json.encode({
+      if (ids != null) "ids": ids,
+      if (collectionId != null) "collectionId": collectionId,
+    });
+    final res = await _http.send(req);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(await res.stream.bytesToString()));
+    }
+    final dir = await getTemporaryDirectory();
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final file = File(p.join(dir.path, "fonto-export-$ts.zip"));
+    await res.stream.pipe(file.openWrite());
+    return file;
+  }
+
   Future<String> createAssetShare(String id) async {
     final j = await _postJson("/api/v1/shares", {
       "targetType": "asset",

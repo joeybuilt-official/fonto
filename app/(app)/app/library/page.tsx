@@ -30,6 +30,7 @@ import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
 import { VirtualizedTimeline, type TimelineMonth } from "../_components/virtualized-timeline";
 import { useToolbarState, type Lifecycle } from "@/lib/hooks/use-toolbar-state";
+import { downloadAssetsZip } from "@/lib/download-zip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ProcessingNotice } from "../_components/processing-notice";
 import { ScopeSelector } from "../shoots/_components/scope-selector";
@@ -424,25 +425,10 @@ function LibraryContent() {
     [toolbar]
   );
 
-  const handleBatchDownload = useCallback(async () => {
-    const ids = Array.from(toolbar.selectedIds);
-    const r = await fetch("/api/v1/assets/urls", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids, variant: "original" }),
-    });
-    const d = (await r.json()) as { urls?: Record<string, string> };
-    for (const id of ids) {
-      const url = d.urls?.[id];
-      if (!url) continue;
-      const asset = assets.find((a) => a.id === id);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = asset?.filename ?? id;
-      a.click();
-      await new Promise((res) => setTimeout(res, 200));
-    }
-  }, [assets, toolbar.selectedIds]);
+  const handleBatchDownload = useCallback(() => {
+    // M8 — one streamed zip instead of N separate browser downloads.
+    downloadAssetsZip(Array.from(toolbar.selectedIds));
+  }, [toolbar.selectedIds]);
 
   const handleBatchTrash = useCallback(async () => {
     const ids = Array.from(toolbar.selectedIds);

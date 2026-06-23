@@ -7,11 +7,12 @@ import { use } from "react";
 import Link from "next/link";
 import {
   ChevronLeft, FolderOpen, Plus, X, Image as ImageIcon,
-  Loader2, Check
+  Loader2, Check, Download
 } from "lucide-react";
 import { PhotoCard, type Asset } from "../../_components/photo-card";
 import { PhotoLightbox } from "../../_components/photo-lightbox";
 import { ListErrorState } from "../../_components/list-states";
+import { downloadCollectionZip } from "@/lib/download-zip";
 
 interface CollectionDetail {
   id: string;
@@ -325,13 +326,25 @@ export default function CollectionDetailPage({
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          Add Photos
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {assets.length > 0 && (
+            <button
+              onClick={() => downloadCollectionZip(collectionId)}
+              className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+              title="Download all as zip"
+            >
+              <Download className="h-4 w-4" />
+              Download zip
+            </button>
+          )}
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            Add Photos
+          </button>
+        </div>
       </div>
 
       {/* Grid */}

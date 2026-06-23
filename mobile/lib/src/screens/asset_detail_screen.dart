@@ -6,6 +6,7 @@
 // favorite toggle, trash, native share. Preview-variant URLs fetched
 // lazily as the user scrolls — keeps the initial route push cheap.
 
+import "dart:async" show Timer;
 import "dart:math" show min, max;
 import "dart:typed_data" show Uint8List;
 import "dart:ui" as ui show instantiateImageCodec;
@@ -63,6 +64,11 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   // bool across page swipes — taps consistently flip the same flag.
   final Map<String, List<AssetFace>?> _facesByAsset = {};
   bool _showFaceLabels = false;
+  // M8 — slideshow auto-advance. Advances one page every SLIDESHOW dwell;
+  // stops automatically at the last asset.
+  static const Duration _slideshowDwell = Duration(seconds: 4);
+  bool _slideshow = false;
+  Timer? _slideTimer;
 
   static bool _isText(Asset a) => a.mimeType.startsWith("text/");
   static bool _isVideo(Asset a) => a.mimeType.startsWith("video/");
@@ -79,8 +85,35 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
 
   @override
   void dispose() {
+    _slideTimer?.cancel();
     _page.dispose();
     super.dispose();
+  }
+
+  // M8 — slideshow controls.
+  void _toggleSlideshow() {
+    if (_slideshow) {
+      _stopSlideshow();
+      return;
+    }
+    if (_index >= _assets.length - 1) return;
+    setState(() => _slideshow = true);
+    _slideTimer = Timer.periodic(_slideshowDwell, (_) {
+      if (_index >= _assets.length - 1) {
+        _stopSlideshow();
+        return;
+      }
+      _page.nextPage(
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeInOut,
+      );
+    });
+  }
+
+  void _stopSlideshow() {
+    _slideTimer?.cancel();
+    _slideTimer = null;
+    if (mounted) setState(() => _slideshow = false);
   }
 
   /// Fetch preview URLs for a window of ±3 around `i` in one batch.
@@ -606,6 +639,16 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
                   ),
                 ),
               ],
+            ),
+          if (_assets.length > 1)
+            IconButton(
+              tooltip: _slideshow ? "Pause slideshow" : "Play slideshow",
+              icon: Icon(
+                _slideshow
+                    ? Icons.pause_circle_outline
+                    : Icons.play_circle_outline,
+              ),
+              onPressed: _toggleSlideshow,
             ),
           IconButton(
             tooltip: "Info",

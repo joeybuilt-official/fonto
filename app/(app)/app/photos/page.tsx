@@ -11,6 +11,7 @@ import { AssetGrid } from "../_components/asset-grid";
 import { ListErrorState } from "../_components/list-states";
 import { AssetAskPanel } from "../_components/asset-ask-panel";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
+import { downloadAssetsZip } from "@/lib/download-zip";
 import { Button } from "@/components/ui/button";
 
 interface Collection {
@@ -232,26 +233,9 @@ function PhotosContent() {
     toolbar.clearSelection();
   }
 
-  async function handleBatchDownload() {
-    // Batch-resolve URLs in one call rather than the previous N round-trips.
-    const ids = Array.from(toolbar.selectedIds);
-    const r = await fetch("/api/v1/assets/urls", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids, variant: "original" }),
-    });
-    const d = (await r.json()) as { urls?: Record<string, string> };
-    for (const id of ids) {
-      const url = d.urls?.[id];
-      if (!url) continue;
-      const asset = photos.find((p) => p.id === id);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = asset?.filename ?? id;
-      a.click();
-      // Small delay to avoid browser blocking sequential downloads.
-      await new Promise((res) => setTimeout(res, 200));
-    }
+  function handleBatchDownload() {
+    // M8 — one streamed zip instead of N separate browser downloads.
+    downloadAssetsZip(Array.from(toolbar.selectedIds));
   }
 
   async function handleBatchTrash() {

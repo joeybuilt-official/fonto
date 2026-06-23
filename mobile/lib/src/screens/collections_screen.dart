@@ -18,6 +18,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../services/zip_export.dart";
 import "../state/collection_cache.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
@@ -670,11 +671,38 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
   String? _error;
   List<Asset> _assets = const [];
   final Map<String, String> _thumbs = {};
+  // M8 — multi-select export.
+  bool _selecting = false;
+  final Set<String> _selected = {};
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  void _toggleSelect(String id) {
+    setState(() {
+      if (_selected.remove(id)) {
+        if (_selected.isEmpty) _selecting = false;
+      } else {
+        _selected.add(id);
+      }
+    });
+  }
+
+  void _enterSelect(String id) {
+    setState(() {
+      _selecting = true;
+      _selected.add(id);
+    });
+  }
+
+  void _exitSelect() {
+    setState(() {
+      _selecting = false;
+      _selected.clear();
+    });
   }
 
   Future<void> _load() async {
@@ -713,7 +741,43 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.collection.name)),
+      appBar: _selecting
+          ? AppBar(
+              leading: IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: "Cancel selection",
+                onPressed: _exitSelect,
+              ),
+              title: Text("${_selected.length} selected"),
+              actions: [
+                IconButton(
+                  tooltip: "Export zip",
+                  icon: const Icon(Icons.archive_outlined),
+                  onPressed: _selected.isEmpty
+                      ? null
+                      : () => exportAndShareZip(
+                            context,
+                            widget.client,
+                            ids: _selected.toList(),
+                          ),
+                ),
+              ],
+            )
+          : AppBar(
+              title: Text(widget.collection.name),
+              actions: [
+                if (_assets.isNotEmpty)
+                  IconButton(
+                    tooltip: "Download zip",
+                    icon: const Icon(Icons.download_outlined),
+                    onPressed: () => exportAndShareZip(
+                      context,
+                      widget.client,
+                      collectionId: widget.collection.id,
+                    ),
+                  ),
+              ],
+            ),
       body: _stateScaffold(
         loading: _loading,
         error: _error,
@@ -730,28 +794,52 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
           itemBuilder: (context, i) {
             final placeholderColor =
                 Theme.of(context).colorScheme.surfaceContainerHighest;
+            final id = _assets[i].id;
+            final selected = _selected.contains(id);
             return GestureDetector(
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => AssetDetailScreen(
-                    client: widget.client,
-                    assets: _assets,
-                    initialIndex: i,
+              onTap: () {
+                if (_selecting) {
+                  _toggleSelect(id);
+                  return;
+                }
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => AssetDetailScreen(
+                      client: widget.client,
+                      assets: _assets,
+                      initialIndex: i,
+                    ),
                   ),
-                ),
-              ),
-              child: _thumbs[_assets[i].id] == null
-                  ? Container(color: placeholderColor)
-                  : CachedNetworkImage(
-                      imageUrl: _thumbs[_assets[i].id]!,
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) =>
-                          Container(color: placeholderColor),
-                      errorWidget: (_, __, ___) => ColoredBox(
-                        color: placeholderColor,
-                        child: const Icon(Icons.broken_image),
+                );
+              },
+              onLongPress: () => _enterSelect(id),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _thumbs[id] == null
+                      ? Container(color: placeholderColor)
+                      : CachedNetworkImage(
+                          imageUrl: _thumbs[id]!,
+                          fit: BoxFit.cover,
+                          placeholder: (_, __) =>
+                              Container(color: placeholderColor),
+                          errorWidget: (_, __, ___) => ColoredBox(
+                            color: placeholderColor,
+                            child: const Icon(Icons.broken_image),
+                          ),
+                        ),
+                  if (selected)
+                    Container(
+                      color: Colors.black.withValues(alpha: 0.4),
+                      alignment: Alignment.topRight,
+                      padding: const EdgeInsets.all(4),
+                      child: const Icon(
+                        Icons.check_circle,
+                        color: Colors.white,
                       ),
                     ),
+                ],
+              ),
             );
           },
         ),
