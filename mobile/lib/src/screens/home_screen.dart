@@ -28,6 +28,7 @@ import "../state/upload_queue.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 import "files_surface.dart";
+import "memories_screen.dart";
 import "settings_screen.dart";
 import "transfers_screen.dart";
 import "../state/camera_roll_scanner.dart";
@@ -1371,6 +1372,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           if (_folder == null && _isPhotos) ..._deviceSlivers(),
           if (_stats != null && _folder == null)
             SliverToBoxAdapter(child: _StatsBar(stats: _stats!)),
+          // "On this day" recap — parity with the web dashboard MemoryCard.
+          // Self-fetches; renders nothing when there's no prior-year history.
+          // Root unfiltered Photos view only, same as the device-recents strip.
+          if (_folder == null && _isPhotos)
+            SliverToBoxAdapter(child: _MemoriesStrip(client: _client)),
           if (_assets.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
@@ -2554,6 +2560,167 @@ class _AppDrawer extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// "On this day" home recap — horizontal strip of one thumbnail per prior year
+/// matching today. Mirrors the web dashboard MemoryCard: self-fetches, renders
+/// nothing when there's no history, and opens the full Memories view on tap.
+class _MemoriesStrip extends StatefulWidget {
+  const _MemoriesStrip({required this.client});
+
+  final FontoClient client;
+
+  @override
+  State<_MemoriesStrip> createState() => _MemoriesStripState();
+}
+
+class _MemoriesStripState extends State<_MemoriesStrip> {
+  List<MemoryYear> _years = const [];
+  Map<String, String> _thumbs = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final years = await widget.client.memories();
+      // One cover thumb per year (first asset).
+      final coverIds = <String>[
+        for (final y in years)
+          if (y.assets.isNotEmpty) y.assets.first.id,
+      ];
+      Map<String, String> thumbs = const {};
+      if (coverIds.isNotEmpty) {
+        thumbs = await widget.client.assetUrls(coverIds, variant: "thumb");
+      }
+      if (!mounted) return;
+      setState(() {
+        _years = years;
+        _thumbs = thumbs;
+      });
+    } catch (_) {
+      // Silent — the strip just stays hidden on failure.
+    }
+  }
+
+  void _openMemories() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MemoriesScreen(client: widget.client),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_years.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome, size: 18, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
+              Text("On this day", style: theme.textTheme.titleSmall),
+              const Spacer(),
+              TextButton(
+                onPressed: _openMemories,
+                child: const Text("View all"),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 116,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _years.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (_, i) {
+                final y = _years[i];
+                final cover = y.assets.isEmpty ? null : _thumbs[y.assets.first.id];
+                final diff = DateTime.now().year - y.year;
+                final label = diff == 1 ? "1y ago" : "${diff}y ago";
+                return GestureDetector(
+                  onTap: _openMemories,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      width: 112,
+                      height: 116,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          if (cover != null)
+                            CachedNetworkImage(
+                              imageUrl: cover,
+                              fit: BoxFit.cover,
+                              memCacheWidth: 240,
+                              placeholder: (ctx, _) => imageSkeleton(ctx),
+                              errorWidget: (ctx, _, __) => ColoredBox(
+                                color: theme.colorScheme.surfaceContainerHighest,
+                              ),
+                            )
+                          else
+                            ColoredBox(
+                              color: theme.colorScheme.surfaceContainerHighest,
+                              child: const Icon(Icons.image_outlined),
+                            ),
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 6),
+                              decoration: const BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.bottomCenter,
+                                  end: Alignment.topCenter,
+                                  colors: [Colors.black87, Colors.transparent],
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    label,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  Text(
+                                    "${y.count} ${y.count == 1 ? 'photo' : 'photos'}",
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

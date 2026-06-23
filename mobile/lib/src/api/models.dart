@@ -108,6 +108,25 @@ class Asset {
       );
 }
 
+/// One prior-year bucket of "On this day" memories. `count` is the pre-cap
+/// total for the year; `assets` is capped server-side (MEMORIES_MAX_PER_YEAR).
+class MemoryYear {
+  MemoryYear({required this.year, required this.count, required this.assets});
+
+  final int year;
+  final int count;
+  final List<Asset> assets;
+
+  static MemoryYear fromJson(Map<String, dynamic> j) => MemoryYear(
+        year: (j["year"] as num).toInt(),
+        count: (j["count"] as num).toInt(),
+        assets: (j["assets"] as List? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(Asset.fromJson)
+            .toList(),
+      );
+}
+
 /// A label/tag with its active-asset count and a sample asset for a
 /// thumbnail — backs the Explore → Things grid.
 class TopTag {

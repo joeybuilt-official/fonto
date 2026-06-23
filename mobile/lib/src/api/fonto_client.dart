@@ -324,6 +324,18 @@ class FontoClient {
         .toList();
   }
 
+  /// Memories ("On this day") — prior-year assets captured on the same calendar
+  /// day (±window) as [date] (defaults to today server-side), newest year
+  /// first. Mirrors the web /app/memories grouped view. Empty when no history.
+  Future<List<MemoryYear>> memories({String? date}) async {
+    final j = await _getJson(
+      "/api/v1/memories",
+      date == null ? const {} : {"date": date},
+    );
+    final raw = (j["years"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(MemoryYear.fromJson).toList();
+  }
+
   /// "More like this" — CLIP visual neighbours via the asset's own embedding
   /// (GET /api/v1/assets/:id/similar). Server falls back to same-classification
   /// when the asset has no embedding yet; empty list when nothing matches.
