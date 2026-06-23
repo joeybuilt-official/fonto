@@ -94,13 +94,24 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _tagName;
   DateTime? _from;
   DateTime? _to;
+  // EXIF facets — mirror the web search FilterPopover "Camera" section.
+  String? _cameraMake;
+  String? _cameraModel;
+  String? _lensModel;
+  String? _iso;
+  String? _fNumber;
+  String? _focalLength;
+
+  List<String?> get _exifValues =>
+      [_cameraMake, _cameraModel, _lensModel, _iso, _fNumber, _focalLength];
 
   bool get _hasFilters =>
       _classification != null ||
       _color != null ||
       _tagId != null ||
       _from != null ||
-      _to != null;
+      _to != null ||
+      _exifValues.any((v) => v != null);
 
   int get _filterCount => [
         _classification,
@@ -108,6 +119,7 @@ class _SearchScreenState extends State<SearchScreen> {
         _tagId,
         _from,
         _to,
+        ..._exifValues,
       ].where((v) => v != null).length;
 
   @override
@@ -137,8 +149,12 @@ class _SearchScreenState extends State<SearchScreen> {
     try {
       // Fire CLIP alongside text search for "natural" queries, but skip it when
       // structured filters narrow the view (mirrors the web's !tid && !cl && !col).
-      final runClip =
-          q.isNotEmpty && _looksSemantic(q) && _tagId == null && _classification == null && _color == null;
+      final runClip = q.isNotEmpty &&
+          _looksSemantic(q) &&
+          _tagId == null &&
+          _classification == null &&
+          _color == null &&
+          _exifValues.every((v) => v == null);
       final clipFuture =
           runClip ? widget.client.searchClip(q) : Future.value(<Asset>[]);
 
@@ -149,6 +165,12 @@ class _SearchScreenState extends State<SearchScreen> {
         color: _color,
         dateFrom: _from == null ? null : _fmtDate(_from!),
         dateTo: _to == null ? null : _fmtDate(_to!),
+        cameraMake: _cameraMake,
+        cameraModel: _cameraModel,
+        lensModel: _lensModel,
+        iso: _iso,
+        fNumber: _fNumber,
+        focalLength: _focalLength,
         semantic: _semantic,
         ocrOnly: _ocrOnly,
       );
@@ -212,6 +234,12 @@ class _SearchScreenState extends State<SearchScreen> {
         tagName: _tagName,
         from: _from,
         to: _to,
+        cameraMake: _cameraMake,
+        cameraModel: _cameraModel,
+        lensModel: _lensModel,
+        iso: _iso,
+        fNumber: _fNumber,
+        focalLength: _focalLength,
         onApply: (s) {
           setState(() {
             _classification = s.classification;
@@ -220,6 +248,12 @@ class _SearchScreenState extends State<SearchScreen> {
             _tagName = s.tagName;
             _from = s.from;
             _to = s.to;
+            _cameraMake = s.cameraMake;
+            _cameraModel = s.cameraModel;
+            _lensModel = s.lensModel;
+            _iso = s.iso;
+            _fNumber = s.fNumber;
+            _focalLength = s.focalLength;
           });
           _run();
         },
@@ -309,6 +343,12 @@ class _SearchScreenState extends State<SearchScreen> {
                     _tagName = null;
                     _from = null;
                     _to = null;
+                    _cameraMake = null;
+                    _cameraModel = null;
+                    _lensModel = null;
+                    _iso = null;
+                    _fNumber = null;
+                    _focalLength = null;
                   });
                   _run();
                 },
@@ -449,6 +489,12 @@ class _FilterValues {
     this.tagName,
     this.from,
     this.to,
+    this.cameraMake,
+    this.cameraModel,
+    this.lensModel,
+    this.iso,
+    this.fNumber,
+    this.focalLength,
   });
   final String? classification;
   final String? color;
@@ -456,6 +502,12 @@ class _FilterValues {
   final String? tagName;
   final DateTime? from;
   final DateTime? to;
+  final String? cameraMake;
+  final String? cameraModel;
+  final String? lensModel;
+  final String? iso;
+  final String? fNumber;
+  final String? focalLength;
 }
 
 class _FilterSheet extends StatefulWidget {
@@ -468,6 +520,12 @@ class _FilterSheet extends StatefulWidget {
     this.tagName,
     this.from,
     this.to,
+    this.cameraMake,
+    this.cameraModel,
+    this.lensModel,
+    this.iso,
+    this.fNumber,
+    this.focalLength,
   });
 
   final FontoClient client;
@@ -478,6 +536,12 @@ class _FilterSheet extends StatefulWidget {
   final String? tagName;
   final DateTime? from;
   final DateTime? to;
+  final String? cameraMake;
+  final String? cameraModel;
+  final String? lensModel;
+  final String? iso;
+  final String? fNumber;
+  final String? focalLength;
 
   @override
   State<_FilterSheet> createState() => _FilterSheetState();
@@ -491,6 +555,12 @@ class _FilterSheetState extends State<_FilterSheet> {
   DateTime? _from;
   DateTime? _to;
   List<TopTag> _tags = const [];
+  late final TextEditingController _cameraMake;
+  late final TextEditingController _cameraModel;
+  late final TextEditingController _lensModel;
+  late final TextEditingController _iso;
+  late final TextEditingController _fNumber;
+  late final TextEditingController _focalLength;
 
   @override
   void initState() {
@@ -501,9 +571,31 @@ class _FilterSheetState extends State<_FilterSheet> {
     _tagName = widget.tagName;
     _from = widget.from;
     _to = widget.to;
+    _cameraMake = TextEditingController(text: widget.cameraMake ?? "");
+    _cameraModel = TextEditingController(text: widget.cameraModel ?? "");
+    _lensModel = TextEditingController(text: widget.lensModel ?? "");
+    _iso = TextEditingController(text: widget.iso ?? "");
+    _fNumber = TextEditingController(text: widget.fNumber ?? "");
+    _focalLength = TextEditingController(text: widget.focalLength ?? "");
     widget.client.topTags(limit: 60).then((t) {
       if (mounted) setState(() => _tags = t);
     }).catchError((_) {});
+  }
+
+  @override
+  void dispose() {
+    _cameraMake.dispose();
+    _cameraModel.dispose();
+    _lensModel.dispose();
+    _iso.dispose();
+    _fNumber.dispose();
+    _focalLength.dispose();
+    super.dispose();
+  }
+
+  String? _nullIfEmpty(TextEditingController c) {
+    final v = c.text.trim();
+    return v.isEmpty ? null : v;
   }
 
   Future<void> _pickDate(bool isFrom) async {
@@ -619,6 +711,77 @@ class _FilterSheetState extends State<_FilterSheet> {
                   );
                 }).toList(),
               ),
+            const SizedBox(height: 16),
+            Text("Camera", style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _cameraMake,
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+                hintText: "Camera make (e.g. Canon)",
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _cameraModel,
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+                hintText: "Camera model",
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _lensModel,
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+                hintText: "Lens model",
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _iso,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      hintText: "ISO",
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _fNumber,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      hintText: "ƒ",
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _focalLength,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      hintText: "mm",
+                    ),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 20),
             Row(
               children: [
@@ -631,6 +794,12 @@ class _FilterSheetState extends State<_FilterSheet> {
                       _tagName = null;
                       _from = null;
                       _to = null;
+                      _cameraMake.clear();
+                      _cameraModel.clear();
+                      _lensModel.clear();
+                      _iso.clear();
+                      _fNumber.clear();
+                      _focalLength.clear();
                     });
                   },
                   child: const Text("Reset"),
@@ -645,6 +814,12 @@ class _FilterSheetState extends State<_FilterSheet> {
                       tagName: _tagName,
                       from: _from,
                       to: _to,
+                      cameraMake: _nullIfEmpty(_cameraMake),
+                      cameraModel: _nullIfEmpty(_cameraModel),
+                      lensModel: _nullIfEmpty(_lensModel),
+                      iso: _nullIfEmpty(_iso),
+                      fNumber: _nullIfEmpty(_fNumber),
+                      focalLength: _nullIfEmpty(_focalLength),
                     ));
                     Navigator.of(context).pop();
                   },

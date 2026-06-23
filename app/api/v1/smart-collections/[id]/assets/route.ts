@@ -120,6 +120,41 @@ function buildCondition(c: Condition): SQL | null {
       return ilike(schema.assets.description, `%${value}%`);
     case "extractedText":
       return ilike(schema.assets.extractedText, `%${value}%`);
+    // EXIF facets — free-text camera/lens vendor strings match case-insensitive
+    // contains; numeric iso/aperture/focal support eq + range (gte/lte).
+    case "cameraMake":
+      return op === "eq"
+        ? eq(schema.assets.cameraMake, value)
+        : ilike(schema.assets.cameraMake, `%${value}%`);
+    case "cameraModel":
+      return op === "eq"
+        ? eq(schema.assets.cameraModel, value)
+        : ilike(schema.assets.cameraModel, `%${value}%`);
+    case "lensModel":
+      return op === "eq"
+        ? eq(schema.assets.lensModel, value)
+        : ilike(schema.assets.lensModel, `%${value}%`);
+    case "iso": {
+      const n = Number.parseInt(value, 10);
+      if (!Number.isInteger(n)) return null;
+      if (op === "gte") return gte(schema.assets.iso, n);
+      if (op === "lte") return lte(schema.assets.iso, n);
+      return eq(schema.assets.iso, n);
+    }
+    case "fNumber": {
+      const n = Number.parseFloat(value);
+      if (!Number.isFinite(n)) return null;
+      if (op === "gte") return gte(schema.assets.fNumber, n);
+      if (op === "lte") return lte(schema.assets.fNumber, n);
+      return eq(schema.assets.fNumber, n);
+    }
+    case "focalLength": {
+      const n = Number.parseFloat(value);
+      if (!Number.isFinite(n)) return null;
+      if (op === "gte") return gte(schema.assets.focalLength, n);
+      if (op === "lte") return lte(schema.assets.focalLength, n);
+      return eq(schema.assets.focalLength, n);
+    }
     default:
       return null;
   }

@@ -63,6 +63,7 @@ void main() {
     expect(find.text("Color"), findsOneWidget);
     expect(find.text("Date range"), findsOneWidget);
     expect(find.text("Tag"), findsOneWidget);
+    expect(find.text("Camera"), findsOneWidget);
     expect(find.widgetWithText(FilledButton, "Apply"), findsOneWidget);
     client.close();
   });

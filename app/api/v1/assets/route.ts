@@ -14,6 +14,7 @@ import { detectMime } from "@/lib/mime";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 import { parseScopeParam, scopeCond, isShootStage } from "@/lib/scope";
+import { exifFilterConditions } from "@/lib/assets/exifFilters";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -211,6 +212,9 @@ export async function GET(request: NextRequest) {
   if (placeParam != null && placeParam.trim() !== "") {
     where.push(eq(schema.assets.placeName, placeParam.trim()));
   }
+  // EXIF facet filters (camera/lens/iso/aperture/focal) — shared parser so the
+  // library grid, smart collections and q-search stay in lockstep.
+  where.push(...exifFilterConditions(searchParams));
   if (directoryPath != null) {
     if (directoryPath === "" || directoryPath === "/") {
       where.push(isNull(schema.assets.directoryPath));

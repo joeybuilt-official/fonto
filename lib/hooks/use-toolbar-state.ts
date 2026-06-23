@@ -58,6 +58,16 @@ export interface FilterState {
   // path. Pair with `directoryPathPrefix` for recursive scope.
   directoryPath: string | null;
   directoryPathPrefix: string | null;
+  // EXIF facets. Free-text camera/lens (contains-match server-side); iso /
+  // fNumber / focalLength carried as strings, parsed + exact-matched by the
+  // shared exifFilterConditions() helper. Surfaced only where a page lists
+  // them in availableFilters (today: search).
+  cameraMake: string | null;
+  cameraModel: string | null;
+  lensModel: string | null;
+  iso: string | null;
+  fNumber: string | null;
+  focalLength: string | null;
 }
 
 export interface ViewState {
@@ -82,6 +92,12 @@ const DEFAULT_FILTERS: FilterState = {
   lifecycle: "active",
   directoryPath: null,
   directoryPathPrefix: null,
+  cameraMake: null,
+  cameraModel: null,
+  lensModel: null,
+  iso: null,
+  fNumber: null,
+  focalLength: null,
 };
 
 const DEFAULT_VIEW: ViewState = {
@@ -122,6 +138,12 @@ function readFilters(sp: URLSearchParams): FilterState {
     lifecycle,
     directoryPath: sp.get("path"),
     directoryPathPrefix: sp.get("pathPrefix"),
+    cameraMake: sp.get("cameraMake"),
+    cameraModel: sp.get("cameraModel"),
+    lensModel: sp.get("lensModel"),
+    iso: sp.get("iso"),
+    fNumber: sp.get("fNumber"),
+    focalLength: sp.get("focalLength"),
   };
 }
 
@@ -147,6 +169,12 @@ function writeFilters(base: URLSearchParams, f: FilterState): URLSearchParams {
   setOrDel("lc", f.lifecycle === "active" ? null : f.lifecycle);
   setOrDel("path", f.directoryPath);
   setOrDel("pathPrefix", f.directoryPathPrefix);
+  setOrDel("cameraMake", f.cameraMake);
+  setOrDel("cameraModel", f.cameraModel);
+  setOrDel("lensModel", f.lensModel);
+  setOrDel("iso", f.iso);
+  setOrDel("fNumber", f.fNumber);
+  setOrDel("focalLength", f.focalLength);
   return sp;
 }
 

@@ -214,6 +214,12 @@ class FontoClient {
     String? dateFrom,
     String? dateTo,
     String? color,
+    String? cameraMake,
+    String? cameraModel,
+    String? lensModel,
+    String? iso,
+    String? fNumber,
+    String? focalLength,
     bool semantic = false,
     bool ocrOnly = false,
   }) async {
@@ -226,6 +232,16 @@ class FontoClient {
     if (dateFrom != null && dateFrom.isNotEmpty) query["dateFrom"] = dateFrom;
     if (dateTo != null && dateTo.isNotEmpty) query["dateTo"] = dateTo;
     if (color != null && color.isNotEmpty) query["color"] = color;
+    if (cameraMake != null && cameraMake.isNotEmpty) query["cameraMake"] = cameraMake;
+    if (cameraModel != null && cameraModel.isNotEmpty) {
+      query["cameraModel"] = cameraModel;
+    }
+    if (lensModel != null && lensModel.isNotEmpty) query["lensModel"] = lensModel;
+    if (iso != null && iso.isNotEmpty) query["iso"] = iso;
+    if (fNumber != null && fNumber.isNotEmpty) query["fNumber"] = fNumber;
+    if (focalLength != null && focalLength.isNotEmpty) {
+      query["focalLength"] = focalLength;
+    }
     if (semantic) query["semantic"] = "true";
     if (ocrOnly) query["ocrOnly"] = "true";
     final j = await _getJson("/api/v1/search", query);

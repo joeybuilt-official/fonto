@@ -121,6 +121,13 @@ export function FilterPopover({
   const showPerson = available.includes("personIds");
   const showFolder = available.includes("directoryPathPrefix");
   const showLifecycle = available.includes("lifecycle");
+  const showExif =
+    available.includes("cameraMake") ||
+    available.includes("cameraModel") ||
+    available.includes("lensModel") ||
+    available.includes("iso") ||
+    available.includes("fNumber") ||
+    available.includes("focalLength");
 
   const [tags, setTags] = useState<Tag[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -287,6 +294,48 @@ export function FilterPopover({
                   />
                 );
               })}
+            </div>
+          </Section>
+        )}
+
+        {showExif && (
+          <Section label="Camera">
+            <div className="flex flex-col gap-1.5">
+              <ExifInput
+                placeholder="Camera make (e.g. Canon)"
+                value={state.cameraMake ?? ""}
+                onChange={(v) => onChange({ cameraMake: v || null })}
+              />
+              <ExifInput
+                placeholder="Camera model"
+                value={state.cameraModel ?? ""}
+                onChange={(v) => onChange({ cameraModel: v || null })}
+              />
+              <ExifInput
+                placeholder="Lens model"
+                value={state.lensModel ?? ""}
+                onChange={(v) => onChange({ lensModel: v || null })}
+              />
+              <div className="flex gap-1.5">
+                <ExifInput
+                  type="number"
+                  placeholder="ISO"
+                  value={state.iso ?? ""}
+                  onChange={(v) => onChange({ iso: v || null })}
+                />
+                <ExifInput
+                  type="number"
+                  placeholder="ƒ"
+                  value={state.fNumber ?? ""}
+                  onChange={(v) => onChange({ fNumber: v || null })}
+                />
+                <ExifInput
+                  type="number"
+                  placeholder="mm"
+                  value={state.focalLength ?? ""}
+                  onChange={(v) => onChange({ focalLength: v || null })}
+                />
+              </div>
             </div>
           </Section>
         )}
@@ -485,6 +534,30 @@ function DateInput({
       onChange={(e) => onChange(e.target.value)}
       aria-label={label}
       className="h-8 flex-1 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-3)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] focus:border-[var(--ft-color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--ft-color-primary)]"
+    />
+  );
+}
+
+function ExifInput({
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  type?: "text" | "number";
+}) {
+  return (
+    <input
+      type={type}
+      inputMode={type === "number" ? "decimal" : undefined}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      aria-label={placeholder}
+      className="h-8 w-full min-w-0 flex-1 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-3)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] placeholder:text-[var(--ft-color-on-surface-variant)] focus:border-[var(--ft-color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--ft-color-primary)]"
     />
   );
 }

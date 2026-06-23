@@ -11,6 +11,7 @@ import { plexoMemorySearch } from "@/lib/plexo";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { deltaE76, parseHex, rgbToLab, type PaletteColor } from "@/lib/perceptual";
 import { parseScopeParam, scopeCond } from "@/lib/scope";
+import { exifFilterConditions, EXIF_FILTER_KEYS } from "@/lib/assets/exifFilters";
 import { getCacheLayer } from "@/lib/cache/valkey";
 
 const COLOR_DELTA_E_THRESHOLD = 30;
@@ -88,6 +89,10 @@ export async function GET(request: NextRequest) {
   const ocrOnly = searchParams.get("ocrOnly") === "true";
   const colorHex = searchParams.get("color")?.trim() ?? "";
   const scopeParam = parseScopeParam(searchParams);
+  // EXIF facet filters (camera/lens/iso/aperture/focal) — shared with the
+  // library + smart-collection query surfaces. Hash the raw values so the
+  // cache key changes when any EXIF filter changes.
+  const exifKey = EXIF_FILTER_KEYS.map((k) => `${k}=${searchParams.get(k) ?? ""}`).join("&");
 
   // Build the cache key from a STABLE digest of every input that affects the
   // result. workspaceIds are sorted before hashing so a user whose membership
@@ -110,6 +115,7 @@ export async function GET(request: NextRequest) {
       ocrOnly,
       colorHex: colorHex.toLowerCase(),
       scope: scopeParam ?? "default",
+      exif: exifKey,
     }),
   );
   const cacheKey = `search:${primaryWorkspaceId}:${queryHash}:${filtersHash}`;
@@ -145,6 +151,7 @@ export async function GET(request: NextRequest) {
   if (dateFrom) conditions.push(gte(schema.assets.createdAt, new Date(dateFrom)));
   if (dateTo) conditions.push(lte(schema.assets.createdAt, new Date(dateTo)));
   if (mimeFilter) conditions.push(sql`${schema.assets.mimeType} LIKE ${mimeFilter + "%"}`);
+  conditions.push(...exifFilterConditions(searchParams));
 
   if (q) {
     if (ocrOnly) {

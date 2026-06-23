@@ -124,7 +124,19 @@ function SearchContent() {
 
   const toolbar = useToolbarState({
     page: "search",
-    availableFilters: ["type", "from", "to", "color", "tagIds"],
+    availableFilters: [
+      "type",
+      "from",
+      "to",
+      "color",
+      "tagIds",
+      "cameraMake",
+      "cameraModel",
+      "lensModel",
+      "iso",
+      "fNumber",
+      "focalLength",
+    ],
   });
 
   const [results, setResults] = useState<Asset[] | null>(null);
@@ -172,8 +184,17 @@ function SearchContent() {
     const dt = toolbar.filters.to ?? "";
     const col = toolbar.filters.color ?? "";
     const tid = toolbar.filters.tagIds[0] ?? "";
+    const exif = {
+      cameraMake: toolbar.filters.cameraMake ?? "",
+      cameraModel: toolbar.filters.cameraModel ?? "",
+      lensModel: toolbar.filters.lensModel ?? "",
+      iso: toolbar.filters.iso ?? "",
+      fNumber: toolbar.filters.fNumber ?? "",
+      focalLength: toolbar.filters.focalLength ?? "",
+    };
+    const hasExif = Object.values(exif).some((v) => v !== "");
 
-    if (!q && !cl && !tid && !df && !dt && !ocrOnly && !col) {
+    if (!q && !cl && !tid && !df && !dt && !ocrOnly && !col && !hasExif) {
       setResults(null);
       setClipHits(null);
       setClipUnavailable(false);
@@ -186,7 +207,7 @@ function SearchContent() {
       // Phase 4.2 — kick off the CLIP search in parallel for "natural"
       // queries. Skipping when other structured filters are active keeps
       // the semantic block out of pure-filter views like "tag=foo".
-      if (q && looksSemantic(q) && !tid && !cl && !col) {
+      if (q && looksSemantic(q) && !tid && !cl && !col && !hasExif) {
         const clipParams = new URLSearchParams({ q, limit: "24" });
         fetch(`/api/v1/search/clip?${clipParams.toString()}`)
           .then((r) => (r.ok ? r.json() : null))
@@ -217,6 +238,9 @@ function SearchContent() {
       if (semantic) params.set("semantic", "true");
       if (ocrOnly) params.set("ocrOnly", "true");
       if (col) params.set("color", col);
+      for (const [k, v] of Object.entries(exif)) {
+        if (v) params.set(k, v);
+      }
 
       const res = await fetch(`/api/v1/search?${params.toString()}`);
       if (!res.ok) throw new Error(`search ${res.status}`);
@@ -236,6 +260,12 @@ function SearchContent() {
     toolbar.filters.to,
     toolbar.filters.color,
     toolbar.filters.tagIds,
+    toolbar.filters.cameraMake,
+    toolbar.filters.cameraModel,
+    toolbar.filters.lensModel,
+    toolbar.filters.iso,
+    toolbar.filters.fNumber,
+    toolbar.filters.focalLength,
     ocrOnly,
     semantic,
   ]);
