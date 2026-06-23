@@ -36,6 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _loading = true;
   bool _autoImport = false;
   bool _wifiOnly = false;
+  bool _chargingOnly = false;
   int _lastImportTs = 0;
   bool _scanning = false;
   bool _reprocessing = false;
@@ -117,29 +118,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final ts = await SettingsStore.getLastImportTs();
     final albums = await SettingsStore.getSelectedAlbumIds();
     final wifiOnly = await SettingsStore.getSyncWifiOnly();
+    final chargingOnly = await SettingsStore.getSyncChargingOnly();
     if (!mounted) return;
     setState(() {
       _autoImport = enabled;
       _lastImportTs = ts;
       _selectedAlbumIds = albums;
       _wifiOnly = wifiOnly;
+      _chargingOnly = chargingOnly;
       _loading = false;
     });
+  }
+
+  /// Re-register the upload-drain backstop with the current network + charging
+  /// constraints. Both sync toggles funnel through here so neither clobbers the
+  /// other's constraint.
+  Future<void> _reRegisterDrain() async {
+    await Workmanager().registerPeriodicTask(
+      kUploadDrainTask,
+      kUploadDrainTask,
+      frequency: const Duration(minutes: 15),
+      constraints: Constraints(
+        networkType: _wifiOnly ? NetworkType.unmetered : NetworkType.connected,
+        requiresCharging: _chargingOnly,
+      ),
+      existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
+    );
+  }
+
+  Future<void> _onChargingOnlyToggle(bool value) async {
+    await SettingsStore.setSyncChargingOnly(value);
+    if (mounted) setState(() => _chargingOnly = value);
+    await _reRegisterDrain();
   }
 
   Future<void> _onWifiOnlyToggle(bool value) async {
     await SettingsStore.setSyncWifiOnly(value);
     if (mounted) setState(() => _wifiOnly = value);
-    // Re-apply the network constraint to the WorkManager backstop tasks so the
-    // setting is honoured in the background too (unmetered vs any connection).
-    final netType = value ? NetworkType.unmetered : NetworkType.connected;
-    await Workmanager().registerPeriodicTask(
-      kUploadDrainTask,
-      kUploadDrainTask,
-      frequency: const Duration(minutes: 15),
-      constraints: Constraints(networkType: netType),
-      existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
-    );
+    // Re-apply both constraints to the WorkManager backstop so the setting is
+    // honoured in the background too (unmetered vs any connection).
+    await _reRegisterDrain();
     if (await SettingsStore.getAutoImport()) {
       await Workmanager().cancelByUniqueName(kCameraRollScanTask);
       await Workmanager().registerPeriodicTask(
@@ -477,6 +495,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   value: _wifiOnly,
                   onChanged: _onWifiOnlyToggle,
+                ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.battery_charging_full),
+                  title: const Text("Sync while charging only"),
+                  subtitle: const Text(
+                    "Pause background uploads and Drive imports unless the "
+                    "device is plugged in.",
+                  ),
+                  value: _chargingOnly,
+                  onChanged: _onChargingOnlyToggle,
                 ),
                 ListTile(
                   leading: const Icon(Icons.cloud_sync_outlined),

@@ -110,12 +110,14 @@ Future<void> main() async {
 /// "Wi-Fi only" setting so the backstop never spends cellular data either.
 Future<void> registerUploadDrain() async {
   final wifiOnly = await SettingsStore.getSyncWifiOnly();
+  final chargingOnly = await SettingsStore.getSyncChargingOnly();
   await Workmanager().registerPeriodicTask(
     kUploadDrainTask,
     kUploadDrainTask,
     frequency: const Duration(minutes: 15),
     constraints: Constraints(
       networkType: wifiOnly ? NetworkType.unmetered : NetworkType.connected,
+      requiresCharging: chargingOnly,
     ),
     existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
   );

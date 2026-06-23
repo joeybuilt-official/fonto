@@ -13,6 +13,7 @@ class SettingsStore {
   static const _kLastImportTs = "fonto.last_import_ts";
   static const _kSelectedAlbums = "fonto.selected_album_ids";
   static const _kWifiOnly = "fonto.sync_wifi_only";
+  static const _kChargingOnly = "fonto.sync_charging_only";
   static const _kLastSurface = "fonto.last_library_surface";
 
   /// Photos-Files split — last-used Library surface ("photos" | "files").
@@ -49,6 +50,19 @@ class SettingsStore {
   static Future<void> setSyncWifiOnly(bool value) async {
     final p = await SharedPreferences.getInstance();
     await p.setBool(_kWifiOnly, value);
+  }
+
+  /// When true, sync only transfers while the device is charging — protects
+  /// battery on long backlog drains. Default off so a fresh install backs up
+  /// immediately regardless of charge state.
+  static Future<bool> getSyncChargingOnly() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_kChargingOnly) ?? false;
+  }
+
+  static Future<void> setSyncChargingOnly(bool value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_kChargingOnly, value);
   }
 
   /// Epoch milliseconds; 0 when no scan has ever run.
