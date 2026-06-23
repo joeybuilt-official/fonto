@@ -35,6 +35,26 @@ const Map<String, String> _tierLabel = {
   "low": "Worth a look",
 };
 
+// M15.4 (P1-4) — plain-language "why" per evidence source for the bucket expander.
+const Map<String, String> _sourceWhy = {
+  "exif":
+      "Your camera wrote the date inside each of these photos when you took them — usually the most reliable source.",
+  "filename": "The date is written into each file's name, like IMG_20180714.jpg.",
+  "ocr_date":
+      "We spotted a date printed in the photo itself — like a timestamp in a corner.",
+  "fs_mtime":
+      "We're going by the date the file was last saved. It can be off if the file was copied or re-saved later.",
+  "identity_bound": "Based on who appears in the photo and when you knew them.",
+  "apparent_age": "Estimated from how old the people in the photo look.",
+  "trip_match": "These line up with a trip we already have dates for.",
+  "scene_season":
+      "The scene looks like a particular season — snow, autumn leaves, and so on.",
+  "cluster_propagation": "Borrowed from very similar photos taken right around these.",
+  "co_occurrence": "Taken right around other photos with dates we're sure of.",
+};
+String _why(String? s) =>
+    (s != null ? _sourceWhy[s] : null) ?? "We pieced the date together from a few small clues.";
+
 const List<String> _months = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -65,6 +85,10 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
   final Map<String, String> _thumbs = {};
   final Set<String> _busy = {};
   final Set<String> _hidden = {};
+  final Set<String> _whyOpen = {}; // P1-4 — expanded "why" per bucket
+  // P1-5 — running tally of what this visit cleared, for the summary banner.
+  int _fixed = 0;
+  int _kept = 0;
 
   @override
   void initState() {
@@ -136,7 +160,14 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
         action: action,
       );
       if (!mounted) return;
-      setState(() => _busy.remove(b.bucketId));
+      setState(() {
+        _busy.remove(b.bucketId);
+        if (action == "confirm") {
+          _fixed += b.count;
+        } else {
+          _kept += b.count;
+        }
+      });
       final n = b.count;
       final msg = action == "confirm"
           ? "Fixing $n date${n == 1 ? "" : "s"}"
@@ -145,7 +176,7 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
         SnackBar(
           content: Text(msg),
           duration: const Duration(seconds: 8),
-          action: SnackBarAction(label: "Undo", onPressed: () => _undo(b)),
+          action: SnackBarAction(label: "Undo", onPressed: () => _undo(b, action)),
         ),
       );
     } catch (e) {
@@ -159,7 +190,15 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
     }
   }
 
-  Future<void> _undo(ReviewBucket b) async {
+  Future<void> _undo(ReviewBucket b, String action) async {
+    // Roll the visit tally back (P1-5).
+    setState(() {
+      if (action == "confirm") {
+        _fixed = (_fixed - b.count).clamp(0, 1 << 31);
+      } else {
+        _kept = (_kept - b.count).clamp(0, 1 << 31);
+      }
+    });
     try {
       await widget.client
           .undoReviewBucket(evidenceSource: b.evidenceSource, conflict: b.conflict);
@@ -200,9 +239,17 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
     final sorting = sorted != null && total != null && total > 0 && sorted < total;
 
     if (buckets.isEmpty && !sorting) {
-      return const ListEmptyState(
+      const empty = ListEmptyState(
         icon: Icons.check_circle_outline,
         message: "Your library's tidy. Nothing to review right now.",
+      );
+      // Keep the visit summary visible even once everything's cleared (P1-5).
+      if (_fixed + _kept == 0) return empty;
+      return Column(
+        children: [
+          Padding(padding: const EdgeInsets.all(12), child: _sessionSummary(context)),
+          const Expanded(child: empty),
+        ],
       );
     }
 
@@ -211,6 +258,7 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
       child: ListView(
         padding: const EdgeInsets.all(12),
         children: [
+          if (_fixed + _kept > 0) _sessionSummary(context),
           if (sorting) _progressBanner(sorted, total),
           if (buckets.isEmpty && sorting)
             const Padding(
@@ -222,6 +270,37 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
           ...buckets.map(_bucketCard),
           _safetyLine(context),
         ],
+      ),
+    );
+  }
+
+  // P1-5 — what this visit tidied; stays put even once everything's clear.
+  Widget _sessionSummary(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final parts = <String>[
+      if (_fixed > 0) "$_fixed date${_fixed == 1 ? "" : "s"} fixed",
+      if (_kept > 0) "$_kept kept as saved",
+    ];
+    return Card(
+      color: scheme.secondaryContainer,
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Icon(Icons.auto_awesome, size: 20, color: scheme.onSecondaryContainer),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                "This visit: ${parts.join(" · ")}.",
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: scheme.onSecondaryContainer,
+                      fontWeight: FontWeight.w500,
+                    ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -272,6 +351,54 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // P1-4 — collapsible plain-language reason for a bucket.
+  Widget _whyExpander(ReviewBucket b) {
+    final open = _whyOpen.contains(b.bucketId);
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() {
+            if (open) {
+              _whyOpen.remove(b.bucketId);
+            } else {
+              _whyOpen.add(b.bucketId);
+            }
+          }),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  "Why these?",
+                  style: Theme.of(context)
+                      .textTheme
+                      .labelMedium
+                      ?.copyWith(color: scheme.primary, fontWeight: FontWeight.w500),
+                ),
+                Icon(open ? Icons.expand_less : Icons.expand_more,
+                    size: 16, color: scheme.primary),
+              ],
+            ),
+          ),
+        ),
+        if (open)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              _why(b.evidenceSource) +
+                  (b.conflict
+                      ? " The date saved with the file disagrees with this, which is why it's here to check."
+                      : ""),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+      ],
     );
   }
 
@@ -402,7 +529,9 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
                 ),
               ),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: 6),
+            _whyExpander(b),
+            const SizedBox(height: 6),
             Wrap(
               spacing: 8,
               runSpacing: 8,

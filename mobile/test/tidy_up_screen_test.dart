@@ -96,6 +96,31 @@ void main() {
     c.close();
   });
 
+  testWidgets("Why these? expands a plain-language reason (P1-4)", (tester) async {
+    final c = await client(withBuckets: true);
+    await tester.pumpWidget(MaterialApp(home: TidyUpScreen(client: c)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining("wrote the date inside"), findsNothing);
+    await tester.tap(find.text("Why these?"));
+    await tester.pumpAndSettle();
+    expect(find.textContaining("wrote the date inside"), findsOneWidget);
+    c.close();
+  });
+
+  testWidgets("session summary appears after a bucket apply (P1-5)", (tester) async {
+    final c = await client(withBuckets: true);
+    await tester.pumpWidget(MaterialApp(home: TidyUpScreen(client: c)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining("This visit:"), findsNothing);
+    await tester.tap(find.text("Looks right — fix all 1204"));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.textContaining("This visit: 1204 dates fixed"), findsOneWidget);
+    c.close();
+  });
+
   testWidgets("owner-only when the server forbids", (tester) async {
     final c = await client(withBuckets: false, bucketsStatus: 403);
     await tester.pumpWidget(MaterialApp(home: TidyUpScreen(client: c)));

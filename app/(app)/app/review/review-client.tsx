@@ -120,6 +120,22 @@ const SOURCE_PHRASE: Record<string, string> = {
 function sourcePhrase(s: string | null): string {
   return (s && SOURCE_PHRASE[s]) || "other clues";
 }
+// M15.4 (P1-4) — plain-language "why" per evidence source for the bucket expander.
+const SOURCE_WHY: Record<string, string> = {
+  exif: "Your camera wrote the date inside each of these photos when you took them — usually the most reliable source.",
+  filename: "The date is written into each file's name, like IMG_20180714.jpg.",
+  ocr_date: "We spotted a date printed in the photo itself — like a timestamp in a corner.",
+  fs_mtime: "We're going by the date the file was last saved. It can be off if the file was copied or re-saved later.",
+  identity_bound: "Based on who appears in the photo and when you knew them.",
+  apparent_age: "Estimated from how old the people in the photo look.",
+  trip_match: "These line up with a trip we already have dates for.",
+  scene_season: "The scene looks like a particular season — snow, autumn leaves, and so on.",
+  cluster_propagation: "Borrowed from very similar photos taken right around these.",
+  co_occurrence: "Taken right around other photos with dates we're sure of.",
+};
+function sourceWhy(s: string | null): string {
+  return (s && SOURCE_WHY[s]) || "We pieced the date together from a few small clues.";
+}
 const TIER_LABEL: Record<Tier, string> = {
   high: "Very likely right",
   medium: "Probably right",
@@ -192,6 +208,9 @@ export function TidyUpClient(): React.ReactElement {
   const [busy, setBusy] = useState(false);
   const [section, setSection] = useState<Section>("date");
   const [toast, setToast] = useState<{ msg: string; undo?: () => void } | null>(null);
+  // M15.4 (P1-5) — running tally of what THIS session cleared, for the summary
+  // banner. Bulk applies + undos keep it honest.
+  const [sessionStats, setSessionStats] = useState({ fixed: 0, kept: 0, trashed: 0 });
   // M15.2 — reason buckets + onboarding progress for the date lane.
   const [buckets, setBuckets] = useState<DateBucket[] | null>(null);
   const [progress, setProgress] = useState<{ sorted: number; total: number } | null>(null);
@@ -394,6 +413,7 @@ export function TidyUpClient(): React.ReactElement {
           (a, r) => a + (r.ok ? r.trashed : 0),
           0
         );
+        if (varTrash > 0) setSessionStats((s) => ({ ...s, trashed: s.trashed + varTrash }));
         showToast(successMsg({ dateOk, varTrash }));
         await load();
       } catch {
@@ -408,8 +428,14 @@ export function TidyUpClient(): React.ReactElement {
 
   // M15.2 — reverse the most recent bulk action on a bucket (snackbar Undo).
   const undoBucket = useCallback(
-    async (b: DateBucket) => {
+    async (b: DateBucket, action: "confirm" | "reject") => {
       setBusy(true);
+      // Roll the session tally back (P1-5).
+      setSessionStats((s) =>
+        action === "confirm"
+          ? { ...s, fixed: Math.max(0, s.fixed - b.count) }
+          : { ...s, kept: Math.max(0, s.kept - b.count) }
+      );
       try {
         await fetch("/api/admin/review-queue/undo-bucket", {
           method: "POST",
@@ -444,12 +470,18 @@ export function TidyUpClient(): React.ReactElement {
           await load();
           return;
         }
+        // P1-5 — roll this bucket into the session tally.
+        setSessionStats((s) =>
+          action === "confirm"
+            ? { ...s, fixed: s.fixed + b.count }
+            : { ...s, kept: s.kept + b.count }
+        );
         const n = b.count.toLocaleString();
         const msg =
           action === "confirm"
             ? `Fixing ${n} date${b.count === 1 ? "" : "s"}`
             : `Keeping the saved date for ${n} photo${b.count === 1 ? "" : "s"}`;
-        showToast(msg, () => void undoBucket(b));
+        showToast(msg, () => void undoBucket(b, action));
       } catch {
         showToast("We lost the connection. Please retry.");
         await load();
@@ -526,6 +558,7 @@ export function TidyUpClient(): React.ReactElement {
       ) : (
         <>
           <AttentionSummary unsorted={unsortedCount} stacks={stackCount} />
+          <SessionSummary stats={sessionStats} />
           {allClear ? (
         <div className="flex flex-col items-center gap-[var(--ft-space-3)] py-20 text-center">
           <span className="flex h-14 w-14 items-center justify-center rounded-[var(--ft-shape-full)] bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]">
@@ -712,6 +745,27 @@ function AttentionSummary({
   );
 }
 
+// M15.4 (P1-5) — what this visit tidied. Stays put even once everything's clear,
+// so the work feels acknowledged.
+function SessionSummary({ stats }: { stats: { fixed: number; kept: number; trashed: number } }) {
+  const parts: string[] = [];
+  if (stats.fixed > 0)
+    parts.push(`${stats.fixed.toLocaleString()} date${stats.fixed === 1 ? "" : "s"} fixed`);
+  if (stats.kept > 0)
+    parts.push(`${stats.kept.toLocaleString()} kept as saved`);
+  if (stats.trashed > 0)
+    parts.push(`${stats.trashed.toLocaleString()} look-alike${stats.trashed === 1 ? "" : "s"} tidied`);
+  if (parts.length === 0) return null;
+  return (
+    <div className="mb-[var(--ft-space-5)] flex items-center gap-[var(--ft-space-3)] rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-secondary-container)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] text-[var(--ft-color-on-secondary-container)]">
+      <Sparkles className="h-5 w-5 shrink-0" />
+      <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] font-medium">
+        This visit: {parts.join(" · ")}.
+      </p>
+    </div>
+  );
+}
+
 function SectionCount({ n }: { n: number }) {
   if (n <= 0) return null;
   return (
@@ -842,6 +896,7 @@ function BucketCard({
   onReviewItem: (assetId: string, action: "confirm" | "reject") => void;
 }) {
   const [reviewing, setReviewing] = useState(false);
+  const [showWhy, setShowWhy] = useState(false);
   const phrase = sourcePhrase(b.evidenceSource);
   const title = b.conflict
     ? "The saved date looks wrong for these"
@@ -902,6 +957,25 @@ function BucketCard({
             </span>
           </div>
         )}
+
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowWhy((v) => !v)}
+            className="inline-flex items-center gap-1 text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium text-[var(--ft-color-primary-text)] hover:underline"
+          >
+            Why these?
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform ${showWhy ? "rotate-180" : ""}`}
+            />
+          </button>
+          {showWhy && (
+            <p className="mt-[var(--ft-space-1)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+              {sourceWhy(b.evidenceSource)}
+              {b.conflict ? " The date saved with the file disagrees with this, which is why it's here to check." : ""}
+            </p>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-[var(--ft-space-2)]">
           <Button variant="filled" disabled={busy} onClick={() => onApply(b, "confirm")}>
