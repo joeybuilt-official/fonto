@@ -13,6 +13,7 @@
 // dataSync foreground service from the background on API 31+ — so callers kick
 // SyncService.ensureRunning() from the home screen / import flow.
 
+import "package:battery_plus/battery_plus.dart";
 import "package:connectivity_plus/connectivity_plus.dart";
 import "package:flutter_foreground_task/flutter_foreground_task.dart";
 
@@ -71,11 +72,14 @@ class _SyncTaskHandler extends TaskHandler {
       final transfer = await SyncService.transferableNow();
       if (transfer != TransferState.ok) {
         _idleTicks++;
+        final reason = switch (transfer) {
+          TransferState.offline => "waiting for connection",
+          TransferState.waitingForCharge => "waiting to charge",
+          _ => "waiting for Wi-Fi",
+        };
         FlutterForegroundTask.updateService(
           notificationTitle: "Fonto sync",
-          notificationText: transfer == TransferState.offline
-              ? "Paused — waiting for connection ($before left)"
-              : "Paused — waiting for Wi-Fi ($before left)",
+          notificationText: "Paused — $reason ($before left)",
         );
         if (_idleTicks >= _maxIdleTicks) await FlutterForegroundTask.stopService();
         return;
@@ -110,7 +114,7 @@ class _SyncTaskHandler extends TaskHandler {
 }
 
 /// Whether sync may transfer right now.
-enum TransferState { ok, offline, waitingForWifi }
+enum TransferState { ok, offline, waitingForWifi, waitingForCharge }
 
 Future<int> _pendingTotal() async {
   final driveQ = await DriveDownloadQueue.open();
@@ -217,6 +221,19 @@ class SyncService {
       final unmetered = results.any((r) =>
           r == ConnectivityResult.wifi || r == ConnectivityResult.ethernet);
       if (!unmetered) return TransferState.waitingForWifi;
+    }
+    if (await SettingsStore.getSyncChargingOnly()) {
+      // charging | full both count as "plugged in". Failure to read the battery
+      // state falls through to allowing the transfer (fail-open — never trap a
+      // backup behind a flaky platform read).
+      try {
+        final state = await Battery().batteryState;
+        if (state != BatteryState.charging && state != BatteryState.full) {
+          return TransferState.waitingForCharge;
+        }
+      } catch (_) {
+        // ignore — treat as transferable
+      }
     }
     return TransferState.ok;
   }
