@@ -330,6 +330,26 @@ class FontoClient {
         .toList();
   }
 
+  /// Duplicates (ADR 0010) — candidate near-duplicate groups with their member
+  /// assets, lightweight (no SSIM). Empty when nothing to review.
+  Future<List<DupGroup>> listDuplicates() async {
+    final j = await _getJson("/api/v1/duplicates");
+    final raw = (j["groups"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(DupGroup.fromJson).toList();
+  }
+
+  /// Resolve a duplicate group: keep the best member, reversibly trash the
+  /// rest (grace window + server-side undo). POST /api/v1/duplicates/:id/resolve.
+  Future<void> resolveDuplicate(String groupId) async {
+    await _postJson("/api/v1/duplicates/$groupId/resolve", const {});
+  }
+
+  /// Dismiss a duplicate group ("not duplicates, keep all"). Stops it
+  /// resurfacing. POST /api/v1/duplicates/:id/dismiss.
+  Future<void> dismissDuplicate(String groupId) async {
+    await _postJson("/api/v1/duplicates/$groupId/dismiss", const {});
+  }
+
   /// Shoots (ADR 0008) — deliberate sessions, newest first, with per-shoot
   /// asset counts. Backs the native Shoots browse screen. Empty when none.
   Future<List<Shoot>> listShoots() async {

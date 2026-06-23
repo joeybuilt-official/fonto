@@ -21,6 +21,7 @@ import "../api/models.dart";
 import "../state/collection_cache.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
+import "duplicates_screen.dart";
 import "filtered_assets_screen.dart";
 import "shoots_screen.dart";
 
@@ -57,8 +58,14 @@ class CollectionsScreen extends StatelessWidget {
             ),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                 child: _ShootsEntry(client: client),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: _DuplicatesEntry(client: client),
               ),
             ),
           ],
@@ -1305,6 +1312,36 @@ class _ShootsEntry extends StatelessWidget {
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder: (_) => ShootsScreen(client: client),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Collections-header entry into the Duplicates review screen (ADR 0010).
+class _DuplicatesEntry extends StatelessWidget {
+  const _DuplicatesEntry({required this.client});
+
+  final FontoClient client;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: theme.colorScheme.secondaryContainer,
+          child: Icon(Icons.copy_all_outlined,
+              color: theme.colorScheme.onSecondaryContainer),
+        ),
+        title: const Text("Duplicates"),
+        subtitle: const Text("Review and clean up near-duplicate photos"),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => DuplicatesScreen(client: client),
           ),
         ),
       ),

@@ -115,6 +115,26 @@ class Asset {
       );
 }
 
+/// A candidate near-duplicate group (ADR 0010 / variant_groups). `members` are
+/// the active assets the detector grouped; `confidence` is the tightest
+/// pairwise similarity (0..1) or null.
+class DupGroup {
+  DupGroup({required this.groupId, required this.members, this.confidence});
+
+  final String groupId;
+  final List<Asset> members;
+  final double? confidence;
+
+  static DupGroup fromJson(Map<String, dynamic> j) => DupGroup(
+        groupId: j["groupId"] as String,
+        confidence: (j["confidence"] as num?)?.toDouble(),
+        members: (j["members"] as List? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(Asset.fromJson)
+            .toList(),
+      );
+}
+
 /// A deliberate photography session (ADR 0008). `clientId` null = hobby shoot.
 /// `total` is the asset count across all stages, for the browse list.
 class Shoot {

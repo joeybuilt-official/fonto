@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Star, Trash2, Smartphone, Archive, FileText } from "lucide-react";
+import { Star, Trash2, Smartphone, Archive, FileText, Copy } from "lucide-react";
 
 interface Counts {
   favorites: number;
@@ -10,6 +10,9 @@ interface Counts {
   screenshots: number;
   archived: number;
   documents: number;
+  // Not returned by /collections/stats — the Duplicates tile never shows a
+  // badge, it's a plain entry point. Optional so the keyed lookup typechecks.
+  duplicates?: number;
 }
 
 const TILES = [
@@ -47,6 +50,13 @@ const TILES = [
     icon: FileText,
     href: "/app/library?kind=document",
     iconClass: "text-green-500",
+  },
+  {
+    key: "duplicates" as const,
+    label: "Duplicates",
+    icon: Copy,
+    href: "/app/duplicates",
+    iconClass: "text-purple-500",
   },
 ] as const;
 
