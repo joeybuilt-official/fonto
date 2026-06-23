@@ -24,6 +24,7 @@ class Asset {
     this.heightPx,
     this.kind,
     this.source,
+    this.scope,
   });
 
   final String id;
@@ -57,6 +58,10 @@ class Asset {
   // asset was imported from (e.g. "web-upload", "drive").
   final String? kind;
   final String? source;
+  // ADR 0008/0009 — partition the asset belongs to: PERSONAL (default) or
+  // SHOOT. Drives default visibility: personal surfaces (timeline, memories)
+  // hide SHOOT unless the user opts in via the scope switcher.
+  final String? scope;
 
   bool get isProcessing =>
       processingState != null &&
@@ -83,6 +88,7 @@ class Asset {
         heightPx: heightPx,
         kind: kind,
         source: source,
+        scope: scope,
       );
 
   static Asset fromJson(Map<String, dynamic> j) => Asset(
@@ -105,7 +111,40 @@ class Asset {
         heightPx: (j["heightPx"] as num?)?.toInt(),
         kind: j["kind"] as String?,
         source: j["source"] as String?,
+        scope: j["scope"] as String?,
       );
+}
+
+/// A deliberate photography session (ADR 0008). `clientId` null = hobby shoot.
+/// `total` is the asset count across all stages, for the browse list.
+class Shoot {
+  Shoot({
+    required this.id,
+    required this.name,
+    this.shootDate,
+    this.clientId,
+    this.kind,
+    this.total = 0,
+  });
+
+  final String id;
+  final String name;
+  final String? shootDate;
+  final String? clientId;
+  final String? kind;
+  final int total;
+
+  static Shoot fromJson(Map<String, dynamic> j) {
+    final counts = j["counts"] as Map<String, dynamic>?;
+    return Shoot(
+      id: j["id"] as String,
+      name: j["name"] as String,
+      shootDate: j["shootDate"] as String?,
+      clientId: j["clientId"] as String?,
+      kind: j["kind"] as String?,
+      total: (counts?["total"] as num?)?.toInt() ?? 0,
+    );
+  }
 }
 
 /// One prior-year bucket of "On this day" memories. `count` is the pre-cap

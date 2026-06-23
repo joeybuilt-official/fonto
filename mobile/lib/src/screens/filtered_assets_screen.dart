@@ -25,6 +25,8 @@ class FilteredAssetsScreen extends StatefulWidget {
     this.kind,
     this.lifecycle,
     this.place,
+    this.shootId,
+    this.scope,
   });
 
   final FontoClient client;
@@ -33,6 +35,10 @@ class FilteredAssetsScreen extends StatefulWidget {
   final String? kind;
   final String? lifecycle;
   final String? place;
+  // ADR 0008/0009 — browse a single shoot's assets (shootId) and/or a scope
+  // partition. Used by the Shoots screen to open SHOOT-scoped grids.
+  final String? shootId;
+  final String? scope;
 
   @override
   State<FilteredAssetsScreen> createState() => _FilteredAssetsScreenState();
@@ -73,6 +79,8 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
         kind: widget.kind,
         lifecycle: widget.lifecycle,
         place: widget.place,
+        shootId: widget.shootId,
+        scope: widget.scope,
       );
       if (!mounted) return;
 

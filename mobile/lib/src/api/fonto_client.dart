@@ -142,9 +142,15 @@ class FontoClient {
     String sort = "captured",
     bool unclassified = false,
     String? q,
+    // ADR 0008/0009 — scope partition. Omitted ⇒ server default (PERSONAL).
+    // Pass "SHOOT" to browse shoot work, or "all" to bypass the partition.
+    String? scope,
+    String? shootId,
   }) async {
     final query = <String, String>{"limit": "$limit", "sort": sort};
     if (mime != null) query["mime"] = mime;
+    if (scope != null && scope.isNotEmpty) query["scope"] = scope;
+    if (shootId != null && shootId.isNotEmpty) query["shootId"] = shootId;
     if (hasGeo) query["hasGeo"] = "1";
     if (favorite) query["favorite"] = "1";
     if (kind != null && kind.isNotEmpty) query["kind"] = kind;
@@ -322,6 +328,14 @@ class FontoClient {
               ...a,
             }))
         .toList();
+  }
+
+  /// Shoots (ADR 0008) — deliberate sessions, newest first, with per-shoot
+  /// asset counts. Backs the native Shoots browse screen. Empty when none.
+  Future<List<Shoot>> listShoots() async {
+    final j = await _getJson("/api/v1/shoots");
+    final raw = (j["shoots"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(Shoot.fromJson).toList();
   }
 
   /// Memories ("On this day") — prior-year assets captured on the same calendar

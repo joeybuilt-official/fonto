@@ -22,6 +22,7 @@ import "../state/collection_cache.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 import "filtered_assets_screen.dart";
+import "shoots_screen.dart";
 
 class CollectionsScreen extends StatelessWidget {
   const CollectionsScreen({super.key, required this.client});
@@ -50,8 +51,14 @@ class CollectionsScreen extends StatelessWidget {
             ),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                 child: _PlacesSection(client: client),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: _ShootsEntry(client: client),
               ),
             ),
           ],
@@ -1266,6 +1273,38 @@ class _PlaceCard extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Collections-header entry into the Shoots browse screen (ADR 0008/0009).
+/// Shoot work is partitioned out of the personal timeline; this is the native
+/// opt-in to view it. Static card — ShootsScreen does the fetching.
+class _ShootsEntry extends StatelessWidget {
+  const _ShootsEntry({required this.client});
+
+  final FontoClient client;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: theme.colorScheme.primaryContainer,
+          child: Icon(Icons.camera_alt_outlined,
+              color: theme.colorScheme.onPrimaryContainer),
+        ),
+        title: const Text("Shoots"),
+        subtitle: const Text("Browse shoot sessions, kept out of your timeline"),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ShootsScreen(client: client),
           ),
         ),
       ),

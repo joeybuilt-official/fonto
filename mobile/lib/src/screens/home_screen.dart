@@ -1014,12 +1014,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     widget.onSignOut();
   }
 
+  /// Personal-timeline view of the loaded set — SHOOT assets (ADR 0008/0009)
+  /// are hidden so shoot work never pollutes the timeline, even from the
+  /// non-scope-partitioned offline cache. Order is preserved.
+  List<Asset> get _visibleAssets =>
+      _assets.where((a) => a.scope != "SHOOT").toList();
+
   Future<void> _openDetail(int i) async {
     final result = await Navigator.of(context).push<Map<String, dynamic>?>(
       MaterialPageRoute(
         builder: (_) => AssetDetailScreen(
           client: _client,
-          assets: _assets,
+          assets: _visibleAssets,
           initialIndex: i,
         ),
       ),
@@ -1325,11 +1331,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
     }
 
-    final groups = _groupAssetsByMonth(_assets);
+    // ADR 0008/0009 — personal timeline hides SHOOT at the display layer.
+    // Online reads already default PERSONAL server-side; this also covers the
+    // offline-cache paths, which aren't scope-partitioned.
+    final visible = _visibleAssets;
+    final groups = _groupAssetsByMonth(visible);
     // O(1) lookup replaces the O(n) indexOf call that ran on every tile render,
     // which was causing a freeze on back-navigation from AssetDetailScreen.
     final flatIdxById = <String, int>{
-      for (var i = 0; i < _assets.length; i++) _assets[i].id: i,
+      for (var i = 0; i < visible.length; i++) visible[i].id: i,
     };
 
     final scroll = RefreshIndicator(
@@ -1377,7 +1387,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           // Root unfiltered Photos view only, same as the device-recents strip.
           if (_folder == null && _isPhotos)
             SliverToBoxAdapter(child: _MemoriesStrip(client: _client)),
-          if (_assets.isEmpty)
+          if (visible.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
               child: ListEmptyState(
