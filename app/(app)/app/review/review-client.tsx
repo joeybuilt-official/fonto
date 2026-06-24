@@ -89,16 +89,20 @@ interface DateBucketSample {
   confidence: number;
 }
 type Tier = "high" | "medium" | "low";
+type BucketAxis = "source" | "folder" | "time";
 interface DateBucket {
-  bucketId: string;
-  evidenceSource: string | null;
-  conflict: boolean;
+  // ADR 0059 — opaque, server-issued key; passed back verbatim on apply/undo.
+  bucketKey: string;
+  axis: BucketAxis;
+  evidenceSource?: string | null;
+  conflict?: boolean;
   reasonLabel: string;
   count: number;
   confidenceTier: Tier;
   sample: DateBucketSample[];
 }
 interface BucketsResponse {
+  axis: BucketAxis;
   buckets: DateBucket[];
   totalReview: number;
   progress: { sorted: number; total: number } | null;
@@ -215,6 +219,8 @@ export function TidyUpClient(): React.ReactElement {
   const [buckets, setBuckets] = useState<DateBucket[] | null>(null);
   const [progress, setProgress] = useState<{ sorted: number; total: number } | null>(null);
   const [hiddenBuckets, setHiddenBuckets] = useState<Set<string>>(new Set());
+  // M15.4 / ADR 0059 — grouping axis for the date lane (By reason / folder / time).
+  const [axis, setAxis] = useState<BucketAxis>("source");
   // Aggregator hub — counts for the queues that live on OTHER surfaces, so this
   // page is the single "needs attention" overview. Unsorted = unclassified
   // (kind IS NULL) library assets; Stacks = AI stack suggestions. Both deep-link
@@ -258,6 +264,37 @@ export function TidyUpClient(): React.ReactElement {
     }
   }, []);
 
+  // Fetch the date buckets for one axis + warm thumbs. Used by the main load and
+  // by the axis toggle (which also clears the hidden set).
+  const loadBuckets = useCallback(
+    async (ax: BucketAxis) => {
+      try {
+        const bres = await fetch(`/api/admin/review-queue/buckets?axis=${ax}`, { cache: "no-store" });
+        if (bres.ok) {
+          const bj = (await bres.json()) as BucketsResponse;
+          setBuckets(bj.buckets);
+          setProgress(bj.progress);
+          await fetchThumbs(bj.buckets.flatMap((b) => b.sample.map((s) => s.assetId)));
+        }
+      } catch {
+        // Buckets are best-effort; the rest of the page still renders.
+      }
+    },
+    [fetchThumbs]
+  );
+
+  // Switch the grouping axis: clear the optimistic hidden set + refetch.
+  const changeAxis = useCallback(
+    (ax: BucketAxis) => {
+      if (ax === axis) return;
+      setAxis(ax);
+      setHiddenBuckets(new Set());
+      setBuckets(null);
+      void loadBuckets(ax);
+    },
+    [axis, loadBuckets]
+  );
+
   // The main feed: fast SQL only (dates + identity + the variant COUNT). The
   // variant manifests are NOT here anymore — they load lazily below.
   const load = useCallback(async () => {
@@ -274,23 +311,12 @@ export function TidyUpClient(): React.ReactElement {
       setHiddenGroups(new Set());
       setHiddenBuckets(new Set());
 
-      // M15.2 — the date lane is now reason-bucketed. Pull the buckets +
-      // onboarding progress, and warm thumbs for every sample.
-      try {
-        const bres = await fetch("/api/admin/review-queue/buckets", { cache: "no-store" });
-        if (bres.ok) {
-          const bj = (await bres.json()) as BucketsResponse;
-          setBuckets(bj.buckets);
-          setProgress(bj.progress);
-          await fetchThumbs(bj.buckets.flatMap((b) => b.sample.map((s) => s.assetId)));
-        }
-      } catch {
-        // Buckets are best-effort; the rest of the page still renders.
-      }
+      // M15.2 / M15.4 — the date lane is reason-bucketed along the active axis.
+      await loadBuckets(axis);
     } catch {
       setError("We couldn't reach the server. Check your connection and retry.");
     }
-  }, [fetchThumbs]);
+  }, [loadBuckets, axis]);
 
   // Fetch one page of variant manifests. `reset` starts from offset 0 and
   // replaces the list (used on first open / after an action refetch); otherwise
@@ -440,7 +466,7 @@ export function TidyUpClient(): React.ReactElement {
         await fetch("/api/admin/review-queue/undo-bucket", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ evidenceSource: b.evidenceSource, conflict: b.conflict }),
+          body: JSON.stringify({ bucketKey: b.bucketKey }),
         });
         showToast("Undone.");
         await load();
@@ -458,12 +484,12 @@ export function TidyUpClient(): React.ReactElement {
   const applyBucket = useCallback(
     async (b: DateBucket, action: "confirm" | "reject") => {
       setBusy(true);
-      setHiddenBuckets((prev) => new Set(prev).add(b.bucketId));
+      setHiddenBuckets((prev) => new Set(prev).add(b.bucketKey));
       try {
         const res = await fetch("/api/admin/review-queue/confirm-bucket", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ evidenceSource: b.evidenceSource, conflict: b.conflict, action }),
+          body: JSON.stringify({ bucketKey: b.bucketKey, action }),
         });
         if (!res.ok) {
           showToast("That didn't go through. Nothing changed — please retry.");
@@ -493,7 +519,7 @@ export function TidyUpClient(): React.ReactElement {
   );
 
   const visibleBuckets = useMemo(
-    () => (buckets ?? []).filter((b) => !hiddenBuckets.has(b.bucketId)),
+    () => (buckets ?? []).filter((b) => !hiddenBuckets.has(b.bucketKey)),
     [buckets, hiddenBuckets]
   );
   const bucketTotal = useMemo(
@@ -607,6 +633,8 @@ export function TidyUpClient(): React.ReactElement {
           {section === "date" && (
             <BucketsSection
               buckets={visibleBuckets}
+              axis={axis}
+              onAxisChange={changeAxis}
               urls={urls}
               busy={busy}
               progress={progress}
@@ -808,8 +836,16 @@ const TIER_CHIP: Record<Tier, string> = {
   low: "bg-[var(--ft-color-surface-container-highest)] text-[var(--ft-color-on-surface-variant)]",
 };
 
+const AXIS_TABS: { id: BucketAxis; label: string }[] = [
+  { id: "source", label: "By reason" },
+  { id: "folder", label: "By folder" },
+  { id: "time", label: "By time" },
+];
+
 function BucketsSection({
   buckets,
+  axis,
+  onAxisChange,
   urls,
   busy,
   progress,
@@ -818,6 +854,8 @@ function BucketsSection({
   onReviewItem,
 }: {
   buckets: DateBucket[];
+  axis: BucketAxis;
+  onAxisChange: (axis: BucketAxis) => void;
   urls: Record<string, string>;
   busy: boolean;
   progress: { sorted: number; total: number } | null;
@@ -829,6 +867,34 @@ function BucketsSection({
 
   return (
     <div className="space-y-[var(--ft-space-3)]">
+      {/* M15.4 / ADR 0059 — group the date queue by reason, folder, or time. */}
+      <div
+        role="tablist"
+        aria-label="Group photos by"
+        className="inline-flex rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-highest)] p-0.5"
+      >
+        {AXIS_TABS.map((t) => {
+          const active = axis === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              disabled={busy}
+              onClick={() => onAxisChange(t.id)}
+              className={`rounded-[var(--ft-shape-full)] px-[var(--ft-space-3)] py-[var(--ft-space-1)] text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium transition-colors ${
+                active
+                  ? "bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface)] shadow-sm"
+                  : "text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
+              }`}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
       {sorting && (
         <Card variant="filled">
           <CardContent className="flex flex-col gap-[var(--ft-space-2)]">
@@ -861,7 +927,7 @@ function BucketsSection({
       ) : (
         buckets.map((b) => (
           <BucketCard
-            key={b.bucketId}
+            key={b.bucketKey}
             bucket={b}
             urls={urls}
             busy={busy}
@@ -897,15 +963,28 @@ function BucketCard({
 }) {
   const [reviewing, setReviewing] = useState(false);
   const [showWhy, setShowWhy] = useState(false);
-  const phrase = sourcePhrase(b.evidenceSource);
-  const title = b.conflict
-    ? "The saved date looks wrong for these"
-    : `These got their date from ${phrase}`;
-  const sub = b.conflict
-    ? `We think the right date comes from ${phrase}.`
-    : b.confidenceTier === "high"
-      ? null
-      : "Peek before you apply.";
+  const isConflict = b.conflict === true;
+  const phrase = sourcePhrase(b.evidenceSource ?? null);
+  // Folder / time axes label the bucket by its group (path / span); the source
+  // axis keeps the reason-led copy + the conflict-compare affordance.
+  const title =
+    b.axis === "folder"
+      ? b.reasonLabel
+      : b.axis === "time"
+        ? b.reasonLabel
+        : isConflict
+          ? "The saved date looks wrong for these"
+          : `These got their date from ${phrase}`;
+  const sub =
+    b.axis !== "source"
+      ? b.confidenceTier === "high"
+        ? null
+        : "Peek before you apply."
+      : isConflict
+        ? `We think the right date comes from ${phrase}.`
+        : b.confidenceTier === "high"
+          ? null
+          : "Peek before you apply.";
   const strip = b.sample.slice(0, 5);
   const remainder = b.count - strip.length;
   const first = b.sample[0];
@@ -945,7 +1024,7 @@ function BucketCard({
           )}
         </div>
 
-        {b.conflict && first && (
+        {isConflict && first && (
           <div className="inline-flex w-fit items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-small)] bg-[var(--ft-color-surface-container)] px-[var(--ft-space-3)] py-[var(--ft-space-1)] text-[length:var(--ft-type-body-small-size)] text-[var(--ft-color-on-surface-variant)]">
             <span>Saved {fmtFiled(first.capturedAt)}</span>
             <ChevronRight className="h-3.5 w-3.5 shrink-0" />
@@ -971,8 +1050,12 @@ function BucketCard({
           </button>
           {showWhy && (
             <p className="mt-[var(--ft-space-1)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
-              {sourceWhy(b.evidenceSource)}
-              {b.conflict ? " The date saved with the file disagrees with this, which is why it's here to check." : ""}
+              {b.axis === "folder"
+                ? "These photos share a folder. We worked out a likely date for each from the clues we found."
+                : b.axis === "time"
+                  ? "These photos were taken around the same time. We worked out a likely date for each from the clues we found."
+                  : sourceWhy(b.evidenceSource ?? null)}
+              {isConflict ? " The date saved with the file disagrees with this, which is why it's here to check." : ""}
             </p>
           )}
         </div>
@@ -980,9 +1063,9 @@ function BucketCard({
         <div className="flex flex-wrap items-center gap-[var(--ft-space-2)]">
           <Button variant="filled" disabled={busy} onClick={() => onApply(b, "confirm")}>
             <Check className="h-4 w-4" />
-            {b.conflict ? `Looks right — fix all ${b.count.toLocaleString()}` : "Use these dates"}
+            {isConflict ? `Looks right — fix all ${b.count.toLocaleString()}` : "Use these dates"}
           </Button>
-          {b.conflict && (
+          {isConflict && (
             <Button variant="outlined" disabled={busy} onClick={() => onApply(b, "reject")}>
               Keep saved dates
             </Button>
@@ -1012,7 +1095,7 @@ function BucketCard({
                     ciLow: null,
                     ciHigh: null,
                     confidence: s.confidence,
-                    conflict: b.conflict,
+                    conflict: b.conflict ?? false,
                     reasons: [],
                   }}
                   url={urls[s.assetId]}
@@ -1021,7 +1104,7 @@ function BucketCard({
                 />
               ))}
             <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
-              Showing a sample. &ldquo;{b.conflict ? `Looks right — fix all ${b.count.toLocaleString()}` : "Use these dates"}&rdquo; applies to all {b.count.toLocaleString()}.
+              Showing a sample. &ldquo;{isConflict ? `Looks right — fix all ${b.count.toLocaleString()}` : "Use these dates"}&rdquo; applies to all {b.count.toLocaleString()}.
             </p>
           </div>
         )}

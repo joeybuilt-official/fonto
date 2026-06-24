@@ -227,10 +227,16 @@ export const BackfillReconcileJobSchema = z
     workspaceId: z.string().uuid(),
     batchSize: z.number().int().positive().max(1000).optional(),
     maxRows: z.number().int().nonnegative().optional(),
+    // M15.4 / ADR 0059 — axis-agnostic opaque bucketKey is the new apply key.
+    // Accept BOTH the new `{bucketKey}` payload AND the legacy
+    // `{evidenceSource, conflict}` pair for one release, so in-flight queued
+    // jobs (enqueued by the pre-deploy route) still resolve. The worker
+    // normalises legacy → a `src:` bucketKey.
     bucket: z
       .object({
-        evidenceSource: z.string().nullable(),
-        conflict: z.boolean(),
+        bucketKey: z.string().optional(),
+        evidenceSource: z.string().nullable().optional(),
+        conflict: z.boolean().optional(),
         action: z.enum(["confirm", "reject", "quarantine"]),
         // M15.2 — when true, reverse the most recent bulk action on this bucket
         // (the snackbar Undo) instead of applying `action`.

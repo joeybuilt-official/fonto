@@ -16,6 +16,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { ensurePersonalWorkspace } from "@/lib/workspace";
 import { requireWorkspaceOwner } from "@/lib/authz";
 import { addBackfillReconcileJob } from "@/lib/queue/queues";
+import { resolveBucketKey } from "@/lib/reconcile/bucketKeyRoute";
 
 const ACTIONS = new Set(["confirm", "reject", "quarantine"]);
 
@@ -29,36 +30,25 @@ export async function POST(request: NextRequest) {
   const authz = await requireWorkspaceOwner(workspace.id);
   if (!authz.ok) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const body = (await request.json().catch(() => ({}))) as {
-    evidenceSource?: unknown;
-    conflict?: unknown;
-    action?: unknown;
-  };
+  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 
   const action = typeof body.action === "string" ? body.action : "";
   if (!ACTIONS.has(action)) {
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   }
-  if (typeof body.conflict !== "boolean") {
-    return NextResponse.json({ error: "conflict (boolean) required" }, { status: 400 });
-  }
-  // null = the "Other evidence" bucket (no dominant source); otherwise a string.
-  const evidenceSource =
-    body.evidenceSource === null
-      ? null
-      : typeof body.evidenceSource === "string"
-        ? body.evidenceSource
-        : undefined;
-  if (evidenceSource === undefined) {
-    return NextResponse.json({ error: "evidenceSource (string|null) required" }, { status: 400 });
+  // ADR 0059 — prefer the opaque bucketKey; accept the legacy
+  // {evidenceSource, conflict} pair (old client bundles / APKs) and normalise.
+  const bucketKey = resolveBucketKey(body);
+  if (!bucketKey) {
+    return NextResponse.json({ error: "bucketKey (or evidenceSource+conflict) required" }, { status: 400 });
   }
 
   // Dedup a double-submit of the same bucket+action while one is in flight.
-  const key = `bucket:${workspace.id}:${body.conflict ? "c" : "n"}:${evidenceSource ?? "null"}:${action}`;
+  const key = `bucket:${workspace.id}:${bucketKey}:${action}`;
   const jobId = await addBackfillReconcileJob(
     {
       workspaceId: workspace.id,
-      bucket: { evidenceSource, conflict: body.conflict, action: action as "confirm" | "reject" | "quarantine" },
+      bucket: { bucketKey, action: action as "confirm" | "reject" | "quarantine" },
     },
     { jobId: key }
   );

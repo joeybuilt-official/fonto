@@ -64,8 +64,89 @@ function tierOf(avgConfidence: number): ConfidenceTier {
   return "low";
 }
 
-function bucketId(source: string | null, conflict: boolean): string {
-  return `${conflict ? "conflict" : "clean"}:${source ?? "unknown"}`;
+// ── Axis-agnostic opaque bucketKey (ADR 0059) ──────────────────────────────
+// A bucket is identified by a single server-issued token `bucketKey`. The
+// client treats it as opaque and passes it back verbatim; the server holds the
+// ONLY parser (predicateForKey), which validates a `^(src|dir|time):` prefix
+// and returns a fully PARAMETERIZED drizzle WHERE — the base64url folder path
+// is never string-interpolated into SQL.
+
+export type BucketAxis = "source" | "folder" | "time";
+
+// 72h session gap for time-cluster bucketing; top-N cap for folder/time axes.
+const TIME_GAP_MS = 72 * 60 * 60 * 1000;
+const MAX_AXIS_BUCKETS = 40;
+
+function b64url(s: string): string {
+  return Buffer.from(s, "utf8").toString("base64url");
+}
+function unb64url(s: string): string {
+  return Buffer.from(s, "base64url").toString("utf8");
+}
+
+/** source axis key — 1:1 with the legacy bucketId pair {evidenceSource,conflict}. */
+export function srcBucketKey(source: string | null, conflict: boolean): string {
+  return `src:${conflict ? "c" : "n"}:${source ?? "null"}`;
+}
+/** folder axis key — empty payload = directory_path IS NULL ("no folder"). */
+function dirBucketKey(path: string | null): string {
+  return path === null ? "dir:" : `dir:${b64url(path)}`;
+}
+/** time axis key — `time:null` = captured_at IS NULL; else half-open [start,end) ms. */
+function timeBucketKey(startMs: number | null, endMs?: number): string {
+  return startMs === null ? "time:null" : `time:${startMs}-${endMs}`;
+}
+
+/**
+ * Resolve a frozen bucketKey to a parameterized drizzle predicate (membership
+ * only — the caller ANDs baseWhere + reviewBandSql). Throws on a malformed key.
+ * Shared by the sample SELECT, applyBucketReconcile, and applyBucketUndo so the
+ * predicate is re-resolved identically every batch.
+ */
+export function predicateForKey(bucketKey: string) {
+  const conflictCol = schema.imageDateInference.conflictFlag;
+  const sourceCol = schema.imageDateInference.dominantEvidenceSource;
+  const dirCol = schema.assets.directoryPath;
+  const capCol = schema.assets.capturedAt;
+
+  if (bucketKey.startsWith("src:")) {
+    const rest = bucketKey.slice(4); // "c:<source>" | "n:<source>"
+    if (rest[1] !== ":" || (rest[0] !== "c" && rest[0] !== "n")) {
+      throw new Error("invalid src bucketKey");
+    }
+    const conflict = rest[0] === "c";
+    const src = rest.slice(2);
+    const sourcePred = src === "null" ? isNull(sourceCol) : eq(sourceCol, src);
+    return and(eq(conflictCol, conflict), sourcePred)!;
+  }
+  if (bucketKey.startsWith("dir:")) {
+    const payload = bucketKey.slice(4);
+    if (payload === "") return isNull(dirCol);
+    return eq(dirCol, unb64url(payload));
+  }
+  if (bucketKey.startsWith("time:")) {
+    const payload = bucketKey.slice(5);
+    if (payload === "null") return isNull(capCol);
+    const m = /^(\d+)-(\d+)$/.exec(payload);
+    if (!m) throw new Error("invalid time bucketKey");
+    const start = new Date(Number(m[1]));
+    const end = new Date(Number(m[2]));
+    return and(sql`${capCol} >= ${start}`, sql`${capCol} < ${end}`)!;
+  }
+  throw new Error("unknown bucketKey axis");
+}
+
+// Compact human label for a time-cluster span (server-formatted; clients render
+// it verbatim for the folder/time axes).
+function timeRangeLabel(startMs: number, endMs: number): string {
+  const a = new Date(startMs);
+  const b = new Date(endMs - 1);
+  const mo = (d: Date) => d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  if (a.getUTCFullYear() === b.getUTCFullYear()) {
+    if (a.getUTCMonth() === b.getUTCMonth()) return `${mo(a)} ${a.getUTCFullYear()}`;
+    return `${mo(a)} – ${mo(b)} ${a.getUTCFullYear()}`;
+  }
+  return `${mo(a)} ${a.getUTCFullYear()} – ${mo(b)} ${b.getUTCFullYear()}`;
 }
 
 // The gate's REVIEW band, in SQL: a conflict with conf >= LOW, OR a
@@ -94,7 +175,10 @@ export interface DateBucketSample {
 }
 
 export interface DateBucket {
-  bucketId: string;
+  /** Opaque, server-issued bucket identity (ADR 0059). Pass back verbatim. */
+  bucketKey: string;
+  axis: BucketAxis;
+  /** Source-axis metadata — drives the conflict-compare affordance only. */
   evidenceSource: string | null;
   conflict: boolean;
   reasonLabel: string;
@@ -103,15 +187,56 @@ export interface DateBucket {
   sample: DateBucketSample[];
 }
 
+// One bounded sample SELECT for a resolved bucket predicate (lowest-confidence
+// first — that's what an operator most wants to eyeball before applying).
+async function sampleForPredicate(
+  workspaceId: string,
+  pred: ReturnType<typeof predicateForKey>
+): Promise<DateBucketSample[]> {
+  const conf = schema.imageDateInference.confidence;
+  const rows = await db
+    .select({
+      assetId: schema.imageDateInference.assetId,
+      mapEstimate: schema.imageDateInference.mapEstimate,
+      mapPrecision: schema.imageDateInference.mapPrecision,
+      confidence: conf,
+      filename: schema.assets.filename,
+      capturedAt: schema.assets.capturedAt,
+    })
+    .from(schema.imageDateInference)
+    .innerJoin(schema.assets, eq(schema.assets.id, schema.imageDateInference.assetId))
+    .where(and(baseWhere(workspaceId), reviewBandSql(), pred))
+    .orderBy(asc(conf))
+    .limit(SAMPLE_PER_BUCKET);
+  return rows.map((r) => ({
+    assetId: r.assetId,
+    filename: r.filename,
+    capturedAt: r.capturedAt ? new Date(r.capturedAt).toISOString() : null,
+    mapEstimate: r.mapEstimate ? String(r.mapEstimate) : null,
+    mapPrecision: r.mapPrecision,
+    confidence: Number(r.confidence.toFixed(3)),
+  }));
+}
+
 /**
- * Reason-bucketed view of the date review queue for one workspace. One grouped
- * count query (bounded to ~evidence-types × {conflict,clean} buckets) plus one
- * bounded sample SELECT per non-empty bucket. Never returns the full queue.
+ * Reason-bucketed view of the date review queue for one workspace, along ONE
+ * axis (ADR 0059):
+ *  - source (default): byte-identical to the shipped path — group by
+ *    (conflict × dominant evidence source).
+ *  - folder: exact-path GROUP BY directory_path (no LIKE roll-up; null → a
+ *    "Files with no folder" bucket). Top-N by count.
+ *  - time: 72h-gap session clusters on captured_at (top-N by count; null → one
+ *    "No date yet" bucket).
+ * Each bucket carries an opaque `bucketKey` + `axis`; the apply key is the
+ * bucketKey, re-resolved server-side. Never returns the full queue.
  */
-export async function listDateBuckets(workspaceId: string): Promise<{
-  buckets: DateBucket[];
-  totalReview: number;
-}> {
+export async function listDateBuckets(
+  workspaceId: string,
+  axis: BucketAxis = "source"
+): Promise<{ buckets: DateBucket[]; totalReview: number }> {
+  if (axis === "folder") return listFolderBuckets(workspaceId);
+  if (axis === "time") return listTimeBuckets(workspaceId);
+
   const conf = schema.imageDateInference.confidence;
   const conflictCol = schema.imageDateInference.conflictFlag;
   const sourceCol = schema.imageDateInference.dominantEvidenceSource;
@@ -135,40 +260,127 @@ export async function listDateBuckets(workspaceId: string): Promise<{
   let totalReview = 0;
   for (const g of grouped) {
     totalReview += g.count;
-    const sourcePred = g.source === null ? isNull(sourceCol) : eq(sourceCol, g.source);
-    const sampleRows = await db
-      .select({
-        assetId: schema.imageDateInference.assetId,
-        mapEstimate: schema.imageDateInference.mapEstimate,
-        mapPrecision: schema.imageDateInference.mapPrecision,
-        confidence: conf,
-        filename: schema.assets.filename,
-        capturedAt: schema.assets.capturedAt,
-      })
-      .from(schema.imageDateInference)
-      .innerJoin(schema.assets, eq(schema.assets.id, schema.imageDateInference.assetId))
-      .where(and(baseWhere(workspaceId), reviewBandSql(), eq(conflictCol, g.conflict), sourcePred))
-      .orderBy(asc(conf))
-      .limit(SAMPLE_PER_BUCKET);
-
+    const key = srcBucketKey(g.source, g.conflict);
     buckets.push({
-      bucketId: bucketId(g.source, g.conflict),
+      bucketKey: key,
+      axis: "source",
       evidenceSource: g.source,
       conflict: g.conflict,
       reasonLabel: reasonLabel(g.source, g.conflict),
       count: g.count,
       confidenceTier: tierOf(g.avgConf ?? 0),
-      sample: sampleRows.map((r) => ({
-        assetId: r.assetId,
-        filename: r.filename,
-        capturedAt: r.capturedAt ? new Date(r.capturedAt).toISOString() : null,
-        mapEstimate: r.mapEstimate ? String(r.mapEstimate) : null,
-        mapPrecision: r.mapPrecision,
-        confidence: Number(r.confidence.toFixed(3)),
-      })),
+      sample: await sampleForPredicate(workspaceId, predicateForKey(key)),
     });
   }
 
+  return { buckets, totalReview };
+}
+
+// Folder axis — exact-path GROUP BY directory_path (ADR 0059: no LIKE roll-up,
+// which keeps counts honest + apply idempotent). Null path → "no folder".
+async function listFolderBuckets(
+  workspaceId: string
+): Promise<{ buckets: DateBucket[]; totalReview: number }> {
+  const conf = schema.imageDateInference.confidence;
+  const dirCol = schema.assets.directoryPath;
+
+  const grouped = await db
+    .select({
+      dir: dirCol,
+      count: sql<number>`count(*)::int`,
+      avgConf: sql<number>`avg(${conf})::float8`,
+    })
+    .from(schema.imageDateInference)
+    .innerJoin(schema.assets, eq(schema.assets.id, schema.imageDateInference.assetId))
+    .where(and(baseWhere(workspaceId), reviewBandSql()))
+    .groupBy(dirCol);
+
+  const totalReview = grouped.reduce((a, g) => a + g.count, 0);
+  grouped.sort((a, b) => b.count - a.count);
+
+  const buckets: DateBucket[] = [];
+  for (const g of grouped.slice(0, MAX_AXIS_BUCKETS)) {
+    const key = dirBucketKey(g.dir);
+    buckets.push({
+      bucketKey: key,
+      axis: "folder",
+      evidenceSource: null,
+      conflict: false,
+      reasonLabel: g.dir ?? "Files with no folder",
+      count: g.count,
+      confidenceTier: tierOf(g.avgConf ?? 0),
+      sample: await sampleForPredicate(workspaceId, predicateForKey(key)),
+    });
+  }
+  return { buckets, totalReview };
+}
+
+// Time axis — 72h-gap session clusters on captured_at. One cheap indexed pull of
+// (assetId, captured_at, confidence) over the review band, clustered in JS; the
+// top-N clusters by count each get a bounded sample SELECT. Null captured_at →
+// one "No date yet" bucket.
+async function listTimeBuckets(
+  workspaceId: string
+): Promise<{ buckets: DateBucket[]; totalReview: number }> {
+  const conf = schema.imageDateInference.confidence;
+  const capCol = schema.assets.capturedAt;
+
+  const rows = await db
+    .select({ capturedAt: capCol, confidence: conf })
+    .from(schema.imageDateInference)
+    .innerJoin(schema.assets, eq(schema.assets.id, schema.imageDateInference.assetId))
+    .where(and(baseWhere(workspaceId), reviewBandSql()));
+
+  const totalReview = rows.length;
+
+  const dated = rows
+    .filter((r) => r.capturedAt != null)
+    .map((r) => ({ ms: new Date(r.capturedAt as Date).getTime(), conf: r.confidence }))
+    .sort((a, b) => a.ms - b.ms);
+  const nullCount = rows.length - dated.length;
+
+  type Cluster = { startMs: number; endMs: number; count: number; sumConf: number };
+  const clusters: Cluster[] = [];
+  let cur: Cluster | null = null;
+  for (const d of dated) {
+    if (cur && d.ms - (cur.endMs - 1) <= TIME_GAP_MS) {
+      cur.endMs = d.ms + 1;
+      cur.count++;
+      cur.sumConf += d.conf;
+    } else {
+      cur = { startMs: d.ms, endMs: d.ms + 1, count: 1, sumConf: d.conf };
+      clusters.push(cur);
+    }
+  }
+  clusters.sort((a, b) => b.count - a.count);
+
+  const buckets: DateBucket[] = [];
+  for (const c of clusters.slice(0, MAX_AXIS_BUCKETS)) {
+    const key = timeBucketKey(c.startMs, c.endMs);
+    buckets.push({
+      bucketKey: key,
+      axis: "time",
+      evidenceSource: null,
+      conflict: false,
+      reasonLabel: timeRangeLabel(c.startMs, c.endMs),
+      count: c.count,
+      confidenceTier: tierOf(c.sumConf / c.count),
+      sample: await sampleForPredicate(workspaceId, predicateForKey(key)),
+    });
+  }
+  if (nullCount > 0) {
+    const key = timeBucketKey(null);
+    buckets.push({
+      bucketKey: key,
+      axis: "time",
+      evidenceSource: null,
+      conflict: false,
+      reasonLabel: "No date yet",
+      count: nullCount,
+      confidenceTier: "low",
+      sample: await sampleForPredicate(workspaceId, predicateForKey(key)),
+    });
+  }
   return { buckets, totalReview };
 }
 
@@ -195,8 +407,7 @@ export async function getSortingProgress(
 }
 
 export interface BucketApplyOpts {
-  evidenceSource: string | null;
-  conflict: boolean;
+  bucketKey: string;
   action: BucketAction;
   batchSize?: number;
   /** Safety cap on rows actioned in one apply (0 = no cap). */
@@ -205,7 +416,7 @@ export interface BucketApplyOpts {
 
 export interface BucketApplyResult {
   workspaceId: string;
-  bucketId: string;
+  bucketKey: string;
   action: BucketAction;
   applied: number;
 }
@@ -220,20 +431,12 @@ export async function applyBucketReconcile(
   workspaceId: string,
   opts: BucketApplyOpts
 ): Promise<BucketApplyResult> {
-  const { evidenceSource, conflict, action } = opts;
+  const { bucketKey, action } = opts;
   const batchSize = Math.max(1, Math.min(1000, opts.batchSize ?? 200));
   const maxRows = opts.maxRows ?? 0;
   const log = logger.child({ component: "reconcile.bucket", workspaceId, action });
 
-  const conflictCol = schema.imageDateInference.conflictFlag;
-  const sourceCol = schema.imageDateInference.dominantEvidenceSource;
-  const sourcePred = evidenceSource === null ? isNull(sourceCol) : eq(sourceCol, evidenceSource);
-  const matchWhere = and(
-    baseWhere(workspaceId),
-    reviewBandSql(),
-    eq(conflictCol, conflict),
-    sourcePred
-  );
+  const matchWhere = and(baseWhere(workspaceId), reviewBandSql(), predicateForKey(bucketKey));
 
   let applied = 0;
   for (;;) {
@@ -282,8 +485,8 @@ export async function applyBucketReconcile(
     if (batch.length < take) break;
   }
 
-  log.info({ applied, evidenceSource, conflict }, "bucket reconcile applied");
-  return { workspaceId, bucketId: bucketId(evidenceSource, conflict), action, applied };
+  log.info({ applied, bucketKey }, "bucket reconcile applied");
+  return { workspaceId, bucketKey, action, applied };
 }
 
 /**
@@ -294,19 +497,17 @@ export async function applyBucketReconcile(
  */
 export async function applyBucketUndo(
   workspaceId: string,
-  opts: { evidenceSource: string | null; conflict: boolean; batchSize?: number }
-): Promise<{ workspaceId: string; bucketId: string; reverted: number }> {
-  const { evidenceSource, conflict } = opts;
+  opts: { bucketKey: string; batchSize?: number }
+): Promise<{ workspaceId: string; bucketKey: string; reverted: number }> {
+  const { bucketKey } = opts;
   const batchSize = Math.max(1, Math.min(1000, opts.batchSize ?? 200));
   const log = logger.child({ component: "reconcile.bucketUndo", workspaceId });
 
-  const conflictCol = schema.imageDateInference.conflictFlag;
-  const sourceCol = schema.imageDateInference.dominantEvidenceSource;
-  const sourcePred = evidenceSource === null ? isNull(sourceCol) : eq(sourceCol, evidenceSource);
+  // No review-band filter here — actioned rows have left the 'inferred' band;
+  // membership comes from the frozen bucketKey + a present undo snapshot.
   const matchWhere = and(
     eq(schema.assets.workspaceId, workspaceId),
-    eq(conflictCol, conflict),
-    sourcePred,
+    predicateForKey(bucketKey),
     sql`${schema.imageDateInference.reviewUndo} is not null`
   );
 
@@ -350,6 +551,6 @@ export async function applyBucketUndo(
     if (batch.length < batchSize) break;
   }
 
-  log.info({ reverted, evidenceSource, conflict }, "bucket undo applied");
-  return { workspaceId, bucketId: bucketId(evidenceSource, conflict), reverted };
+  log.info({ reverted, bucketKey }, "bucket undo applied");
+  return { workspaceId, bucketKey, reverted };
 }

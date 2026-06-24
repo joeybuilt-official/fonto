@@ -750,30 +750,25 @@ class FontoClient {
 
   // M15.3 — Tidy Up (reason-bucketed date review). Owner-gated server-side:
   // a non-owner caller gets ApiException(403), which the screen surfaces.
-  Future<ReviewBuckets> listReviewBuckets() async {
-    final j = await _getJson("/api/admin/review-queue/buckets");
+  // M15.4 / ADR 0059 — axis = source (default) | folder | time.
+  Future<ReviewBuckets> listReviewBuckets({String axis = "source"}) async {
+    final j = await _getJson("/api/admin/review-queue/buckets", {"axis": axis});
     return ReviewBuckets.fromJson(j);
   }
 
   Future<void> applyReviewBucket({
-    required String? evidenceSource,
-    required bool conflict,
+    required String bucketKey,
     required String action,
   }) async {
     await _postJson("/api/admin/review-queue/confirm-bucket", {
-      "evidenceSource": evidenceSource,
-      "conflict": conflict,
+      "bucketKey": bucketKey,
       "action": action,
     });
   }
 
-  Future<void> undoReviewBucket({
-    required String? evidenceSource,
-    required bool conflict,
-  }) async {
+  Future<void> undoReviewBucket({required String bucketKey}) async {
     await _postJson("/api/admin/review-queue/undo-bucket", {
-      "evidenceSource": evidenceSource,
-      "conflict": conflict,
+      "bucketKey": bucketKey,
     });
   }
 

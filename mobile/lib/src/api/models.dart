@@ -989,25 +989,32 @@ class ReviewBucketSample {
 
 class ReviewBucket {
   ReviewBucket({
-    required this.bucketId,
+    required this.bucketKey,
+    required this.axis,
     required this.evidenceSource,
     required this.conflict,
+    required this.reasonLabel,
     required this.count,
     required this.confidenceTier,
     required this.sample,
   });
 
-  final String bucketId;
+  // ADR 0059 — opaque, server-issued key; passed back verbatim on apply/undo.
+  final String bucketKey;
+  final String axis; // source | folder | time
   final String? evidenceSource;
   final bool conflict;
+  final String reasonLabel; // server-formatted (folder path / time span / reason)
   final int count;
   final String confidenceTier; // high | medium | low
   final List<ReviewBucketSample> sample;
 
   static ReviewBucket fromJson(Map<String, dynamic> j) => ReviewBucket(
-        bucketId: j["bucketId"] as String,
+        bucketKey: (j["bucketKey"] as String?) ?? "",
+        axis: (j["axis"] as String?) ?? "source",
         evidenceSource: j["evidenceSource"] as String?,
         conflict: (j["conflict"] as bool?) ?? false,
+        reasonLabel: (j["reasonLabel"] as String?) ?? "",
         count: (j["count"] as num?)?.toInt() ?? 0,
         confidenceTier: (j["confidenceTier"] as String?) ?? "low",
         sample: ((j["sample"] as List<dynamic>?) ?? const [])

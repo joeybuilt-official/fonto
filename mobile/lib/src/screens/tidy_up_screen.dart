@@ -81,6 +81,8 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
   bool _loading = true;
   String? _error;
   bool _forbidden = false;
+  // M15.4 / ADR 0059 — grouping axis (By reason / By folder / By time).
+  String _axis = "source";
   ReviewBuckets? _data;
   final Map<String, String> _thumbs = {};
   final Set<String> _busy = {};
@@ -109,7 +111,7 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
       _forbidden = false;
     });
     try {
-      final data = await widget.client.listReviewBuckets();
+      final data = await widget.client.listReviewBuckets(axis: _axis);
       final ids = <String>[
         for (final b in data.buckets)
           for (final s in b.sample) s.assetId,
@@ -157,20 +159,49 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
     });
   }
 
+  // Switch the grouping axis: reset the optimistic state + refetch.
+  void _changeAxis(String axis) {
+    if (axis == _axis) return;
+    setState(() {
+      _axis = axis;
+      _hidden.clear();
+      _reviewOpen = null;
+      _itemHidden.clear();
+      _itemBusy.clear();
+    });
+    _load();
+  }
+
+  Widget _axisTabs() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: SegmentedButton<String>(
+        showSelectedIcon: false,
+        segments: const [
+          ButtonSegment(value: "source", label: Text("By reason")),
+          ButtonSegment(value: "folder", label: Text("By folder")),
+          ButtonSegment(value: "time", label: Text("By time")),
+        ],
+        selected: {_axis},
+        onSelectionChanged:
+            _loading ? null : (s) => _changeAxis(s.first),
+      ),
+    );
+  }
+
   Future<void> _apply(ReviewBucket b, String action) async {
     setState(() {
-      _busy.add(b.bucketId);
-      _hidden.add(b.bucketId);
+      _busy.add(b.bucketKey);
+      _hidden.add(b.bucketKey);
     });
     try {
       await widget.client.applyReviewBucket(
-        evidenceSource: b.evidenceSource,
-        conflict: b.conflict,
+        bucketKey: b.bucketKey,
         action: action,
       );
       if (!mounted) return;
       setState(() {
-        _busy.remove(b.bucketId);
+        _busy.remove(b.bucketKey);
         if (action == "confirm") {
           _fixed += b.count;
         } else {
@@ -191,8 +222,8 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _busy.remove(b.bucketId);
-        _hidden.remove(b.bucketId);
+        _busy.remove(b.bucketKey);
+        _hidden.remove(b.bucketKey);
       });
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text("Couldn't apply: $e")));
@@ -209,8 +240,7 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
       }
     });
     try {
-      await widget.client
-          .undoReviewBucket(evidenceSource: b.evidenceSource, conflict: b.conflict);
+      await widget.client.undoReviewBucket(bucketKey: b.bucketKey);
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -242,22 +272,28 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
 
     final data = _data;
     final buckets =
-        (data?.buckets ?? const <ReviewBucket>[]).where((b) => !_hidden.contains(b.bucketId)).toList();
+        (data?.buckets ?? const <ReviewBucket>[]).where((b) => !_hidden.contains(b.bucketKey)).toList();
     final sorted = data?.progressSorted;
     final total = data?.progressTotal;
     final sorting = sorted != null && total != null && total > 0 && sorted < total;
 
     if (buckets.isEmpty && !sorting) {
-      const empty = ListEmptyState(
-        icon: Icons.check_circle_outline,
-        message: "Your library's tidy. Nothing to review right now.",
-      );
-      // Keep the visit summary visible even once everything's cleared (P1-5).
-      if (_fixed + _kept == 0) return empty;
-      return Column(
+      // Keep the axis tabs + visit summary visible even once everything's
+      // cleared, so the operator can switch grouping without a reload (P1-5).
+      final emptyMsg = _axis == "source"
+          ? "Your library's tidy. Nothing to review right now."
+          : "Nothing to review in this view.";
+      return ListView(
+        padding: const EdgeInsets.all(12),
         children: [
-          Padding(padding: const EdgeInsets.all(12), child: _sessionSummary(context)),
-          const Expanded(child: empty),
+          _axisTabs(),
+          if (_fixed + _kept > 0) _sessionSummary(context),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(emptyMsg, textAlign: TextAlign.center),
+            ),
+          ),
         ],
       );
     }
@@ -267,6 +303,7 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
       child: ListView(
         padding: const EdgeInsets.all(12),
         children: [
+          _axisTabs(),
           if (_fixed + _kept > 0) _sessionSummary(context),
           if (sorting) _progressBanner(sorted, total),
           if (buckets.isEmpty && sorting)
@@ -365,7 +402,7 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
 
   // P1-4 — collapsible plain-language reason for a bucket.
   Widget _whyExpander(ReviewBucket b) {
-    final open = _whyOpen.contains(b.bucketId);
+    final open = _whyOpen.contains(b.bucketKey);
     final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -373,9 +410,9 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
         InkWell(
           onTap: () => setState(() {
             if (open) {
-              _whyOpen.remove(b.bucketId);
+              _whyOpen.remove(b.bucketKey);
             } else {
-              _whyOpen.add(b.bucketId);
+              _whyOpen.add(b.bucketKey);
             }
           }),
           child: Padding(
@@ -400,7 +437,11 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Text(
-              _why(b.evidenceSource) +
+              (b.axis == "folder"
+                      ? "These photos share a folder. We worked out a likely date for each from the clues we found."
+                      : b.axis == "time"
+                          ? "These photos were taken around the same time. We worked out a likely date for each from the clues we found."
+                          : _why(b.evidenceSource)) +
                   (b.conflict
                       ? " The date saved with the file disagrees with this, which is why it's here to check."
                       : ""),
@@ -424,14 +465,20 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
   }
 
   Widget _bucketCard(ReviewBucket b) {
-    final busy = _busy.contains(b.bucketId);
+    final busy = _busy.contains(b.bucketKey);
     final phrase = _phrase(b.evidenceSource);
-    final title = b.conflict
-        ? "The saved date looks wrong for these"
-        : "These got their date from $phrase";
-    final sub = b.conflict
-        ? "We think the right date comes from $phrase."
-        : (b.confidenceTier == "high" ? null : "Peek before you apply.");
+    // Folder / time axes label the bucket by its group (path / span); the source
+    // axis keeps the reason-led copy + the conflict-compare affordance.
+    final title = b.axis != "source"
+        ? b.reasonLabel
+        : (b.conflict
+            ? "The saved date looks wrong for these"
+            : "These got their date from $phrase");
+    final sub = b.axis != "source"
+        ? (b.confidenceTier == "high" ? null : "Peek before you apply.")
+        : (b.conflict
+            ? "We think the right date comes from $phrase."
+            : (b.confidenceTier == "high" ? null : "Peek before you apply."));
     final strip = b.sample.take(5).toList();
     final remainder = b.count - strip.length;
     final first = b.sample.isNotEmpty ? b.sample.first : null;
@@ -563,19 +610,19 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
                   onPressed: busy
                       ? null
                       : () => setState(() =>
-                          _reviewOpen = _reviewOpen == b.bucketId ? null : b.bucketId),
+                          _reviewOpen = _reviewOpen == b.bucketKey ? null : b.bucketKey),
                   icon: Icon(
-                    _reviewOpen == b.bucketId
+                    _reviewOpen == b.bucketKey
                         ? Icons.expand_less
                         : Icons.touch_app_outlined,
                     size: 18,
                   ),
                   label: Text(
-                      _reviewOpen == b.bucketId ? "Done reviewing" : "Review one by one"),
+                      _reviewOpen == b.bucketKey ? "Done reviewing" : "Review one by one"),
                 ),
               ],
             ),
-            if (_reviewOpen == b.bucketId) _reviewItems(b),
+            if (_reviewOpen == b.bucketKey) _reviewItems(b),
           ],
         ),
       ),
