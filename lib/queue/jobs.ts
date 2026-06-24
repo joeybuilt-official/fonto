@@ -247,6 +247,13 @@ export const BackfillReconcileJobSchema = z
   .strict();
 export type BackfillReconcileJob = z.infer<typeof BackfillReconcileJobSchema>;
 
+// M15 closeout — nightly HNSW face auto-cluster. Per-workspace, no embedding
+// vectors loaded into Node memory. Triggered by /api/v1/cron/auto-cluster.
+export const AutoClusterFacesJobSchema = z.object({
+  workspaceId: z.string().uuid(),
+}).strict();
+export type AutoClusterFacesJob = z.infer<typeof AutoClusterFacesJobSchema>;
+
 /** Job-name constants so producers + workers can never disagree on string keys. */
 export const JobNames = {
   ProcessAsset: "process-asset",
@@ -315,6 +322,9 @@ export const JobNames = {
   // auto-commit date band (status='inferred' -> 'confirmed' + captured_at).
   // One-off, operator-enqueued; NOT a recurring schedule. Idempotent/resumable.
   BackfillReconcile: "backfill-reconcile",
+  // M15 closeout — nightly HNSW face auto-cluster for one workspace. No
+  // embedding vectors loaded into Node; DB-side pgvector HNSW does the work.
+  AutoClusterFaces: "auto-cluster-faces",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

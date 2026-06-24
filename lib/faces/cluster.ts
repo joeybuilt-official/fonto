@@ -83,6 +83,11 @@ interface FaceRow {
   confidence: number | null;
 }
 
+interface FaceIdRow {
+  id: string;
+  personId: string | null;
+}
+
 interface PersonRow {
   id: string;
   name: string | null;
@@ -345,24 +350,38 @@ export async function clusterWorkspaceFaces(
     labels = dbscan(points, eps, minPts);
   }
 
-  // Group face ids by cluster label.
+  const { created, updated, noise, clusterCount } = await applyClusterLabels(
+    workspaceId,
+    usable,
+    labels
+  );
+  log.info({ created, updated, noise, clusters: clusterCount }, "clustering complete");
+  return { created, updated, noise };
+}
+
+/**
+ * Apply DBSCAN labels to the `persons` / `face_instances` tables.
+ * Shared by both the embedding-based (GPU/JS) and HNSW clustering paths.
+ * - Existing named persons are never merged or renamed.
+ * - Anonymous persons absorb new members from matching clusters.
+ * - Noise faces lose their anonymous person assignment.
+ * - `instance_count` is recomputed from ground truth at the end.
+ */
+async function applyClusterLabels(
+  workspaceId: string,
+  faceRows: FaceIdRow[],
+  labels: number[]
+): Promise<{ created: number; updated: number; noise: number; clusterCount: number }> {
   const clusters = new Map<number, string[]>();
   let noise = 0;
-  for (let i = 0; i < usable.length; i++) {
+  for (let i = 0; i < faceRows.length; i++) {
     const label = labels[i];
-    if (label === -1) {
-      noise++;
-      continue;
-    }
+    if (label === -1) { noise++; continue; }
     let list = clusters.get(label);
-    if (!list) {
-      list = [];
-      clusters.set(label, list);
-    }
-    list.push(usable[i].id);
+    if (!list) { list = []; clusters.set(label, list); }
+    list.push(faceRows[i].id);
   }
 
-  // Look up existing person rows so we can preserve names + merge.
   const existingPersons = await db
     .select({ id: schema.persons.id, name: schema.persons.name })
     .from(schema.persons)
@@ -371,10 +390,8 @@ export async function clusterWorkspaceFaces(
     existingPersons.map((p) => [p.id, p])
   );
 
-  // Map current face -> person assignment so we can decide whether to
-  // re-use an existing cluster.
   const facePersonNow = new Map<string, string>();
-  for (const r of usable) {
+  for (const r of faceRows) {
     if (r.personId && existingPersonById.has(r.personId)) {
       facePersonNow.set(r.id, r.personId);
     }
@@ -384,28 +401,18 @@ export async function clusterWorkspaceFaces(
   let updated = 0;
 
   for (const [, faceIds] of clusters) {
-    // Tally which existing persons these face members already belong to.
     const tally = new Map<string, number>();
     for (const fid of faceIds) {
       const pid = facePersonNow.get(fid);
       if (pid) tally.set(pid, (tally.get(pid) ?? 0) + 1);
     }
 
-    // Pick the top-tally person — but only if they cover >=50% of the
-    // cluster. This protects merge/named-person identity: a small fresh
-    // cluster shouldn't be absorbed by a much larger named person.
     let attachTo: string | null = null;
     let bestCount = 0;
     for (const [pid, count] of tally) {
-      if (count > bestCount) {
-        bestCount = count;
-        attachTo = pid;
-      }
+      if (count > bestCount) { bestCount = count; attachTo = pid; }
     }
     if (attachTo && bestCount * 2 < faceIds.length) {
-      // Prefer named persons even at a smaller share — if the top tally
-      // happens to be a named person and any other tally exists for a
-      // named person, the user's hand-labelled identity wins.
       const namedHits = Array.from(tally.entries()).filter(
         ([pid]) => (existingPersonById.get(pid)?.name ?? null) !== null
       );
@@ -414,9 +421,6 @@ export async function clusterWorkspaceFaces(
       } else if (namedHits.length === 0) {
         attachTo = null;
       } else {
-        // Multiple named persons in one cluster — don't auto-merge; pick
-        // the largest named tally so faces glom onto the dominant identity
-        // and the rest stay where they are.
         namedHits.sort((a, b) => b[1] - a[1]);
         attachTo = namedHits[0][0];
       }
@@ -424,9 +428,6 @@ export async function clusterWorkspaceFaces(
 
     if (attachTo) {
       updated++;
-      // Attach any faces in the cluster that aren't already pointing here
-      // (and aren't already attached to a *different* named person — those
-      // we leave alone to preserve hand edits).
       const toMove: string[] = [];
       for (const fid of faceIds) {
         const currentPid = facePersonNow.get(fid);
@@ -444,32 +445,18 @@ export async function clusterWorkspaceFaces(
           .where(inArray(schema.faceInstances.id, toMove));
       }
     } else {
-      // No suitable existing person — only create a new one if none of
-      // these faces already belong to a named person (preserve hand edits).
       const facesWithoutNamedPerson: string[] = [];
       for (const fid of faceIds) {
         const currentPid = facePersonNow.get(fid);
-        if (!currentPid) {
-          facesWithoutNamedPerson.push(fid);
-          continue;
-        }
+        if (!currentPid) { facesWithoutNamedPerson.push(fid); continue; }
         const cur = existingPersonById.get(currentPid);
-        if (cur && cur.name === null) {
-          // Anonymous existing person — re-clustering can move members.
-          facesWithoutNamedPerson.push(fid);
-        }
-        // Named existing person — preserve, skip.
+        if (cur && cur.name === null) facesWithoutNamedPerson.push(fid);
       }
       if (facesWithoutNamedPerson.length === 0) continue;
 
       const [newPerson] = await db
         .insert(schema.persons)
-        .values({
-          workspaceId,
-          name: null,
-          coverFaceId: facesWithoutNamedPerson[0],
-          instanceCount: 0,
-        })
+        .values({ workspaceId, name: null, coverFaceId: facesWithoutNamedPerson[0], instanceCount: 0 })
         .returning({ id: schema.persons.id });
       created++;
       await db
@@ -479,12 +466,10 @@ export async function clusterWorkspaceFaces(
     }
   }
 
-  // Noise: detach faces that landed in noise but had a (non-named) person.
-  // Named persons keep their members regardless — the user labelled them.
   const noiseFaceIds: string[] = [];
-  for (let i = 0; i < usable.length; i++) {
+  for (let i = 0; i < faceRows.length; i++) {
     if (labels[i] !== -1) continue;
-    const r = usable[i];
+    const r = faceRows[i];
     if (!r.personId) continue;
     const p = existingPersonById.get(r.personId);
     if (p && p.name !== null) continue;
@@ -497,47 +482,142 @@ export async function clusterWorkspaceFaces(
       .where(inArray(schema.faceInstances.id, noiseFaceIds));
   }
 
-  // Recompute instance_count for every person in the workspace from the
-  // ground truth (face_instances). Cheap; a single grouped subquery.
   await db.execute(sql`
     UPDATE fonto.persons p
-    SET instance_count = COALESCE(c.cnt, 0),
-        updated_at = now()
+    SET instance_count = COALESCE(c.cnt, 0), updated_at = now()
     FROM (
       SELECT person_id, COUNT(*)::int AS cnt
       FROM fonto.face_instances
-      WHERE workspace_id = ${workspaceId}
-        AND person_id IS NOT NULL
+      WHERE workspace_id = ${workspaceId} AND person_id IS NOT NULL
       GROUP BY person_id
     ) c
-    WHERE p.workspace_id = ${workspaceId}
-      AND p.id = c.person_id
+    WHERE p.workspace_id = ${workspaceId} AND p.id = c.person_id
   `);
-  // Zero out any persons no longer pointed-at (their faces were all
-  // detached). We don't delete the row — keeps the user's name + hidden
-  // edits intact if they later attach faces back.
   await db.execute(sql`
     UPDATE fonto.persons p
-    SET instance_count = 0,
-        updated_at = now()
+    SET instance_count = 0, updated_at = now()
     WHERE p.workspace_id = ${workspaceId}
       AND NOT EXISTS (
-        SELECT 1 FROM fonto.face_instances f
-        WHERE f.person_id = p.id
+        SELECT 1 FROM fonto.face_instances f WHERE f.person_id = p.id
       )
   `);
 
-  // Pick a quality-ranked cover for every person, not the first face seen
-  // when the cluster was first assembled. Score = detector confidence ×
-  // bbox area in normalised coords — high-confidence + large-in-frame wins.
-  // Excludes hidden faces. Same SQL as the one-shot recompute backfill.
   await recomputeCoverFacesForWorkspace(workspaceId);
 
-  log.info(
-    { created, updated, noise, clusters: clusters.size },
-    "clustering complete"
-  );
+  return { created, updated, noise, clusterCount: clusters.size };
+}
 
+// ---------- HNSW-backed full-library batch clustering (M15 closeout) ----------
+
+const HNSW_BATCH_SIZE = 1000;
+const HNSW_NEIGHBOR_LIMIT = 100;
+
+/**
+ * Build a DBSCAN edge graph for `faceIds` entirely inside PostgreSQL, using
+ * the HNSW pgvector index (migration 0021). No embedding vectors are loaded
+ * into Node memory — the distance computation stays DB-side.
+ *
+ * Returns the same {edges, deg} shape as neighborsViaGPU, suitable for
+ * dbscanFromEdges. Edges are deduplicated (each pair appears once).
+ */
+async function buildEdgesViaHNSW(
+  workspaceId: string,
+  faceIds: string[],
+  idToIdx: Map<string, number>,
+  eps: number,
+  minConfidence: number
+): Promise<{ edges: ReadonlyArray<readonly [number, number]>; deg: ReadonlyArray<number> }> {
+  const n = faceIds.length;
+  const deg = new Array<number>(n).fill(0);
+  const edgeSet = new Set<string>();
+  const edges: [number, number][] = [];
+
+  for (let offset = 0; offset < n; offset += HNSW_BATCH_SIZE) {
+    const batch = faceIds.slice(offset, offset + HNSW_BATCH_SIZE);
+    const rawRows = await db.execute(sql`
+      SELECT src.id AS source_id, n.id AS neighbor_id
+      FROM fonto.face_instances src
+      CROSS JOIN LATERAL (
+        SELECT fi.id
+        FROM fonto.face_instances fi
+        WHERE fi.workspace_id = ${workspaceId}
+          AND fi.hidden = false
+          AND fi.confidence >= ${minConfidence}
+          AND fi.id != src.id
+          AND (src.embedding <=> fi.embedding) <= ${eps}
+        ORDER BY src.embedding <=> fi.embedding
+        LIMIT ${HNSW_NEIGHBOR_LIMIT}
+      ) n
+      WHERE src.id = ANY(${batch}::uuid[])
+        AND src.workspace_id = ${workspaceId}
+        AND src.hidden = false
+        AND src.confidence >= ${minConfidence}
+    `);
+    const rows = rawRows as unknown as Array<{ source_id: string; neighbor_id: string }>;
+
+    for (const row of rows) {
+      const a = idToIdx.get(row.source_id);
+      const b = idToIdx.get(row.neighbor_id);
+      if (a === undefined || b === undefined) continue;
+      const key = a < b ? `${a},${b}` : `${b},${a}`;
+      if (!edgeSet.has(key)) {
+        edgeSet.add(key);
+        edges.push([a, b]);
+        deg[a]++;
+        deg[b]++;
+      }
+    }
+  }
+
+  return { edges, deg };
+}
+
+/**
+ * Full-library face clustering via pgvector HNSW — no 50k cap, no embedding
+ * vectors loaded into Node memory. Intended for the nightly cron job.
+ *
+ * Uses the same DBSCAN parameters (eps, minPts) and DB-update logic as
+ * clusterWorkspaceFaces. Safe to call concurrently for different workspaces.
+ */
+export async function clusterWorkspaceFacesHNSW(
+  workspaceId: string,
+  opts: ClusterOpts = {}
+): Promise<ClusterStats> {
+  const log = logger.child({ component: "face-cluster-hnsw", workspaceId });
+  const eps = opts.eps ?? 0.32;
+  const minPts = opts.minPts ?? 5;
+  const minConfidence = Number(process.env.FACE_CLUSTER_MIN_CONFIDENCE ?? "0.55");
+
+  const rows = await db
+    .select({
+      id: schema.faceInstances.id,
+      personId: schema.faceInstances.personId,
+    })
+    .from(schema.faceInstances)
+    .where(
+      and(
+        eq(schema.faceInstances.workspaceId, workspaceId),
+        eq(schema.faceInstances.hidden, false),
+        isNotNull(schema.faceInstances.embedding),
+        sql`${schema.faceInstances.confidence} >= ${minConfidence}`
+      )
+    ) as FaceIdRow[];
+
+  log.info({ faceCount: rows.length, eps, minPts }, "hnsw-cluster: loaded face ids");
+  if (rows.length === 0) return { created: 0, updated: 0, noise: 0 };
+
+  const faceIds = rows.map((r) => r.id);
+  const idToIdx = new Map(faceIds.map((id, i) => [id, i]));
+
+  const graph = await buildEdgesViaHNSW(workspaceId, faceIds, idToIdx, eps, minConfidence);
+  const labels = dbscanFromEdges(graph.edges, graph.deg, faceIds.length, minPts);
+
+  const { created, updated, noise, clusterCount } = await applyClusterLabels(
+    workspaceId,
+    rows,
+    labels
+  );
+  log.info({ created, updated, noise, clusters: clusterCount, faces: rows.length }, "hnsw-cluster complete");
   return { created, updated, noise };
 }
 
