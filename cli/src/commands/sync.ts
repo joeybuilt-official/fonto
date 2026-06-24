@@ -343,6 +343,34 @@ async function uploadOneTus(
   return { assetId, deduplicated: false };
 }
 
+// Upload one file (large → resumable tus, else multipart), then record it in
+// the state file and persist. Shared by the one-shot `sync` loop and the
+// `watch` daemon. Throws on failure; caller handles logging.
+async function uploadAndRecord(
+  f: WalkedFile,
+  remotePrefix: string,
+  state: SyncState,
+  statePath: string
+): Promise<{ assetId: string | null; deduplicated: boolean }> {
+  const relDir = path.dirname(f.rel).replace(/\\/g, "/");
+  const composed = remotePrefix.replace(/\/+$/, "") + (relDir === "." ? "" : "/" + relDir);
+  const remotePath = composed === "" ? "/" : composed;
+  const { assetId, deduplicated } =
+    f.size >= LARGE_FILE_BYTES
+      ? await uploadOneTus(f, remotePath, state, statePath)
+      : await uploadOne(f, remotePrefix);
+  const sha = await sha256(f.abs);
+  state.entries[f.rel] = {
+    size: f.size,
+    mtimeMs: f.mtimeMs,
+    sha256: sha,
+    assetId,
+    uploadedAt: new Date().toISOString(),
+  };
+  saveState(statePath, state);
+  return { assetId, deduplicated };
+}
+
 export async function sync(dir: string, opts: SyncOpts): Promise<void> {
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     console.error(chalk.red(`✗ not a directory: ${dir}`));
@@ -417,24 +445,9 @@ export async function sync(dir: string, opts: SyncOpts): Promise<void> {
     const f = upload[i];
     const s = ora(`[${i + 1}/${upload.length}] ${f.rel}`).start();
     try {
-      // M9 — large files take the resumable tus path; the helper needs the
-      // composed remote path the same way uploadOne derives it.
-      const relDir = path.dirname(f.rel).replace(/\\/g, "/");
-      const composed =
-        remotePrefix.replace(/\/+$/, "") + (relDir === "." ? "" : "/" + relDir);
-      const remotePath = composed === "" ? "/" : composed;
-      const { assetId, deduplicated } =
-        f.size >= LARGE_FILE_BYTES
-          ? await uploadOneTus(f, remotePath, state, statePath)
-          : await uploadOne(f, remotePrefix);
-      const sha = await sha256(f.abs);
-      state.entries[f.rel] = {
-        size: f.size,
-        mtimeMs: f.mtimeMs,
-        sha256: sha,
-        assetId,
-        uploadedAt: new Date().toISOString(),
-      };
+      // Large files take the resumable tus path; state is persisted per file
+      // inside the helper so an interrupted sync doesn't re-upload everything.
+      const { assetId, deduplicated } = await uploadAndRecord(f, remotePrefix, state, statePath);
       if (deduplicated) {
         dedupe++;
         s.warn(`${f.rel} ${chalk.dim("(dedup)")}`);
@@ -442,9 +455,6 @@ export async function sync(dir: string, opts: SyncOpts): Promise<void> {
         ok++;
         s.succeed(`${f.rel} ${chalk.dim(assetId?.slice(0, 8) ?? "")}`);
       }
-      // Persist state per file so an interrupted sync doesn't re-upload
-      // every successful file on restart.
-      saveState(statePath, state);
     } catch (err) {
       fail++;
       if (err instanceof ApiError) {
@@ -659,4 +669,140 @@ async function runPull(
 
   state.cursor = cursor;
   saveState(statePath, state);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// M11 — `fonto watch <dir>`: long-running push daemon. Runs a one-shot sync to
+// establish a baseline, then watches the tree and uploads new/changed files as
+// they settle — no need to re-run `sync`. Dependency-free (fs.watch + debounce
+// + a stability re-stat), mirroring the dependency-free tus path above.
+// Push-only: deletions + pulls are out of scope (use `sync --pull` for bidir).
+
+export interface WatchOpts extends SyncOpts {
+  debounce?: string;
+}
+
+export async function watch(dir: string, opts: WatchOpts): Promise<void> {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+    console.error(chalk.red(`✗ not a directory: ${dir}`));
+    process.exitCode = 2;
+    return;
+  }
+  const rootDir = path.resolve(dir);
+  const statePath = opts.state ?? path.join(rootDir, ".fonto-sync.json");
+  const remotePrefix = (opts.remotePrefix ?? "/").replace(/\/+$/, "") || "/";
+  const debounceMs = Math.max(200, Number(opts.debounce ?? "800") || 800);
+
+  // Establish a baseline first — uploads everything already present, then we
+  // only react to changes from here.
+  await sync(dir, opts);
+
+  // Reload the state the baseline pass just wrote; the watcher mutates this.
+  const state = loadState(statePath);
+  const patterns = loadIgnoreFile(rootDir);
+
+  // Per-path debounce timers + a single-flight FIFO queue so uploads run one at
+  // a time (matches sync's sequential default; predictable request budget).
+  const pending = new Map<string, NodeJS.Timeout>();
+  const queue: string[] = [];
+  let draining = false;
+
+  async function processRel(rel: string): Promise<void> {
+    const abs = path.join(rootDir, rel);
+    let st: fs.Stats;
+    try {
+      st = fs.statSync(abs);
+    } catch {
+      return; // gone before we got to it — push-only, nothing to do
+    }
+    if (!st.isFile()) return;
+
+    // Stability check: re-stat after a beat. If the file is still changing
+    // (mid-write / large copy), bail — a later event re-triggers it.
+    await new Promise((r) => setTimeout(r, 250));
+    let st2: fs.Stats;
+    try {
+      st2 = fs.statSync(abs);
+    } catch {
+      return;
+    }
+    if (st2.size !== st.size || st2.mtimeMs !== st.mtimeMs) return;
+
+    const f: WalkedFile = { abs, rel, size: st2.size, mtimeMs: st2.mtimeMs };
+    const prev = state.entries[rel];
+    if (prev && prev.size === f.size && prev.mtimeMs === f.mtimeMs && prev.assetId) return;
+    if (prev && prev.size === f.size) {
+      const h = await sha256(abs);
+      if (h === prev.sha256 && prev.assetId) {
+        state.entries[rel] = { ...prev, mtimeMs: f.mtimeMs };
+        saveState(statePath, state);
+        return;
+      }
+    }
+    const s = ora(`↑ ${rel}`).start();
+    try {
+      const { assetId, deduplicated } = await uploadAndRecord(f, remotePrefix, state, statePath);
+      if (deduplicated) s.warn(`${rel} ${chalk.dim("(dedup)")}`);
+      else s.succeed(`${rel} ${chalk.dim(assetId?.slice(0, 8) ?? "")}`);
+    } catch (err) {
+      const msg = err instanceof ApiError ? `${err.status} ${err.message}` : (err as Error).message;
+      s.fail(`${rel} ${chalk.dim(msg)}`);
+    }
+  }
+
+  async function drain(): Promise<void> {
+    if (draining) return;
+    draining = true;
+    while (queue.length > 0) {
+      const rel = queue.shift()!;
+      await processRel(rel);
+    }
+    draining = false;
+  }
+
+  function schedule(rel: string): void {
+    const existing = pending.get(rel);
+    if (existing) clearTimeout(existing);
+    pending.set(
+      rel,
+      setTimeout(() => {
+        pending.delete(rel);
+        if (!queue.includes(rel)) queue.push(rel);
+        void drain();
+      }, debounceMs)
+    );
+  }
+
+  let watcher: fs.FSWatcher;
+  try {
+    watcher = fs.watch(rootDir, { recursive: true }, (_event, filename) => {
+      if (!filename) return;
+      const rel = filename.toString().split(path.sep).join("/");
+      if (isIgnored(rel, path.basename(rel), patterns)) return;
+      schedule(rel);
+    });
+  } catch (err) {
+    console.error(
+      chalk.red(
+        `✗ could not start watcher: ${(err as Error).message}\n` +
+          `  Recursive fs.watch needs Node ≥ 20 on Linux. Re-run \`fonto sync\` periodically instead.`
+      )
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(chalk.green(`👁  watching ${rootDir} → ${remotePrefix}  (Ctrl-C to stop)`));
+
+  await new Promise<void>((resolve) => {
+    const stop = () => {
+      watcher.close();
+      for (const t of pending.values()) clearTimeout(t);
+      saveState(statePath, state);
+      console.log(chalk.dim("\n✓ watcher stopped, state saved"));
+      resolve();
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  });
 }

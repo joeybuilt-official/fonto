@@ -17,14 +17,14 @@ import { trash, restore } from "./commands/trash.js";
 import { scList, scRun, scCreate } from "./commands/smart-collection.js";
 import { stacksList, stacksSuggestions, stacksAccept } from "./commands/stacks.js";
 import { folderMv, folderRm } from "./commands/folder.js";
-import { sync } from "./commands/sync.js";
+import { sync, watch } from "./commands/sync.js";
 
 const program = new Command();
 
 program
   .name("fonto")
   .description("Fonto CLI — terminal interface to your Fonto instance")
-  .version("0.3.0");
+  .version("0.4.0");
 
 program
   .command("login")
@@ -173,6 +173,16 @@ program
   .option("--pull", "pull remote deltas before pushing (bidirectional)")
   .action(async (dir: string, opts) => {
     await sync(dir, opts);
+  });
+
+program
+  .command("watch <dir>")
+  .description("baseline-sync <dir> then keep uploading new/changed files live (push-only)")
+  .option("--remote-prefix <path>", "virtual folder root on the remote (default /)")
+  .option("--state <path>", "state file (default <dir>/.fonto-sync.json)")
+  .option("--debounce <ms>", "settle delay before uploading a changed file (default 800)")
+  .action(async (dir: string, opts) => {
+    await watch(dir, opts);
   });
 
 program.parseAsync(process.argv).catch((err: Error) => {
