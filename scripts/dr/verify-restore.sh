@@ -46,10 +46,14 @@ echo "[verify] decrypted $(stat -c%s "$TMP") bytes"
 # zero possibility of touching the live pushd database.
 docker exec "$PG_CONTAINER" psql -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 \
   -c "DROP DATABASE IF EXISTS $TESTDB;" -c "CREATE DATABASE $TESTDB;"
-docker exec "$PG_CONTAINER" psql -U "$PGUSER" -d "$TESTDB" -c "CREATE SCHEMA IF NOT EXISTS fonto;"
+# The fonto schema has vector (pgvector) columns whose type lives in public;
+# a single-schema dump carries no CREATE EXTENSION, so install it first.
+docker exec "$PG_CONTAINER" psql -U "$PGUSER" -d "$TESTDB" \
+  -c "CREATE EXTENSION IF NOT EXISTS vector;" \
+  -c "CREATE SCHEMA IF NOT EXISTS fonto;"
 docker cp "$TMP" "$PG_CONTAINER:/tmp/restore.pgdump"
 docker exec "$PG_CONTAINER" sh -lc \
-  "pg_restore --no-owner --no-privileges -d '$TESTDB' /tmp/restore.pgdump 2>&1 | tail -3 || true"
+  "pg_restore -U '$PGUSER' --no-owner --no-privileges -d '$TESTDB' /tmp/restore.pgdump 2>&1 | tail -3 || true"
 
 ASSETS="$(docker exec "$PG_CONTAINER" psql -U "$PGUSER" -d "$TESTDB" -tAc \
   "SELECT count(*) FROM fonto.assets;" 2>/dev/null || echo 0)"

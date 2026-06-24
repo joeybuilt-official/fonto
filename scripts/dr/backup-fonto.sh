@@ -50,9 +50,13 @@ mkdir -p "$DEST"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="$DEST/fonto-$TS.pgdump.gz.age"
 
+# Connect as the container's superuser (docker exec defaults to OS user `root`,
+# which is not a Postgres role) — mirrors verify-restore.sh.
+PGUSER="$(docker exec "$PG_CONTAINER" printenv POSTGRES_USER)"
+
 # Stream dump -> gzip -> age. Never writes plaintext to disk. -Z0 because gzip
 # does the compression (lets us pipe before encrypt).
-docker exec "$PG_CONTAINER" pg_dump -Fc -Z0 \
+docker exec "$PG_CONTAINER" pg_dump -U "$PGUSER" -Fc -Z0 \
   --schema="$SCHEMA" --no-owner --no-privileges "$DB" \
   | gzip -9 \
   | age -R "$AGE_RECIPIENT_FILE" > "$OUT.tmp"
