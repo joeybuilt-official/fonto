@@ -41,7 +41,13 @@ export const EMBEDDING_MODEL_ID = "openclip-vit-b-32";
 let cachedModelId: string | null = null;
 
 function visionUrl(): string {
-  return process.env.PLEXO_VISION_URL ?? "http://plexo-vision:7000";
+  const base = process.env.PLEXO_VISION_URL;
+  if (!base) {
+    throw new Error(
+      "PLEXO_VISION_URL is not set — configure the Plexo vision sidecar base URL (no hardcoded host fallback)"
+    );
+  }
+  return base;
 }
 
 function serviceKey(): string {
@@ -369,12 +375,21 @@ export async function neighborsViaGPU(
     // sequence number to satisfy the schema.
     faces[i] = { id: String(i), vec: points[i] };
   }
-  const body = JSON.stringify({
-    faces,
-    eps,
-    minPts,
-    return: "edges",
-  });
+  // Guard the serialisation: a face set large enough to push the JSON past
+  // V8's ~512MB max string length throws a RangeError ("Invalid string
+  // length"). The caller caps N well below this, but degrade to null (→ caller
+  // skips / falls back) instead of throwing, so an oversized set can never
+  // silently kill the whole cluster pass again.
+  let body: string;
+  try {
+    body = JSON.stringify({ faces, eps, minPts, return: "edges" });
+  } catch (err) {
+    logger.warn(
+      { count: points.length, err: err instanceof Error ? err.message : String(err) },
+      "neighborsViaGPU payload too large to serialise; falling back"
+    );
+    return null;
+  }
 
   const attempt = async (): Promise<{
     ok: boolean;

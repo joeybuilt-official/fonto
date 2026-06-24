@@ -55,6 +55,10 @@ import { neighborsViaGPU } from "@/lib/plexo-vision";
  * dominates the O(N²) JS scan — the in-process path wins.
  */
 const GPU_CLUSTER_MIN_N = 2000;
+// Above this, the O(N²) in-process JS DBSCAN pegs the worker's single thread and
+// starves asset processing — so it's only a fallback for modest sets; larger
+// sets that can't reach the GPU skip the pass rather than melt down.
+const JS_DBSCAN_MAX_N = 20000;
 
 export interface ClusterOpts {
   /** Cosine-distance threshold; 0 = identical, 2 = opposite. Default 0.32. */
@@ -282,9 +286,31 @@ export async function clusterWorkspaceFaces(
   // Drop rows whose embedding read back malformed. Defensive — the embed
   // step should guarantee well-formed 512-dim vectors, but a partial
   // migration / hand-edit could violate that.
-  const usable: FaceRow[] = rows.filter(
+  let usable: FaceRow[] = rows.filter(
     (r) => Array.isArray(r.embedding) && r.embedding.length > 0
   );
+
+  // Single-pass cap. The GPU edge-builder (plexo-vision /v1/faces/cluster)
+  // rejects N > VISION_CLUSTER_MAX_N (50k) and bodies > 512MB, and a JSON body
+  // for ~90k+ faces exceeds V8's ~512MB max string length — which used to throw
+  // "Invalid string length" and kill the whole pass SILENTLY (logged warn, no
+  // clustering) on large libraries. Until the endpoint accepts a chunked/binary
+  // payload we cluster the highest-confidence MAX_N faces: the excised tail is
+  // the lowest-confidence detections, and every excluded face stays attached +
+  // searchable — it just doesn't seed a person card this pass. PARTIAL coverage
+  // is logged loudly so it's never mistaken for "everything clustered".
+  const MAX_CLUSTER_N = Number(process.env.FACE_CLUSTER_MAX_N ?? "50000");
+  let partialDropped = 0;
+  if (usable.length > MAX_CLUSTER_N) {
+    partialDropped = usable.length - MAX_CLUSTER_N;
+    usable = [...usable]
+      .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+      .slice(0, MAX_CLUSTER_N);
+    log.warn(
+      { total: usable.length + partialDropped, clustered: MAX_CLUSTER_N, dropped: partialDropped },
+      "face set exceeds single-pass cap — clustering highest-confidence subset only (PARTIAL); excluded faces stay searchable but ungrouped"
+    );
+  }
 
   const points = usable.map((r) => r.embedding);
   // GPU path when the library is big enough for HTTP overhead to pay off.
@@ -299,12 +325,21 @@ export async function clusterWorkspaceFaces(
     if (gpu) {
       labels = dbscanFromEdges(gpu.edges, gpu.deg, points.length, minPts);
       log.info({ count: points.length, ep: "cuda" }, "cluster via gpu");
-    } else {
+    } else if (points.length <= JS_DBSCAN_MAX_N) {
       labels = dbscan(points, eps, minPts);
       log.info(
         { count: points.length, ep: "cpu-fallback" },
         "cluster via cpu"
       );
+    } else {
+      // GPU unreachable AND too many faces for the O(N²) JS DBSCAN (it pegs the
+      // worker's single thread + starves asset processing). Skip this pass
+      // rather than melt down; the next debounced trigger retries the GPU.
+      log.warn(
+        { count: points.length, ep: "skipped" },
+        "GPU edge-builder unavailable and face set too large for JS fallback — skipping cluster pass"
+      );
+      return { created: 0, updated: 0, noise: 0 };
     }
   } else {
     labels = dbscan(points, eps, minPts);
