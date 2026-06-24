@@ -22,6 +22,10 @@ class ApiException implements Exception {
   String toString() => "ApiException($status): $message";
 }
 
+/// Sentinel for "argument not provided" so a nullable param can distinguish
+/// `null` (clear it) from absent (leave unchanged). See updateTag.
+const Object _unset = Object();
+
 class FontoClient {
   FontoClient(this.auth, {http.Client? httpClient})
       : _http = httpClient ?? http.Client();
@@ -824,6 +828,32 @@ class FontoClient {
     final j = await _getJson("/api/v1/tags/top", {"limit": "$limit"});
     final raw = (j["tags"] as List? ?? const []).cast<Map<String, dynamic>>();
     return raw.map(TopTag.fromJson).toList();
+  }
+
+  /// M10 / ADR 0013 — full tag list with hierarchy (parentId + path), for the
+  /// Manage tags tree.
+  Future<List<TagNode>> listTags() async {
+    final j = await _getJson("/api/v1/tags");
+    final raw = (j["tags"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(TagNode.fromJson).toList();
+  }
+
+  /// Create a tag, optionally as a child of [parentId].
+  Future<void> createTag(String name, {String? parentId}) async {
+    await _postJson("/api/v1/tags", {
+      "name": name,
+      if (parentId != null) "parentId": parentId,
+    });
+  }
+
+  /// Rename and/or re-parent a tag. Pass [parentId] (string or null) only when
+  /// moving; omit it to leave the parent unchanged.
+  Future<void> updateTag(String id, {String? name, Object? parentId = _unset}) async {
+    final body = <String, dynamic>{
+      if (name != null) "name": name,
+      if (!identical(parentId, _unset)) "parentId": parentId,
+    };
+    await _patchJson("/api/v1/tags/$id", body);
   }
 
   /// Assets carrying a given tag (Things drill-in). Uses the search endpoint's

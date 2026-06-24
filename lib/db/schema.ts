@@ -504,10 +504,17 @@ export const tags = fontoSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     // Phase 2.3 — delta-sync cursor; see assets.seq.
     seq: bigint("seq", { mode: "bigint" }),
+    // M10 / ADR 0013 — hierarchy. parentId = canonical tree edge (null = root);
+    // path = materialized ancestor-id path incl self, '/<id>/<id>/.../<self>/',
+    // for descendant-inclusive filtering via prefix match.
+    parentId: uuid("parent_id"),
+    path: text("path").notNull().default(""),
   },
   (table) => [
     index("tags_workspace_id_idx").on(table.workspaceId),
     index("tags_workspace_seq_idx").on(table.workspaceId, table.seq),
+    index("tags_workspace_parent_idx").on(table.workspaceId, table.parentId),
+    index("tags_workspace_path_idx").on(table.workspaceId, table.path),
   ]
 );
 

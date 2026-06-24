@@ -212,6 +212,35 @@ class TopTag {
       );
 }
 
+/// M10 / ADR 0013 — a tag in the hierarchy. `parentId` is the tree edge (null =
+/// root); `path` is the materialized ancestor-id path incl self, used for
+/// descendant-inclusive filtering server-side. Depth = number of ids in path.
+class TagNode {
+  TagNode({
+    required this.id,
+    required this.name,
+    required this.color,
+    this.parentId,
+    this.path = "",
+  });
+
+  final String id;
+  final String name;
+  final String color;
+  final String? parentId;
+  final String path;
+
+  int get depth => path.split("/").where((s) => s.isNotEmpty).length;
+
+  static TagNode fromJson(Map<String, dynamic> j) => TagNode(
+        id: j["id"] as String,
+        name: j["name"] as String,
+        color: (j["color"] as String?) ?? "#6366f1",
+        parentId: j["parentId"] as String?,
+        path: (j["path"] as String?) ?? "",
+      );
+}
+
 /// Keyset cursor for the asset list. Field is sort-axis agnostic — the
 /// backend returns `capturedBefore` when we ask for `sort=captured`, which
 /// is what the mobile grid now does so photos and documents are ordered by

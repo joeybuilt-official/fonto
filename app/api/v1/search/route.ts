@@ -179,12 +179,21 @@ export async function GET(request: NextRequest) {
 
   let assetIds: string[] | null = null;
 
-  // Tag filter via join
+  // Tag filter via join. M10 / ADR 0013 — descendant-inclusive: a tag matches
+  // its own assets AND every descendant tag's, via the materialized-path
+  // prefix. `path LIKE '<target.path>%'` is self-inclusive (trailing slash).
   if (tagId) {
+    const [target] = await db
+      .select({ path: schema.tags.path })
+      .from(schema.tags)
+      .where(eq(schema.tags.id, tagId))
+      .limit(1);
+    if (!target?.path) return { assets: [], total: 0 };
     const taggedAssets = await db
-      .select({ assetId: schema.assetTags.assetId })
+      .selectDistinct({ assetId: schema.assetTags.assetId })
       .from(schema.assetTags)
-      .where(eq(schema.assetTags.tagId, tagId));
+      .innerJoin(schema.tags, eq(schema.tags.id, schema.assetTags.tagId))
+      .where(sql`${schema.tags.path} LIKE ${target.path + "%"}`);
     assetIds = taggedAssets.map((r) => r.assetId);
     if (!assetIds.length) return { assets: [], total: 0 };
     conditions.push(inArray(schema.assets.id, assetIds));

@@ -92,6 +92,13 @@ export default function ExploreThingsPage() {
             Browse your library by what&apos;s in it — objects, scenes, and
             concepts detected automatically, plus your own tags.
           </p>
+          <Link
+            href="/app/tags"
+            className="inline-flex items-center gap-1 text-xs font-medium text-[var(--ft-color-primary-text)] hover:underline"
+          >
+            <TagIcon className="h-3 w-3" />
+            Manage tags
+          </Link>
         </div>
       </div>
 

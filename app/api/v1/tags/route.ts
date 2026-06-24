@@ -14,7 +14,8 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { childPath, pathDepth, TAG_DEPTH_LIMIT } from "@/lib/tags/tree";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { nextSeq } from "@/lib/db/seq";
 import { jsonSafe } from "@/lib/assets/createAssetRow";
@@ -69,19 +70,42 @@ export async function POST(request: NextRequest) {
   const gate = await requireWorkspaceAccessOrResponse(user.id, workspaceId, "editor");
   if (!gate.ok) return gate.response;
 
-  const body = (await request.json()) as { name: string; color?: string };
+  const body = (await request.json()) as { name: string; color?: string; parentId?: string | null };
   if (!body.name?.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
+
+  // M10 / ADR 0013 — optional parent. Validate it's in this workspace and the
+  // new node would not exceed the depth cap.
+  let parentPath: string | null = null;
+  if (body.parentId) {
+    const [parent] = await db
+      .select({ id: schema.tags.id, path: schema.tags.path })
+      .from(schema.tags)
+      .where(and(eq(schema.tags.id, body.parentId), eq(schema.tags.workspaceId, workspaceId)))
+      .limit(1);
+    if (!parent) return NextResponse.json({ error: "parent not found" }, { status: 400 });
+    if (pathDepth(parent.path) >= TAG_DEPTH_LIMIT)
+      return NextResponse.json({ error: "max nesting depth reached" }, { status: 400 });
+    parentPath = parent.path;
+  }
 
   // Phase 2.3 — allocate delta-sync seq for this new tag.
   const seq = await nextSeq(workspaceId, "tag");
-  const [tag] = await db
+  const [created] = await db
     .insert(schema.tags)
     .values({
       workspaceId,
       name: body.name.trim().toLowerCase(),
       color: body.color ?? "#6366f1",
+      parentId: body.parentId ?? null,
       seq,
     })
+    .returning();
+  // path needs the row's own id; set it now that we have it.
+  const path = childPath(parentPath, created.id);
+  const [tag] = await db
+    .update(schema.tags)
+    .set({ path })
+    .where(eq(schema.tags.id, created.id))
     .returning();
 
   // Phase 2.4 — outbound webhook (tag.created).

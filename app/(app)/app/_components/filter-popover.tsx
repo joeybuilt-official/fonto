@@ -14,8 +14,8 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
-import { Filter, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Filter, X, ChevronRight } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -68,6 +68,8 @@ interface Tag {
   id: string;
   name: string;
   color?: string | null;
+  parentId?: string | null;
+  path?: string | null;
 }
 
 interface Person {
@@ -407,32 +409,17 @@ export function FilterPopover({
 
         {showTag && tags.length > 0 && (
           <Section label="Tags">
-            <div className="flex flex-wrap gap-1.5">
-              {tags.map((t) => {
-                const active = state.tagIds.includes(t.id);
-                return (
-                  <Chip
-                    key={t.id}
-                    variant="filter"
-                    selected={active}
-                    onClick={() =>
-                      onChange({
-                        tagIds: active
-                          ? state.tagIds.filter((x) => x !== t.id)
-                          : [...state.tagIds, t.id],
-                      })
-                    }
-                    style={
-                      active && t.color
-                        ? { background: t.color, borderColor: t.color }
-                        : undefined
-                    }
-                  >
-                    #{t.name}
-                  </Chip>
-                );
-              })}
-            </div>
+            <TagTree
+              tags={tags}
+              selected={state.tagIds}
+              onToggle={(id) =>
+                onChange({
+                  tagIds: state.tagIds.includes(id)
+                    ? state.tagIds.filter((x) => x !== id)
+                    : [...state.tagIds, id],
+                })
+              }
+            />
           </Section>
         )}
 
@@ -499,6 +486,77 @@ export function FilterPopover({
       </PopoverContent>
     </Popover>
   );
+}
+
+// M10 / ADR 0013 — nested tag tree for the filter. Selecting a parent filters
+// to that tag AND its descendants (the search route resolves this server-side
+// via the materialized path), so the tree here is purely for browse + select.
+function TagTree({
+  tags,
+  selected,
+  onToggle,
+}: {
+  tags: Tag[];
+  selected: string[];
+  onToggle: (id: string) => void;
+}) {
+  const byParent = useMemo(() => {
+    const m = new Map<string | null, Tag[]>();
+    for (const t of tags) {
+      const k = t.parentId ?? null;
+      const arr = m.get(k) ?? [];
+      arr.push(t);
+      m.set(k, arr);
+    }
+    for (const arr of m.values()) arr.sort((a, b) => a.name.localeCompare(b.name));
+    return m;
+  }, [tags]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  const renderNode = (t: Tag, depth: number): React.ReactNode => {
+    const kids = byParent.get(t.id) ?? [];
+    const isCollapsed = collapsed.has(t.id);
+    const active = selected.includes(t.id);
+    return (
+      <div key={t.id}>
+        <div className="flex items-center gap-1" style={{ paddingLeft: depth * 14 }}>
+          {kids.length > 0 ? (
+            <button
+              type="button"
+              aria-label={isCollapsed ? "Expand" : "Collapse"}
+              onClick={() =>
+                setCollapsed((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(t.id)) next.delete(t.id);
+                  else next.add(t.id);
+                  return next;
+                })
+              }
+              className="flex h-5 w-5 shrink-0 items-center justify-center text-[var(--ft-color-on-surface-variant)]"
+            >
+              <ChevronRight
+                className={`h-3.5 w-3.5 transition-transform ${isCollapsed ? "" : "rotate-90"}`}
+              />
+            </button>
+          ) : (
+            <span className="w-5 shrink-0" />
+          )}
+          <Chip
+            variant="filter"
+            selected={active}
+            onClick={() => onToggle(t.id)}
+            style={active && t.color ? { background: t.color, borderColor: t.color } : undefined}
+          >
+            #{t.name}
+          </Chip>
+        </div>
+        {!isCollapsed && kids.map((k) => renderNode(k, depth + 1))}
+      </div>
+    );
+  };
+
+  const roots = byParent.get(null) ?? [];
+  return <div className="flex flex-col gap-1">{roots.map((r) => renderNode(r, 0))}</div>;
 }
 
 function Section({

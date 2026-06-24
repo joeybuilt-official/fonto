@@ -18,6 +18,7 @@ import "../api/models.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 import "ignored_people_screen.dart";
+import "tags_screen.dart";
 
 class ExploreScreen extends StatelessWidget {
   const ExploreScreen({super.key, required this.client});
@@ -786,6 +787,29 @@ class _ThingsTabState extends State<_ThingsTab> {
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+            child: TextButton.icon(
+              icon: const Icon(Icons.sell_outlined, size: 18),
+              label: const Text("Manage tags"),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => TagsScreen(client: widget.client),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Expanded(child: _buildGrid()),
+      ],
+    );
+  }
+
+  Widget _buildGrid() {
     return _stateScaffold(
       loading: _loading,
       error: _error,
