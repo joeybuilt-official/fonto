@@ -89,6 +89,12 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
   // P1-5 — running tally of what this visit cleared, for the summary banner.
   int _fixed = 0;
   int _kept = 0;
+  // M15.4 P1-1 — per-item "review one by one" surface. `_reviewOpen` is the
+  // bucketId whose individual sample cards are expanded; `_itemHidden` are the
+  // sample assets already actioned this visit; `_itemBusy` guards re-taps.
+  String? _reviewOpen;
+  final Set<String> _itemHidden = {};
+  final Set<String> _itemBusy = {};
 
   @override
   void initState() {
@@ -120,6 +126,9 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
       setState(() {
         _data = data;
         _hidden.clear();
+        _reviewOpen = null;
+        _itemHidden.clear();
+        _itemBusy.clear();
         _thumbs
           ..clear()
           ..addAll(thumbs);
@@ -549,11 +558,146 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
                     onPressed: busy ? null : () => _apply(b, "reject"),
                     child: const Text("Keep saved dates"),
                   ),
+                // M15.4 P1-1 — drop into one-by-one review (swipe / tap).
+                TextButton.icon(
+                  onPressed: busy
+                      ? null
+                      : () => setState(() =>
+                          _reviewOpen = _reviewOpen == b.bucketId ? null : b.bucketId),
+                  icon: Icon(
+                    _reviewOpen == b.bucketId
+                        ? Icons.expand_less
+                        : Icons.touch_app_outlined,
+                    size: 18,
+                  ),
+                  label: Text(
+                      _reviewOpen == b.bucketId ? "Done reviewing" : "Review one by one"),
+                ),
               ],
+            ),
+            if (_reviewOpen == b.bucketId) _reviewItems(b),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // M15.4 P1-1 — per-item review surface: each sample is a swipeable card
+  // (swipe right = use the photo's date, left = keep the saved date) with
+  // explicit buttons too (WCAG 2.5.1: never swipe-only). Visibility is driven
+  // by `_itemHidden` (the Dismissible never removes its own child) so an
+  // optimistic action can be undone via the snackbar.
+  Widget _reviewItems(ReviewBucket b) {
+    final items = b.sample.where((s) => !_itemHidden.contains(s.assetId)).toList();
+    if (items.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 12),
+        child: Text("All caught up here — apply the rest above."),
+      );
+    }
+    return Column(
+      children: [
+        const SizedBox(height: 8),
+        for (final s in items) _reviewItemCard(s),
+      ],
+    );
+  }
+
+  Widget _reviewItemCard(ReviewBucketSample s) {
+    final url = _thumbs[s.assetId];
+    final busy = _itemBusy.contains(s.assetId);
+    return Dismissible(
+      key: ValueKey("rev-${s.assetId}"),
+      background: Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.only(left: 16),
+        color: Colors.green.withValues(alpha: 0.85),
+        child: const Icon(Icons.check, color: Colors.white),
+      ),
+      secondaryBackground: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 16),
+        color: Colors.redAccent.withValues(alpha: 0.85),
+        child: const Icon(Icons.history, color: Colors.white),
+      ),
+      confirmDismiss: (dir) async {
+        await _applyItem(
+          s,
+          dir == DismissDirection.startToEnd ? "confirm" : "reject",
+        );
+        return false; // visibility handled by _itemHidden
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: url == null
+                    ? imageSkeleton(context)
+                    : CachedNetworkImage(
+                        imageUrl: url, fit: BoxFit.cover, memCacheWidth: 120),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                "Photo says ${_fmtDate(s.mapEstimate, precision: s.mapPrecision)}",
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            IconButton(
+              tooltip: "Use this date",
+              onPressed: busy ? null : () => _applyItem(s, "confirm"),
+              icon: const Icon(Icons.check_circle_outline),
+            ),
+            IconButton(
+              tooltip: "Keep saved date",
+              onPressed: busy ? null : () => _applyItem(s, "reject"),
+              icon: const Icon(Icons.history),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _applyItem(ReviewBucketSample s, String action) async {
+    if (_itemBusy.contains(s.assetId)) return;
+    setState(() {
+      _itemBusy.add(s.assetId);
+      _itemHidden.add(s.assetId);
+    });
+    try {
+      await widget.client.confirmReviewItem(s.assetId, action);
+      if (!mounted) return;
+      setState(() => action == "confirm" ? _fixed++ : _kept++);
+      final inverse = action == "confirm" ? "reject" : "confirm";
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(action == "confirm" ? "Date applied" : "Kept saved date"),
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: "Undo",
+          onPressed: () async {
+            try {
+              await widget.client.confirmReviewItem(s.assetId, inverse);
+            } catch (_) {}
+            if (mounted) {
+              setState(() {
+                _itemHidden.remove(s.assetId);
+                action == "confirm" ? _fixed-- : _kept--;
+              });
+            }
+          },
+        ),
+      ));
+    } catch (_) {
+      if (mounted) setState(() => _itemHidden.remove(s.assetId));
+    } finally {
+      if (mounted) setState(() => _itemBusy.remove(s.assetId));
+    }
   }
 }
