@@ -184,6 +184,28 @@ class _FontoAppState extends State<FontoApp> {
   }
 
   Future<void> _handleDeepLink(Uri uri) async {
+    // M14 / ADR 0056 — OIDC handoff: the web minted a PAT after IdP login and
+    // deep-linked it back. Handle BEFORE the configured-guard (the app isn't
+    // logged in yet). Save it like a manually-pasted token, verify, go home.
+    if (uri.path == "/mobile/auth-callback") {
+      final pat = uri.queryParameters["pat"];
+      if (pat != null && pat.isNotEmpty) {
+        await _auth.save(pat: pat, baseUrl: uri.origin);
+        final client = FontoClient(_auth);
+        try {
+          await client.stats();
+          await registerUploadDrain();
+          if (!mounted) return;
+          _handleLoggedIn();
+        } catch (_) {
+          await _auth.clear();
+        } finally {
+          client.close();
+        }
+      }
+      return;
+    }
+
     if (!_auth.isConfigured) return;
     final client = FontoClient(_auth);
     bool navigated = false;

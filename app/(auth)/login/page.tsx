@@ -3,7 +3,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { signIn, signUp } from "@/lib/auth/client";
+import { signIn, signUp, signInSSO, ssoProviderId } from "@/lib/auth/client";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -133,6 +133,33 @@ function LoginPageInner() {
             {loading ? "Loading..." : isSignUp ? "Create Account" : "Sign In"}
           </button>
         </form>
+
+        {/* M14 / ADR 0056 — SSO, shown only when an IdP is configured. Mobile
+            (?mobile=1) routes the post-login redirect through the PAT handoff. */}
+        {ssoProviderId && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <span className="h-px flex-1 bg-border" />
+              <span className="text-xs text-muted-foreground">or</span>
+              <span className="h-px flex-1 bg-border" />
+            </div>
+            <button
+              type="button"
+              aria-label="Sign in with SSO"
+              onClick={() =>
+                signInSSO(
+                  ssoProviderId,
+                  searchParams.get("mobile") === "1"
+                    ? "/mobile/auth-handoff"
+                    : (safeCallback ?? "/app/home")
+                )
+              }
+              className="w-full rounded border border-border bg-card px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              Sign in with SSO
+            </button>
+          </div>
+        )}
 
         <p className="text-center text-sm text-muted-foreground">
           {isSignUp ? "Already have an account?" : "Need an account?"}{" "}

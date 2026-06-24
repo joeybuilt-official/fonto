@@ -85,6 +85,15 @@ export default function SettingsPage() {
   const tabClass = (tab: SettingsTab) =>
     cn(activeTab !== tab && "md:hidden");
 
+  // M14 / ADR 0055 — surface the instance-admin console link only to admins.
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    fetch("/api/v1/admin/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setIsAdmin(!!d?.isInstanceAdmin))
+      .catch(() => null);
+  }, []);
+
   useEffect(() => {
     fetch("/api/v1/workspace")
       .then((r) => r.json())
@@ -640,6 +649,40 @@ export default function SettingsPage() {
               Export JSON
             </Button>
           </div>
+          {/* M14 / ADR 0057 — full library export: manifest + every original. */}
+          <div className="mt-4 flex items-center justify-between border-t border-[var(--ft-color-outline-variant)] pt-4">
+            <div>
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Export everything
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Download your whole library — every original photo &amp; video, plus a manifest
+              </p>
+            </div>
+            <Button
+              variant="outlined"
+              size="sm"
+              render={<a href="/api/v1/assets/export/zip?scope=workspace" />}
+            >
+              Export .zip
+            </Button>
+          </div>
+          {/* M14 / ADR 0055 — instance-admin console, admin-only. */}
+          {isAdmin && (
+            <div className="mt-4 flex items-center justify-between border-t border-[var(--ft-color-outline-variant)] pt-4">
+              <div>
+                <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                  Instance admin
+                </p>
+                <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                  Server stats, users, and per-workspace storage quotas
+                </p>
+              </div>
+              <Button variant="outlined" size="sm" render={<a href="/app/settings/admin" />}>
+                Open console
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

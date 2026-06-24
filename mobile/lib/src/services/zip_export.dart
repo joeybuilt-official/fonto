@@ -16,14 +16,24 @@ Future<void> exportAndShareZip(
   FontoClient client, {
   List<String>? ids,
   String? collectionId,
+  // M14 / ADR 0057 — pass "workspace" to export the whole library (manifest +
+  // every original), no entry cap.
+  String? scope,
 }) async {
   final messenger = ScaffoldMessenger.of(context);
   messenger.showSnackBar(
-    const SnackBar(content: Text("Preparing export…")),
+    SnackBar(
+      content: Text(
+        scope == "workspace" ? "Preparing full library export…" : "Preparing export…",
+      ),
+    ),
   );
   try {
-    final file =
-        await client.downloadExportZip(ids: ids, collectionId: collectionId);
+    final file = await client.downloadExportZip(
+      ids: ids,
+      collectionId: collectionId,
+      scope: scope,
+    );
     await Share.shareXFiles(
       [XFile(file.path, mimeType: "application/zip")],
       subject: "Fonto export",

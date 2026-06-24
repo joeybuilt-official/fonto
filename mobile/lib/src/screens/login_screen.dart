@@ -7,6 +7,7 @@
 // we wipe the saved creds so the form stays on screen.
 
 import "package:flutter/material.dart";
+import "package:url_launcher/url_launcher.dart";
 
 import "../../main.dart" show registerUploadDrain;
 import "../api/fonto_client.dart";
@@ -33,6 +34,19 @@ class _LoginScreenState extends State<LoginScreen> {
     _baseUrlCtrl.dispose();
     _patCtrl.dispose();
     super.dispose();
+  }
+
+  // M14 / ADR 0056 — open the web login in the system browser for the OIDC
+  // dance. On success the web deep-links a PAT back to /mobile/auth-callback,
+  // handled in main.dart. The base URL field sets which instance to hit.
+  Future<void> _ssoLogin() async {
+    final baseUrl = _baseUrlCtrl.text.trim();
+    if (baseUrl.isEmpty) {
+      setState(() => _error = "Enter your Fonto URL first.");
+      return;
+    }
+    final uri = Uri.parse("$baseUrl/login?mobile=1");
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   Future<void> _submit() async {
@@ -106,6 +120,14 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Text("Sign in"),
+              ),
+              const SizedBox(height: 12),
+              // M14 / ADR 0056 — SSO via the system browser. Opens the web
+              // login (which mints a PAT + deep-links it back if the instance
+              // has an IdP configured). Browser-mediated, so no native OAuth.
+              OutlinedButton(
+                onPressed: _busy ? null : _ssoLogin,
+                child: const Text("Sign in with SSO"),
               ),
               if (_error != null) ...[
                 const SizedBox(height: 16),

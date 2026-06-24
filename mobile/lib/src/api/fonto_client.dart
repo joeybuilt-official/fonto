@@ -413,6 +413,39 @@ class FontoClient {
   Future<String?> assetMotionUrl(String id) =>
       resolveSignedUrl("/api/v1/assets/$id/url?variant=motion");
 
+  // ── M14 / ADR 0055 — instance-admin console. All gated server-side (403 for
+  // non-admins). Returns raw maps/lists; the screen renders them directly.
+
+  /// True when the signed-in user is an instance admin (drives the settings
+  /// tile visibility). Swallows errors → false (fail-closed UI).
+  Future<bool> adminMe() async {
+    try {
+      final j = await _getJson("/api/v1/admin/me");
+      return j["isInstanceAdmin"] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<Map<String, dynamic>> adminServerStats() =>
+      _getJson("/api/v1/admin/server-stats");
+
+  Future<List<Map<String, dynamic>>> adminUsers() async {
+    final j = await _getJson("/api/v1/admin/users");
+    return (j["users"] as List? ?? const []).cast<Map<String, dynamic>>();
+  }
+
+  Future<List<Map<String, dynamic>>> adminWorkspaces() async {
+    final j = await _getJson("/api/v1/admin/workspaces");
+    return (j["workspaces"] as List? ?? const []).cast<Map<String, dynamic>>();
+  }
+
+  /// Set a workspace quota. `quotaBytes` null = unlimited.
+  Future<void> adminSetQuota(String workspaceId, int? quotaBytes) =>
+      _putJson("/api/v1/admin/workspaces/$workspaceId/quota", {
+        "quotaBytes": quotaBytes,
+      });
+
   /// Phase 3 (faces/UX) — resolve a relative API URL endpoint that returns a
   /// signed object URL as `{ "url": "..." }`. Used for the dedicated face crop
   /// (`Person.coverFaceCropUrl`, `AssetFace.faceCropUrl`), which point at
@@ -693,12 +726,16 @@ class FontoClient {
   Future<File> downloadExportZip({
     List<String>? ids,
     String? collectionId,
+    // M14 / ADR 0057 — "workspace" exports the whole library (manifest + every
+    // original), no entry cap. Ignores ids/collectionId when set.
+    String? scope,
   }) async {
     final req = http.Request("POST", _uri("/api/v1/assets/export/zip"));
     req.headers.addAll({..._headers, "Content-Type": "application/json"});
     req.body = json.encode({
       if (ids != null) "ids": ids,
       if (collectionId != null) "collectionId": collectionId,
+      if (scope != null) "scope": scope,
     });
     final res = await _http.send(req);
     if (res.statusCode < 200 || res.statusCode >= 300) {

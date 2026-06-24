@@ -18,7 +18,9 @@ import "../state/settings_store.dart";
 import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
 import "../state/workmanager_dispatcher.dart";
+import "../services/zip_export.dart";
 import "../widgets/sync_permission_sheet.dart";
+import "admin_screen.dart";
 import "google_drive_import_screen.dart";
 import "imports_screen.dart";
 import "nextcloud_import_screen.dart";
@@ -50,6 +52,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _load();
     _loadStorage();
+    _loadAdmin();
+  }
+
+  // M14 / ADR 0055 — gate the Instance Admin tile on the server tier check.
+  bool _isAdmin = false;
+  Future<void> _loadAdmin() async {
+    try {
+      final auth = await AuthStore.load();
+      final client = FontoClient(auth);
+      try {
+        final ok = await client.adminMe();
+        if (mounted) setState(() => _isAdmin = ok);
+      } finally {
+        client.close();
+      }
+    } catch (_) {
+      // Best-effort — tile stays hidden on failure (fail-closed).
+    }
+  }
+
+  Future<void> _openAdmin() async {
+    final auth = await AuthStore.load();
+    if (!mounted) return;
+    final client = FontoClient(auth);
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => AdminScreen(client: client)),
+    );
+    client.close();
   }
 
   Future<void> _loadStorage() async {
@@ -424,6 +454,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     client.close();
   }
 
+  // M14 / ADR 0057 — export the whole library (manifest + every original) via
+  // the M8 streaming-zip pipeline, then hand off to the native share sheet.
+  Future<void> _exportLibrary() async {
+    final auth = await AuthStore.load();
+    if (!mounted) return;
+    if (!auth.isConfigured) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Sign in first to export.")),
+      );
+      return;
+    }
+    final client = FontoClient(auth);
+    try {
+      await exportAndShareZip(context, client, scope: "workspace");
+    } finally {
+      client.close();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -666,6 +715,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
+                const Divider(height: 1),
+                // M14 / ADR 0057 — full library export (manifest + originals).
+                ListTile(
+                  leading: const Icon(Icons.download_for_offline_outlined),
+                  title: const Text("Export everything"),
+                  subtitle: const Text(
+                    "Download your whole library — every original photo & "
+                    "video, plus a manifest.",
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _exportLibrary,
+                ),
+                // M14 / ADR 0055 — instance-admin console, admin-only.
+                if (_isAdmin) ...[
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.admin_panel_settings_outlined),
+                    title: const Text("Instance admin"),
+                    subtitle: const Text(
+                      "Server stats, users, and per-workspace storage quotas.",
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _openAdmin,
+                  ),
+                ],
               ],
             ),
     );

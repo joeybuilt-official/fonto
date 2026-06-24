@@ -54,7 +54,35 @@ interface ExportParams {
   ids: string[];
   collectionId: string | null;
   token: string | null;
+  // M14 / ADR 0057 — full-workspace export (manifest + ALL originals, no entry
+  // cap). Owner pulls their entire library out of the appliance. Only valid on
+  // the authenticated path; ignored for token/share exports.
+  scope: "workspace" | null;
 }
+
+// Richer column set for the workspace manifest. `manifest.json` correlates each
+// in-zip filename back to its asset id + checksum + capture metadata so a
+// re-import (or any external tool) can rebuild the library faithfully.
+const MANIFEST_COLS = {
+  id: schema.assets.id,
+  workspaceId: schema.assets.workspaceId,
+  filename: schema.assets.filename,
+  mimeType: schema.assets.mimeType,
+  sizeBytes: schema.assets.sizeBytes,
+  sha256: schema.assets.sha256,
+  capturedAt: schema.assets.capturedAt,
+  createdAt: schema.assets.createdAt,
+} as const;
+type ManifestRow = {
+  id: string;
+  workspaceId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  capturedAt: Date | null;
+  createdAt: Date;
+};
 
 function json(body: unknown, status: number) {
   return new Response(JSON.stringify(body), {
@@ -149,6 +177,9 @@ async function resolveMemberAssets(
 
 async function handle(params: ExportParams): Promise<Response> {
   let assets: ExportAsset[];
+  // M14 — workspace-scope export carries a manifest + lifts the entry/byte
+  // caps (the owner is pulling their whole library, which is the point).
+  let manifest: { workspaceId: string; workspaceName: string; rows: ManifestRow[] } | null = null;
 
   if (params.token) {
     const resolved = await resolveShareAssets(params.token);
@@ -159,22 +190,44 @@ async function handle(params: ExportParams): Promise<Response> {
     if (!user) return json({ error: "Unauthorized" }, 401);
     const workspaces = await getUserWorkspaces(user.id);
     if (!workspaces.length) return json({ error: "Not found" }, 404);
-    const res = await resolveMemberAssets(workspaces.map((w) => w.id), params);
-    if (res === "badreq") return json({ error: "ids or collectionId required" }, 400);
-    if (res === "notfound") return json({ error: "Not found" }, 404);
-    assets = res;
+
+    if (params.scope === "workspace") {
+      // Whole library: every active asset in the caller's primary workspace.
+      const ws = workspaces[0];
+      const rows = (await db
+        .select(MANIFEST_COLS)
+        .from(schema.assets)
+        .where(and(eq(schema.assets.workspaceId, ws.id), ACTIVE_ONLY))) as ManifestRow[];
+      if (!rows.length) return json({ error: "Nothing to export" }, 404);
+      manifest = { workspaceId: ws.id, workspaceName: ws.name, rows };
+      assets = rows.map((r) => ({
+        id: r.id,
+        workspaceId: r.workspaceId,
+        filename: r.filename,
+        sizeBytes: r.sizeBytes,
+      }));
+    } else {
+      const res = await resolveMemberAssets(workspaces.map((w) => w.id), params);
+      if (res === "badreq") return json({ error: "ids or collectionId required" }, 400);
+      if (res === "notfound") return json({ error: "Not found" }, 404);
+      assets = res;
+    }
   }
 
   if (!assets.length) return json({ error: "Nothing to export" }, 404);
 
   let truncated = 0;
-  if (assets.length > MAX_ENTRIES) {
-    truncated = assets.length - MAX_ENTRIES;
-    assets = assets.slice(0, MAX_ENTRIES);
-  }
-  const totalBytes = assets.reduce((n, a) => n + (a.sizeBytes ?? 0), 0);
-  if (totalBytes > MAX_TOTAL_BYTES) {
-    return json({ error: "Export too large", maxBytes: MAX_TOTAL_BYTES, totalBytes }, 413);
+  // Workspace export is uncapped by design (it's the owner's full data export);
+  // every other mode keeps the entry + byte guards.
+  if (!manifest) {
+    if (assets.length > MAX_ENTRIES) {
+      truncated = assets.length - MAX_ENTRIES;
+      assets = assets.slice(0, MAX_ENTRIES);
+    }
+    const totalBytes = assets.reduce((n, a) => n + (a.sizeBytes ?? 0), 0);
+    if (totalBytes > MAX_TOTAL_BYTES) {
+      return json({ error: "Export too large", maxBytes: MAX_TOTAL_BYTES, totalBytes }, 413);
+    }
   }
 
   // STORE mode: media is already compressed; DEFLATE would burn CPU for ~0 gain.
@@ -190,9 +243,40 @@ async function handle(params: ExportParams): Promise<Response> {
   // R2 stream only when archiver is ready for it (await the 'entry' event), so
   // exactly one object is in flight — bounded memory + natural backpressure.
   const fill = (async () => {
+    // M14 — manifest first (small, buffered). Maps each in-zip file → asset id,
+    // checksum, mime + capture/ingest time so the export is self-describing.
+    if (manifest) {
+      const manifestJson = JSON.stringify(
+        {
+          exportedAt: new Date().toISOString(),
+          workspace: { id: manifest.workspaceId, name: manifest.workspaceName },
+          assetCount: manifest.rows.length,
+          assets: manifest.rows.map((r) => ({
+            id: r.id,
+            file: `originals/${r.id}_${r.filename.replace(/^\/+/, "").split("/").pop()}`,
+            filename: r.filename,
+            mimeType: r.mimeType,
+            sizeBytes: r.sizeBytes,
+            sha256: r.sha256,
+            capturedAt: r.capturedAt ? r.capturedAt.toISOString() : null,
+            createdAt: r.createdAt.toISOString(),
+          })),
+        },
+        null,
+        2
+      );
+      const mfConsumed = new Promise<void>((resolve) => archive.once("entry", () => resolve()));
+      archive.append(Buffer.from(manifestJson), { name: "manifest.json" });
+      await mfConsumed;
+    }
     const usedNames = new Set<string>();
     for (const a of assets) {
-      const name = uniqueName(a, usedNames);
+      // Workspace export: deterministic `originals/<id>_<name>` (id-prefixed so
+      // it's collision-free + matches the manifest `file` path). Other modes
+      // keep the flat human-friendly naming.
+      const name = manifest
+        ? `originals/${a.id}_${a.filename.replace(/^\/+/, "").split("/").pop() || a.id}`
+        : uniqueName(a, usedNames);
       let body: ReadableStream;
       try {
         ({ body } = await storage().getStream(assetStorageKey(a.workspaceId, a.id, a.filename)));
@@ -213,9 +297,10 @@ async function handle(params: ExportParams): Promise<Response> {
   fill.catch((err) => archive.destroy(err as Error));
 
   const today = new Date().toISOString().slice(0, 10);
+  const fname = manifest ? `fonto-library-${today}.zip` : `fonto-export-${today}.zip`;
   const headers: Record<string, string> = {
     "Content-Type": "application/zip",
-    "Content-Disposition": `attachment; filename="fonto-export-${today}.zip"`,
+    "Content-Disposition": `attachment; filename="${fname}"`,
     "Cache-Control": "no-store",
   };
   if (truncated) headers["X-Fonto-Export-Truncated"] = String(truncated);
@@ -229,6 +314,7 @@ export async function GET(request: NextRequest) {
     ids: parseCsv(sp.get("ids")),
     collectionId: sp.get("collectionId"),
     token: sp.get("token"),
+    scope: sp.get("scope") === "workspace" ? "workspace" : null,
   });
 }
 
@@ -238,23 +324,28 @@ export async function POST(request: NextRequest) {
   let collectionId: string | null = sp.get("collectionId");
   const token = sp.get("token");
 
+  let scope: "workspace" | null = sp.get("scope") === "workspace" ? "workspace" : null;
+
   const ctype = request.headers.get("content-type") ?? "";
   if (ctype.includes("application/json")) {
     const body = (await request.json().catch(() => ({}))) as {
       ids?: string[];
       collectionId?: string;
+      scope?: string;
     };
     ids = Array.isArray(body.ids) ? body.ids.filter((s) => typeof s === "string") : [];
     collectionId = body.collectionId ?? collectionId;
+    if (body.scope === "workspace") scope = "workspace";
   } else {
     const form = await request.formData().catch(() => null);
     if (form) {
       ids = parseCsv(form.get("ids")?.toString());
       collectionId = (form.get("collectionId")?.toString() || null) ?? collectionId;
+      if (form.get("scope")?.toString() === "workspace") scope = "workspace";
     }
   }
 
-  return handle({ ids, collectionId, token });
+  return handle({ ids, collectionId, token, scope });
 }
 
 // Avoid in-zip name collisions by suffixing the short asset id before the ext.
