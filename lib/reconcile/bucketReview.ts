@@ -92,9 +92,11 @@ export function srcBucketKey(source: string | null, conflict: boolean): string {
 function dirBucketKey(path: string | null): string {
   return path === null ? "dir:" : `dir:${b64url(path)}`;
 }
-/** time axis key — `time:null` = captured_at IS NULL; else half-open [start,end) ms. */
+/** time axis key — `time:null` = captured_at IS NULL; else half-open [start,end) ms.
+ * Underscore separator (not `-`) so a negative epoch (pre-1970 captured_at)
+ * round-trips unambiguously. */
 function timeBucketKey(startMs: number | null, endMs?: number): string {
-  return startMs === null ? "time:null" : `time:${startMs}-${endMs}`;
+  return startMs === null ? "time:null" : `time:${startMs}_${endMs}`;
 }
 
 /**
@@ -127,7 +129,7 @@ export function predicateForKey(bucketKey: string) {
   if (bucketKey.startsWith("time:")) {
     const payload = bucketKey.slice(5);
     if (payload === "null") return isNull(capCol);
-    const m = /^(\d+)-(\d+)$/.exec(payload);
+    const m = /^(-?\d+)_(-?\d+)$/.exec(payload);
     if (!m) throw new Error("invalid time bucketKey");
     // gte/lt (not raw sql) so drizzle applies the timestamp column's
     // Date→driver encoding; a raw `sql` param hands the driver a bare Date.
