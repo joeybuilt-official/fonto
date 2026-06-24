@@ -436,7 +436,7 @@ export async function addAutoClusterFacesJob(
 ): Promise<string | undefined> {
   const q = maintenanceQueue() as unknown as Queue<AutoClusterFacesJob>;
   const job = await q.add(JobNames.AutoClusterFaces, payload, {
-    jobId: `auto-cluster-faces:${payload.workspaceId}`,
+    jobId: `auto-cluster-faces-${payload.workspaceId}`,
     removeOnComplete: true,
     removeOnFail: 50,
   });
