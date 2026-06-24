@@ -3,7 +3,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play, Share2 } from "lucide-react";
+import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play, Share2, CircleDot } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 export interface Asset {
@@ -40,6 +40,11 @@ export interface Asset {
   // endpoint includes the member count so PhotoCard can render a badge
   // without a per-tile round trip. NULL for standalone assets.
   stackMemberCount?: number | null;
+  // M12 / ADR 0014 — motion (Live) photo. `motionPhoto` true ⇒ this still
+  // carries a playable clip (embedded Android MP4 or a paired Apple MOV) and
+  // gets a "LIVE" badge. The clip URL is fetched on demand via
+  // `/api/v1/assets/{id}/url?variant=motion` (not bundled in the grid list).
+  motionPhoto?: boolean | null;
   // Phase 8a — video probe output. NULL for non-video assets.
   durationSeconds?: number | null;
   videoCodec?: string | null;
@@ -398,6 +403,15 @@ export function PhotoCard({
             </div>
           )}
         </>
+      )}
+
+      {/* M12 / ADR 0014 — motion (Live) photo badge. Top-left so it clears the
+          stack badge (top-right) + favorite heart (bottom-left). Stills only. */}
+      {asset.motionPhoto && !asset.mimeType.startsWith("video/") && (
+        <div className="pointer-events-none absolute top-1.5 left-1.5 z-10 flex items-center gap-0.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+          <CircleDot className="h-2.5 w-2.5" />
+          Live
+        </div>
       )}
 
       {/* Hover overlay */}

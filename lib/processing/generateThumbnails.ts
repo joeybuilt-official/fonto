@@ -26,9 +26,13 @@ import { logger } from "@/lib/logger";
 import {
   assetDerivativeKey,
   assetResponsiveDerivativeKey,
+  assetMotionKey,
   assetStorageKey,
 } from "@/lib/r2";
 import { storage } from "@/lib/storage";
+import { findEmbeddedMotionVideo } from "@/lib/processing/extractMotionPhoto";
+import { pairAppleMotion } from "@/lib/processing/motionPairing";
+import { nextSeq } from "@/lib/db/seq";
 import { decodeToBuffer } from "@/lib/processing/decode";
 import { probeVideo } from "@/lib/processing/probeVideo";
 import { extractVideoThumbnail } from "@/lib/processing/extractVideoThumbnail";
@@ -186,6 +190,9 @@ export async function generateThumbnails(
   log.info({ bytes: original.length }, "downloaded original");
 
   let decodedBuffer: Buffer;
+  // M12 / ADR 0014 — set when this still carries an embedded Android motion
+  // clip we extracted + uploaded. Folded into the final row UPDATE below.
+  let motionVideoKey: string | null = null;
   if (isVideo) {
     // ffmpeg's accurate-seek wants a file path; pipe-via-stdin defeats
     // keyframe seeking. Write to a tmp file, probe, extract, unlink.
@@ -215,6 +222,18 @@ export async function generateThumbnails(
         .where(eq(schema.assets.id, assetId));
     } finally {
       await fs.promises.unlink(tmp).catch(() => {});
+    }
+    // M12 / ADR 0014 — Apple Live Photo: a short `.MOV` sibling of a still.
+    // durationSeconds was just stamped above, so pairing can run now. Best-
+    // effort; the workspace reconcile sweep is the safety net for stragglers
+    // whose still hadn't imported yet.
+    try {
+      await pairAppleMotion(assetId);
+    } catch (err) {
+      log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "apple motion pairing failed"
+      );
     }
   } else if (isPdf) {
     // Phase 6.7 — documents render their first page via poppler's pdftoppm
@@ -247,6 +266,31 @@ export async function generateThumbnails(
       "decoded"
     );
     decodedBuffer = decoded.buffer;
+
+    // M12 / ADR 0014 — Android motion photo: an MP4 clip is appended after
+    // the JPEG EOI. Byte-scan the in-memory original (already downloaded for
+    // the decode above — no extra read), slice the clip, and upload it as a
+    // `motion.mp4` derivative. Byte-copy only; the original JPEG is untouched.
+    // Best-effort: extraction never blocks the thumbnail job.
+    try {
+      const motion = findEmbeddedMotionVideo(original);
+      if (motion) {
+        const clip = original.subarray(motion.offset, motion.offset + motion.length);
+        const key = assetMotionKey(workspaceId, assetId);
+        await storage().put(key, clip, {
+          contentType: "video/mp4",
+          contentLength: clip.length,
+          cacheControl: DERIVATIVE_CACHE_CONTROL,
+        });
+        motionVideoKey = key;
+        log.info({ motionBytes: clip.length, key }, "extracted motion clip");
+      }
+    } catch (err) {
+      log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "motion-photo extraction failed"
+      );
+    }
   }
 
   // Encode all variants in parallel — sharp pipelines are independent. CPU
@@ -344,6 +388,17 @@ export async function generateThumbnails(
     "derivatives uploaded"
   );
 
+  // M12 — bump seq when a motion clip was found so delta-sync propagates the
+  // motionPhoto flag (+ the LIVE badge) to offline clients. Skipped otherwise
+  // to keep the thumbnail job off the seq allocator on the common path.
+  const motionFields = motionVideoKey
+    ? {
+        motionPhoto: true,
+        motionVideoKey,
+        seq: await nextSeq(workspaceId, "asset"),
+      }
+    : {};
+
   await db
     .update(schema.assets)
     .set({
@@ -357,6 +412,7 @@ export async function generateThumbnails(
       previewAvifKey,
       thumbnailGeneratedAt: new Date(),
       lqip,
+      ...motionFields,
     })
     .where(eq(schema.assets.id, assetId));
 

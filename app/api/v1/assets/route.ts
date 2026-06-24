@@ -71,6 +71,9 @@ export async function GET(request: NextRequest) {
   const where: SQL[] = [
     eq(schema.assets.workspaceId, workspaceId),
     eq(schema.assets.lifecycleState, lifecycleFilter),
+    // M12 / ADR 0014 — absorbed Apple Live Photo MOVs are hidden; their still
+    // carries the clip. One tile = one moment.
+    eq(schema.assets.motionCompanion, false),
   ];
   if (onlyFavorites) where.push(eq(schema.assets.isFavorite, true));
   if (ratingMin !== null) where.push(gte(schema.assets.rating, ratingMin));

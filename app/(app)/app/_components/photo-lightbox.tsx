@@ -8,7 +8,7 @@ import {
   X, ChevronLeft, ChevronRight, Info, Tag, FolderPlus, Download,
   Trash2, Plus, Loader2, Share2, Check, Copy, Settings, Heart, Star, Layers, MessageCircle,
   ScanSearch, EyeOff, RotateCcw, RotateCw, FlipVertical, Crop as CropIcon, CornerUpLeft,
-  Play, Pause
+  Play, Pause, CircleDot
 } from "lucide-react";
 import ReactCrop, {
   centerCrop,
@@ -638,6 +638,24 @@ export function PhotoLightbox({
   // Bumped on load/resize so the overlay recomputes against the live rect.
   const [imgRectTick, setImgRectTick] = useState(0);
 
+  // M12 / ADR 0014 — motion (Live) photo playback. The clip URL is fetched
+  // lazily on first hover/tap (not bundled in the list), then the <video>
+  // overlays the still while active. `motionActive` is driven by hover on the
+  // desktop + a tap toggle on touch.
+  const [motionUrl, setMotionUrl] = useState<string | null>(null);
+  const [motionActive, setMotionActive] = useState(false);
+  const motionVideoRef = useRef<HTMLVideoElement | null>(null);
+  const showMotion = asset.motionPhoto === true && !asset.mimeType.startsWith("video/");
+
+  const stopMotion = useCallback(() => {
+    setMotionActive(false);
+    const v = motionVideoRef.current;
+    if (v) {
+      v.pause();
+      v.currentTime = 0;
+    }
+  }, []);
+
   useEffect(() => {
     setIsFavorite(!!asset.isFavorite);
     setRating(asset.rating ?? 0);
@@ -683,6 +701,26 @@ export function PhotoLightbox({
   // prop `asset` (the primary in stack mode) but swaps to a clicked
   // stack member when set.
   const displayedAssetId = viewMemberId ?? asset.id;
+
+  // M12 / ADR 0014 — lazily fetch the motion clip URL on first hover/tap.
+  const startMotion = useCallback(async () => {
+    if (!showMotion) return;
+    setMotionActive(true);
+    if (motionUrl) return;
+    try {
+      const r = await fetch(`/api/v1/assets/${displayedAssetId}/url?variant=motion`);
+      const d = (await r.json()) as { url?: string };
+      setMotionUrl(d.url ?? null);
+    } catch {
+      setMotionUrl(null);
+    }
+  }, [showMotion, motionUrl, displayedAssetId]);
+
+  // Drop the cached clip URL when the visible asset changes (stack nav etc.).
+  useEffect(() => {
+    setMotionUrl(null);
+    setMotionActive(false);
+  }, [displayedAssetId]);
 
   useEffect(() => {
     setUrl(null);
@@ -1460,7 +1498,11 @@ export function PhotoLightbox({
             // Phase 2 (faces/UX) — the image is wrapped so name-tag chips can
             // be absolutely positioned over each detected face. Tapping the
             // image toggles the chips (mirrors the Flutter `_showNames`).
-            <div className="relative flex max-h-full max-w-full items-center justify-center p-8">
+            <div
+              className="relative flex max-h-full max-w-full items-center justify-center p-8"
+              onMouseEnter={showMotion ? () => void startMotion() : undefined}
+              onMouseLeave={showMotion ? stopMotion : undefined}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 ref={imgRef}
@@ -1478,6 +1520,37 @@ export function PhotoLightbox({
                   if (faces.length > 0) setShowNames((v) => !v);
                 }}
               />
+              {/* M12 / ADR 0014 — motion clip overlay. Plays muted + looped
+                  over the still while hovered (desktop) or toggled (touch). */}
+              {showMotion && motionActive && motionUrl && (
+                // eslint-disable-next-line jsx-a11y/media-has-caption
+                <video
+                  ref={motionVideoRef}
+                  src={motionUrl}
+                  muted
+                  loop
+                  autoPlay
+                  playsInline
+                  className="pointer-events-none absolute inset-0 m-auto max-h-full max-w-full object-contain p-8"
+                />
+              )}
+              {/* "LIVE" badge — also the tap target for touch playback. */}
+              {showMotion && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (motionActive) stopMotion();
+                    else void startMotion();
+                  }}
+                  className="absolute left-4 top-4 z-10 flex items-center gap-1 rounded-full bg-black/65 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-white hover:bg-black/80"
+                  title={motionActive ? "Stop Live Photo" : "Play Live Photo"}
+                  aria-label={motionActive ? "Stop Live Photo" : "Play Live Photo"}
+                >
+                  <CircleDot className="h-3 w-3" />
+                  Live
+                </button>
+              )}
               {showNames &&
                 faceChips.map((c) => (
                   <div

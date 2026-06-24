@@ -27,6 +27,7 @@ import "../state/drive_download_queue.dart";
 import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
 import "../widgets/list_states.dart";
+import "../widgets/live_badge.dart";
 import "asset_detail_screen.dart";
 import "files_surface.dart";
 import "memories_screen.dart";
@@ -2385,6 +2386,13 @@ class _AssetTile extends StatelessWidget {
                     ? Icons.play_circle_fill
                     : Icons.description,
               ),
+            ),
+          // M12 / ADR 0014 — motion (Live) photo badge (parity with web grid).
+          if (_isImage && asset.motionPhoto)
+            const Positioned(
+              left: 4,
+              top: 4,
+              child: LiveBadge(compact: true),
             ),
           if (asset.isProcessing)
             const Positioned(

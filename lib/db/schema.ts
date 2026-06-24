@@ -325,6 +325,20 @@ export const assets = fontoSchema.table(
     qualityMetrics: jsonb("quality_metrics"),
     consolidationState: text("consolidation_state").notNull().default("none"),
     trashPurgeAt: timestamp("trash_purge_at", { withTimezone: true }),
+    // M12 / ADR 0014 — motion (Live) photos.
+    //   motionPhoto: this still carries a playable motion clip (either an
+    //     embedded Android MP4 extracted to `motionVideoKey`, or a paired
+    //     Apple MOV at `motionCompanionAssetId`). Drives the "LIVE" badge.
+    //   motionVideoKey: R2 key of the extracted Android clip (`motion.mp4`
+    //     under the asset prefix). NULL for Apple-paired stills + non-motion.
+    //   motionCompanionAssetId: soft FK to the separate `.MOV` asset (Apple).
+    //   motionCompanion: set on a MOV that's been absorbed as a still's
+    //     companion — library/grid/search reads filter these out (one tile =
+    //     one moment). Reversible: clearing the columns un-hides the MOV.
+    motionPhoto: boolean("motion_photo").notNull().default(false),
+    motionVideoKey: text("motion_video_key"),
+    motionCompanionAssetId: uuid("motion_companion_asset_id"),
+    motionCompanion: boolean("motion_companion").notNull().default(false),
   },
   (table) => [
     index("assets_workspace_id_idx").on(table.workspaceId),
@@ -404,6 +418,12 @@ export const assets = fontoSchema.table(
     index("assets_trash_purge_at_idx")
       .on(table.trashPurgeAt)
       .where(sql`${table.trashPurgeAt} IS NOT NULL`),
+    // M12 / ADR 0014 — absorbed Apple companions. Partial on the handful of
+    // companion MOVs keeps the BTree tiny; read paths exclude these with
+    // `motion_companion = false`.
+    index("assets_motion_companion_idx")
+      .on(table.workspaceId)
+      .where(sql`${table.motionCompanion} = true`),
     // T1.5 perf-audit (migration 0045) — partial composite indexes for the
     // 95th-percentile grid/search/timeline read. Every such query filters by
     // workspace_id AND lifecycle_state='active' and orders by captured_at

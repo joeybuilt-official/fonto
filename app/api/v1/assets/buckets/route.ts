@@ -36,6 +36,9 @@ export async function GET(request: NextRequest) {
   const where: SQL[] = [
     eq(schema.assets.workspaceId, workspaceId),
     eq(schema.assets.lifecycleState, lifecycleFilter),
+    // M12 / ADR 0014 — exclude absorbed Apple companions so scrubber bucket
+    // counts match the grid.
+    eq(schema.assets.motionCompanion, false),
   ];
   // ADR 0008 — scope default
   const __sc = scopeCond(parseScopeParam(searchParams));

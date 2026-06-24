@@ -407,6 +407,12 @@ class FontoClient {
     return urls.map((k, v) => MapEntry(k, v as String));
   }
 
+  /// M12 / ADR 0014 — resolve the presigned motion-clip URL for a Live Photo.
+  /// Returns null when the asset has no clip (non-motion) or on error, so the
+  /// caller can simply not offer playback.
+  Future<String?> assetMotionUrl(String id) =>
+      resolveSignedUrl("/api/v1/assets/$id/url?variant=motion");
+
   /// Phase 3 (faces/UX) — resolve a relative API URL endpoint that returns a
   /// signed object URL as `{ "url": "..." }`. Used for the dedicated face crop
   /// (`Person.coverFaceCropUrl`, `AssetFace.faceCropUrl`), which point at

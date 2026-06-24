@@ -140,6 +140,8 @@ export async function GET(request: NextRequest) {
   const conditions = [
     inArray(schema.assets.workspaceId, workspaceIds),
     isNull(schema.assets.deletedAt),
+    // M12 / ADR 0014 — never surface absorbed Apple Live Photo companions.
+    eq(schema.assets.motionCompanion, false),
   ];
   // ADR 0008 — scope default
   const __sc = scopeCond(parseScopeParam(searchParams));

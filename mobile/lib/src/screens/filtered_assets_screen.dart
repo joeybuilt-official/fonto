@@ -14,6 +14,7 @@ import "package:flutter/material.dart";
 import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "../widgets/list_states.dart";
+import "../widgets/live_badge.dart";
 import "asset_detail_screen.dart";
 
 class FilteredAssetsScreen extends StatefulWidget {
@@ -200,21 +201,35 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
           }
           final a = _assets[i];
           final url = _thumbs[a.id];
+          final tile = url == null
+              ? imageSkeleton(context)
+              : CachedNetworkImage(
+                  imageUrl: url,
+                  fit: BoxFit.cover,
+                  memCacheWidth: 260,
+                  memCacheHeight: 260,
+                  placeholder: (ctx, _) => imageSkeleton(ctx),
+                  errorWidget: (ctx, _, __) => ColoredBox(
+                    color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                    child: const Icon(Icons.broken_image),
+                  ),
+                );
           return GestureDetector(
             onTap: () => _openDetail(i),
-            child: url == null
-                ? imageSkeleton(context)
-                : CachedNetworkImage(
-                    imageUrl: url,
-                    fit: BoxFit.cover,
-                    memCacheWidth: 260,
-                    memCacheHeight: 260,
-                    placeholder: (ctx, _) => imageSkeleton(ctx),
-                    errorWidget: (ctx, _, __) => ColoredBox(
-                      color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-                      child: const Icon(Icons.broken_image),
-                    ),
-                  ),
+            // M12 / ADR 0014 — LIVE badge on motion-photo tiles (web parity).
+            child: a.motionPhoto
+                ? Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      tile,
+                      const Positioned(
+                        left: 4,
+                        top: 4,
+                        child: LiveBadge(compact: true),
+                      ),
+                    ],
+                  )
+                : tile,
           );
         },
       ),

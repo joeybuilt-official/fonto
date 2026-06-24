@@ -132,3 +132,16 @@ export function hlsSegmentKeyPrefix(workspaceId: string, assetId: string): strin
 export function hlsSpriteKey(workspaceId: string, assetId: string): string {
   return `fonto/${workspaceId}/${assetId}/hls/sprite.jpg`;
 }
+
+/**
+ * M12 / ADR 0014 — extracted Android motion-photo clip.
+ *
+ *   fonto/{ws}/{asset}/motion.mp4
+ *
+ * Byte-copy of the MP4 embedded after the JPEG EOI; never re-encoded. Lives
+ * under the owning asset's prefix so a workspace/asset delete sweeps it too.
+ * Stored on `assets.motion_video_key`.
+ */
+export function assetMotionKey(workspaceId: string, assetId: string): string {
+  return `fonto/${workspaceId}/${assetId}/motion.mp4`;
+}

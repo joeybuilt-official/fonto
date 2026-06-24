@@ -25,6 +25,7 @@ class Asset {
     this.kind,
     this.source,
     this.scope,
+    this.motionPhoto = false,
   });
 
   final String id;
@@ -62,6 +63,11 @@ class Asset {
   // SHOOT. Drives default visibility: personal surfaces (timeline, memories)
   // hide SHOOT unless the user opts in via the scope switcher.
   final String? scope;
+  // M12 / ADR 0014 — motion (Live) photo: this still carries a playable clip
+  // (embedded Android MP4 or a paired Apple MOV). Drives the "LIVE" badge +
+  // long-press playback. The clip URL is fetched on demand via
+  // /api/v1/assets/{id}/url?variant=motion (FontoClient.assetMotionUrl).
+  final bool motionPhoto;
 
   bool get isProcessing =>
       processingState != null &&
@@ -89,6 +95,7 @@ class Asset {
         kind: kind,
         source: source,
         scope: scope,
+        motionPhoto: motionPhoto,
       );
 
   static Asset fromJson(Map<String, dynamic> j) => Asset(
@@ -112,6 +119,7 @@ class Asset {
         kind: j["kind"] as String?,
         source: j["source"] as String?,
         scope: j["scope"] as String?,
+        motionPhoto: (j["motionPhoto"] as bool?) ?? false,
       );
 }
 

@@ -52,6 +52,36 @@ export async function GET(
   if (!access) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const asset = access.asset;
 
+  // M12 / ADR 0014 — motion clip playback. Resolves the extracted Android
+  // derivative (`motionVideoKey`) first, else the paired Apple MOV's original.
+  // Kept out of the typed `Variant` chain since it may presign a DIFFERENT
+  // asset's bytes (the companion).
+  if (request.nextUrl.searchParams.get("variant") === "motion") {
+    let motionKey: string | null = asset.motionVideoKey ?? null;
+    if (!motionKey && asset.motionCompanionAssetId) {
+      const [companion] = await db
+        .select({
+          id: schema.assets.id,
+          workspaceId: schema.assets.workspaceId,
+          filename: schema.assets.filename,
+        })
+        .from(schema.assets)
+        .where(eq(schema.assets.id, asset.motionCompanionAssetId))
+        .limit(1);
+      if (companion) {
+        motionKey = assetStorageKey(companion.workspaceId, companion.id, companion.filename);
+      }
+    }
+    if (!motionKey) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    const motionUrl = await storage().presignGet(motionKey, { expiresIn: 3600 });
+    return NextResponse.json(
+      { url: motionUrl, expiresIn: 3600, variant: "motion" },
+      { headers: { "Cache-Control": "public, max-age=3600" } }
+    );
+  }
+
   const variant = parseVariant(request.nextUrl.searchParams.get("variant"));
 
   // Pick the R2 key based on the requested variant. Derivatives may be NULL

@@ -18,6 +18,7 @@ import "package:http/http.dart" as http;
 import "package:photo_view/photo_view.dart";
 import "package:photo_view/photo_view_gallery.dart";
 import "package:share_plus/share_plus.dart";
+import "package:video_player/video_player.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
@@ -25,6 +26,7 @@ import "../state/asset_cache.dart";
 import "../state/offline_cache.dart";
 import "../state/pending_mutations.dart";
 import "../widgets/asset_video_player.dart";
+import "../widgets/live_badge.dart";
 
 class AssetDetailScreen extends StatefulWidget {
   const AssetDetailScreen({
@@ -734,19 +736,28 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
                             ),
                           )
                         : const Center(child: CircularProgressIndicator()))
-                    : CachedNetworkImage(
-                        imageUrl: url,
-                        fit: BoxFit.contain,
-                        memCacheWidth: 1920,
-                        placeholder: (_, __) => const Center(
-                          child: CircularProgressIndicator(),
-                        ),
-                        errorWidget: (_, __, ___) => const Icon(
-                          Icons.broken_image,
-                          color: Colors.white,
-                          size: 48,
-                        ),
-                      ),
+                    // M12 / ADR 0014 — motion (Live) photos render a LIVE badge
+                    // + long-press playback over the still (parity with web's
+                    // hover-to-play). Non-motion stills keep the plain image.
+                    : a.motionPhoto
+                        ? _MotionPhotoView(
+                            client: widget.client,
+                            asset: a,
+                            url: url,
+                          )
+                        : CachedNetworkImage(
+                            imageUrl: url,
+                            fit: BoxFit.contain,
+                            memCacheWidth: 1920,
+                            placeholder: (_, __) => const Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                            errorWidget: (_, __, ___) => const Icon(
+                              Icons.broken_image,
+                              color: Colors.white,
+                              size: 48,
+                            ),
+                          ),
                 minScale: PhotoViewComputedScale.contained,
                 maxScale: PhotoViewComputedScale.covered * 4,
                 heroAttributes: PhotoViewHeroAttributes(tag: a.id),
@@ -2004,3 +2015,127 @@ class _SimilarStripState extends State<_SimilarStrip> {
     );
   }
 }
+
+/// M12 / ADR 0014 — a motion (Live) photo page: the still with a "LIVE" badge
+/// and long-press-to-play. Long-press fetches the clip URL on first use, plays
+/// it muted + looped over the still, and releasing long-press returns to the
+/// still. Parity with the web lightbox's hover-to-play.
+class _MotionPhotoView extends StatefulWidget {
+  const _MotionPhotoView({
+    required this.client,
+    required this.asset,
+    required this.url,
+  });
+
+  final FontoClient client;
+  final Asset asset;
+  final String url;
+
+  @override
+  State<_MotionPhotoView> createState() => _MotionPhotoViewState();
+}
+
+class _MotionPhotoViewState extends State<_MotionPhotoView> {
+  VideoPlayerController? _ctrl;
+  bool _playing = false;
+  bool _loading = false;
+  String? _motionUrl;
+
+  Future<void> _start() async {
+    if (_playing || _loading) return;
+    setState(() => _loading = true);
+    try {
+      _motionUrl ??= await widget.client.assetMotionUrl(widget.asset.id);
+      final u = _motionUrl;
+      if (u == null) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+      final c = VideoPlayerController.networkUrl(Uri.parse(u));
+      await c.initialize();
+      await c.setVolume(0);
+      await c.setLooping(true);
+      await c.play();
+      if (!mounted) {
+        await c.dispose();
+        return;
+      }
+      setState(() {
+        _ctrl = c;
+        _playing = true;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _stop() async {
+    final c = _ctrl;
+    if (mounted) {
+      setState(() {
+        _playing = false;
+        _ctrl = null;
+      });
+    }
+    if (c != null) {
+      await c.pause();
+      await c.dispose();
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onLongPress: _start,
+      onLongPressUp: _stop,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CachedNetworkImage(
+            imageUrl: widget.url,
+            fit: BoxFit.contain,
+            memCacheWidth: 1920,
+            placeholder: (_, __) =>
+                const Center(child: CircularProgressIndicator()),
+            errorWidget: (_, __, ___) => const Icon(
+              Icons.broken_image,
+              color: Colors.white,
+              size: 48,
+            ),
+          ),
+          if (_playing && _ctrl != null)
+            Center(
+              child: AspectRatio(
+                aspectRatio: _ctrl!.value.aspectRatio == 0
+                    ? 1
+                    : _ctrl!.value.aspectRatio,
+                child: VideoPlayer(_ctrl!),
+              ),
+            ),
+          const Positioned(left: 12, top: 12, child: LiveBadge()),
+          if (_loading)
+            const Positioned(
+              left: 12,
+              top: 44,
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
