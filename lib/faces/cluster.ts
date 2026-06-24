@@ -46,6 +46,7 @@
 
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
+import { pgArray } from "@/lib/db/sql-helpers";
 import { logger } from "@/lib/logger";
 import { neighborsViaGPU } from "@/lib/plexo-vision";
 
@@ -548,7 +549,7 @@ async function buildEdgesViaHNSW(
         ORDER BY src.embedding <=> fi.embedding
         LIMIT ${HNSW_NEIGHBOR_LIMIT}
       ) n
-      WHERE src.id = ANY(${batch}::uuid[])
+      WHERE src.id = ANY(${pgArray(batch)}::uuid[])
         AND src.workspace_id = ${workspaceId}
         AND src.hidden = false
         AND src.confidence >= ${minConfidence}
