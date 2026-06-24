@@ -28,6 +28,65 @@ import {
   assetStorageKey,
 } from "@/lib/r2";
 import { storage } from "@/lib/storage";
+import { probeVideo, type VideoProbe } from "@/lib/processing/probeVideo";
+
+// M13 / ADR 0054 — video transcode stays CPU-only on the host (GPUs reserved for
+// ML inference). The wins here are CPU-side + config-gated:
+//   FONTO_HLS_COPY_FASTPATH — stream-copy an already-web-playable H.264/AAC
+//     source straight into HLS (no libx264 re-encode). Default ON.
+//   FONTO_HLS_FMP4 — copy path emits fMP4/CMAF (.m4s + init); "0" → mpegts .ts.
+//   FONTO_HLS_HDR_TONEMAP — tonemap PQ/HLG HDR → SDR on the transcode path so
+//     HDR sources stop rendering washed-out. Default ON.
+//   FONTO_HLS_COPY_MAX_BITRATE — source-bitrate ceiling (bytes/sec) above which
+//     a source transcodes instead of copies (no ABR for a single copied rung).
+const HLS_COPY_FASTPATH = process.env.FONTO_HLS_COPY_FASTPATH !== "0";
+const HLS_FMP4 = process.env.FONTO_HLS_FMP4 !== "0";
+const HLS_HDR_TONEMAP = process.env.FONTO_HLS_HDR_TONEMAP !== "0";
+const HLS_COPY_MAX_BITRATE = Number(
+  process.env.FONTO_HLS_COPY_MAX_BITRATE ?? "12000000"
+);
+
+const COPY_HLS_TIME = 4;
+
+function isHdr(p: VideoProbe): boolean {
+  return p.colorTransfer === "smpte2084" || p.colorTransfer === "arib-std-b67";
+}
+
+/**
+ * M13 — a source qualifies for stream-copy (no re-encode) only when it is
+ * ALREADY a strictly web-playable H.264 (8-bit 4:2:0, ≤High@4.0, ≤1080p,
+ * ≤ceiling-bitrate, SDR) with AAC ≤2ch (or no) audio. The gate is deliberately
+ * strict: a mis-copied incompatible stream silently breaks the player, whereas
+ * a needless transcode is merely slow.
+ */
+export function canStreamCopy(p: VideoProbe): boolean {
+  if (!HLS_COPY_FASTPATH) return false;
+  if (p.codec !== "h264") return false;
+  const prof = (p.vProfile ?? "").toLowerCase();
+  if (!["constrained baseline", "baseline", "main", "high"].includes(prof)) {
+    return false; // rejects "High 10", "High 4:2:2", "High 4:4:4"
+  }
+  if (p.vPixFmt !== "yuv420p") return false; // rejects 10-bit / 422 / 444
+  if (p.vLevel == null || p.vLevel > 40) return false;
+  if (isHdr(p)) return false;
+  if ((p.colorPrimaries ?? "") === "bt2020") return false;
+  if (p.width == null || p.height == null || p.width > 1920 || p.height > 1080) {
+    return false;
+  }
+  if (p.bitRate == null || p.bitRate > HLS_COPY_MAX_BITRATE) return false;
+  const hasAudio = p.aCodec != null;
+  if (hasAudio && (p.aCodec !== "aac" || (p.aChannels ?? 99) > 2)) return false;
+  return true;
+}
+
+/** Build the master-playlist CODECS attribute for a copied H.264 source. */
+function avcCodecsString(p: VideoProbe): string {
+  const prof = (p.vProfile ?? "main").toLowerCase();
+  const profileByte = prof === "high" ? "6400" : prof.includes("baseline") ? "4240" : "4d40";
+  const lvlHex = (p.vLevel ?? 30).toString(16).padStart(2, "0");
+  const avc = `avc1.${profileByte}${lvlHex}`;
+  return p.aCodec != null ? `${avc},mp4a.40.2` : avc;
+}
 
 export interface RenditionSpec {
   // Used in the m3u8 filename + segment prefix.
@@ -97,6 +156,9 @@ export interface TranscodeOptions {
   workspaceId: string;
   assetId: string;
   filename: string;
+  // M13 — optional pre-computed probe (the worker already needs one for the
+  // sprite). When omitted, transcodeVideoHls probes the source itself.
+  probe?: VideoProbe;
 }
 
 export async function transcodeVideoHls(
@@ -113,6 +175,23 @@ export async function transcodeVideoHls(
     const buf = await storage().getBuffer(sourceKey);
     await writeFile(sourcePath, buf);
 
+    // M13 — probe once. The copy gate + HDR detection both need it; the job
+    // handler also re-uses duration/dims for the sprite, but probing here keeps
+    // transcodeVideoHls self-sufficient + idempotent.
+    const probe = opts.probe ?? (await probeVideo(sourcePath));
+
+    // M13 — copy-if-compatible fast path: skip libx264 entirely for sources
+    // that are already web-playable. Falls back to the ladder if the copy
+    // produces pathological segments (sparse keyframes).
+    if (canStreamCopy(probe)) {
+      const copied = await streamCopyHls(opts, probe, sourcePath, outDir);
+      if (copied) return copied;
+      // else: fall through to the transcode ladder (clean outDir first).
+      for (const f of await readdir(outDir)) {
+        await rm(join(outDir, f), { force: true }).catch(() => undefined);
+      }
+    }
+
     // 2. Build the ffmpeg argv. One invocation, N outputs.
     //
     // Filter graph:
@@ -123,7 +202,15 @@ export async function transcodeVideoHls(
     const scaleChains = HLS_LADDER.map(
       (r, i) => `[v${i}]scale=trunc(oh*a/2)*2:${r.height}[vout${i}]`
     ).join(";");
-    const filter = `[0:v]split=${HLS_LADDER.length}${splits};${scaleChains}`;
+    // M13 — filter head. HDR (PQ/HLG) sources get a zscale→tonemap→zscale
+    // chain so they map to SDR bt709 instead of rendering washed-out. Every
+    // source (incl. 10-bit SDR HEVC/VP9/AV1) gets format=yuv420p so libx264
+    // High-profile doesn't choke on a non-4:2:0 input.
+    const head =
+      HLS_HDR_TONEMAP && isHdr(probe)
+        ? `[0:v]zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,split=${HLS_LADDER.length}${splits}`
+        : `[0:v]format=yuv420p,split=${HLS_LADDER.length}${splits}`;
+    const filter = `${head};${scaleChains}`;
 
     const args: string[] = [
       "-y",
@@ -140,6 +227,10 @@ export async function transcodeVideoHls(
         "-profile:v", r.profile,
         "-level", r.level,
         "-pix_fmt", "yuv420p",
+        // M13 — tag output SDR/bt709 (matters once an HDR source is tonemapped).
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
         "-sc_threshold", "0",
         "-g", "48",                              // GOP = 2s @ 24fps; keyframe-aligned across ladder
         "-keyint_min", "48",
@@ -220,6 +311,105 @@ export async function transcodeVideoHls(
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/**
+ * M13 — stream-copy a web-playable H.264 source into a single-rendition HLS
+ * (no re-encode). Returns the result, or null when the copy produced
+ * pathological segments (sparse keyframes → over-long first segment), in which
+ * case the caller falls back to the transcode ladder.
+ */
+async function streamCopyHls(
+  opts: TranscodeOptions,
+  probe: VideoProbe,
+  sourcePath: string,
+  outDir: string
+): Promise<HlsTranscodeResult | null> {
+  const args: string[] = [
+    "-y",
+    "-i", sourcePath,
+    "-map", "0:v:0",
+    "-map", "0:a:0?", // optional audio — audio-less sources don't fail
+    "-c", "copy",
+    "-hls_time", String(COPY_HLS_TIME),
+    "-hls_playlist_type", "vod",
+  ];
+  if (HLS_FMP4) {
+    args.push(
+      "-hls_segment_type", "fmp4",
+      "-hls_fmp4_init_filename", "source_init.mp4",
+      "-hls_segment_filename", join(outDir, "source_%03d.m4s")
+    );
+  } else {
+    args.push(
+      "-hls_segment_type", "mpegts",
+      "-hls_segment_filename", join(outDir, "source_%03d.ts")
+    );
+  }
+  args.push("-f", "hls", join(outDir, "source.m3u8"));
+
+  await runFfmpeg(args);
+
+  // Sparse-keyframe guard: stream-copy can only split at existing keyframes, so
+  // a source with rare keyframes yields an over-long first segment. If so, bail
+  // and let the caller transcode (slow-but-correct beats torn playback).
+  const mediaPlaylist = await readFile(join(outDir, "source.m3u8"), "utf8");
+  const firstExtinf = mediaPlaylist.match(/#EXTINF:([\d.]+)/);
+  if (firstExtinf && Number.parseFloat(firstExtinf[1]) > COPY_HLS_TIME * 2) {
+    return null;
+  }
+
+  // Master playlist — ONE stream, CODECS computed from the probe (never
+  // hardcoded; the player negotiates from these).
+  const bw = probe.bitRate ?? Math.round((probe.width ?? 1280) * (probe.height ?? 720) * 4);
+  const res = `${probe.width ?? 0}x${probe.height ?? 0}`;
+  const masterContent =
+    [
+      "#EXTM3U",
+      `#EXT-X-VERSION:${HLS_FMP4 ? 7 : 3}`,
+      `#EXT-X-STREAM-INF:BANDWIDTH=${bw},RESOLUTION=${res},CODECS="${avcCodecsString(probe)}"`,
+      "source.m3u8",
+    ].join("\n") + "\n";
+
+  const masterR2 = hlsMasterKey(opts.workspaceId, opts.assetId);
+  const segmentPrefix = hlsSegmentKeyPrefix(opts.workspaceId, opts.assetId);
+
+  // Segments + init first (so the playlist is always valid once visible), then
+  // the media playlist, then the master last.
+  const files = await readdir(outDir);
+  for (const f of files) {
+    if (f.endsWith(".m4s") || f === "source_init.mp4") {
+      await storage().put(`${segmentPrefix}${f}`, await readFile(join(outDir, f)), {
+        contentType: "video/mp4",
+      });
+    } else if (f.endsWith(".ts")) {
+      await storage().put(`${segmentPrefix}${f}`, await readFile(join(outDir, f)), {
+        contentType: "video/MP2T",
+      });
+    }
+  }
+  await storage().put(
+    hlsRenditionKey(opts.workspaceId, opts.assetId, "source"),
+    await readFile(join(outDir, "source.m3u8")),
+    { contentType: "application/vnd.apple.mpegurl" }
+  );
+  await storage().put(masterR2, Buffer.from(masterContent), {
+    contentType: "application/vnd.apple.mpegurl",
+  });
+
+  return {
+    masterKey: masterR2,
+    renditions: [
+      {
+        name: "source",
+        key: hlsRenditionKey(opts.workspaceId, opts.assetId, "source"),
+        height: probe.height ?? 0,
+        bitrateKbps: probe.bitRate ? Math.round(probe.bitRate / 1000) : 0,
+        codec: "h264",
+      },
+    ],
+    segmentPrefix,
+  };
 }
 
 function runFfmpeg(args: string[]): Promise<void> {

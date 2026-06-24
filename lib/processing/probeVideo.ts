@@ -13,6 +13,16 @@ export interface VideoProbe {
   width: number | null;
   height: number | null;
   bitRate: number | null;
+  // M13 / ADR 0054 — copy-if-compatible + HDR gate inputs. Additive; existing
+  // callers (generateThumbnails, generateSpriteSheet) ignore these.
+  vProfile: string | null; // video stream `profile` ("High", "Main", "Constrained Baseline")
+  vPixFmt: string | null; // `pix_fmt` ("yuv420p", "yuv420p10le", …)
+  vLevel: number | null; // ffprobe int level (40 == L4.0, 31 == L3.1)
+  colorPrimaries: string | null;
+  colorTransfer: string | null; // PRIMARY HDR signal (smpte2084 / arib-std-b67)
+  colorSpace: string | null;
+  aCodec: string | null; // audio stream codec_name ("aac", …)
+  aChannels: number | null;
 }
 
 interface FfprobeRaw {
@@ -22,18 +32,34 @@ interface FfprobeRaw {
     codec_name?: string;
     width?: number;
     height?: number;
+    profile?: string;
+    pix_fmt?: string;
+    level?: number;
+    color_primaries?: string;
+    color_transfer?: string;
+    color_space?: string;
+    channels?: number;
   }>;
 }
 
 export async function probeVideo(file: string): Promise<VideoProbe> {
   const raw = await runFfprobe(file);
   const video = raw.streams?.find((s) => s.codec_type === "video");
+  const audio = raw.streams?.find((s) => s.codec_type === "audio");
   return {
     durationSec: raw.format?.duration ? Number.parseFloat(raw.format.duration) : null,
     codec: video?.codec_name ?? null,
     width: video?.width ?? null,
     height: video?.height ?? null,
     bitRate: raw.format?.bit_rate ? Number.parseInt(raw.format.bit_rate, 10) : null,
+    vProfile: video?.profile ?? null,
+    vPixFmt: video?.pix_fmt ?? null,
+    vLevel: typeof video?.level === "number" ? video.level : null,
+    colorPrimaries: video?.color_primaries ?? null,
+    colorTransfer: video?.color_transfer ?? null,
+    colorSpace: video?.color_space ?? null,
+    aCodec: audio?.codec_name ?? null,
+    aChannels: typeof audio?.channels === "number" ? audio.channels : null,
   };
 }
 
