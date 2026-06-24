@@ -15,7 +15,7 @@
 // does. All actions are reversible (status transitions; the inference row keeps
 // mapEstimate so a confirm can be reverted to inferred). PURGE is NOT here.
 
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { DEFAULT_GATE_THRESHOLDS } from "@/lib/fusion/gate";
 import { logger } from "@/lib/logger";
@@ -129,9 +129,11 @@ export function predicateForKey(bucketKey: string) {
     if (payload === "null") return isNull(capCol);
     const m = /^(\d+)-(\d+)$/.exec(payload);
     if (!m) throw new Error("invalid time bucketKey");
+    // gte/lt (not raw sql) so drizzle applies the timestamp column's
+    // Date→driver encoding; a raw `sql` param hands the driver a bare Date.
     const start = new Date(Number(m[1]));
     const end = new Date(Number(m[2]));
-    return and(sql`${capCol} >= ${start}`, sql`${capCol} < ${end}`)!;
+    return and(gte(capCol, start), lt(capCol, end))!;
   }
   throw new Error("unknown bucketKey axis");
 }
