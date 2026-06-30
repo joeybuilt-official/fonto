@@ -72,4 +72,25 @@ sha256sum "$OUT" > "$OUT.sha256"
 SIZE="$(stat -c%s "$OUT")"
 echo "$(date -u +%FT%TZ) OK $OUT ${SIZE}B" >> "$DEST/backup.log"
 echo "[backup-fonto] wrote $OUT (${SIZE} bytes)"
+
+# M15 closeout (ADR-0011) — off-site replication to Cloudflare R2.
+# Uses the pre-configured rclone [r2] remote (same credentials as the app).
+# Uploads the encrypted artifact + its sha256 to backups/fonto/ in the R2
+# bucket so a NAS total-loss can be restored from cloud.
+R2_REMOTE="${R2_REMOTE:-r2-fonto}"
+R2_DEST="${R2_REMOTE}:fonto-assets/backups/fonto"
+if command -v rclone >/dev/null 2>&1; then
+  echo "[backup-fonto] uploading to R2..."
+  if rclone copy "$OUT" "$R2_DEST/" --checksum --log-level ERROR 2>&1 && \
+     rclone copy "$OUT.sha256" "$R2_DEST/" --checksum --log-level ERROR 2>&1; then
+    R2_SIZE="$(rclone size "$R2_DEST/$(basename "$OUT")" --json 2>/dev/null | grep -o '"bytes":[0-9]*' | grep -o '[0-9]*' || echo 0)"
+    echo "$(date -u +%FT%TZ) R2_OK $(basename "$OUT") ${R2_SIZE}B" >> "$DEST/backup.log"
+    echo "[backup-fonto] R2 upload OK"
+  else
+    _alert "R2 upload failed for $OUT"
+  fi
+else
+  echo "[backup-fonto] rclone not installed — skipping R2 off-site upload"
+fi
+
 trap - ERR

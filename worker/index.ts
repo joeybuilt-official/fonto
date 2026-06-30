@@ -47,6 +47,8 @@ import {
   InferDateJobSchema,
   BackfillInferenceJobSchema,
   BackfillReconcileJobSchema,
+  AutoClusterFacesJobSchema,
+  type AutoClusterFacesJob,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
   type WebhookDeliveryJob,
@@ -66,7 +68,7 @@ import { reapStuckAssets } from "@/lib/processing/reapStuckAssets";
 import { generateThumbnails } from "@/lib/processing/generateThumbnails";
 import { embedAsset } from "@/lib/processing/embedAsset";
 import { detectFacesForAsset } from "@/lib/processing/detectFaces";
-import { clusterWorkspaceFaces } from "@/lib/faces/cluster";
+import { clusterWorkspaceFaces, clusterWorkspaceFacesHNSW } from "@/lib/faces/cluster";
 import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { runDailyDigest } from "@/lib/notifications/runDailyDigest";
 import { transcodeVideoHls } from "@/lib/processing/transcodeVideoHls";
@@ -1592,6 +1594,19 @@ function startMaintenanceWorker(): Worker {
           maxRows: parsed.data.maxRows,
         });
         log.info(result, "date reconcile complete");
+        return result;
+      }
+      if (job.name === JobNames.AutoClusterFaces) {
+        // M15 closeout — nightly HNSW face clustering. No 50k cap; no embedding
+        // vectors loaded into Node memory. DB-side pgvector HNSW does the work.
+        const parsed = AutoClusterFacesJobSchema.safeParse(job.data ?? {});
+        if (!parsed.success) {
+          log.warn({ issues: parsed.error.issues }, "auto-cluster-faces bad payload — ignoring");
+          return null;
+        }
+        log.info({ workspaceId: parsed.data.workspaceId }, "auto-cluster-faces start");
+        const result = await clusterWorkspaceFacesHNSW(parsed.data.workspaceId);
+        log.info(result, "auto-cluster-faces complete");
         return result;
       }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");

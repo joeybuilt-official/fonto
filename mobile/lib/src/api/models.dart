@@ -712,14 +712,20 @@ class AssetFace {
   final String? personName;
   final bool hidden;
 
-  static AssetFace fromJson(Map<String, dynamic> j) => AssetFace(
-        id: j["id"] as String,
-        bbox: PersonBbox.fromJson(j["bbox"])!,
-        confidence: (j["confidence"] as num).toDouble(),
-        personId: j["personId"] as String?,
-        personName: j["personName"] as String?,
-        hidden: j["hidden"] as bool? ?? false,
-      );
+  /// Returns null when the server sends a face without a usable bbox; the
+  /// `assetFaces` parser drops those so the overlay never receives a null.
+  static AssetFace? fromJson(Map<String, dynamic> j) {
+    final bbox = PersonBbox.fromJson(j["bbox"]);
+    if (bbox == null) return null;
+    return AssetFace(
+      id: j["id"] as String,
+      bbox: bbox,
+      confidence: (j["confidence"] as num).toDouble(),
+      personId: j["personId"] as String?,
+      personName: j["personName"] as String?,
+      hidden: j["hidden"] as bool? ?? false,
+    );
+  }
 }
 
 class WorkspaceStats {

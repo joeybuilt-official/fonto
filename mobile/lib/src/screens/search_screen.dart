@@ -14,6 +14,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../state/offline_cache.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 
@@ -74,6 +75,11 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final _ctrl = TextEditingController();
   bool _busy = false;
+  // Monotonic id for the in-flight search. Concurrent _run() calls (chip
+  // toggles, repeated submit, filter-apply) can resolve out of order; only the
+  // newest seq is allowed to commit results, so stale responses can't clobber
+  // fresh ones and flash assets in/out.
+  int _searchSeq = 0;
   String? _error;
   // Search results aren't cached (the endpoint has no clean offline shape), so
   // when a query fails offline we show a dedicated "needs connection" state
@@ -129,10 +135,12 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _run() async {
+    final seq = ++_searchSeq;
     final q = _ctrl.text.trim();
     // Match the web: nothing to do when there's no query and no active filter.
     if (q.isEmpty && !_ocrOnly && !_hasFilters) {
       setState(() {
+        _busy = false;
         _results = const [];
         _semanticResults = const [];
         _semanticUnavailable = false;
@@ -174,17 +182,23 @@ class _SearchScreenState extends State<SearchScreen> {
         semantic: _semantic,
         ocrOnly: _ocrOnly,
       );
-      final clip = await clipFuture;
+      final clipRaw = await clipFuture;
+      // Drop semantic hits already in the text results: the same asset in both
+      // grids means two Hero widgets sharing one tag, which Flutter rejects and
+      // renders as flicker. Dedup keeps every Hero tag unique on screen.
+      final textIds = assets.map((a) => a.id).toSet();
+      final clip = clipRaw.where((a) => !textIds.contains(a.id)).toList();
 
       // Resolve thumbs for the union of both result sets in one call.
       final ids = <String>{
-        ...assets.map((a) => a.id),
+        ...textIds,
         ...clip.map((a) => a.id),
       }.toList();
       final thumbs = ids.isEmpty
           ? <String, String>{}
           : await widget.client.assetUrls(ids, variant: "thumb");
-      if (!mounted) return;
+      // Stale-response guard: a newer _run() superseded this one — discard.
+      if (!mounted || seq != _searchSeq) return;
       setState(() {
         _results = assets;
         _semanticResults = clip;
@@ -193,9 +207,9 @@ class _SearchScreenState extends State<SearchScreen> {
         _busy = false;
       });
     } on ApiException catch (e) {
-      await _fail("${e.status}: ${e.message}");
+      if (seq == _searchSeq) await _fail("${e.status}: ${e.message}");
     } catch (e) {
-      await _fail(e.toString());
+      if (seq == _searchSeq) await _fail(e.toString());
     }
   }
 
@@ -463,13 +477,18 @@ class _SearchScreenState extends State<SearchScreen> {
                     tag: a.id,
                     child: CachedNetworkImage(
                       imageUrl: url,
+                      cacheManager: OfflineCache.thumbs,
+                      cacheKey: a.id,
                       fit: BoxFit.cover,
+                      memCacheWidth: 260,
+                      memCacheHeight: 260,
                       placeholder: (ctx, _) => imageSkeleton(ctx),
                       errorWidget: (_, __, ___) =>
                           const Icon(Icons.broken_image),
                     ),
                   );
             return GestureDetector(
+              key: ValueKey(a.id),
               onTap: () => _openDetail(set, i),
               child: tile,
             );

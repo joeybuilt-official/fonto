@@ -240,22 +240,27 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   /// Offline favorite: optimistically flip the local row and persist the edit
   /// to the pending-mutations queue, which replays on reconnect.
   Future<void> _queueFavoriteOffline(String id, bool next) async {
+    var queued = false;
     try {
       final q = await PendingMutations.open();
-      await q.enqueue(
+      queued = await q.enqueue(
         assetId: id,
         field: "isFavorite",
         value: next ? "true" : "false",
       );
     } catch (_) {
-      // Queue write failed — still reflect the change locally.
+      // Queue open/write failed — leave queued false so we don't misreport.
     }
     if (!mounted) return;
-    final i = _assets.indexWhere((a) => a.id == id);
-    if (i >= 0) {
-      setState(() => _assets[i] = _assets[i].copyWith(isFavorite: next));
+    if (queued) {
+      final i = _assets.indexWhere((a) => a.id == id);
+      if (i >= 0) {
+        setState(() => _assets[i] = _assets[i].copyWith(isFavorite: next));
+      }
+      _snack("Saved offline — will sync when you're back online.");
+    } else {
+      _snack("Couldn't save — try again.");
     }
-    _snack("Saved offline — will sync when you're back online.");
   }
 
   Future<void> _reprocess() async {
@@ -306,6 +311,11 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       });
     } on ApiException catch (e) {
       _snack("Trash failed: ${e.status} ${e.message}");
+      if (mounted) setState(() => _acting = false);
+    } catch (_) {
+      // Network down / timeout — surface it and clear the wedged button.
+      if (mounted) _snack("Trash failed — check your connection and try again.");
+    } finally {
       if (mounted) setState(() => _acting = false);
     }
   }
@@ -1293,14 +1303,21 @@ class _FaceImageOverlay extends StatelessWidget {
             cacheKey: cacheKey,
             fit: BoxFit.contain,
             imageBuilder: (ctx, imageProvider) {
-              imageProvider.resolve(ImageConfiguration.empty).addListener(
-                ImageStreamListener((info, _) {
+              // Resolve intrinsic dimensions once. Guarded by imageDims so the
+              // listener isn't re-added on every rebuild, and it self-removes
+              // after firing so the stream isn't leaked.
+              if (imageDims == null) {
+                final stream = imageProvider.resolve(ImageConfiguration.empty);
+                late final ImageStreamListener listener;
+                listener = ImageStreamListener((info, _) {
                   onDimsResolved(Size(
                     info.image.width.toDouble(),
                     info.image.height.toDouble(),
                   ));
-                }),
-              );
+                  stream.removeListener(listener);
+                });
+                stream.addListener(listener);
+              }
               return Image(image: imageProvider, fit: BoxFit.contain);
             },
             placeholder: (_, __) =>

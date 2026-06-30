@@ -23,6 +23,7 @@ import type {
   ExtractEvidenceJob,
   InferDateJob,
   BackfillReconcileJob,
+  AutoClusterFacesJob,
 } from "./jobs";
 
 export const QueueNames = {
@@ -425,4 +426,19 @@ export function allQueues(): Queue[] {
 export async function closeAllQueues(): Promise<void> {
   await Promise.all(Array.from(cache.values()).map((q) => q.close().catch(() => undefined)));
   cache.clear();
+}
+
+/**
+ * M15 closeout — enqueue one nightly HNSW face auto-cluster job for a workspace.
+ */
+export async function addAutoClusterFacesJob(
+  payload: AutoClusterFacesJob
+): Promise<string | undefined> {
+  const q = maintenanceQueue() as unknown as Queue<AutoClusterFacesJob>;
+  const job = await q.add(JobNames.AutoClusterFaces, payload, {
+    jobId: `auto-cluster-faces-${payload.workspaceId}`,
+    removeOnComplete: true,
+    removeOnFail: 50,
+  });
+  return job.id;
 }

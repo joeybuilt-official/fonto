@@ -63,6 +63,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   WorkspaceStats? _stats;
   FolderTree? _tree;
   final List<Asset> _assets = [];
+  // Derived views of _assets, recomputed only when _assets actually mutates
+  // (see _recomputeDerived). Re-deriving these O(n) passes on every setState —
+  // including ones that don't touch _assets — froze the grid on large
+  // libraries, especially on back-nav from AssetDetailScreen.
+  List<Asset> _visible = const [];
+  List<_MonthGroup> _groups = const [];
+  Map<String, int> _flatIdxById = const {};
   final Map<String, String> _thumbs = {};
   AssetCursor? _cursor;
   // M8 — multi-select export. Long-press a tile to enter selection.
@@ -194,6 +201,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _thumbs
           ..clear()
           ..addAll(cached.thumbs);
+        _recomputeDerived();
         _loadingFirst = false;
       });
       return true;
@@ -446,6 +454,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (toAdd.isNotEmpty) {
           _assets.insertAll(0, toAdd);
           _thumbs.addAll(newThumbs);
+          _recomputeDerived();
         }
       });
       if (stats.processing > 0) _ensureProcessingPoll();
@@ -504,6 +513,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _thumbs
           ..clear()
           ..addAll(thumbs);
+        _recomputeDerived();
         _cursor = page.nextCursor;
         _offline = false;
         _loadingFirst = false;
@@ -578,6 +588,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _thumbs
           ..clear()
           ..addAll(cached.thumbs);
+        _recomputeDerived();
         _cursor = null;
         _offBeforeTs = (last.capturedAt ?? last.createdAt).millisecondsSinceEpoch;
         _offBeforeId = last.id;
@@ -609,6 +620,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() {
         _assets.addAll(cached.assets);
         _thumbs.addAll(cached.thumbs);
+        _recomputeDerived();
         if (cached.assets.isNotEmpty) {
           final last = cached.assets.last;
           _offBeforeTs = (last.capturedAt ?? last.createdAt).millisecondsSinceEpoch;
@@ -643,6 +655,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() {
         _assets.addAll(page.assets);
         _thumbs.addAll(newThumbs);
+        _recomputeDerived();
         _cursor = page.nextCursor;
         _loadingMore = false;
       });
@@ -1022,8 +1035,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Personal-timeline view of the loaded set — SHOOT assets (ADR 0008/0009)
   /// are hidden so shoot work never pollutes the timeline, even from the
   /// non-scope-partitioned offline cache. Order is preserved.
-  List<Asset> get _visibleAssets =>
-      _assets.where((a) => a.scope != "SHOOT").toList();
+  List<Asset> get _visibleAssets => _visible;
+
+  /// Recompute the three derived views of _assets. MUST be called inside every
+  /// setState that mutates _assets (load / prime / prepend / loadMore / trash).
+  void _recomputeDerived() {
+    final visible = _assets.where((a) => a.scope != "SHOOT").toList();
+    _visible = visible;
+    _groups = _groupAssetsByMonth(visible);
+    _flatIdxById = {
+      for (var i = 0; i < visible.length; i++) visible[i].id: i,
+    };
+  }
 
   Future<void> _openDetail(int i) async {
     final result = await Navigator.of(context).push<Map<String, dynamic>?>(
@@ -1040,7 +1063,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // grid reflects the action without a full refresh.
     final trashedId = result["trashedId"] as String?;
     if (trashedId != null) {
-      setState(() => _assets.removeWhere((a) => a.id == trashedId));
+      setState(() {
+        _assets.removeWhere((a) => a.id == trashedId);
+        _recomputeDerived();
+      });
     }
   }
 
@@ -1390,13 +1416,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // ADR 0008/0009 — personal timeline hides SHOOT at the display layer.
     // Online reads already default PERSONAL server-side; this also covers the
     // offline-cache paths, which aren't scope-partitioned.
-    final visible = _visibleAssets;
-    final groups = _groupAssetsByMonth(visible);
-    // O(1) lookup replaces the O(n) indexOf call that ran on every tile render,
-    // which was causing a freeze on back-navigation from AssetDetailScreen.
-    final flatIdxById = <String, int>{
-      for (var i = 0; i < visible.length; i++) visible[i].id: i,
-    };
+    // Derived views are cached in State and refreshed by _recomputeDerived
+    // only when _assets mutates, so a plain setState (e.g. selection toggle)
+    // no longer pays for three O(n) passes on every rebuild.
+    final visible = _visible;
+    final groups = _groups;
+    final flatIdxById = _flatIdxById;
 
     final scroll = RefreshIndicator(
       onRefresh: _refresh,
@@ -1482,6 +1507,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     (context, i) {
                       final asset = g.assets[i];
                       return RepaintBoundary(
+                        key: ValueKey(asset.id),
                         child: _AssetTile(
                           asset: asset,
                           url: _thumbs[asset.id],

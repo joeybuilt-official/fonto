@@ -300,6 +300,7 @@ class _GooglePhotosImportScreenState extends State<GooglePhotosImportScreen> {
             headers: _authHeaders(token),
           );
           if (res.statusCode != 200) {
+            if (!mounted) return;
             setState(() => _importDone++);
             continue;
           }
@@ -318,6 +319,7 @@ class _GooglePhotosImportScreenState extends State<GooglePhotosImportScreen> {
         } catch (_) {
           // skip; continue
         }
+        if (!mounted) return;
         setState(() => _importDone++);
       }
       await UploadQueue.drain();

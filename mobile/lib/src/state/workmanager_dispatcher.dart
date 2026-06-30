@@ -39,8 +39,22 @@ void callbackDispatcher() {
       if (task == kCameraRollScanTask) {
         final enabled = await SettingsStore.getAutoImport();
         if (enabled) {
-          await CameraRollScanner.scanAndEnqueue();
-          await UploadQueue.drain();
+          // Scan and drain are wrapped separately so a drain failure never
+          // rolls back the scan's watermark advance, and a scan failure (which
+          // leaves the watermark untouched, see CameraRollScanner) is logged on
+          // its own phase. A throwing scan returns false so WorkManager retries.
+          try {
+            await CameraRollScanner.scanAndEnqueue();
+          } catch (e) {
+            debugPrint("cameraRollScan phase failed: $e");
+            return false;
+          }
+          try {
+            await UploadQueue.drain();
+          } catch (e) {
+            debugPrint("uploadDrain phase failed: $e");
+            return false;
+          }
         }
         return true;
       }

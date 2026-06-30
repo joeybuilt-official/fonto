@@ -338,6 +338,7 @@ class _PersonTile extends StatelessWidget {
                   inner = CachedNetworkImage(
                     imageUrl: faceCropUrl!,
                     fit: BoxFit.cover,
+                    memCacheWidth: 260,
                     placeholder: (ctx, _) => _imageSkeleton(ctx),
                     errorWidget: (_, __, ___) => const Icon(Icons.person),
                   );
@@ -353,6 +354,7 @@ class _PersonTile extends StatelessWidget {
                   inner = CachedNetworkImage(
                     imageUrl: url!,
                     fit: BoxFit.cover,
+                    memCacheWidth: 260,
                     placeholder: (ctx, _) => _imageSkeleton(ctx),
                     errorWidget: (_, __, ___) => const Icon(Icons.person),
                   );
@@ -413,6 +415,7 @@ Widget _buildFaceZoom(String url, PersonBbox bbox, double d) {
         child: CachedNetworkImage(
           imageUrl: url,
           fit: BoxFit.cover,
+          memCacheWidth: 260,
           placeholder: (ctx, _) => _imageSkeleton(ctx),
           errorWidget: (_, __, ___) => const Icon(Icons.person),
         ),
@@ -527,6 +530,7 @@ class _PlacesTabState extends State<_PlacesTab> {
                             : CachedNetworkImage(
                                 imageUrl: cover,
                                 fit: BoxFit.cover,
+                                memCacheWidth: 260,
                                 placeholder: (ctx, _) => _imageSkeleton(ctx),
                                 errorWidget: (_, __, ___) =>
                                     const Icon(Icons.broken_image),
@@ -719,6 +723,7 @@ class _PlaceThumb extends StatelessWidget {
         : CachedNetworkImage(
             imageUrl: url!,
             fit: BoxFit.cover,
+            memCacheWidth: 260,
             placeholder: (ctx, _) => _imageSkeleton(ctx),
             errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
           );
@@ -862,6 +867,7 @@ class _ThingTile extends StatelessWidget {
               CachedNetworkImage(
                 imageUrl: url!,
                 fit: BoxFit.cover,
+                memCacheWidth: 260,
                 placeholder: (_, __) => Container(color: placeholderColor),
                 errorWidget: (_, __, ___) => Container(color: placeholderColor),
               )
@@ -1004,6 +1010,7 @@ class _TagAssetsScreenState extends State<_TagAssetsScreen> {
                 : CachedNetworkImage(
                     imageUrl: _thumbs[_assets[i].id]!,
                     fit: BoxFit.cover,
+                    memCacheWidth: 260,
                     placeholder: (ctx, _) => _imageSkeleton(ctx),
                     errorWidget: (ctx, _, __) => ColoredBox(
                       color:
@@ -1131,28 +1138,33 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   Future<void> _rename() async {
     final messenger = ScaffoldMessenger.of(context);
     final controller = TextEditingController(text: _name ?? "");
-    final newName = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Rename person"),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: "Name"),
-          onSubmitted: (v) => Navigator.of(ctx).pop(v),
+    final String? newName;
+    try {
+      newName = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text("Rename person"),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: "Name"),
+            onSubmitted: (v) => Navigator.of(ctx).pop(v),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text("Cancel"),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(controller.text),
+              child: const Text("Save"),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text("Cancel"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text),
-            child: const Text("Save"),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      controller.dispose();
+    }
     if (newName == null || !mounted) return;
     final trimmed = newName.trim();
     if (trimmed.isEmpty) return;
@@ -1437,6 +1449,7 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                 : CachedNetworkImage(
                     imageUrl: _thumbs[_assets[i].id]!,
                     fit: BoxFit.cover,
+                    memCacheWidth: 260,
                     placeholder: (ctx, _) => _imageSkeleton(ctx),
                     errorWidget: (ctx, _, __) => ColoredBox(
                       color:

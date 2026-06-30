@@ -197,43 +197,57 @@ class _FilesSurfaceState extends State<FilesSurface> {
       );
     }
 
-    // Build banded item list (assets already imported-at DESC from the server).
-    final items = <Widget>[];
+    // Flatten into a lazy row model (assets already imported-at DESC from the
+    // server). Each entry is either a recency-band header or an asset row; the
+    // O(n) band scan runs once here, the widgets build on demand in the
+    // ListView.builder below so we don't eagerly inflate ~200 rows.
+    final rows = <_FileRow>[];
     String? lastBand;
     for (final a in _assets) {
       final b = _band(a.createdAt);
       if (b != lastBand) {
         lastBand = b;
-        items.add(Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text(
-            b.toUpperCase(),
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.6,
-            ),
-          ),
-        ));
+        rows.add(_FileRow.header(b));
       }
-      final sub = _snippet(a) ?? "${a.kind ?? "file"} · ${_fmtSize(a.sizeBytes)}";
-      items.add(ListTile(
-        leading: CircleAvatar(
-          backgroundColor: theme.colorScheme.surfaceContainerHighest,
-          child: Icon(_kindIcon(a.kind),
-              size: 20, color: theme.colorScheme.onSurfaceVariant),
-        ),
-        title: Text(a.filename, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: Text(
-          _fmtDate(a.createdAt),
-          style: theme.textTheme.labelSmall
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-        ),
-        onTap: () => _openProperties(a),
-      ));
+      rows.add(_FileRow.asset(a));
     }
-    return ListView(children: items);
+    return ListView.builder(
+      itemCount: rows.length,
+      itemBuilder: (context, i) {
+        final row = rows[i];
+        if (row.header != null) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            child: Text(
+              row.header!.toUpperCase(),
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.6,
+              ),
+            ),
+          );
+        }
+        final a = row.asset!;
+        final sub =
+            _snippet(a) ?? "${a.kind ?? "file"} · ${_fmtSize(a.sizeBytes)}";
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundColor: theme.colorScheme.surfaceContainerHighest,
+            child: Icon(_kindIcon(a.kind),
+                size: 20, color: theme.colorScheme.onSurfaceVariant),
+          ),
+          title: Text(a.filename, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: Text(
+            _fmtDate(a.createdAt),
+            style: theme.textTheme.labelSmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          onTap: () => _openProperties(a),
+        );
+      },
+    );
   }
 
   Future<void> _openProperties(Asset a) async {
@@ -374,4 +388,15 @@ class _FilePropertiesState extends State<_FileProperties> {
           ],
         ),
       );
+}
+
+/// One row in the lazy Files list — either a recency-band [header] or an
+/// [asset] row. Lets the file list render through ListView.builder instead of
+/// eagerly inflating every row.
+class _FileRow {
+  const _FileRow.header(this.header) : asset = null;
+  const _FileRow.asset(this.asset) : header = null;
+
+  final String? header;
+  final Asset? asset;
 }

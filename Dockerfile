@@ -13,6 +13,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ARG NEXT_PUBLIC_APP_URL=https://myfonto.com
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+ARG NEXT_PUBLIC_OIDC_PROVIDER_ID=authentik
+ENV NEXT_PUBLIC_OIDC_PROVIDER_ID=$NEXT_PUBLIC_OIDC_PROVIDER_ID
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 ENV AUTH_DATABASE_URL="postgresql://stub:stub@localhost:5432/stub"
