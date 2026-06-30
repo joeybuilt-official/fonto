@@ -35,11 +35,19 @@ class DevicePhotos {
 
     final selectedIds = await SettingsStore.getSelectedAlbumIds();
 
+    // Newest-first: photo_manager has no implicit order, so the platform
+    // default (Android MediaStore ≈ oldest-first) would push the newest photos
+    // past the `limit` cap and hide them. Force createDate-descending.
+    final newestFirst = FilterOptionGroup(
+      orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)],
+    );
+
     if (selectedIds.isEmpty) {
       // Default: the single "all" album, newest-first.
       final paths = await PhotoManager.getAssetPathList(
         type: RequestType.image,
         onlyAll: true,
+        filterOption: newestFirst,
       );
       if (paths.isEmpty) return const [];
       return paths.first.getAssetListRange(start: 0, end: limit);
@@ -49,6 +57,7 @@ class DevicePhotos {
     // limit, deduping by asset id since one photo can live in several albums.
     final paths = await PhotoManager.getAssetPathList(
       type: RequestType.image,
+      filterOption: newestFirst,
     );
     final selected =
         paths.where((p) => selectedIds.contains(p.id)).toList();
