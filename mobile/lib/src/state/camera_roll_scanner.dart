@@ -32,18 +32,32 @@ class CameraRollScanner {
         lastTs == 0 ? DateTime(2000) : DateTime.fromMillisecondsSinceEpoch(lastTs);
     final now = DateTime.now();
 
+    // Full-library reconcile: photos restored from Google Photos / iCloud /
+    // WhatsApp / AirDrop carry an OLD createDate, so they sort *behind* the
+    // createTime watermark and would never be enqueued. When the device's total
+    // image count exceeds the stored high-water, drop the createTimeCond and
+    // re-scan everything; enqueue is sha256-idempotent so already-uploaded
+    // assets are skipped downstream (also auto-backfills existing installs).
+    // Cost ceiling: a count mismatch re-hashes the full library this pass.
+    final deviceCount = await PhotoManager.getAssetCount(type: RequestType.common);
+    final highWater = await SettingsStore.getEnqueuedHighWater();
+    final reconcile = deviceCount > highWater;
+
     final albums = await PhotoManager.getAssetPathList(
       type: RequestType.common,
-      filterOption: FilterOptionGroup(
-        createTimeCond: DateTimeCond(
-          min: lastImport,
-          max: now,
-        ),
-      ),
+      filterOption: reconcile
+          ? FilterOptionGroup()
+          : FilterOptionGroup(
+              createTimeCond: DateTimeCond(
+                min: lastImport,
+                max: now,
+              ),
+            ),
     );
 
     if (albums.isEmpty) {
-      await SettingsStore.setLastImportTs(now.millisecondsSinceEpoch);
+      // No album scanned to completion (empty list / permission downgrade) —
+      // do NOT advance the watermark, so the next pass retries.
       return 0;
     }
 
@@ -64,6 +78,10 @@ class CameraRollScanner {
 
     final queue = await UploadQueue.open();
     var enqueued = 0;
+    // Oldest asset skipped because its originFile was unavailable (iCloud not
+    // downloaded / HEIC pending). The watermark is clamped behind it so the
+    // next pass retries those assets instead of stepping over them.
+    DateTime? oldestSkipped;
 
     for (final album in targetAlbums) {
       final count = await album.assetCountAsync;
@@ -71,7 +89,13 @@ class CameraRollScanner {
       final entities = await album.getAssetListRange(start: 0, end: count);
       for (final entity in entities) {
         final file = await entity.originFile;
-        if (file == null) continue;
+        if (file == null) {
+          final created = entity.createDateTime;
+          if (oldestSkipped == null || created.isBefore(oldestSkipped)) {
+            oldestSkipped = created;
+          }
+          continue;
+        }
         final hash = await UploadQueue.hashFile(file);
         final id = await queue.enqueue(
           filePath: file.path,
@@ -83,8 +107,17 @@ class CameraRollScanner {
     }
 
     // Advance the watermark only after a full pass, so an interrupted scan
-    // re-tries next time (dedupe by sha256 makes re-enqueue a no-op).
-    await SettingsStore.setLastImportTs(now.millisecondsSinceEpoch);
+    // re-tries next time (dedupe by sha256 makes re-enqueue a no-op). Clamp it
+    // just behind the oldest skipped (originFile==null) asset so those retry.
+    var watermark = now;
+    if (oldestSkipped != null &&
+        oldestSkipped.isBefore(watermark)) {
+      watermark = oldestSkipped.subtract(const Duration(milliseconds: 1));
+    }
+    await SettingsStore.setLastImportTs(watermark.millisecondsSinceEpoch);
+    if (reconcile) {
+      await SettingsStore.setEnqueuedHighWater(deviceCount);
+    }
     return enqueued;
   }
 }

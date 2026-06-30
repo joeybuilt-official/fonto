@@ -550,6 +550,8 @@ class _StackTile extends StatelessWidget {
                     imageUrl: url!,
                     fit: BoxFit.cover,
                     width: double.infinity,
+                    memCacheWidth: 260,
+                    memCacheHeight: 260,
                     placeholder: (_, __) => Container(color: placeholderColor),
                     errorWidget: (_, __, ___) =>
                         const Icon(Icons.broken_image),
@@ -828,6 +830,8 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
                       : CachedNetworkImage(
                           imageUrl: _thumbs[id]!,
                           fit: BoxFit.cover,
+                          memCacheWidth: 260,
+                          memCacheHeight: 260,
                           placeholder: (_, __) =>
                               Container(color: placeholderColor),
                           errorWidget: (_, __, ___) => ColoredBox(
@@ -1140,6 +1144,8 @@ class _PeopleCardState extends State<_PeopleCard> {
                           : CachedNetworkImage(
                               imageUrl: url,
                               fit: BoxFit.cover,
+                              memCacheWidth: 260,
+                              memCacheHeight: 260,
                               placeholder: (_, __) => Container(
                                 color:
                                     theme.colorScheme.surfaceContainerHighest,

@@ -64,13 +64,12 @@ class DevicePhotos {
     final seen = <String>{};
     final out = <AssetEntity>[];
     for (final album in selected) {
-      if (out.length >= limit) break;
-      final remaining = limit - out.length;
-      final batch = await album.getAssetListRange(start: 0, end: remaining);
+      final batch = await album.getAssetListRange(start: 0, end: limit);
       for (final e in batch) {
         if (seen.add(e.id)) out.add(e);
       }
     }
-    return out;
+    out.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
+    return out.take(limit).toList();
   }
 }

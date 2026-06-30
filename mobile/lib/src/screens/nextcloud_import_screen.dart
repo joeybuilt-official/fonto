@@ -263,6 +263,7 @@ class _NextcloudImportScreenState extends State<NextcloudImportScreen> {
             headers: {"Authorization": _basicAuth},
           );
           if (res.statusCode != 200) {
+            if (!mounted) return;
             setState(() => _importDone++);
             continue;
           }
@@ -279,6 +280,7 @@ class _NextcloudImportScreenState extends State<NextcloudImportScreen> {
         } catch (_) {
           // Skip; continue.
         }
+        if (!mounted) return;
         setState(() => _importDone++);
       }
       await UploadQueue.drain();

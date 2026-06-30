@@ -15,6 +15,7 @@ class SettingsStore {
   static const _kWifiOnly = "fonto.sync_wifi_only";
   static const _kChargingOnly = "fonto.sync_charging_only";
   static const _kLastSurface = "fonto.last_library_surface";
+  static const _kEnqueuedHighWater = "fonto.enqueued_high_water";
 
   /// Photos-Files split — last-used Library surface ("photos" | "files").
   /// Inbox is never persisted (it is transient triage). Defaults to "photos".
@@ -74,6 +75,21 @@ class SettingsStore {
   static Future<void> setLastImportTs(int epochMs) async {
     final p = await SharedPreferences.getInstance();
     await p.setInt(_kLastImportTs, epochMs);
+  }
+
+  /// Highest device image count seen at the end of a completed full reconcile.
+  /// A later scan finding a higher device count means assets landed *behind*
+  /// the createTime watermark (restored from Google Photos / iCloud / WhatsApp /
+  /// AirDrop carry an old createDate), so a full no-watermark reconcile runs.
+  /// Default 0 so existing installs auto-backfill on the next scan.
+  static Future<int> getEnqueuedHighWater() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getInt(_kEnqueuedHighWater) ?? 0;
+  }
+
+  static Future<void> setEnqueuedHighWater(int count) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_kEnqueuedHighWater, count);
   }
 
   /// Album IDs the user chose to import from. Empty list ⇒ import everything

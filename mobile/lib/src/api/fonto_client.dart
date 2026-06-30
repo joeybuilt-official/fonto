@@ -172,7 +172,7 @@ class FontoClient {
       query["directoryPathPrefix"] = directoryPathPrefix;
     }
     final j = await _getJson("/api/v1/assets", query);
-    final raw = (j["assets"] as List).cast<Map<String, dynamic>>();
+    final raw = (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
     final cursorJson = j["nextCursor"] as Map<String, dynamic>?;
     return AssetPage(
       assets: raw.map(Asset.fromJson).toList(),
@@ -278,7 +278,7 @@ class FontoClient {
   /// into a nested tree client-side.
   Future<FolderTree> folderTree() async {
     final j = await _getJson("/api/v1/folders/tree");
-    final paths = (j["paths"] as List)
+    final paths = (j["paths"] as List? ?? const [])
         .cast<Map<String, dynamic>>()
         .map(FolderLeaf.fromJson)
         .toList();
@@ -403,8 +403,12 @@ class FontoClient {
       "/api/v1/assets/urls",
       {"ids": ids, "variant": variant},
     );
-    final urls = (j["urls"] as Map).cast<String, dynamic>();
-    return urls.map((k, v) => MapEntry(k, v as String));
+    final urls = (j["urls"] as Map? ?? const {});
+    final out = <String, String>{};
+    urls.forEach((k, v) {
+      if (v is String) out[k as String] = v;
+    });
+    return out;
   }
 
   /// M12 / ADR 0014 — resolve the presigned motion-clip URL for a Live Photo.
@@ -927,7 +931,10 @@ class FontoClient {
   Future<List<AssetFace>> assetFaces(String assetId) async {
     final j = await _getJson("/api/v1/assets/$assetId/faces");
     final raw = (j["faces"] as List? ?? const []).cast<Map<String, dynamic>>();
-    return raw.map(AssetFace.fromJson).toList();
+    return raw
+        .map(AssetFace.fromJson)
+        .whereType<AssetFace>()
+        .toList();
   }
 
   Future<void> assignFace(String faceId, String? personId) async {

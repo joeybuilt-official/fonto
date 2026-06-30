@@ -52,21 +52,28 @@ class PendingMutations {
   /// Queue (or collapse) one field edit for an asset. [value] is the JSON-
   /// scalar string form: "true"/"false" for isFavorite, the integer text for
   /// rating. UNIQUE(asset_id, field) + REPLACE = last-write-wins.
-  Future<void> enqueue({
+  /// Returns true if the row was persisted, false if the local write failed
+  /// (so the caller can avoid misreporting "Saved offline").
+  Future<bool> enqueue({
     required String assetId,
     required String field,
     required String value,
   }) async {
-    await _db.insert(
-      "pending_mutations",
-      {
-        "asset_id": assetId,
-        "field": field,
-        "value": value,
-        "created_at": DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    try {
+      await _db.insert(
+        "pending_mutations",
+        {
+          "asset_id": assetId,
+          "field": field,
+          "value": value,
+          "created_at": DateTime.now().millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<int> pendingCount() async {

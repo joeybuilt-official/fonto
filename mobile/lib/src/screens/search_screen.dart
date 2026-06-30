@@ -14,6 +14,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../state/offline_cache.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 
@@ -139,6 +140,7 @@ class _SearchScreenState extends State<SearchScreen> {
     // Match the web: nothing to do when there's no query and no active filter.
     if (q.isEmpty && !_ocrOnly && !_hasFilters) {
       setState(() {
+        _busy = false;
         _results = const [];
         _semanticResults = const [];
         _semanticUnavailable = false;
@@ -475,13 +477,18 @@ class _SearchScreenState extends State<SearchScreen> {
                     tag: a.id,
                     child: CachedNetworkImage(
                       imageUrl: url,
+                      cacheManager: OfflineCache.thumbs,
+                      cacheKey: a.id,
                       fit: BoxFit.cover,
+                      memCacheWidth: 260,
+                      memCacheHeight: 260,
                       placeholder: (ctx, _) => imageSkeleton(ctx),
                       errorWidget: (_, __, ___) =>
                           const Icon(Icons.broken_image),
                     ),
                   );
             return GestureDetector(
+              key: ValueKey(a.id),
               onTap: () => _openDetail(set, i),
               child: tile,
             );

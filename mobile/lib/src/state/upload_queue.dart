@@ -109,7 +109,7 @@ class UploadQueue {
     final dbPath = p.join(docs.path, "fonto-uploads.db");
     final db = await openDatabase(
       dbPath,
-      version: 1,
+      version: 2,
       onCreate: (db, _) async {
         await db.execute("""
           CREATE TABLE uploads (
@@ -121,12 +121,20 @@ class UploadQueue {
             attempts INTEGER NOT NULL DEFAULT 0,
             last_error TEXT,
             created_at INTEGER NOT NULL,
-            uploaded_asset_id TEXT
+            uploaded_asset_id TEXT,
+            in_flight_since INTEGER
           )
         """);
         await db.execute(
           "CREATE INDEX uploads_state_idx ON uploads(state, created_at)",
         );
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+            "ALTER TABLE uploads ADD COLUMN in_flight_since INTEGER",
+          );
+        }
       },
     );
     _instance = UploadQueue._(db);
@@ -172,7 +180,7 @@ class UploadQueue {
 
   Future<int> pendingCount() async {
     final r = await _db.rawQuery(
-      "SELECT COUNT(*) AS c FROM uploads WHERE state IN ('pending','in_flight')",
+      "SELECT COUNT(*) AS c FROM uploads WHERE state = 'pending'",
     );
     return (r.first["c"] as int?) ?? 0;
   }
@@ -198,16 +206,25 @@ class UploadQueue {
   ///      'failed' (surfacing in the ⚠ list) rather than looping.
   /// Returns how many rows were recovered.
   Future<int> recoverStuck() async {
+    // Only reclaim in_flight rows whose lease has expired — a row claimed by a
+    // live drain in this same process has a fresh in_flight_since, so recovering
+    // it here would let two drains upload the same file. A 10-minute lease
+    // comfortably exceeds Android's background execution window.
+    final leaseCutoff = DateTime.now()
+            .subtract(const Duration(minutes: 10))
+            .millisecondsSinceEpoch;
     return _db.rawUpdate(
       """
       UPDATE uploads
       SET state = 'pending',
+          in_flight_since = NULL,
           attempts = CASE WHEN attempts >= ? THEN 0 ELSE attempts END,
           last_error = CASE WHEN attempts >= ? THEN NULL ELSE last_error END
-      WHERE state = 'in_flight'
+      WHERE (state = 'in_flight'
+             AND (in_flight_since IS NULL OR in_flight_since < ?))
          OR (state = 'pending' AND attempts >= ?)
       """,
-      [_maxAttempts, _maxAttempts, _maxAttempts],
+      [_maxAttempts, _maxAttempts, leaseCutoff, _maxAttempts],
     );
   }
 
@@ -247,24 +264,29 @@ class UploadQueue {
     return _db.delete("uploads", where: "state = 'failed'");
   }
 
+  /// Atomically claim up to [limit] pending rows → 'in_flight', stamping
+  /// in_flight_since so [recoverStuck] won't reclaim a live lease. SELECT +
+  /// UPDATE run in one transaction so a parallel drain can't pick the same
+  /// rows (mirrors DriveDownloadQueue.claimBatch).
   Future<List<UploadQueueEntry>> nextBatch({int limit = 10}) async {
-    final rows = await _db.query(
-      "uploads",
-      where: "state = ? AND attempts < ?",
-      whereArgs: ["pending", _maxAttempts],
-      orderBy: "created_at ASC",
-      limit: limit,
-    );
-    return rows.map(UploadQueueEntry.fromRow).toList();
-  }
-
-  Future<void> _markInFlight(int id) async {
-    await _db.update(
-      "uploads",
-      {"state": "in_flight"},
-      where: "id = ?",
-      whereArgs: [id],
-    );
+    return _db.transaction((txn) async {
+      final rows = await txn.query(
+        "uploads",
+        where: "state = ? AND attempts < ?",
+        whereArgs: ["pending", _maxAttempts],
+        orderBy: "created_at ASC",
+        limit: limit,
+      );
+      if (rows.isEmpty) return const <UploadQueueEntry>[];
+      final ids = rows.map((r) => r["id"] as int).toList();
+      final ph = List.filled(ids.length, "?").join(",");
+      await txn.rawUpdate(
+        "UPDATE uploads SET state = 'in_flight', in_flight_since = ? "
+        "WHERE id IN ($ph)",
+        [DateTime.now().millisecondsSinceEpoch, ...ids],
+      );
+      return rows.map(UploadQueueEntry.fromRow).toList();
+    });
   }
 
   Future<void> _markSuccess(int id, String assetId) async {
@@ -303,6 +325,10 @@ class UploadQueue {
     if (!auth.isConfigured) return 0;
     final queue = await UploadQueue.open();
     final client = FontoClient(auth);
+    // Resolve the temp dir once so we can safely delete ONLY upload sources we
+    // created under it. Camera-roll picks flow through this same queue with the
+    // user's REAL device file path, which must never be deleted.
+    final tmpPath = (await getTemporaryDirectory()).path;
     _draining = true;
     // Recover rows the drain would otherwise skip forever (stranded in_flight
     // + attempt-exhausted pending) before counting, so they're retried this
@@ -341,11 +367,8 @@ class UploadQueue {
           total = known;
           progress.value = UploadProgress(done: processed, total: total);
         }
-        // Mark every entry in the batch in_flight up front so a parallel
-        // foreground drain trigger doesn't pick up the same rows again.
-        for (final entry in batch) {
-          await queue._markInFlight(entry.id);
-        }
+        // nextBatch already claimed these rows in_flight atomically, so a
+        // parallel foreground drain trigger can't pick the same rows up.
         // Process the batch with bounded concurrency. Dart's single-threaded
         // event loop makes counter increments safe across awaiting futures.
         for (int i = 0; i < batch.length; i += concurrency) {
@@ -367,6 +390,15 @@ class UploadQueue {
                 sha256Hex: entry.sha256,
               );
               await queue._markSuccess(entry.id, asset.id);
+              // Best-effort cleanup of the temp source we downloaded for this
+              // upload. GUARDED to getTemporaryDirectory() — a camera-roll pick
+              // carries the user's real device path, which we must NOT delete.
+              if (p.isWithin(tmpPath, entry.filePath)) {
+                try {
+                  final f = File(entry.filePath);
+                  if (await f.exists()) await f.delete();
+                } catch (_) {/* best-effort */}
+              }
               ok++;
             } on ApiException catch (e) {
               final terminal = e.status >= 400 &&
