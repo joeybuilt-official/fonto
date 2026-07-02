@@ -265,17 +265,17 @@ async function processAssetInner(
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (msg.includes("MODEL_PARSE_ERROR")) {
-            // Permanent schema-validation failure — Plexo AI producing values
-            // outside the response enum. Retrying will not fix it. Continue
-            // without unified analysis; CLIP fallback + defaults will drive
-            // the row to 'ready' so the "Processing N items" counter drains.
-            console.warn("[fonto] analyze-image MODEL_PARSE_ERROR — skipping unified for", assetId, msg);
+          // Any Plexo HTTP response error is permanent for THIS image: retrying will
+          // reproduce the same MODEL_PARSE_ERROR / INTERNAL_ERROR / 4xx / 5xx. We
+          // must NOT keep the row stuck at 'captured' — CLIP fallback + defaults
+          // still drive it to 'ready' so the "Processing N items" counter drains.
+          // Pure network failures (fetch failed / ECONNREFUSED / socket closed) do
+          // NOT start with "plexo analyze-image HTTP" — rethrow those so BullMQ
+          // retries when Plexo is back up.
+          if (msg.startsWith("plexo analyze-image HTTP")) {
+            console.warn("[fonto] analyze-image response error — skipping unified for", assetId, msg);
           } else {
-            // Transient failure (500, network, GPU pressure): re-throw so
-            // BullMQ retries the job later instead of running the 5-call
-            // legacy chain, which doubles Ollama load.
-            console.warn("[fonto] unified analyze-image failed for", assetId, err);
+            console.warn("[fonto] unified analyze-image transport failed for", assetId, err);
             throw err;
           }
         }
