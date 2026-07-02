@@ -61,6 +61,7 @@ import {
   type ExtractEvidenceJob,
   type InferDateJob,
 } from "@/lib/queue/jobs";
+import { runDriftSweep } from "@/lib/reaudit/driftSweep";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
 import { processAsset } from "@/lib/processing/processAsset";
@@ -2098,6 +2099,10 @@ async function main(): Promise<void> {
 
   // Future: register thumbnail / classify / ocr-only workers here once their
   // pipelines are split out of the all-in-one processAsset function.
+
+  // ponytail: setInterval drift sweep; upgrade to maintenanceQueue scheduler if exact 4am timing matters
+  setTimeout(() => void runDriftSweep(), 5 * 60_000);
+  setInterval(() => void runDriftSweep(), 24 * 60 * 60_000);
 
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
