@@ -41,9 +41,10 @@ export async function startRegistration(userId: string, userEmail: string) {
     excludeCredentials: await getCredentialDescriptors(userId),
   });
 
-  // Store challenge
+  // Store challenge. Two separate statements — postgres-js (extended protocol)
+  // rejects multiple commands in one parameterized execute.
+  await db.execute(sql`DELETE FROM auth.passkey_challenges WHERE user_id = ${userId}`);
   await db.execute(sql`
-    DELETE FROM auth.passkey_challenges WHERE user_id = ${userId};
     INSERT INTO auth.passkey_challenges (user_id, challenge)
     VALUES (${userId}, ${opts.challenge})
   `);
@@ -79,8 +80,8 @@ export async function finishRegistration(
   const { credential, credentialDeviceType, credentialBackedUp } =
     verification.registrationInfo;
 
+  await db.execute(sql`DELETE FROM auth.passkey_challenges WHERE user_id = ${userId}`);
   await db.execute(sql`
-    DELETE FROM auth.passkey_challenges WHERE user_id = ${userId};
     INSERT INTO auth.passkey_credentials
       (id, user_id, user_handle, public_key, counter, device_type, backed_up, transports)
     VALUES (
@@ -115,8 +116,8 @@ export async function startAuthentication(userId?: string) {
   });
 
   const challengeUserId = userId ?? "__anon__";
+  await db.execute(sql`DELETE FROM auth.passkey_challenges WHERE user_id = ${challengeUserId}`);
   await db.execute(sql`
-    DELETE FROM auth.passkey_challenges WHERE user_id = ${challengeUserId};
     INSERT INTO auth.passkey_challenges (user_id, challenge)
     VALUES (${challengeUserId}, ${opts.challenge})
   `);
@@ -174,9 +175,9 @@ export async function finishAuthentication(
     UPDATE auth.passkey_credentials
     SET counter = ${verification.authenticationInfo.newCounter},
         last_used_at = now()
-    WHERE id = ${credId};
-    DELETE FROM auth.passkey_challenges WHERE user_id = ${challengeUserId}
+    WHERE id = ${credId}
   `);
+  await db.execute(sql`DELETE FROM auth.passkey_challenges WHERE user_id = ${challengeUserId}`);
 
   return { verified: true, userId: cred.user_id };
 }

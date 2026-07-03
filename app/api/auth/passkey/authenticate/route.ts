@@ -9,7 +9,7 @@ import {
   startAuthentication,
   finishAuthentication,
 } from "@/lib/auth/passkey";
-import { headers } from "next/headers";
+import { mintSession } from "@/lib/auth/session";
 
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as { step: string; userId?: string; response?: unknown };
@@ -29,10 +29,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Verification failed" }, { status: 401 });
       }
 
-      // Return the verified userId so the client can trigger a Better Auth
-      // sign-in (e.g. via a magic link or custom token flow).
-      // ADR-004: session creation is handled by the calling client using
-      // the app's existing Better Auth session mechanism.
+      // Mint a real Better Auth session cookie for the verified user (ADR-004:
+      // the passkey is the account root; a successful assertion logs in).
+      await mintSession(userId);
       return NextResponse.json({ verified: true, userId });
     }
 

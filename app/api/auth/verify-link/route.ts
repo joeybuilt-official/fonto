@@ -5,10 +5,9 @@
 // GET /api/auth/verify-link?token=<hex> → validates token + creates session.
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { headers } from "next/headers";
+import { mintSession } from "@/lib/auth/session";
 
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get("token");
@@ -16,28 +15,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing token" }, { status: 400 });
   }
 
-  const rows = await db.execute<{ id: string; user_id: string }>(sql`
-    SELECT id, user_id
-    FROM auth.one_time_links
+  // Atomically claim the token: the UPDATE both validates (unused, unexpired)
+  // and consumes it in one statement, so two concurrent requests cannot both
+  // redeem the same link (single-use, race-free — ADR-004 Fallback 3).
+  const rows = await db.execute<{ user_id: string }>(sql`
+    UPDATE auth.one_time_links
+    SET used = true
     WHERE token = ${token}
       AND used = false
       AND expires_at > now()
-    LIMIT 1
+    RETURNING user_id
   `);
 
-  const link = (rows as unknown as Array<{ id: string; user_id: string }>)[0];
-  if (!link) {
+  const claimed = (rows as unknown as Array<{ user_id: string }>)[0];
+  if (!claimed) {
     return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
   }
 
-  // Mark as used before creating session (prevent replay).
-  await db.execute(sql`
-    UPDATE auth.one_time_links SET used = true WHERE id = ${link.id}
-  `);
-
-  // Create a Better Auth session. Better Auth doesn't have a direct
-  // signInWithUserId API, so we redirect to a protected next step with
-  // the verified userId in a short-lived cookie instead.
-  const res = NextResponse.json({ verified: true, userId: link.user_id });
-  return res;
+  // Mint a real Better Auth session for the verified legacy user.
+  await mintSession(claimed.user_id);
+  return NextResponse.json({ verified: true, userId: claimed.user_id });
 }
