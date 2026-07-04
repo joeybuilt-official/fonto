@@ -23,7 +23,7 @@ import {
   plexoPublishEvent,
   plexoStoreMemory,
   plexoSuggestTags,
-  plexoVisionOcr,
+  type PlexoVisionOcrResult,
 } from "@/lib/plexo";
 import {
   analyzeImageUnified,
@@ -36,7 +36,8 @@ import { classifyAsset } from "@/lib/classify/classify";
 import { deriveKind } from "@/lib/classify/kind";
 import { tryEnqueueFaceDetect } from "@/lib/assets/createAssetRow";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
-import { labelImageUrl, visionConfigured } from "@/lib/plexo-vision";
+import { visionConfigured } from "@/lib/plexo-vision";
+import { intelligence } from "@/lib/intelligence/client";
 import { isJunkLabel } from "@/lib/processing/labelStoplist";
 
 const DOCUMENT_CLASSIFICATIONS = new Set([
@@ -348,7 +349,12 @@ async function processAssetInner(
                 imgRow.previewKey ??
                 assetStorageKey(imgRow.workspaceId, assetId, filename);
               const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
-              preDescribeLabels = (await labelImageUrl(signedUrl)).labels;
+              const labelBase64 = Buffer.from(
+                await (await fetch(signedUrl)).arrayBuffer()
+              ).toString("base64");
+              preDescribeLabels = (await intelligence.label(labelBase64)).labels.map(
+                (l) => l.label
+              );
             }
           } catch (err) {
             console.warn("[fonto] pre-describe labels failed for", assetId, err);
@@ -853,9 +859,14 @@ export async function runOcrForAsset(
   // and is the only place that records the OCR sub-step (used both inline
   // by the worker and by the nightly backfill cron).
   const endTimer = assetProcessingDurationSeconds.startTimer();
-  let result: Awaited<ReturnType<typeof plexoVisionOcr>>;
+  let result: PlexoVisionOcrResult | null;
   try {
-    result = await plexoVisionOcr(plexoWorkspaceId, signedUrl);
+    const r = await intelligence.ocr({ imageUrl: signedUrl });
+    result = {
+      text: r.spans.map((s) => s.text).join("\n"),
+      model: r.modelId,
+      lines: [],
+    };
   } catch (err) {
     endTimer({ outcome: "failure" });
     console.warn("[fonto] OCR failed for asset", assetId, err);

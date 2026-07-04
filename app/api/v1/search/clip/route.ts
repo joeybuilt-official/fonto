@@ -29,7 +29,8 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccess } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { embedText, visionConfigured } from "@/lib/plexo-vision";
+import { visionConfigured } from "@/lib/plexo-vision";
+import { intelligence } from "@/lib/intelligence/client";
 import { nearestNeighbors } from "@/lib/vectors";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { parseScopeParam, scopeCond } from "@/lib/scope";
@@ -118,8 +119,8 @@ async function handle(request: NextRequest): Promise<NextResponse> {
   // Embed the query. Vision failures degrade to "unavailable" instead of 500.
   let queryVec: number[];
   try {
-    const embedded = await embedText(q);
-    queryVec = embedded.vector;
+    const embedded = await intelligence.embedText(q);
+    queryVec = [...embedded.vector];
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({

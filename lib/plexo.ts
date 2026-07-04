@@ -7,6 +7,7 @@
  */
 import { createPlexoClient, type AiMessage } from "@joeybuilt/plexo-sdk/connect"
 import { ocrImage, visionConfigured } from "@/lib/plexo-vision"
+import { intelligence } from "@/lib/intelligence/client"
 
 // Re-export the unified analyze-image client so existing import sites stay
 // uniform with `lib/plexo`. The implementation lives separately so the
@@ -179,16 +180,16 @@ export async function plexoClassifyAsset(
   const isImage = mimeType.startsWith("image/")
   const validForType = isImage ? IMAGE_SUBTYPES.join(", ") : DOCUMENT_SUBTYPES.join(", ")
   const hint = textSnippet ? `\nContent preview: ${textSnippet.slice(0, 300)}` : ""
-  const text = await plexoAiComplete(
+  const { text } = await intelligence.complete({
     workspaceId,
-    [
+    messages: [
       {
         role: "user",
         content: `Classify this ${isImage ? "image" : "document"} into exactly one category. Reply with ONE word only, no punctuation:\n${validForType}\n\nFilename: ${filename}\nMIME type: ${mimeType}${hint}`,
       },
     ],
-    10,
-  )
+    maxTokens: 10,
+  })
   const word = text.trim().toLowerCase().replace(/[^a-z]/g, "") as AssetSubtype
   return (ALL_SUBTYPES as readonly string[]).includes(word)
     ? word
@@ -205,16 +206,16 @@ export async function plexoSuggestTags(
 ): Promise<string[]> {
   try {
     const hint = description ? `\nDescription: ${description}` : ""
-    const text = await plexoAiComplete(
+    const { text } = await intelligence.complete({
       workspaceId,
-      [
+      messages: [
         {
           role: "user",
           content: `Suggest 3-5 short tags for this asset. Reply with a JSON array of strings only, no explanation.\n\nFilename: ${filename}\nClassification: ${classification}${hint}`,
         },
       ],
-      64,
-    )
+      maxTokens: 64,
+    })
     const trimmed = text.trim().replace(/^```json\s*|\s*```$/g, "")
     const parsed = JSON.parse(trimmed) as unknown
     if (Array.isArray(parsed)) {
@@ -278,11 +279,11 @@ Rules:
 
 Caption:`
 
-  const text = await plexoAiComplete(
+  const { text } = await intelligence.complete({
     workspaceId,
-    [{ role: "user", content: prompt }],
-    120,
-  )
+    messages: [{ role: "user", content: prompt }],
+    maxTokens: 120,
+  })
   // The model sometimes leaks a leading "Caption:" or wraps the answer in
   // quotes despite the prompt — strip both.
   return text
@@ -306,10 +307,10 @@ export async function plexoDescribeDocument(
   const prompt = preview
     ? `Write a concise 1-sentence description (under 25 words) of this document named "${filename}". Base it strictly on the content below; do not invent details.\n\n${preview}`
     : `Write a brief 1-sentence description for a document named "${filename}" (type: ${mimeType}). Keep it under 20 words.`
-  const text = await plexoAiComplete(
+  const { text } = await intelligence.complete({
     workspaceId,
-    [{ role: "user", content: prompt }],
-    80,
-  )
+    messages: [{ role: "user", content: prompt }],
+    maxTokens: 80,
+  })
   return text.trim()
 }

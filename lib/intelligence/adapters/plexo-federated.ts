@@ -27,14 +27,31 @@ import {
 } from "../ports";
 
 export const PlexoFederatedCompletionLayer = Layer.succeed(Completion, {
-  complete: (_req) =>
-    Effect.fail(
-      new CapabilityUnavailableError({
-        port: "jex/Completion",
-        reason:
-          "Plexo federated Completion requires workspaceId; use AnthropicCompletionLayer or call plexoAiComplete directly",
-      })
-    ),
+  complete: (req) =>
+    Effect.tryPromise({
+      try: async () => {
+        if (!req.workspaceId) {
+          throw new CapabilityUnavailableError({
+            port: "jex/Completion",
+            reason: "federated Completion needs workspaceId",
+          });
+        }
+        const { plexoAiComplete } = await import("@/lib/plexo");
+        const text = await plexoAiComplete(
+          req.workspaceId,
+          req.messages.map((m) => ({ role: m.role, content: m.content })),
+          req.maxTokens
+        );
+        return { text, inputTokens: 0, outputTokens: 0, model: "plexo" };
+      },
+      catch: (err) =>
+        err instanceof CapabilityUnavailableError
+          ? err
+          : new CapabilityUnavailableError({
+              port: "jex/Completion",
+              reason: err instanceof Error ? err.message : String(err),
+            }),
+    }),
 });
 
 export const PlexoFederatedImageEmbeddingLayer = Layer.succeed(ImageEmbedding, {
@@ -88,13 +105,50 @@ export const PlexoFederatedOcrLayer = Layer.succeed(Ocr, {
 });
 
 export const PlexoFederatedFaceDetectionLayer = Layer.succeed(FaceDetection, {
-  detect: (_req: FaceDetectionRequest) =>
-    Effect.fail(
-      new CapabilityUnavailableError({
-        port: "jex/FaceDetection",
-        reason: "Plexo federated face detection not yet implemented; use embedded sidecar",
-      })
-    ),
+  detect: (req: FaceDetectionRequest) =>
+    Effect.tryPromise({
+      try: async () => {
+        const base = (process.env.PLEXO_VISION_URL ?? "").replace(/\/+$/, "");
+        if (!base) {
+          throw new CapabilityUnavailableError({
+            port: "jex/FaceDetection",
+            reason: "PLEXO_VISION_URL is not set",
+          });
+        }
+        const res = await fetch(`${base}/v1/faces/detect`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(process.env.PLEXO_SERVICE_KEY
+              ? { authorization: `Bearer ${process.env.PLEXO_SERVICE_KEY}` }
+              : {}),
+          },
+          body: JSON.stringify({ image: req.imageBase64 }),
+        });
+        if (!res.ok) throw new Error(`faces/detect HTTP ${res.status}`);
+        const data = (await res.json()) as {
+          faces?: Array<{
+            bbox?: { x?: number; y?: number; w?: number; h?: number };
+            confidence?: number;
+            embedding?: number[];
+          }>;
+          modelId?: string;
+        };
+        const faces = (data.faces ?? []).map((f) => ({
+          boundingBox: { x: f.bbox?.x ?? 0, y: f.bbox?.y ?? 0, width: f.bbox?.w ?? 0, height: f.bbox?.h ?? 0 },
+          embedding: f.embedding ?? [],
+          confidence: f.confidence ?? 0,
+        }));
+        return { faces, modelId: data.modelId ?? "arcface" };
+      },
+      catch: (err) =>
+        err instanceof CapabilityUnavailableError
+          ? err
+          : new CapabilityUnavailableError({
+              port: "jex/FaceDetection",
+              reason: err instanceof Error ? err.message : String(err),
+            }),
+    }),
 });
 
 export const PlexoFederatedImageLabelingLayer = Layer.succeed(ImageLabeling, {

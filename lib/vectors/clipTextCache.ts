@@ -25,7 +25,7 @@
 // keying per workspace prevents one tenant's frequent saved searches from
 // crowding out another tenant's during eviction.
 
-import { embedText } from "@/lib/plexo-vision";
+import { intelligence } from "@/lib/intelligence/client";
 
 const DEFAULT_TTL_MS = 60 * 60 * 1000; // 1 hour
 const DEFAULT_MAX = 100;
@@ -93,9 +93,9 @@ export async function getCachedClipTextEmbedding(
   }
 
   try {
-    const embedded = await embedText(trimmed);
+    const embedded = await intelligence.embedText(trimmed);
     const entry: CacheEntry = {
-      vector: embedded.vector,
+      vector: [...embedded.vector],
       modelId: embedded.modelId,
       insertedAt: now,
     };
