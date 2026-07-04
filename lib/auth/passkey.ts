@@ -3,7 +3,7 @@
 //
 // Passkey registration + authentication flows (ADR-004).
 // Uses @simplewebauthn/server. rpId = myfonto.com. residentKey: required.
-// Credentials stored in auth.passkey_credentials via raw SQL.
+// Credentials stored in fonto.passkey_credentials via raw SQL.
 
 import {
   generateRegistrationOptions,
@@ -43,9 +43,9 @@ export async function startRegistration(userId: string, userEmail: string) {
 
   // Store challenge. Two separate statements — postgres-js (extended protocol)
   // rejects multiple commands in one parameterized execute.
-  await db.execute(sql`DELETE FROM auth.passkey_challenges WHERE user_id = ${userId}`);
+  await db.execute(sql`DELETE FROM fonto.passkey_challenges WHERE user_id = ${userId}`);
   await db.execute(sql`
-    INSERT INTO auth.passkey_challenges (user_id, challenge)
+    INSERT INTO fonto.passkey_challenges (user_id, challenge)
     VALUES (${userId}, ${opts.challenge})
   `);
 
@@ -57,7 +57,7 @@ export async function finishRegistration(
   response: RegistrationResponseJSON
 ) {
   const rows = await db.execute<{ challenge: string }>(sql`
-    SELECT challenge FROM auth.passkey_challenges
+    SELECT challenge FROM fonto.passkey_challenges
     WHERE user_id = ${userId} AND expires_at > now()
     ORDER BY created_at DESC LIMIT 1
   `);
@@ -80,9 +80,9 @@ export async function finishRegistration(
   const { credential, credentialDeviceType, credentialBackedUp } =
     verification.registrationInfo;
 
-  await db.execute(sql`DELETE FROM auth.passkey_challenges WHERE user_id = ${userId}`);
+  await db.execute(sql`DELETE FROM fonto.passkey_challenges WHERE user_id = ${userId}`);
   await db.execute(sql`
-    INSERT INTO auth.passkey_credentials
+    INSERT INTO fonto.passkey_credentials
       (id, user_id, user_handle, public_key, counter, device_type, backed_up, transports)
     VALUES (
       ${credential.id},
@@ -116,9 +116,9 @@ export async function startAuthentication(userId?: string) {
   });
 
   const challengeUserId = userId ?? "__anon__";
-  await db.execute(sql`DELETE FROM auth.passkey_challenges WHERE user_id = ${challengeUserId}`);
+  await db.execute(sql`DELETE FROM fonto.passkey_challenges WHERE user_id = ${challengeUserId}`);
   await db.execute(sql`
-    INSERT INTO auth.passkey_challenges (user_id, challenge)
+    INSERT INTO fonto.passkey_challenges (user_id, challenge)
     VALUES (${challengeUserId}, ${opts.challenge})
   `);
 
@@ -139,7 +139,7 @@ export async function finishAuthentication(
     transports: string[];
   }>(sql`
     SELECT id, user_id, user_handle, public_key, counter, transports
-    FROM auth.passkey_credentials WHERE id = ${credId}
+    FROM fonto.passkey_credentials WHERE id = ${credId}
   `);
 
   const cred = (credRows as unknown as Array<{ id: string; user_id: string; user_handle: string; public_key: Buffer; counter: number; transports: string[] }>)[0];
@@ -147,7 +147,7 @@ export async function finishAuthentication(
 
   const challengeUserId = sessionUserId ?? "__anon__";
   const challengeRows = await db.execute<{ challenge: string }>(sql`
-    SELECT challenge FROM auth.passkey_challenges
+    SELECT challenge FROM fonto.passkey_challenges
     WHERE user_id = ${challengeUserId} AND expires_at > now()
     ORDER BY created_at DESC LIMIT 1
   `);
@@ -172,12 +172,12 @@ export async function finishAuthentication(
   if (!verification.verified) throw new Error("Authentication verification failed");
 
   await db.execute(sql`
-    UPDATE auth.passkey_credentials
+    UPDATE fonto.passkey_credentials
     SET counter = ${verification.authenticationInfo.newCounter},
         last_used_at = now()
     WHERE id = ${credId}
   `);
-  await db.execute(sql`DELETE FROM auth.passkey_challenges WHERE user_id = ${challengeUserId}`);
+  await db.execute(sql`DELETE FROM fonto.passkey_challenges WHERE user_id = ${challengeUserId}`);
 
   return { verified: true, userId: cred.user_id };
 }
@@ -188,7 +188,7 @@ export async function finishAuthentication(
 
 async function getCredentialDescriptors(userId: string) {
   const rows = await db.execute<{ id: string; transports: string[] }>(sql`
-    SELECT id, transports FROM auth.passkey_credentials WHERE user_id = ${userId}
+    SELECT id, transports FROM fonto.passkey_credentials WHERE user_id = ${userId}
   `);
   return (rows as unknown as Array<{ id: string; transports: string[] }>).map((r) => ({
     id: r.id,

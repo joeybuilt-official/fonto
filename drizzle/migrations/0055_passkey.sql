@@ -1,7 +1,10 @@
 -- Jex ADR-004: passkey_challenges (short-lived) + passkey_credentials tables.
--- Stored in the auth schema alongside Better Auth tables.
+-- Namespaced to Fonto's OWN `fonto` schema, NOT the shared `auth` schema:
+-- pushd.auth is shared across apps and already holds a foreign, incompatible
+-- `auth.passkey_credentials` (uuid id / credential_id / jsonb transports).
+-- These are Fonto-owned; they reference the shared auth.user by FK only.
 
-CREATE TABLE IF NOT EXISTS auth.passkey_challenges (
+CREATE TABLE IF NOT EXISTS fonto.passkey_challenges (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     text NOT NULL,
   challenge   text NOT NULL,
@@ -10,9 +13,9 @@ CREATE TABLE IF NOT EXISTS auth.passkey_challenges (
 );
 
 CREATE INDEX IF NOT EXISTS passkey_challenges_user_id_idx
-  ON auth.passkey_challenges (user_id);
+  ON fonto.passkey_challenges (user_id);
 
-CREATE TABLE IF NOT EXISTS auth.passkey_credentials (
+CREATE TABLE IF NOT EXISTS fonto.passkey_credentials (
   id                  text PRIMARY KEY,
   user_id             text NOT NULL REFERENCES auth.user(id) ON DELETE CASCADE,
   user_handle         text NOT NULL,
@@ -26,7 +29,7 @@ CREATE TABLE IF NOT EXISTS auth.passkey_credentials (
 );
 
 CREATE INDEX IF NOT EXISTS passkey_credentials_user_id_idx
-  ON auth.passkey_credentials (user_id);
+  ON fonto.passkey_credentials (user_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS passkey_credentials_user_handle_idx
-  ON auth.passkey_credentials (user_handle);
+  ON fonto.passkey_credentials (user_handle);

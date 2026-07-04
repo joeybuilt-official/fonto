@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   // and consumes it in one statement, so two concurrent requests cannot both
   // redeem the same link (single-use, race-free — ADR-004 Fallback 3).
   const rows = await db.execute<{ user_id: string }>(sql`
-    UPDATE auth.one_time_links
+    UPDATE fonto.one_time_links
     SET used = true
     WHERE token = ${token}
       AND used = false

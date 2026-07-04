@@ -3,7 +3,7 @@
 //
 // One-time link generation (ADR-004 Fallback 3 — legacy account bridge).
 // Authenticated user POSTs → generates a 32-byte random token stored in
-// auth.one_time_links (15min TTL), returns {link:"/auth/login?token=..."}.
+// fonto.one_time_links (15min TTL), returns {link:"/auth/login?token=..."}.
 // Hard rule: only issued from an authenticated session (ADR-004 §risk).
 
 import { NextRequest, NextResponse } from "next/server";
@@ -23,7 +23,7 @@ export async function POST(_req: NextRequest) {
   const userId = session.user.id;
 
   await db.execute(sql`
-    INSERT INTO auth.one_time_links (user_id, token)
+    INSERT INTO fonto.one_time_links (user_id, token)
     VALUES (${userId}, ${token})
   `);
 
