@@ -102,7 +102,7 @@ export async function finishRegistration(
       ${credential.counter},
       ${credentialDeviceType},
       ${credentialBackedUp},
-      ${(response.response.transports ?? []) as string[]}
+      ${`{${(response.response.transports ?? []).join(",")}}`}::text[]
     )
     ON CONFLICT (id) DO UPDATE
       SET counter = EXCLUDED.counter,
