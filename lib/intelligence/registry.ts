@@ -78,7 +78,7 @@ function tiersFor<T>(embedded: Layer.Layer<T>, federated: Layer.Layer<T>): Reado
  * If every tier fails, the last failure cause is surfaced (preserving the
  * adapter's typed error, e.g. RateLimitError).
  */
-function resolve<T, S, A, E>(
+export function resolve<T, S, A, E>(
   tag: Context.Tag<T, S>,
   port: string,
   invoke: (svc: S) => Effect.Effect<A, E>,
