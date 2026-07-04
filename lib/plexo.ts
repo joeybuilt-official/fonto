@@ -6,8 +6,7 @@
  * which are just deploy-shaped prompts on top of `aiComplete`.
  */
 import { createPlexoClient, type AiMessage } from "@joeybuilt/plexo-sdk/connect"
-import { ocrImage, visionConfigured } from "@/lib/plexo-vision"
-import { intelligence } from "@/lib/intelligence/client"
+import { intelligence, CapabilityUnavailableError } from "@/lib/intelligence/client"
 
 // Re-export the unified analyze-image client so existing import sites stay
 // uniform with `lib/plexo`. The implementation lives separately so the
@@ -80,13 +79,14 @@ export interface PlexoVisionOcrResult {
 
 /**
  * Runs OCR for an image. Phase 4.4 swaps the legacy LLM-based path for a
- * dedicated PaddleOCR PP-OCRv5 model served by the Plexo vision sidecar
- * (see lib/plexo-vision.ts). The LLM path is retained as a fallback when
- * OCR_LLM_FALLBACK=true: if the vision service is unreachable or returns
- * an empty result we re-attempt via sdk.visionOcr.
+ * dedicated PaddleOCR PP-OCRv5 model, now reached through the Jex
+ * intelligence facade (lib/intelligence/client.ts). The LLM path is
+ * retained as a fallback when OCR_LLM_FALLBACK=true: if the vision
+ * capability is unavailable or returns an empty result we re-attempt via
+ * sdk.visionOcr.
  *
  * Empty result vs. failure:
- *   - empty: PaddleOCR ran successfully and found no text → returns
+ *   - empty: OCR ran successfully and found no text → returns
  *     `{ text: "", lines: [], model }`. Callers should record ocrState
  *     'empty', NOT 'failed'.
  *   - failure: thrown error. Callers should record ocrState 'failed'.
@@ -100,17 +100,26 @@ export async function plexoVisionOcr(
   imageUrl: string,
   lang?: string,
 ): Promise<PlexoVisionOcrResult | null> {
-  // Primary: PaddleOCR via the dedicated vision service.
-  if (visionConfigured()) {
-    try {
-      const result = await ocrImage(imageUrl, lang)
-      const text = result.lines.map((l) => l.text).join("\n")
-      return {
-        text,
-        model: result.modelId,
-        lines: result.lines,
-      }
-    } catch (err) {
+  // Primary: PaddleOCR via the intelligence facade. CapabilityUnavailableError
+  // maps to the legacy !visionConfigured() branch (proceed to LLM fallback);
+  // any other error maps to the legacy paddle-failure branch (rethrow unless
+  // OCR_LLM_FALLBACK=true).
+  let capabilityUnavailable = false
+  try {
+    const result = await intelligence.ocr({ imageUrl, lang })
+    return {
+      text: result.spans.map((s) => s.text).join("\n"),
+      model: result.modelId,
+      lines: result.spans.map((s) => ({
+        text: s.text,
+        bbox: (s.bbox ? [...s.bbox] : [0, 0, 0, 0]) as [number, number, number, number],
+        confidence: s.confidence,
+      })),
+    }
+  } catch (err) {
+    if (err instanceof CapabilityUnavailableError) {
+      capabilityUnavailable = true
+    } else {
       console.warn("[fonto] plexo-vision OCR failed, considering LLM fallback:", err)
       if (process.env.OCR_LLM_FALLBACK !== "true") {
         throw err
@@ -120,10 +129,10 @@ export async function plexoVisionOcr(
   }
 
   // Fallback: legacy LLM-based OCR via Plexo Core. Only attempted if
-  // OCR_LLM_FALLBACK=true or the vision service isn't configured at all
+  // OCR_LLM_FALLBACK=true or the vision capability isn't available at all
   // (preserves behaviour for deploys that never set PLEXO_VISION_URL).
   const allowFallback =
-    process.env.OCR_LLM_FALLBACK === "true" || !visionConfigured()
+    process.env.OCR_LLM_FALLBACK === "true" || capabilityUnavailable
   if (!allowFallback) return null
 
   const legacy = await sdk.visionOcr(workspaceId, imageUrl)

@@ -115,7 +115,7 @@ export const VisionSidecarOcrLayer = Layer.succeed(Ocr, {
         else if (req.imageBase64) body.imageBase64 = req.imageBase64;
 
         const data = await sidecarPost<{
-          lines?: Array<{ text?: string; confidence?: number }>;
+          lines?: Array<{ text?: string; confidence?: number; bbox?: unknown }>;
           modelId?: string;
           model_id?: string;
           model?: string;
@@ -124,7 +124,20 @@ export const VisionSidecarOcrLayer = Layer.succeed(Ocr, {
         const modelId = data.modelId ?? data.model_id ?? data.model ?? "paddleocr-pp-ocrv5";
         const spans = (data.lines ?? [])
           .filter((l) => l.text)
-          .map((l) => ({ text: l.text!, confidence: l.confidence ?? 0 }));
+          .map((l) => {
+            const bb = l.bbox;
+            // bbox=[x,y,w,h]; drop zero-area boxes (sidecar defaults missing
+            // bbox to [0,0,0,0]).
+            const bbox =
+              Array.isArray(bb) &&
+              bb.length === 4 &&
+              bb.every((n) => typeof n === "number") &&
+              (bb[2] as number) > 0 &&
+              (bb[3] as number) > 0
+                ? ([bb[0], bb[1], bb[2], bb[3]] as [number, number, number, number])
+                : undefined;
+            return { text: l.text!, confidence: l.confidence ?? 0, ...(bbox ? { bbox } : {}) };
+          });
         return { spans, modelId };
       },
       catch: (err) => unavailable("jex/Ocr", err instanceof Error ? err.message : String(err)),

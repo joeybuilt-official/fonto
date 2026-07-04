@@ -865,7 +865,14 @@ export async function runOcrForAsset(
     result = {
       text: r.spans.map((s) => s.text).join("\n"),
       model: r.modelId,
-      lines: [],
+      // Per-line boxes only exist on the PaddleOCR path; LLM/VLM spans
+      // carry no bbox and are excluded (preserves the pre-Jex ocr_boxes
+      // shape: [{text, bbox:[x,y,w,h], confidence}]).
+      lines: r.spans.flatMap((s) =>
+        s.bbox
+          ? [{ text: s.text, bbox: [...s.bbox] as [number, number, number, number], confidence: s.confidence }]
+          : []
+      ),
     };
   } catch (err) {
     endTimer({ outcome: "failure" });

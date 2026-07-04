@@ -25,10 +25,14 @@
 //   - non-image MIME type                     -> warn + no-op.
 //   - asset row missing / R2 object missing   -> warn + no-op.
 //
-// Re-running for the same asset is NOT idempotent — every call inserts new
-// rows. Callers (the worker handler) are expected to only enqueue once per
-// asset; manual re-runs from a CLI should DELETE existing rows for the
-// asset first if a re-detection is desired.
+// Re-running for the same asset is idempotent: if any face_instances row
+// already exists for the asset, the run logs and skips before any download
+// or sidecar work. This protects against reprocess re-enqueues and BullMQ
+// retries (attempts: 3) double-inserting.
+// ponytail: deliberate ceiling — a detector-model upgrade cannot refresh old
+// assets through reprocess; that path is a future force flag or a one-off
+// maintenance script (see scripts/immich-recover-byteless.ts for the delete
+// pattern).
 
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
@@ -172,6 +176,16 @@ export async function detectFacesForAsset(assetId: string): Promise<void> {
   // guarantees it was a photo).
   if (asset.classification != null && asset.classification !== "photo") {
     log.info({ classification: asset.classification }, "non-photo asset — skipping face detection");
+    return;
+  }
+
+  const [existing] = await db
+    .select({ id: schema.faceInstances.id })
+    .from(schema.faceInstances)
+    .where(eq(schema.faceInstances.assetId, assetId))
+    .limit(1);
+  if (existing) {
+    log.info("faces already detected — skipping");
     return;
   }
 

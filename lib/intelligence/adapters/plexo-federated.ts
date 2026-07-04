@@ -92,7 +92,12 @@ export const PlexoFederatedOcrLayer = Layer.succeed(Ocr, {
         const input = req.imageUrl ?? req.imageBase64 ?? "";
         const result = await ocrImage(input, req.lang);
         return {
-          spans: result.lines.map((l) => ({ text: l.text, confidence: l.confidence })),
+          spans: result.lines.map((l) => ({
+            text: l.text,
+            confidence: l.confidence,
+            // ocrImage defaults missing bbox to [0,0,0,0] — drop zero-area.
+            ...(l.bbox[2] > 0 && l.bbox[3] > 0 ? { bbox: l.bbox } : {}),
+          })),
           modelId: result.modelId,
         };
       },

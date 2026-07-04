@@ -137,6 +137,9 @@ export interface OcrRequest {
 export interface OcrSpan {
   readonly text: string;
   readonly confidence: number;
+  // [x, y, w, h] — present only for adapters with positional output
+  // (PaddleOCR); LLM/VLM OCR paths return spans without boxes.
+  readonly bbox?: readonly [number, number, number, number];
 }
 
 export interface OcrResponse {
