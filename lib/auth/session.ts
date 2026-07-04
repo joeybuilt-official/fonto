@@ -28,7 +28,9 @@ async function signCookieValue(value: string, secret: string): Promise<string> {
   );
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
   const b64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
-  return encodeURIComponent(`${value}.${b64}`);
+  // Raw `token.sig` — Next's cookie jar URL-encodes on serialization; a
+  // pre-encoded value would double-encode on the wire and never verify.
+  return `${value}.${b64}`;
 }
 
 export async function mintSession(userId: string): Promise<void> {
