@@ -27,6 +27,6 @@ export async function POST(_req: NextRequest) {
     VALUES (${userId}, ${token})
   `);
 
-  const link = `/auth/login?token=${token}`;
+  const link = `/login?token=${token}`;
   return NextResponse.json({ link });
 }

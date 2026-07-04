@@ -3,6 +3,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  startRegistration,
+  type PublicKeyCredentialCreationOptionsJSON,
+} from "@simplewebauthn/browser";
 import { useSession } from "@/lib/auth/client";
 import Link from "next/link";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
@@ -156,6 +160,79 @@ export default function SettingsPage() {
       setPolicyMsg(err instanceof Error ? `Failed: ${err.message}` : "Failed to change policy.");
     } finally {
       setPolicyBusy(false);
+    }
+  }
+
+  // Jex — passkey enrollment + one-time sign-in link (auth routes already live).
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [passkeyMsg, setPasskeyMsg] = useState<string | null>(null);
+  const [passkeyErr, setPasskeyErr] = useState<string | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [oneTimeLink, setOneTimeLink] = useState<string | null>(null);
+  const [linkErr, setLinkErr] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  async function handleAddPasskey() {
+    if (passkeyBusy) return;
+    setPasskeyBusy(true);
+    setPasskeyMsg(null);
+    setPasskeyErr(null);
+    try {
+      const startRes = await fetch("/api/auth/passkey/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "start" }),
+      });
+      if (startRes.status === 401) throw new Error("Session expired — sign in again to add a passkey.");
+      if (!startRes.ok) throw new Error(`HTTP ${startRes.status}`);
+      const optionsJSON =
+        (await startRes.json()) as PublicKeyCredentialCreationOptionsJSON;
+      const response = await startRegistration({ optionsJSON });
+      const finishRes = await fetch("/api/auth/passkey/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "finish", response }),
+      });
+      const data = (await finishRes.json().catch(() => null)) as {
+        verified?: boolean;
+        error?: string;
+      } | null;
+      if (!finishRes.ok || !data?.verified) {
+        throw new Error(data?.error ?? `HTTP ${finishRes.status}`);
+      }
+      setPasskeyMsg("Passkey added");
+    } catch (err) {
+      if (!(err instanceof Error && err.name === "NotAllowedError")) {
+        setPasskeyErr(
+          err instanceof Error && err.message ? err.message : "Failed to add passkey."
+        );
+      }
+    } finally {
+      setPasskeyBusy(false);
+    }
+  }
+
+  async function handleGenerateLink() {
+    if (linkBusy) return;
+    setLinkBusy(true);
+    setLinkErr(null);
+    setLinkCopied(false);
+    try {
+      const res = await fetch("/api/auth/passkey/one-time-link", { method: "POST" });
+      const data = (await res.json().catch(() => null)) as {
+        link?: string;
+        error?: string;
+      } | null;
+      if (!res.ok || !data?.link) {
+        throw new Error(data?.error ?? `HTTP ${res.status}`);
+      }
+      setOneTimeLink(window.location.origin + data.link);
+    } catch (err) {
+      setLinkErr(
+        err instanceof Error && err.message ? err.message : "Failed to generate link."
+      );
+    } finally {
+      setLinkBusy(false);
     }
   }
 
@@ -625,6 +702,108 @@ export default function SettingsPage() {
             <Button variant="outlined" size="sm" render={<Link href="/app/settings/tokens" />}>
               Manage tokens
             </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card variant="outlined" className={tabClass("account")}>
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Passkeys
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-[var(--ft-space-3)]">
+          <div className="flex items-center justify-between gap-[var(--ft-space-3)]">
+            <div>
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Add a passkey
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Sign in with your fingerprint, face, or device PIN — no password.
+              </p>
+            </div>
+            <Button
+              variant="outlined"
+              size="sm"
+              onClick={handleAddPasskey}
+              disabled={passkeyBusy}
+              aria-busy={passkeyBusy}
+            >
+              {passkeyBusy ? "Waiting…" : "Add passkey"}
+            </Button>
+          </div>
+          {passkeyMsg && (
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-success-container)]">
+              {passkeyMsg}
+            </p>
+          )}
+          {passkeyErr && (
+            <p role="alert" className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]">
+              {passkeyErr}
+            </p>
+          )}
+
+          <div className="pt-[var(--ft-space-3)] border-t border-[var(--ft-color-outline-variant)] space-y-[var(--ft-space-3)]">
+            <div className="flex items-center justify-between gap-[var(--ft-space-3)]">
+              <div>
+                <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                  One-time sign-in link
+                </p>
+                <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                  Sign in on another device without a password or passkey.
+                </p>
+              </div>
+              <Button
+                variant="outlined"
+                size="sm"
+                onClick={handleGenerateLink}
+                disabled={linkBusy}
+                aria-busy={linkBusy}
+              >
+                {linkBusy ? "Generating…" : "Generate link"}
+              </Button>
+            </div>
+            {oneTimeLink && (
+              <div className="space-y-[var(--ft-space-1)]">
+                <label
+                  htmlFor="one-time-link"
+                  className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase"
+                >
+                  Sign-in link
+                </label>
+                <div className="flex items-center gap-[var(--ft-space-2)]">
+                  <input
+                    id="one-time-link"
+                    type="text"
+                    readOnly
+                    value={oneTimeLink}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="w-full min-w-0 rounded border border-[var(--ft-color-outline-variant)] bg-transparent px-3 py-2 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--ft-color-primary)]"
+                  />
+                  <Button
+                    variant="outlined"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => {
+                      navigator.clipboard
+                        .writeText(oneTimeLink)
+                        .then(() => setLinkCopied(true))
+                        .catch(() => setLinkErr("Copy failed — select the link and copy manually."));
+                    }}
+                  >
+                    {linkCopied ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+                <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                  Single-use and short-lived — open it on the other device right away.
+                </p>
+              </div>
+            )}
+            {linkErr && (
+              <p role="alert" className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]">
+                {linkErr}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
