@@ -28,7 +28,8 @@ import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
-import { embedImage, visionConfigured } from "@/lib/plexo-vision";
+import { visionConfigured } from "@/lib/plexo-vision";
+import { intelligence } from "@/lib/intelligence/client";
 
 export interface EmbedAssetInput {
   assetId: string;
@@ -102,7 +103,10 @@ export async function embedAsset(
   const buffer = await downloadFromR2(bucket, key);
   log.info({ bytes: buffer.length, key }, "downloaded image for embedding");
 
-  const { vector, modelId } = await embedImage(buffer);
+  const { vector, modelId } = await intelligence.embedImage(
+    buffer.toString("base64"),
+    asset.mimeType
+  );
   log.info({ modelId, dims: vector.length }, "embedding received");
 
   // TODO(4.3): once migration 0017 lands and `schema.assets.clipVec` exists,
@@ -111,7 +115,7 @@ export async function embedAsset(
   // If the column doesn't yet exist, the UPDATE throws a 42703 and the
   // worker retries — eventually the migration ships and the retry succeeds.
   try {
-    const literal = toPgVectorLiteral(vector);
+    const literal = toPgVectorLiteral([...vector]);
     await db.execute(
       sql`UPDATE fonto.assets SET clip_vec = ${literal}::vector WHERE id = ${assetId}::uuid`
     );

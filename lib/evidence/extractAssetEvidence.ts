@@ -16,7 +16,8 @@ import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
-import { labelImageUrl, visionConfigured } from "@/lib/plexo-vision";
+import { visionConfigured } from "@/lib/plexo-vision";
+import { intelligence } from "@/lib/intelligence/client";
 import { logger } from "@/lib/logger";
 import type { EvidenceInput, EvidenceType } from "./types";
 import {
@@ -166,8 +167,9 @@ export async function extractAssetEvidence(assetId: string): Promise<ExtractResu
         asset.previewKey ??
         assetStorageKey(asset.workspaceId, asset.id, asset.filename);
       const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
-      const { labels, modelId } = await labelImageUrl(signedUrl);
-      const scene = sceneSeasonEvidence(labels, modelId);
+      const base64 = Buffer.from(await (await fetch(signedUrl)).arrayBuffer()).toString("base64");
+      const r = await intelligence.label(base64);
+      const scene = sceneSeasonEvidence(r.labels.map((l) => l.label), r.modelId);
       if (scene) inputs.push(scene);
       else sceneSeasonSkipped = "no-seasonal-labels";
     } catch (err) {

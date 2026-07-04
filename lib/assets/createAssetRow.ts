@@ -36,7 +36,8 @@ import { emitWebhook } from "@/lib/webhooks/emit";
 import { emitActivity } from "@/lib/activity/emit";
 import { nextSeq } from "@/lib/db/seq";
 import { deriveScope, type Scope } from "@/lib/scope";
-import { embedImage, visionServiceConfigured } from "@/lib/plexo-vision";
+import { visionServiceConfigured } from "@/lib/plexo-vision";
+import { intelligence } from "@/lib/intelligence/client";
 import { nearestNeighbors } from "@/lib/vectors";
 // Phase 1.1 `thumbnailQueue` + `JobNames.GenerateThumbnails` resolved
 // dynamically below so this module stays buildable if those exports
@@ -290,8 +291,9 @@ async function embedImageWithBudget(
       // Phase 4.2 client returns { vector, modelId }; we only need vector here.
       // Internal timeout (15s default) is independent of the inline budget —
       // the budget races against the call as a whole.
-      embedImage(buffer)
-        .then((r) => r.vector)
+      intelligence
+        .embedImage(buffer.toString("base64"), mimeType)
+        .then((r) => [...r.vector])
         .catch((err) => {
           console.warn("[fonto] inline CLIP embed failed:", err);
           return null;

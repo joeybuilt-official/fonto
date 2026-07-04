@@ -39,6 +39,7 @@ import {
 } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { generateFaceCropsForAsset } from "@/lib/processing/faceCrop";
+import { intelligence } from "@/lib/intelligence/client";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -203,38 +204,27 @@ export async function detectFacesForAsset(assetId: string): Promise<void> {
     }
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
-
   let body: DetectFaceResponseBody;
   try {
-    const res = await fetch(`${base}/v1/faces/detect`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json",
-        ...(serviceKey() ? { authorization: `Bearer ${serviceKey()}` } : {}),
-      },
-      body: JSON.stringify({ image: buffer.toString("base64") }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      log.warn(
-        { status: res.status, detail: detail.slice(0, 200) },
-        "plexo-vision /v1/faces/detect returned non-2xx — skipping"
-      );
-      return;
-    }
-    body = (await res.json()) as DetectFaceResponseBody;
+    const r = await intelligence.detectFaces(buffer.toString("base64"));
+    body = {
+      faces: r.faces.map((f) => ({
+        bbox: {
+          x: f.boundingBox.x,
+          y: f.boundingBox.y,
+          w: f.boundingBox.width,
+          h: f.boundingBox.height,
+        },
+        confidence: f.confidence,
+        embedding: f.embedding,
+      })),
+    };
   } catch (err) {
     log.warn(
       { err: err instanceof Error ? err.message : String(err) },
-      "plexo-vision /v1/faces/detect call failed — skipping"
+      "face detection unavailable — skipping"
     );
     return;
-  } finally {
-    clearTimeout(timer);
   }
 
   const faces = parseFaces(body);

@@ -42,6 +42,9 @@ export interface CompletionRequest {
   readonly model?: string;
   readonly maxTokens?: number;
   readonly providerHint?: { readonly type: "anthropic"; readonly model: string };
+  // Tenant context for the federated (Plexo) adapter — Plexo's aiComplete is
+  // workspace-scoped. Ignored by the embedded (direct-provider) adapter.
+  readonly workspaceId?: string;
 }
 
 export interface CompletionResponse {
