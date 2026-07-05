@@ -122,12 +122,13 @@ class _LoginScreenState extends State<LoginScreen> {
                     : const Text("Sign in"),
               ),
               const SizedBox(height: 12),
-              // M14 / ADR 0056 — SSO via the system browser. Opens the web
-              // login (which mints a PAT + deep-links it back if the instance
-              // has an IdP configured). Browser-mediated, so no native OAuth.
+              // M14 / ADR 0056 + Jex ADR-004 — browser-mediated sign-in. Opens
+              // the web login, where password, passkey, one-time link, and SSO
+              // all work; every success path mints a PAT and deep-links it
+              // back. No native OAuth or WebAuthn needed in the app.
               OutlinedButton(
                 onPressed: _busy ? null : _ssoLogin,
-                child: const Text("Sign in with SSO"),
+                child: const Text("Sign in with browser"),
               ),
               if (_error != null) ...[
                 const SizedBox(height: 16),
