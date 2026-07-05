@@ -48,6 +48,21 @@ function LoginPageInner() {
     return callback;
   })();
 
+  // Mobile PAT handoff (?mobile=1): EVERY successful sign-in — password,
+  // passkey, one-time link, SSO — must bounce through /mobile/auth-handoff so
+  // the native app gets its PAT deep-link instead of landing in the web UI.
+  const isMobileHandoff = searchParams.get("mobile") === "1";
+  const successTarget = isMobileHandoff
+    ? "/mobile/auth-handoff"
+    : (safeCallback ?? "/app/home");
+  // Route handlers aren't in the client route tree — router.push would 404;
+  // the handoff needs a real browser navigation so its redirect chain can
+  // reach the app-link deep link.
+  const go = () => {
+    if (isMobileHandoff) window.location.assign(successTarget);
+    else router.push(successTarget);
+  };
+
   // One-time sign-in link consumption (?token=<hex>). The verify endpoint
   // mints the session cookie itself and returns JSON — on success we just
   // redirect like a password login. Ref-guarded: tokens are single-use, so a
@@ -58,21 +73,27 @@ function LoginPageInner() {
     if (!linkToken || linkConsumed.current) return;
     linkConsumed.current = true;
     // Strip the single-use token from the URL so it never lands in
-    // browser history or a Referer header.
-    window.history.replaceState({}, "", "/login");
+    // browser history or a Referer header. Keep ?mobile=1 so a failed
+    // consume still leaves the PAT-handoff flow intact for a retry.
+    window.history.replaceState(
+      {},
+      "",
+      searchParams.get("mobile") === "1" ? "/login?mobile=1" : "/login"
+    );
     fetch(`/api/auth/verify-link?token=${encodeURIComponent(linkToken)}`)
       .then(async (res) => {
         const data = (await res.json().catch(() => null)) as {
           verified?: boolean;
         } | null;
         if (res.ok && data?.verified) {
-          router.push(safeCallback ?? "/app/home");
+          go();
         } else {
           setError("Sign-in link invalid or expired");
         }
       })
       .catch(() => setError("Sign-in link invalid or expired"));
-  }, [linkToken, router, safeCallback]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- go is stable per render inputs
+  }, [linkToken]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -93,7 +114,7 @@ function LoginPageInner() {
           return;
         }
       }
-      router.push(safeCallback ?? "/app/home");
+      go();
     } catch (err) {
       // better-auth throws (rather than returning result.error) on transport
       // failures — notably a 429 rate-limit, whose body comes back as
@@ -180,7 +201,7 @@ function LoginPageInner() {
               <span className="h-px flex-1 bg-border" />
             </div>
             <PasskeyLogin
-              onSuccess={() => router.push(safeCallback ?? "/app/home")}
+              onSuccess={go}
             />
             {ssoProviderId && (
               <button
@@ -189,9 +210,7 @@ function LoginPageInner() {
                 onClick={() =>
                   signInSSO(
                     ssoProviderId,
-                    searchParams.get("mobile") === "1"
-                      ? "/mobile/auth-handoff"
-                      : (safeCallback ?? "/app/home")
+                    successTarget
                   )
                 }
                 className="w-full rounded border border-border bg-card px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary"
