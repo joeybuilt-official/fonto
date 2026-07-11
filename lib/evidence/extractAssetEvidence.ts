@@ -16,7 +16,6 @@ import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
-import { visionConfigured } from "@/lib/plexo-vision";
 import { intelligence } from "@/lib/intelligence/client";
 import { logger } from "@/lib/logger";
 import type { EvidenceInput, EvidenceType } from "./types";
@@ -161,7 +160,7 @@ export async function extractAssetEvidence(assetId: string): Promise<ExtractResu
 
   // --- Plexo perception adapter (scene_season), gated + non-fatal ---
   let sceneSeasonSkipped: string | undefined;
-  if (visionConfigured() && asset.mimeType.startsWith("image/")) {
+  if (intelligence.available("label") && asset.mimeType.startsWith("image/")) {
     try {
       const visionKey =
         asset.previewKey ??
@@ -177,7 +176,7 @@ export async function extractAssetEvidence(assetId: string): Promise<ExtractResu
       log.warn({ err: sceneSeasonSkipped }, "scene_season extraction failed — skipping");
     }
   } else {
-    sceneSeasonSkipped = visionConfigured() ? "non-image" : "vision-unconfigured";
+    sceneSeasonSkipped = intelligence.available("label") ? "non-image" : "vision-unconfigured";
   }
 
   await writeEvidence(asset.id, inputs);

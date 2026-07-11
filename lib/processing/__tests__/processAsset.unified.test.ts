@@ -16,7 +16,7 @@ import {
   analyzeImageUnified,
   unifiedAnalyzeEnabled,
   type AnalyzeImageResult,
-} from "../../plexo-analyze";
+} from "../../intelligence/adapters/plexo-unified";
 
 const SAMPLE_PAYLOAD: AnalyzeImageResult = {
   classification: "photo",

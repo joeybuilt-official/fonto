@@ -15,7 +15,7 @@
 //     the original if the preview hasn't been generated yet.
 //   - Calls `embedImage()` and writes `assets.clip_vec` via raw SQL — the
 //     Drizzle schema column lands with the 4.3 pgvector migration; until then
-//     this path is gated by `visionConfigured()` and short-circuits when the
+//     this path is gated by `intelligence.available("embedImage")` and short-circuits when the
 //     column is missing (the SQL fails cleanly).
 //
 // Graceful degradation: the caller (worker) catches throws and BullMQ retries
@@ -28,7 +28,6 @@ import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
-import { visionConfigured } from "@/lib/plexo-vision";
 import { intelligence } from "@/lib/intelligence/client";
 
 export interface EmbedAssetInput {
@@ -64,7 +63,7 @@ export async function embedAsset(
   const { assetId, workspaceId } = input;
   const log = logger.child({ component: "clip-embed", assetId, workspaceId });
 
-  if (!visionConfigured()) {
+  if (!intelligence.available("embedImage")) {
     log.info("vision service not configured — skipping");
     return { skipped: true, reason: "vision-not-configured" };
   }

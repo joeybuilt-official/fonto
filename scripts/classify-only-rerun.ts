@@ -22,6 +22,7 @@
 import postgres from "postgres";
 import { classifyAsset } from "@/lib/classify/classify";
 import { deriveKind } from "@/lib/classify/kind";
+import { intelligence } from "@/lib/intelligence/client";
 // Helpers live in classifyHelpers.ts (NOT processAsset.ts) so this script
 // doesn't transitively load the Plexo SDK + sharp + S3 + webhook stack at
 // top-level. The Plexo SDK has an ESM-only subpath ("./connect") that tsx's
@@ -271,7 +272,7 @@ async function main(): Promise<void> {
   let plexo: PlexoFns | null = null;
   if (enableLlmFallback) try {
     const plexoMod = (await import("@/lib/plexo")) as typeof import("@/lib/plexo");
-    if (plexoMod.plexoAvailable()) {
+    if (intelligence.available("complete")) {
       // better-auth's user table lives in the `auth` schema (DATABASE_URL's
       // search_path is fonto,public — auth is NOT on it). Reference explicitly.
       const [wsRow] = (await sql`

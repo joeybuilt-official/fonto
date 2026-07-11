@@ -30,7 +30,7 @@ import postgres from "postgres";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
-import { analyzeImageUnified } from "@/lib/plexo-analyze";
+import { intelligence } from "@/lib/intelligence/client";
 import { deriveKind } from "@/lib/classify/kind";
 
 function arg(name: string): string | true | null {
@@ -63,6 +63,12 @@ interface Row {
 async function main(): Promise<void> {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) throw new Error("DATABASE_URL not set");
+
+  if (!intelligence.analyzeConfigured()) {
+    throw new Error(
+      "unified analyze not configured: set USE_UNIFIED_ANALYZE=1 + PLEXO_URL + PLEXO_SERVICE_KEY",
+    );
+  }
 
   const workspaceId =
     typeof arg("workspace-id") === "string"
@@ -162,7 +168,7 @@ async function main(): Promise<void> {
         { expiresIn: 300 },
       );
 
-      const result = await analyzeImageUnified({
+      const result = await intelligence.analyzeImage({
         workspaceId: row.workspace_id,
         imageUrl: signedUrl,
         mimeType: row.mime_type,

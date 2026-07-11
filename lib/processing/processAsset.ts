@@ -14,10 +14,8 @@ import { db, schema } from "@/lib/db";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import {
-  plexoAvailable,
   plexoEnsureWorkspace,
   plexoClassifyAsset,
-  classifyTextCodeByMime,
   plexoDescribeImage,
   plexoDescribeDocument,
   plexoPublishEvent,
@@ -25,19 +23,17 @@ import {
   plexoSuggestTags,
   type PlexoVisionOcrResult,
 } from "@/lib/plexo";
-import {
-  analyzeImageUnified,
-  unifiedAnalyzeEnabled,
-  type AnalyzeImageResult,
-} from "@/lib/plexo-analyze";
 import { assetProcessingDurationSeconds } from "@/lib/metrics";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { classifyAsset } from "@/lib/classify/classify";
-import { deriveKind } from "@/lib/classify/kind";
+import { deriveKind, classifyTextCodeByMime } from "@/lib/classify/kind";
 import { tryEnqueueFaceDetect } from "@/lib/assets/createAssetRow";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
-import { visionConfigured } from "@/lib/plexo-vision";
-import { intelligence } from "@/lib/intelligence/client";
+import {
+  intelligence,
+  CapabilityUnavailableError,
+  type AnalyzeImageResult,
+} from "@/lib/intelligence/client";
 import { isJunkLabel } from "@/lib/processing/labelStoplist";
 
 const DOCUMENT_CLASSIFICATIONS = new Set([
@@ -141,7 +137,7 @@ async function processAssetInner(
   // (flag off OR non-image OR the unified call failed mid-flight).
   let unifiedResultTopLevel: AnalyzeImageResult | null = null;
 
-  if (plexoAvailable()) {
+  if (intelligence.available("complete")) {
     plexoWorkspaceId = await plexoEnsureWorkspace(userId, email);
 
     if (mimeType.startsWith("image/")) {
@@ -193,7 +189,7 @@ async function processAssetInner(
       // while making the result visible to the suggested-tags block at
       // the bottom of the pipeline.
       let unifiedResult: AnalyzeImageResult | null = null;
-      const useUnified = unifiedAnalyzeEnabled();
+      const useUnified = intelligence.analyzeConfigured();
 
       // CLIP-only classify pass (no LLM fallback when unified is on — the
       // unified call itself IS our LLM fallback, with vision context).
@@ -242,7 +238,7 @@ async function processAssetInner(
               assetStorageKey(imgRow.workspaceId, assetId, filename);
             const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
             const unifiedStartedAt = Date.now();
-            unifiedResult = await analyzeImageUnified({
+            unifiedResult = await intelligence.analyzeImage({
               workspaceId: plexoWorkspaceId,
               imageUrl: signedUrl,
               mimeType,
@@ -272,8 +268,12 @@ async function processAssetInner(
           // still drive it to 'ready' so the "Processing N items" counter drains.
           // Pure network failures (fetch failed / ECONNREFUSED / socket closed) do
           // NOT start with "plexo analyze-image HTTP" — rethrow those so BullMQ
-          // retries when Plexo is back up.
-          if (msg.startsWith("plexo analyze-image HTTP")) {
+          // retries when Plexo is back up. CapabilityUnavailableError means the
+          // unified path isn't enabled/configured — same as the flag-off case,
+          // so fall to the legacy chain rather than retrying.
+          if (err instanceof CapabilityUnavailableError) {
+            console.warn("[fonto] analyze-image capability unavailable — skipping unified for", assetId, msg);
+          } else if (msg.startsWith("plexo analyze-image HTTP")) {
             console.warn("[fonto] analyze-image response error — skipping unified for", assetId, msg);
           } else {
             console.warn("[fonto] unified analyze-image transport failed for", assetId, err);
@@ -327,7 +327,7 @@ async function processAssetInner(
         // Legacy chain — flag off OR unified call failed mid-flight.
         // Image-grounded signals BEFORE description so the caption can quote
         // real OCR text and reference the objects/scene the vision model saw.
-        if (visionConfigured()) {
+        if (intelligence.available("label")) {
           try {
             const [imgRow] = await db
               .select({
