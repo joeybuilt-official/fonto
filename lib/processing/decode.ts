@@ -16,17 +16,20 @@
 //                                          → sharp if libheif present,
 //                                            else `heif-convert` subprocess
 //   image/x-canon-cr2 | -cr3 | -adobe-dng | -sony-arw | -nikon-nef | ...
-//   (any mime in lib/mime.RAW_MIME_TYPES)   → `dcraw_emu -e -c <file>` for
-//                                            embedded JPEG; fall back to
-//                                            `dcraw_emu -w -c <file>` (TIFF
-//                                            from raw sensor data) on miss.
+//   (any mime in lib/mime.RAW_MIME_TYPES)   → `simple_dcraw -e <file>` for
+//                                            the embedded preview; fall back
+//                                            to `dcraw_emu -w -T <file>`
+//                                            (TIFF from raw sensor data).
+//   image/vnd.adobe.photoshop               → `ffmpeg -i <file> -frames:v 1`
+//                                            (ffmpeg's psd decoder renders
+//                                            the flattened composite)
 //
 // Subprocesses run with a hard timeout (RAW_DECODE_TIMEOUT_MS, default 30s);
 // killed processes throw a clear error that the caller can surface as a
 // thumbnail failure without retrying forever.
 
 import { spawn } from "node:child_process";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -71,6 +74,11 @@ const HEIC_MIMES = new Set<string>([
   "image/heif",
   "image/heic-sequence",
   "image/heif-sequence",
+]);
+
+const PSD_MIMES = new Set<string>([
+  "image/vnd.adobe.photoshop",
+  "image/x-photoshop",
 ]);
 
 // ─── Capability detection (run once at module load) ─────────────────────────
@@ -133,6 +141,10 @@ export async function decodeToBuffer(
     return decodeRawWithDcraw(input, mime, filename);
   }
 
+  if (PSD_MIMES.has(mime)) {
+    return decodePsdWithFfmpeg(input, filename);
+  }
+
   throw new Error(`decodeToBuffer: unsupported mime type ${mimeType}`);
 }
 
@@ -144,7 +156,10 @@ export async function decodeToBuffer(
 export function canDecode(mimeType: string): boolean {
   const mime = mimeType.toLowerCase();
   return (
-    PASSTHROUGH_MIMES.has(mime) || HEIC_MIMES.has(mime) || isRawMime(mime)
+    PASSTHROUGH_MIMES.has(mime) ||
+    HEIC_MIMES.has(mime) ||
+    isRawMime(mime) ||
+    PSD_MIMES.has(mime)
   );
 }
 
@@ -171,7 +186,6 @@ async function decodeWithHeifConvert(
   try {
     await writeFile(inPath, input);
     await runSubprocess("heif-convert", [inPath, outPath], RAW_DECODE_TIMEOUT_MS);
-    const { readFile } = await import("node:fs/promises");
     const out = await readFile(outPath);
     if (out.length === 0) {
       throw new Error("heif-convert produced empty output");
@@ -183,14 +197,18 @@ async function decodeWithHeifConvert(
 }
 
 /**
- * Decode a camera RAW file using dcraw_emu (libraw). Two-stage:
- *   1. Try `dcraw_emu -e -c <file>` — extract the embedded preview JPEG.
- *      Most cameras embed a full-resolution JPEG; this is what the camera's
- *      LCD shows and what Lightroom uses for the "Embedded" preview. Fast
- *      (~50ms) and high quality.
- *   2. If that fails (no embedded JPEG / corrupt / unsupported), fall back
- *      to `dcraw_emu -w -c <file>` which demosaics the raw sensor data and
- *      writes a 16-bit TIFF. Slower (~1-3s per shot) but always works for
+ * Decode a camera RAW file using LibRaw's CLI samples. Two-stage:
+ *   1. `simple_dcraw -e <file>` — extract the embedded preview into
+ *      `<file>.thumb.jpg` (or `.thumb.ppm` for cameras that embed an
+ *      uncompressed preview). Most cameras embed a full-resolution JPEG;
+ *      this is what the camera's LCD shows and what Lightroom uses for the
+ *      "Embedded" preview. Fast (~50ms) and high quality.
+ *      NOTE: dcraw_emu does NOT accept classic dcraw's `-e`/`-c` flags (its
+ *      `-c` is a float threshold) — thumbnail extraction lives in
+ *      simple_dcraw, and output always goes to files, never stdout.
+ *   2. If that fails (no embedded preview / corrupt / unsupported), fall
+ *      back to `dcraw_emu -w -T -Z <out> <file>` which demosaics the raw
+ *      sensor data to a TIFF. Slower (~1-3s per shot) but always works for
  *      LibRaw-supported cameras.
  *
  * Files we touch live in a per-invocation tempdir that's removed in finally.
@@ -206,18 +224,17 @@ async function decodeRawWithDcraw(
   try {
     await writeFile(inPath, input);
 
-    // Stage 1: embedded JPEG. dcraw_emu writes to stdout with `-c`.
+    // Stage 1: embedded preview → <inPath>.thumb.jpg / .thumb.ppm.
     try {
-      const embedded = await runSubprocessCapture(
-        "dcraw_emu",
-        ["-e", "-c", inPath],
-        RAW_DECODE_TIMEOUT_MS
-      );
-      if (embedded.length > 0) {
-        return {
-          buffer: embedded,
-          sourceFormat: `${rawTagFromMime(mime)}-embedded-jpeg`,
-        };
+      await runSubprocess("simple_dcraw", ["-e", inPath], RAW_DECODE_TIMEOUT_MS);
+      for (const thumbPath of [`${inPath}.thumb.jpg`, `${inPath}.thumb.ppm`]) {
+        const embedded = await readFile(thumbPath).catch(() => null);
+        if (embedded && embedded.length > 0) {
+          return {
+            buffer: embedded,
+            sourceFormat: `${rawTagFromMime(mime)}-embedded-jpeg`,
+          };
+        }
       }
     } catch (err) {
       // Stage 2 will retry; only re-throw timeouts (no point demosaicing if
@@ -228,15 +245,48 @@ async function decodeRawWithDcraw(
     }
 
     // Stage 2: full demosaic to TIFF.
-    const tiff = await runSubprocessCapture(
+    const outPath = join(dir, "out.tiff");
+    await runSubprocess(
       "dcraw_emu",
-      ["-w", "-c", inPath],
+      ["-w", "-T", "-Z", outPath, inPath],
       RAW_DECODE_TIMEOUT_MS
     );
-    if (tiff.length === 0) {
+    const tiff = await readFile(outPath).catch(() => null);
+    if (!tiff || tiff.length === 0) {
       throw new Error(`dcraw_emu produced no output for ${filename}`);
     }
     return { buffer: tiff, sourceFormat: `${rawTagFromMime(mime)}-dcraw-tiff` };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Decode a Photoshop PSD via ffmpeg's psd decoder, which renders the
+ * flattened composite (present in any PSD saved with "Maximize
+ * Compatibility"). PSDs run big (largest in the library is 220MB, ~9s to
+ * decode), so the timeout gets a 60s floor regardless of the RAW knob.
+ */
+async function decodePsdWithFfmpeg(
+  input: Buffer,
+  filename: string
+): Promise<DecodedImage> {
+  const ext = extensionOf(filename) || "psd";
+  const dir = await mkdtemp(join(tmpdir(), "fonto-psd-"));
+  const inPath = join(dir, `in.${ext}`);
+  const outPath = join(dir, "out.png");
+  try {
+    await writeFile(inPath, input);
+    await runSubprocess(
+      "ffmpeg",
+      ["-hide_banner", "-loglevel", "error", "-y", "-i", inPath, "-frames:v", "1", outPath],
+      Math.max(RAW_DECODE_TIMEOUT_MS, 60_000)
+    );
+    const out = await readFile(outPath).catch(() => null);
+    if (!out || out.length === 0) {
+      throw new Error(`ffmpeg produced no output for ${filename}`);
+    }
+    return { buffer: out, sourceFormat: "psd-ffmpeg" };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
@@ -251,47 +301,6 @@ function rawTagFromMime(mime: string): string {
 function rawExtFromMime(mime: string): string | undefined {
   const tag = rawTagFromMime(mime);
   return tag === "raw" ? undefined : tag;
-}
-
-/**
- * Spawn `cmd` with `args`, capture stdout as a Buffer, enforce a hard
- * timeout. Throws on non-zero exit, stderr is included in the error message.
- */
-async function runSubprocessCapture(
-  cmd: string,
-  args: string[],
-  timeoutMs: number
-): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
-    const chunks: Buffer[] = [];
-    const errChunks: Buffer[] = [];
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill("SIGKILL");
-    }, timeoutMs);
-
-    proc.stdout.on("data", (c: Buffer) => chunks.push(c));
-    proc.stderr.on("data", (c: Buffer) => errChunks.push(c));
-    proc.on("error", (err) => {
-      clearTimeout(timer);
-      reject(new Error(`spawn ${cmd} failed: ${err.message}`));
-    });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      if (timedOut) {
-        reject(new Error(`${cmd} timed out after ${timeoutMs}ms`));
-        return;
-      }
-      if (code !== 0) {
-        const stderr = Buffer.concat(errChunks).toString("utf8").slice(0, 500);
-        reject(new Error(`${cmd} exited ${code}: ${stderr}`));
-        return;
-      }
-      resolve(Buffer.concat(chunks));
-    });
-  });
 }
 
 /**
