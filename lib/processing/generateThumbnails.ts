@@ -106,13 +106,18 @@ async function uploadDerivative(
  * Encode a single derivative variant. `.rotate()` (no args) auto-applies the
  * EXIF orientation tag and strips it from the output so consumers don't have
  * to know about orientation at all.
+ *
+ * `unlimited: true` (here and the sibling pipelines): libvips' TIFF
+ * "Cumulated memory allocation" guard rejects legitimate 60-130MB scanner
+ * TIFFs in the library. Decompression bombs stay bounded by sharp's default
+ * limitInputPixels (268MP), which `unlimited` does not lift.
  */
 async function encodeVariant(
   source: Buffer,
   longEdgePx: number,
   quality: number
 ): Promise<Buffer> {
-  return sharp(source, { failOn: "none" })
+  return sharp(source, { failOn: "none", unlimited: true })
     .rotate()
     .resize({
       width: longEdgePx,
@@ -134,7 +139,7 @@ async function encodeAvifVariant(
   longEdgePx: number,
   quality: number
 ): Promise<Buffer> {
-  return sharp(source, { failOn: "none" })
+  return sharp(source, { failOn: "none", unlimited: true })
     .rotate()
     .resize({
       width: longEdgePx,
@@ -321,7 +326,7 @@ export async function generateThumbnails(
     encodeAvifVariant(decodedBuffer, THUMB_1024_LONG_EDGE_PX, AVIF_QUALITY),
     encodeVariant(decodedBuffer, PREVIEW_LONG_EDGE_PX, PREVIEW_QUALITY),
     encodeAvifVariant(decodedBuffer, PREVIEW_LONG_EDGE_PX, AVIF_QUALITY),
-    sharp(decodedBuffer, { failOn: "none" })
+    sharp(decodedBuffer, { failOn: "none", unlimited: true })
       .rotate()
       .resize(LQIP_EDGE_PX, LQIP_EDGE_PX, { fit: "cover" })
       .webp({ quality: LQIP_QUALITY, effort: 3 })
