@@ -29,6 +29,12 @@ builds:
       - CM_KEY_PASSWORD
     commands:
       - git clone --depth 1 --branch main https://x-access-token:$GITHUB_TOKEN@github.com/joeybuilt-official/fonto.git .
+      # The public cirruslabs flutter:stable image ships JDK 21 only; some
+      # third-party plugins (e.g. photo_manager) compile Kotlin at 21 while the
+      # app pins Java to 17 -> "Inconsistent JVM-target". Relax the check to a
+      # warning so the release APK still builds (mixed 17/21 dex is runtime-safe
+      # on minSdk 21). Remove once a pinned JDK17 builder image is used.
+      - printf '\nkotlin.jvm.target.validation.mode=warning\n' >> mobile/android/gradle.properties
       - printf '%s' "$CM_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > /tmp/fonto-upload.jks
       - cd mobile && flutter pub get
       - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release
@@ -50,6 +56,7 @@ builds:
       - GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
     commands:
       - git clone --depth 1 --branch main https://x-access-token:$GITHUB_TOKEN@github.com/joeybuilt-official/fonto.git .
+      - printf '\nkotlin.jvm.target.validation.mode=warning\n' >> mobile/android/gradle.properties
       - printf '%s' "$CM_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > /tmp/fonto-upload.jks
       - cd mobile && flutter pub get
       - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release
