@@ -1,0 +1,62 @@
+# pushd build config — replaces Codemagic (see codemagic.yaml for prior art).
+# Native Flutter Android app in mobile/, signed release APK + AAB, emailed.
+#
+# Tag-trigger convention (handled by the pushd webhook, not this file):
+#   v*         -> run `android-release`  (signed APK+AAB, emailed)
+#   release-v* -> run `android-publish`  (signed AAB -> Play internal, draft)
+#
+# Signing secrets are provisioned per-project in pushd's secret store (never in
+# this repo). mobile/android/app/build.gradle reads them as CM_* env vars:
+#   CM_KEYSTORE_BASE64  base64 of fonto-upload.jks
+#   CM_STORE_PASSWORD   keystore store password
+#   CM_KEY_ALIAS        signing key alias
+#   CM_KEY_PASSWORD     signing key password
+# Image: public cirruslabs Flutter (Flutter stable + Android SDK + JDK17),
+# pullable without a custom build. Pin to a concrete tag once the joeybuilt
+# builder image exists.
+version: 1
+builds:
+  android-release:
+    executor: docker
+    type: android
+    flavor: flutter
+    image: ghcr.io/cirruslabs/flutter:stable
+    secrets:
+      - GITHUB_TOKEN
+      - CM_KEYSTORE_BASE64
+      - CM_STORE_PASSWORD
+      - CM_KEY_ALIAS
+      - CM_KEY_PASSWORD
+    commands:
+      - git clone --depth 1 --branch main https://x-access-token:$GITHUB_TOKEN@github.com/joeybuilt-official/fonto.git .
+      - printf '%s' "$CM_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > /tmp/fonto-upload.jks
+      - cd mobile && flutter pub get
+      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release
+    artifacts:
+      - mobile/build/app/outputs/flutter-apk/app-release.apk
+    deliver:
+      - email
+  android-publish:
+    executor: docker
+    type: android
+    flavor: flutter
+    image: ghcr.io/cirruslabs/flutter:stable
+    secrets:
+      - GITHUB_TOKEN
+      - CM_KEYSTORE_BASE64
+      - CM_STORE_PASSWORD
+      - CM_KEY_ALIAS
+      - CM_KEY_PASSWORD
+      - GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+    commands:
+      - git clone --depth 1 --branch main https://x-access-token:$GITHUB_TOKEN@github.com/joeybuilt-official/fonto.git .
+      - printf '%s' "$CM_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > /tmp/fonto-upload.jks
+      - cd mobile && flutter pub get
+      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release
+      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build appbundle --release
+    artifacts:
+      - mobile/build/app/outputs/flutter-apk/app-release.apk
+      - mobile/build/app/outputs/bundle/release/app-release.aab
+    deliver:
+      - email
+      - play:internal:draft
