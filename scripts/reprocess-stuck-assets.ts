@@ -18,6 +18,13 @@
 //   pnpm reprocess:stuck                         # default: workspace=all
 //   pnpm reprocess:stuck -- --workspace=<uuid>
 //   pnpm reprocess:stuck -- --dry-run
+//   pnpm reprocess:stuck -- --thumbs-only        # only thumbnail jobs
+//   pnpm reprocess:stuck -- --process-only       # only process-asset jobs
+//
+// The split flags exist because processAsset feeds the VLM `previewKey ??
+// original` — for formats the VLM can't decode (PSD/RAW/TIFF) the preview
+// MUST exist first or analyze 500s. Run --thumbs-only, wait for previews,
+// then --process-only.
 //
 // Reads DATABASE_URL + REDIS_URL from env.
 
@@ -50,6 +57,8 @@ async function main(): Promise<void> {
   const workspaceFilter =
     typeof arg("workspace") === "string" ? (arg("workspace") as string) : null;
   const dryRun = !!arg("dry-run");
+  const thumbsOnly = !!arg("thumbs-only");
+  const processOnly = !!arg("process-only");
 
   const sql = postgres(dbUrl, { prepare: false });
   const redis = new IORedis(redisUrl, { maxRetriesPerRequest: null });
@@ -122,21 +131,23 @@ async function main(): Promise<void> {
       );
       continue;
     }
-    await processQueue.add(
-      "process-asset",
-      {
-        assetId: r.id,
-        workspaceId: r.workspace_id,
-        userId,
-        filename: r.filename,
-        mimeType: r.mime_type,
-        extractedText: null,
-      },
-      { jobId: `reprocess-stuck-${runId}-${r.id}` }
-    );
-    enqueuedProcess++;
+    if (!thumbsOnly) {
+      await processQueue.add(
+        "process-asset",
+        {
+          assetId: r.id,
+          workspaceId: r.workspace_id,
+          userId,
+          filename: r.filename,
+          mimeType: r.mime_type,
+          extractedText: null,
+        },
+        { jobId: `reprocess-stuck-${runId}-${r.id}` }
+      );
+      enqueuedProcess++;
+    }
 
-    if (!r.thumbnail_key) {
+    if (!processOnly && !r.thumbnail_key) {
       await thumbQueue.add(
         "thumbnail",
         { assetId: r.id, workspaceId: r.workspace_id },
