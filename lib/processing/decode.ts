@@ -269,6 +269,11 @@ async function decodeRawWithDcraw(
  *   2. ImageMagick `magick <in>[0] <out>` — the reference PSD reader;
  *      `[0]` selects the merged composite. Slower but handles the RLE
  *      variants ffmpeg chokes on.
+ *   3. `exiftool -b -PhotoshopThumbnail` — the ~160px JPEG Photoshop embeds
+ *      as an image resource. Last resort for damaged/truncated PSDs (the
+ *      library holds file-carve recoveries whose layer data is gone but
+ *      whose resource block survived). Low-res, but enough for a library
+ *      thumbnail and classification; the original stays for download.
  * PSDs run big (largest in the library is 220MB, ~9s via ffmpeg at idle),
  * so the timeout gets a 60s floor regardless of the RAW knob.
  */
@@ -298,12 +303,26 @@ async function decodePsdWithFfmpeg(
         throw err;
       }
     }
-    await runSubprocess("magick", [`${inPath}[0]`, outPath], timeoutMs);
-    const out = await readFile(outPath).catch(() => null);
-    if (!out || out.length === 0) {
+    try {
+      await runSubprocess("magick", [`${inPath}[0]`, outPath], timeoutMs);
+      const out = await readFile(outPath).catch(() => null);
+      if (out && out.length > 0) {
+        return { buffer: out, sourceFormat: "psd-magick" };
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("timed out")) {
+        throw err;
+      }
+    }
+    const thumb = await runSubprocessCaptureStdout(
+      "exiftool",
+      ["-b", "-PhotoshopThumbnail", inPath],
+      timeoutMs
+    );
+    if (thumb.length === 0) {
       throw new Error(`psd decode produced no output for ${filename}`);
     }
-    return { buffer: out, sourceFormat: "psd-magick" };
+    return { buffer: thumb, sourceFormat: "psd-embedded-thumbnail" };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
@@ -318,6 +337,47 @@ function rawTagFromMime(mime: string): string {
 function rawExtFromMime(mime: string): string | undefined {
   const tag = rawTagFromMime(mime);
   return tag === "raw" ? undefined : tag;
+}
+
+/**
+ * Spawn `cmd` with `args`, capture stdout as a Buffer, enforce a hard
+ * timeout. Throws on non-zero exit, stderr is included in the error message.
+ */
+async function runSubprocessCaptureStdout(
+  cmd: string,
+  args: string[],
+  timeoutMs: number
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill("SIGKILL");
+    }, timeoutMs);
+
+    proc.stdout.on("data", (c: Buffer) => chunks.push(c));
+    proc.stderr.on("data", (c: Buffer) => errChunks.push(c));
+    proc.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new Error(`spawn ${cmd} failed: ${err.message}`));
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`${cmd} timed out after ${timeoutMs}ms`));
+        return;
+      }
+      if (code !== 0) {
+        const stderr = Buffer.concat(errChunks).toString("utf8").slice(0, 500);
+        reject(new Error(`${cmd} exited ${code}: ${stderr}`));
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
+  });
 }
 
 /**
