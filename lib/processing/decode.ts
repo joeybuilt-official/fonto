@@ -262,10 +262,15 @@ async function decodeRawWithDcraw(
 }
 
 /**
- * Decode a Photoshop PSD via ffmpeg's psd decoder, which renders the
- * flattened composite (present in any PSD saved with "Maximize
- * Compatibility"). PSDs run big (largest in the library is 220MB, ~9s to
- * decode), so the timeout gets a 60s floor regardless of the RAW knob.
+ * Decode a Photoshop PSD to PNG. Two-stage:
+ *   1. ffmpeg's psd decoder renders the flattened composite (present in
+ *      any PSD saved with "Maximize Compatibility"). Fast, but its RLE
+ *      reader rejects some real-world PSDs ("Invalid rle char").
+ *   2. ImageMagick `magick <in>[0] <out>` — the reference PSD reader;
+ *      `[0]` selects the merged composite. Slower but handles the RLE
+ *      variants ffmpeg chokes on.
+ * PSDs run big (largest in the library is 220MB, ~9s via ffmpeg at idle),
+ * so the timeout gets a 60s floor regardless of the RAW knob.
  */
 async function decodePsdWithFfmpeg(
   input: Buffer,
@@ -275,18 +280,30 @@ async function decodePsdWithFfmpeg(
   const dir = await mkdtemp(join(tmpdir(), "fonto-psd-"));
   const inPath = join(dir, `in.${ext}`);
   const outPath = join(dir, "out.png");
+  const timeoutMs = Math.max(RAW_DECODE_TIMEOUT_MS, 60_000);
   try {
     await writeFile(inPath, input);
-    await runSubprocess(
-      "ffmpeg",
-      ["-hide_banner", "-loglevel", "error", "-y", "-i", inPath, "-frames:v", "1", outPath],
-      Math.max(RAW_DECODE_TIMEOUT_MS, 60_000)
-    );
+    try {
+      await runSubprocess(
+        "ffmpeg",
+        ["-hide_banner", "-loglevel", "error", "-y", "-i", inPath, "-frames:v", "1", outPath],
+        timeoutMs
+      );
+      const out = await readFile(outPath).catch(() => null);
+      if (out && out.length > 0) {
+        return { buffer: out, sourceFormat: "psd-ffmpeg" };
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("timed out")) {
+        throw err;
+      }
+    }
+    await runSubprocess("magick", [`${inPath}[0]`, outPath], timeoutMs);
     const out = await readFile(outPath).catch(() => null);
     if (!out || out.length === 0) {
-      throw new Error(`ffmpeg produced no output for ${filename}`);
+      throw new Error(`psd decode produced no output for ${filename}`);
     }
-    return { buffer: out, sourceFormat: "psd-ffmpeg" };
+    return { buffer: out, sourceFormat: "psd-magick" };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
