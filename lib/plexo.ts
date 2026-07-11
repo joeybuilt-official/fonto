@@ -16,7 +16,7 @@ export {
   unifiedAnalyzeEnabled,
   type AnalyzeImageResult,
   type AnalyzeImageHints,
-} from "@/lib/plexo-analyze"
+} from "@/lib/intelligence/adapters/plexo-unified"
 
 const sdk = createPlexoClient({
   appId: "fonto",
@@ -160,25 +160,6 @@ export const IMAGE_SUBTYPES = ["photo", "screenshot", "mockup", "logo", "icon"] 
 export const DOCUMENT_SUBTYPES = ["receipt", "contract", "letter", "report", "form", "document", "scan", "text", "code"] as const
 export const ALL_SUBTYPES = [...IMAGE_SUBTYPES, ...DOCUMENT_SUBTYPES] as const
 export type AssetSubtype = (typeof ALL_SUBTYPES)[number]
-
-// Deterministic text/code classification straight from the mime type — these
-// are unambiguous, so we skip the LLM round-trip. text/plain is prose ("text");
-// markdown and source-code mimes are "code". Returns null for any other mime so
-// the caller falls back to the LLM document classifier.
-export function classifyTextCodeByMime(mimeType: string): "text" | "code" | null {
-  const m = (mimeType || "").toLowerCase().split(";")[0].trim()
-  if (m === "text/plain") return "text"
-  if (
-    m === "text/markdown" ||
-    m.startsWith("text/x-") ||
-    m === "application/json" ||
-    m === "application/x-yaml" ||
-    m === "application/xml"
-  ) {
-    return "code"
-  }
-  return null
-}
 
 export async function plexoClassifyAsset(
   workspaceId: string,

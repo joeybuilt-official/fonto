@@ -10,7 +10,17 @@
 // adapter answered — it only sees the port response or the typed error.
 
 import { Cause, Effect, Exit, Option } from "effect";
-import { resolveIntelligenceLayer } from "./registry";
+import {
+  resolveIntelligenceLayer,
+  capabilityConfigured,
+  type FacadeCapability,
+} from "./registry";
+import {
+  analyzeImageUnified,
+  unifiedAnalyzeEnabled,
+  type AnalyzeImageOptions,
+  type AnalyzeImageResult,
+} from "./adapters/plexo-unified";
 import {
   Completion,
   ImageEmbedding,
@@ -60,6 +70,26 @@ export const intelligence = {
 
   detectFaces: (imageBase64: string): Promise<FaceDetectionResponse> =>
     run(provide(Effect.flatMap(FaceDetection, (s) => s.detect({ imageBase64 })))),
+
+  available: (capability: FacadeCapability): boolean =>
+    capabilityConfigured(capability),
+
+  analyzeConfigured: (): boolean => unifiedAnalyzeEnabled(),
+
+  // Composite over the ports, not a port (ADR-002): ONE federated VLM
+  // round-trip by design; callers keep their per-port fallback (processAsset
+  // legacy chain) — sequencing the ports here would 4x GPU load.
+  analyzeImage: async (opts: AnalyzeImageOptions): Promise<AnalyzeImageResult> => {
+    if (!unifiedAnalyzeEnabled()) {
+      throw new CapabilityUnavailableError({
+        port: "jex/analyzeImage",
+        reason:
+          "unified analyze disabled: USE_UNIFIED_ANALYZE flag off or PLEXO_URL/PLEXO_SERVICE_KEY unset",
+      });
+    }
+    return analyzeImageUnified(opts);
+  },
 };
 
 export { CapabilityUnavailableError };
+export type { FacadeCapability, AnalyzeImageOptions, AnalyzeImageResult };

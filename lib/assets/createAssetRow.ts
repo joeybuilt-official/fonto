@@ -36,7 +36,6 @@ import { emitWebhook } from "@/lib/webhooks/emit";
 import { emitActivity } from "@/lib/activity/emit";
 import { nextSeq } from "@/lib/db/seq";
 import { deriveScope, type Scope } from "@/lib/scope";
-import { visionServiceConfigured } from "@/lib/plexo-vision";
 import { intelligence } from "@/lib/intelligence/client";
 import { nearestNeighbors } from "@/lib/vectors";
 // Phase 1.1 `thumbnailQueue` + `JobNames.GenerateThumbnails` resolved
@@ -283,7 +282,7 @@ async function embedImageWithBudget(
   mimeType: string,
   budgetMs: number
 ): Promise<number[] | "timeout" | null> {
-  if (!visionServiceConfigured()) return null;
+  if (!intelligence.available("embedImage")) return null;
   if (!mimeType.startsWith("image/")) return null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -742,7 +741,7 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
         .catch((err) => {
           console.warn("[fonto] failed to stamp clipDedupCheckedAt:", err);
         });
-    } else if (visionServiceConfigured()) {
+    } else if (intelligence.available("embedImage")) {
       void tryEnqueueClipDedupCheck(asset.id, workspaceId);
     }
   }

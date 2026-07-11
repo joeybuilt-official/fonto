@@ -29,7 +29,6 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccess } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { visionConfigured } from "@/lib/plexo-vision";
 import { intelligence } from "@/lib/intelligence/client";
 import { nearestNeighbors } from "@/lib/vectors";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
@@ -88,7 +87,7 @@ async function handle(request: NextRequest): Promise<NextResponse> {
 
   // Short-circuit when the vision service isn't configured. This is the
   // common "running fonto without the optional Plexo vision sidecar" case.
-  if (!visionConfigured()) {
+  if (!intelligence.available("embedText")) {
     return NextResponse.json({
       results: [],
       unavailable: true,

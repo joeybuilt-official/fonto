@@ -15,7 +15,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq, and, or, inArray, ilike, gte, lte, sql, SQL, isNull } from "drizzle-orm";
 // (sql imported for ML/face stubs and the Phase 5.5 stack filter subquery.)
-import { visionConfigured } from "@/lib/plexo-vision";
+import { intelligence } from "@/lib/intelligence/client";
 import { getCachedClipTextEmbedding, nearestNeighbors } from "@/lib/vectors";
 import { deltaE76, parseHex, rgbToLab } from "@/lib/perceptual";
 import { pgArray } from "@/lib/db/sql-helpers";
@@ -230,7 +230,7 @@ const loadSmartCollectionAssets = (
       // Graceful degradation: vision unconfigured / embed failure ⇒ skip
       // the clause entirely (matches /api/v1/search/clip behaviour).
       if (typeof q.clipText === "string" && q.clipText.trim().length > 0) {
-        if (visionConfigured()) {
+        if (intelligence.available("embedText")) {
           const matched = new Set<string>();
           for (const wsId of workspaceIds) {
             const embedded = await getCachedClipTextEmbedding(wsId, q.clipText.trim());
@@ -250,7 +250,7 @@ const loadSmartCollectionAssets = (
           }
           conditions.push(inArray(schema.assets.id, Array.from(matched)));
         }
-        // If !visionConfigured the clause is silently dropped.
+        // If the embedText capability is unavailable the clause is silently dropped.
       }
 
       // Phase 5.4 — personIds / hasFaces (Phase 5.1's `face_instances` now

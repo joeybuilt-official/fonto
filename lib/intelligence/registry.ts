@@ -154,3 +154,23 @@ export const IntelligenceLive: Layer.Layer<IntelligencePorts> = Layer.mergeAll(
 export function resolveIntelligenceLayer(): Layer.Layer<IntelligencePorts> {
   return IntelligenceLive;
 }
+
+export type FacadeCapability =
+  | "complete"
+  | "embedImage"
+  | "embedText"
+  | "ocr"
+  | "label"
+  | "detectFaces";
+
+// Config-presence probe, zero network. Answers "is SOME tier plausibly
+// configured", not "will the call succeed". Vision capabilities require an
+// actual vision URL — BOTH vision adapters (sidecar and federated) call one,
+// so a PLEXO_URL-only env must report vision as unconfigured or callers'
+// soft-skip gates would pass and every tier would then throw, churning
+// BullMQ retries where the old visionConfigured() gate skipped cleanly.
+export function capabilityConfigured(name: FacadeCapability): boolean {
+  return name === "complete"
+    ? !!(process.env.PLEXO_URL || process.env.FONTO_LLM_KEY)
+    : !!(process.env.FONTO_VISION_URL || process.env.PLEXO_VISION_URL);
+}

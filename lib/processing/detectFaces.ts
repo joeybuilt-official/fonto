@@ -20,7 +20,7 @@
 // 1 - dot(a, b).
 //
 // Graceful degradation:
-//   - PLEXO_VISION_URL unset                  -> warn + no-op (no throw).
+//   - face-detection capability unconfigured  -> warn + no-op (no throw).
 //   - sidecar HTTP/network error              -> warn + no-op (no throw).
 //   - non-image MIME type                     -> warn + no-op.
 //   - asset row missing / R2 object missing   -> warn + no-op.
@@ -45,8 +45,6 @@ import { storage } from "@/lib/storage";
 import { generateFaceCropsForAsset } from "@/lib/processing/faceCrop";
 import { intelligence } from "@/lib/intelligence/client";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
-
 interface DetectFaceResponseBody {
   faces?: Array<{
     bbox?: { x?: unknown; y?: unknown; w?: unknown; h?: unknown };
@@ -59,16 +57,6 @@ interface ParsedFace {
   bbox: { x: number; y: number; w: number; h: number };
   confidence: number;
   embedding: number[];
-}
-
-function serviceKey(): string {
-  return process.env.PLEXO_SERVICE_KEY ?? "";
-}
-
-function visionBase(): string | null {
-  const raw = process.env.PLEXO_VISION_URL;
-  if (!raw) return null;
-  return raw.replace(/\/+$/, "");
 }
 
 async function downloadFromR2(bucket: string, key: string): Promise<Buffer> {
@@ -130,9 +118,8 @@ function parseFaces(raw: DetectFaceResponseBody): ParsedFace[] {
 export async function detectFacesForAsset(assetId: string): Promise<void> {
   const log = logger.child({ component: "face-detect", assetId });
 
-  const base = visionBase();
-  if (!base) {
-    log.warn("PLEXO_VISION_URL unset — skipping face detection");
+  if (!intelligence.available("detectFaces")) {
+    log.warn("face detection capability unconfigured — skipping face detection");
     return;
   }
 
