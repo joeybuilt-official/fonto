@@ -29,6 +29,7 @@ import "../state/upload_queue.dart";
 import "../widgets/list_states.dart";
 import "../widgets/live_badge.dart";
 import "asset_detail_screen.dart";
+import "device_asset_viewer.dart";
 import "files_surface.dart";
 import "memories_screen.dart";
 import "settings_screen.dart";
@@ -1313,14 +1314,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             mainAxisSpacing: 4,
           ),
           delegate: SliverChildBuilderDelegate(
-            (context, i) => RepaintBoundary(
-              child: _DeviceTile(entity: shown[i]),
-            ),
+            (context, i) {
+              final entity = shown[i];
+              return RepaintBoundary(
+                child: _DeviceTile(
+                  entity: entity,
+                  onTap: () => _openDeviceAsset(entity),
+                ),
+              );
+            },
             childCount: shown.length,
           ),
         ),
       ),
     ];
+  }
+
+  void _openDeviceAsset(AssetEntity entity) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DeviceAssetViewerScreen(entity: entity),
+      ),
+    );
   }
 
   Widget _buildBody() {
@@ -2444,49 +2459,55 @@ class _AssetTile extends StatelessWidget {
 /// — fully offline, no network. A cloud-arrow-up badge signals it's pending
 /// upload to Fonto.
 class _DeviceTile extends StatelessWidget {
-  const _DeviceTile({required this.entity});
+  const _DeviceTile({required this.entity, required this.onTap});
   final AssetEntity entity;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final placeholderColor =
         Theme.of(context).colorScheme.surfaceContainerHighest;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        FutureBuilder<Uint8List?>(
-          future: entity.thumbnailDataWithSize(const ThumbnailSize.square(260)),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return Container(color: placeholderColor);
-            }
-            final data = snapshot.data;
-            if (data == null) {
-              return ColoredBox(
-                color: placeholderColor,
-                child: const Icon(Icons.broken_image),
-              );
-            }
-            return Image.memory(data, fit: BoxFit.cover);
-          },
-        ),
-        Positioned(
-          right: 4,
-          bottom: 4,
-          child: Container(
-            padding: const EdgeInsets.all(2),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.6),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: const Icon(
-              Icons.cloud_upload_outlined,
-              size: 14,
-              color: Colors.white,
+    return GestureDetector(
+      onTap: onTap,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          FutureBuilder<Uint8List?>(
+            future:
+                entity.thumbnailDataWithSize(const ThumbnailSize.square(260)),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return Container(color: placeholderColor);
+              }
+              final data = snapshot.data;
+              if (data == null) {
+                return ColoredBox(
+                  color: placeholderColor,
+                  child: const Icon(Icons.broken_image),
+                );
+              }
+              return Image.memory(data, fit: BoxFit.cover);
+            },
+          ),
+          Positioned(
+            right: 4,
+            bottom: 4,
+            child: Container(
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                color:
+                    Theme.of(context).colorScheme.scrim.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Icon(
+                Icons.cloud_upload_outlined,
+                size: 14,
+                color: Colors.white,
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
