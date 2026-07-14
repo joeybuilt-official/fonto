@@ -19,6 +19,19 @@ import { db, schema } from "@/lib/db";
 import { and, eq, exists, gte, isNull, inArray, like, or, sql, SQL } from "drizzle-orm";
 import { isKind } from "@/lib/classify/kind";
 import { parseScopeParam, scopeCond } from "@/lib/scope";
+import { getCacheLayer } from "@/lib/cache/valkey";
+
+interface Bucket {
+  month: string;
+  count: number;
+}
+
+// The scrubber counts aggregate every active asset in the workspace on each
+// load (two ~1s passes at 150k+ assets). They only change on upload / lifecycle
+// mutations, which already fire `cacheInvalidate(ws:<id>:assets)` — so cache
+// under that same tag with a short TTL to also cover direct worker writes
+// (kind assignment during processing bypasses the API invalidation path).
+const BUCKETS_TTL_SEC = 60;
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -156,16 +169,30 @@ export async function GET(request: NextRequest) {
   // "undated" as a segregated "Undated" section pinned to the bottom.
   const monthExpr = sql<string>`COALESCE(to_char(${schema.assets.capturedAt}, 'YYYY-MM'), 'undated')`;
 
-  const rows = await db
-    .select({ month: monthExpr, count: sql<number>`COUNT(*)::int` })
-    .from(schema.assets)
-    .where(and(...where))
-    .groupBy(monthExpr)
-    // Dated months newest-first; the undated bucket always sorts last.
-    .orderBy(
-      sql`CASE WHEN ${monthExpr} = 'undated' THEN 1 ELSE 0 END`,
-      sql`${monthExpr} DESC`
-    );
+  // Cache key = workspace + the full (sorted) filter param set. Same raw params
+  // → same buckets, so sorting the query string gives a stable, collision-free
+  // key across every chip/lens/scope combination.
+  const keyParams = new URLSearchParams(searchParams);
+  keyParams.sort();
+  const cacheKey = `buckets:${workspaceId}:${keyParams.toString()}`;
 
-  return NextResponse.json({ buckets: rows });
+  const cache = getCacheLayer<Bucket[]>();
+  const buckets = await cache.getOrCompute(
+    cacheKey,
+    BUCKETS_TTL_SEC,
+    async () =>
+      db
+        .select({ month: monthExpr, count: sql<number>`COUNT(*)::int` })
+        .from(schema.assets)
+        .where(and(...where))
+        .groupBy(monthExpr)
+        // Dated months newest-first; the undated bucket always sorts last.
+        .orderBy(
+          sql`CASE WHEN ${monthExpr} = 'undated' THEN 1 ELSE 0 END`,
+          sql`${monthExpr} DESC`
+        ),
+    { cacheName: "buckets", workspaceId, tags: [`ws:${workspaceId}:assets`] }
+  );
+
+  return NextResponse.json({ buckets });
 }
