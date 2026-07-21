@@ -56,6 +56,12 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   // Ids whose preview-url fetch failed; lets us render a retry affordance
   // instead of an infinite spinner.
   final Set<String> _previewFailed = {};
+  // Bottom thumbnail-nav strip — separate "thumb"-variant cache (smaller,
+  // cheaper than `_previews`) + its own scroll controller so the strip can
+  // keep the current asset centered as the user swipes the main PageView.
+  final Map<String, String> _stripThumbs = {};
+  final ScrollController _stripScroll = ScrollController();
+  static const double _stripItemExtent = 64;
   // Phase 6.12 — extracted text layer for text/code assets, fetched lazily
   // from the per-asset detail endpoint as the user scrolls onto one.
   final Map<String, String> _texts = {};
@@ -83,12 +89,15 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     _ensurePreviews(_index);
     _ensureText(_index);
     _ensureFaces(_index);
+    _ensureThumbs(_index);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _centerStrip(_index));
   }
 
   @override
   void dispose() {
     _slideTimer?.cancel();
     _page.dispose();
+    _stripScroll.dispose();
     super.dispose();
   }
 
@@ -173,6 +182,42 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     _ensurePreviews(i);
     _ensureText(i);
     _ensureFaces(i);
+    _ensureThumbs(i);
+    _centerStrip(i);
+  }
+
+  /// Prefetch "thumb"-variant URLs for a window of ±5 around `i` for the
+  /// bottom thumbnail-nav strip. Separate cache from `_previews`, which
+  /// holds larger preview-quality images for the main viewer.
+  Future<void> _ensureThumbs(int i) async {
+    final lo = (i - 5).clamp(0, _assets.length - 1);
+    final hi = (i + 5).clamp(0, _assets.length - 1);
+    final ids = <String>[];
+    for (var k = lo; k <= hi; k++) {
+      final id = _assets[k].id;
+      if (!_stripThumbs.containsKey(id)) ids.add(id);
+    }
+    if (ids.isEmpty) return;
+    try {
+      final batch = await widget.client.assetUrls(ids, variant: "thumb");
+      if (!mounted) return;
+      setState(() => _stripThumbs.addAll(batch));
+    } catch (_) {
+      // Best-effort — missing thumbs just render as placeholder tiles.
+    }
+  }
+
+  /// Scrolls the thumbnail strip so item `i` stays centered in its viewport.
+  void _centerStrip(int i) {
+    if (!_stripScroll.hasClients) return;
+    final target = (i * _stripItemExtent) -
+        (_stripScroll.position.viewportDimension / 2) +
+        (_stripItemExtent / 2);
+    _stripScroll.animateTo(
+      target.clamp(0, _stripScroll.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    );
   }
 
   /// Lazy-load the face list for asset `i`. Skips non-images and ids
@@ -786,6 +831,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
           // intercepted. The overlay only paints when labels are on AND
           // we have faces + dims for the current image.
           if (_showFaceLabels) _buildFaceOverlay(),
+          if (_assets.length > 1) _buildThumbnailStrip(),
         ],
       ),
     );
@@ -793,6 +839,73 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
 
   static bool _isViewableImage(Asset a) =>
       a.mimeType.startsWith("image/");
+
+  /// Bottom thumbnail-nav strip: a scrollable row of neighboring-asset
+  /// thumbs, current one highlighted, tap-to-jump via `_page`. Kept centered
+  /// on `_index` by `_centerStrip`, called from `_onPageChanged`.
+  Widget _buildThumbnailStrip() {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          height: 72,
+          color: Colors.black54,
+          child: ListView.builder(
+            controller: _stripScroll,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _assets.length,
+            itemExtent: _stripItemExtent,
+            itemBuilder: (context, i) {
+              final a = _assets[i];
+              final url = _stripThumbs[a.id];
+              final current = i == _index;
+              return Center(
+                child: GestureDetector(
+                  onTap: () => _page.animateToPage(
+                    i,
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOut,
+                  ),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    width: current ? 56 : 44,
+                    height: current ? 56 : 44,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: current
+                          ? Border.all(color: Colors.white, width: 2)
+                          : null,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: url == null
+                          ? Container(color: Colors.white24)
+                          : CachedNetworkImage(
+                              imageUrl: url,
+                              fit: BoxFit.cover,
+                              memCacheWidth: 150,
+                              placeholder: (_, __) =>
+                                  Container(color: Colors.white24),
+                              errorWidget: (_, __, ___) => const Icon(
+                                Icons.broken_image,
+                                color: Colors.white54,
+                                size: 20,
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildFaceOverlay() {
     final a = _cur;
