@@ -36,7 +36,7 @@ import { emitWebhook } from "@/lib/webhooks/emit";
 import { emitActivity } from "@/lib/activity/emit";
 import { nextSeq } from "@/lib/db/seq";
 import { deriveScope, type Scope } from "@/lib/scope";
-import { intelligence } from "@/lib/intelligence/client";
+import { embedImage, visionServiceConfigured } from "@/lib/plexo-vision";
 import { nearestNeighbors } from "@/lib/vectors";
 // Phase 1.1 `thumbnailQueue` + `JobNames.GenerateThumbnails` resolved
 // dynamically below so this module stays buildable if those exports
@@ -282,7 +282,7 @@ async function embedImageWithBudget(
   mimeType: string,
   budgetMs: number
 ): Promise<number[] | "timeout" | null> {
-  if (!intelligence.available("embedImage")) return null;
+  if (!visionServiceConfigured()) return null;
   if (!mimeType.startsWith("image/")) return null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -290,9 +290,8 @@ async function embedImageWithBudget(
       // Phase 4.2 client returns { vector, modelId }; we only need vector here.
       // Internal timeout (15s default) is independent of the inline budget —
       // the budget races against the call as a whole.
-      intelligence
-        .embedImage(buffer.toString("base64"), mimeType)
-        .then((r) => [...r.vector])
+      embedImage(buffer)
+        .then((r) => r.vector)
         .catch((err) => {
           console.warn("[fonto] inline CLIP embed failed:", err);
           return null;
@@ -708,9 +707,6 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
   // image assets and only when pHash didn't already produce a hit. If the
   // inline embed takes longer than CLIP_DEDUP_INLINE_TIMEOUT_MS we hand
   // off to the BullMQ worker so the upload response isn't blocked.
-  // FONTO_IMPORT_SKIP_INLINE_CLIP=1 skips the inline embed entirely — bulk
-  // importers set it so throughput isn't bounded by the vision sidecar; the
-  // clip-embedding backfill queue covers the skipped assets afterwards.
   if (
     process.env.FONTO_IMPORT_SKIP_INLINE_CLIP !== "1" &&
     mimeType.startsWith("image/") &&
@@ -748,7 +744,7 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
         .catch((err) => {
           console.warn("[fonto] failed to stamp clipDedupCheckedAt:", err);
         });
-    } else if (intelligence.available("embedImage")) {
+    } else if (visionServiceConfigured()) {
       void tryEnqueueClipDedupCheck(asset.id, workspaceId);
     }
   }
