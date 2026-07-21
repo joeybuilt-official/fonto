@@ -17,16 +17,16 @@ import { cn } from "@/lib/utils"
  * Shape: medium (12 px). Spacing 16 px / 24 px per MD3 density-default.
  */
 const cardVariants = cva(
-  "flex flex-col rounded-[var(--ft-shape-medium)] text-[var(--ft-color-on-surface)] transition-shadow",
+  "flex flex-col rounded-[var(--radius-md)] text-[var(--text)] transition-shadow",
   {
     variants: {
       variant: {
         elevated:
-          "bg-[var(--ft-color-surface-container-low)] shadow-[var(--ft-elev-1)] hover:shadow-[var(--ft-elev-2)]",
+          "border-0 bg-[var(--surface)] shadow-[var(--elevation-card)] hover:shadow-[var(--elevation-raised)]",
         filled:
-          "bg-[var(--ft-color-surface-container-highest)] shadow-none",
+          "bg-[var(--surface-sunken)] shadow-none",
         outlined:
-          "border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface)] shadow-none",
+          "border border-[var(--border)] bg-[var(--surface)] shadow-none",
       },
     },
     defaultVariants: {
