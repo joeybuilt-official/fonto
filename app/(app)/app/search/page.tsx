@@ -152,10 +152,12 @@ function SearchContent() {
     const isDoc = !a.mimeType.startsWith("image/");
     if (isDoc && (a.mimeType === "application/pdf" || a.extractedText)) {
       setViewerAsset(a);
-    } else if (a.mimeType.startsWith("image/")) {
-      router.push("/app/library?kind=moment");
     } else {
-      router.push("/app/library?kind=document");
+      // Deep-link into the library lightbox for THIS asset. The library reads
+      // ?lb=<id> and fetches out-of-list assets directly, so the result the
+      // user clicked actually opens — instead of dumping them into the
+      // generic library with nothing selected.
+      router.push(`/app/library?lb=${a.id}`);
     }
   }
 
