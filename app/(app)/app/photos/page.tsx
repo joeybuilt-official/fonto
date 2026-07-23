@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useMemo, useState, useCallback, Suspense } from "react";
 import { X, FolderPlus, Download, Trash2, Loader2 } from "lucide-react";
 import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
@@ -11,6 +11,7 @@ import { AssetGrid } from "../_components/asset-grid";
 import { ListErrorState } from "../_components/list-states";
 import { AssetAskPanel } from "../_components/asset-ask-panel";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
+import { useSnackbar } from "@/components/ui/snackbar";
 import { downloadAssetsZip } from "@/lib/download-zip";
 import { Button } from "@/components/ui/button";
 
@@ -130,14 +131,19 @@ function PhotosContent() {
     availableFilters: ["type", "favorite", "ratingMin"],
   });
 
-  const [photos, setPhotos] = useState<Asset[]>([]);
+  // Raw server feed (created-DESC keyset order). Client sort/search derive
+  // `photos` from this; batch mutations splice it.
+  const [rawPhotos, setRawPhotos] = useState<Asset[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
+  const toast = useSnackbar();
 
   useEffect(() => {
     fetch("/api/v1/collections")
@@ -153,61 +159,89 @@ function PhotosContent() {
       });
   }, []);
 
-  // Fetch on every filter change. `type` is the classification subtype;
-  // `favorite` and `ratingMin` ride along server-side. Sort is applied
-  // client-side because the list endpoint always returns desc(created_at).
-  // No abort/cancel: filter changes are user-initiated and infrequent;
-  // race conditions resolve last-wins, which is the right semantic here.
+  // Server-side query for the current filter set. `type` is the classification
+  // subtype; `favorite` and `ratingMin` ride along server-side. Sort/search are
+  // applied client-side over the loaded window (the list endpoint returns
+  // created-DESC). The 200-row page is a KEYSET page, not the whole library —
+  // load-more-on-scroll walks the rest via the opaque cursor.
+  const buildQuery = useCallback(() => {
+    const sp = new URLSearchParams();
+    sp.set("mime", "image/");
+    sp.set("limit", "200");
+    if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
+    if (toolbar.filters.favorite) sp.set("favorite", "1");
+    if (toolbar.filters.ratingMin != null) sp.set("ratingMin", String(toolbar.filters.ratingMin));
+    return sp;
+  }, [toolbar.filters.type, toolbar.filters.favorite, toolbar.filters.ratingMin]);
+
+  // First page (and refetch on filter change / refreshKey). No abort/cancel:
+  // filter changes are user-initiated and infrequent; last-wins is fine.
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
       setLoading(true);
       setError(false);
-      const sp = new URLSearchParams();
-      sp.set("mime", "image/");
-      if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
-      if (toolbar.filters.favorite) sp.set("favorite", "1");
-      if (toolbar.filters.ratingMin != null) sp.set("ratingMin", String(toolbar.filters.ratingMin));
       try {
-        const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        const r = await fetch(`/api/v1/assets?${buildQuery().toString()}`);
         if (!r.ok) throw new Error(`assets ${r.status}`);
-        const d = (await r.json()) as { assets?: Asset[] };
-        let list = (d.assets ?? []) as Asset[];
-        if (toolbar.filters.sort === "oldest") {
-          list = [...list].sort(
-            (a, b) =>
-              new Date(a.capturedAt ?? a.createdAt).getTime() -
-              new Date(b.capturedAt ?? b.createdAt).getTime()
-          );
-        } else if (toolbar.filters.sort === "name") {
-          list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
-        } else if (toolbar.filters.sort === "rating") {
-          list = [...list].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
-        }
-        // Client-side text search across filename + description. The list
-        // endpoint has no q= param; until it does, this keeps search useful.
-        if (toolbar.filters.q) {
-          const needle = toolbar.filters.q.toLowerCase();
-          list = list.filter(
-            (a) =>
-              a.filename.toLowerCase().includes(needle) ||
-              (a.description?.toLowerCase().includes(needle) ?? false)
-          );
-        }
-        setPhotos(list);
+        const d = (await r.json()) as { assets?: Asset[]; cursor?: string | null };
+        if (cancelled) return;
+        setRawPhotos(d.assets ?? []);
+        setCursor(d.cursor ?? null);
       } catch {
-        setError(true);
+        if (!cancelled) setError(true);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, [
-    toolbar.filters.type,
-    toolbar.filters.favorite,
-    toolbar.filters.ratingMin,
-    toolbar.filters.sort,
-    toolbar.filters.q,
-    refreshKey,
-  ]);
+    return () => {
+      cancelled = true;
+    };
+  }, [buildQuery, refreshKey]);
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const sp = buildQuery();
+      sp.set("cursor", cursor);
+      const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+      if (r.ok) {
+        const d = (await r.json()) as { assets?: Asset[]; cursor?: string | null };
+        setRawPhotos((prev) => [...prev, ...(d.assets ?? [])]);
+        setCursor(d.cursor ?? null);
+      }
+    } catch {
+      /* transient — sentinel will retry on the next scroll tick */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [cursor, loadingMore, buildQuery]);
+
+  // Client-side sort + text search over the loaded window.
+  const photos = useMemo(() => {
+    let list = rawPhotos;
+    if (toolbar.filters.sort === "oldest") {
+      list = [...list].sort(
+        (a, b) =>
+          new Date(a.capturedAt ?? a.createdAt).getTime() -
+          new Date(b.capturedAt ?? b.createdAt).getTime()
+      );
+    } else if (toolbar.filters.sort === "name") {
+      list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
+    } else if (toolbar.filters.sort === "rating") {
+      list = [...list].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+    }
+    if (toolbar.filters.q) {
+      const needle = toolbar.filters.q.toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.filename.toLowerCase().includes(needle) ||
+          (a.description?.toLowerCase().includes(needle) ?? false)
+      );
+    }
+    return list;
+  }, [rawPhotos, toolbar.filters.sort, toolbar.filters.q]);
 
   const openLightbox = useCallback((_id: string, index: number) => {
     setLightboxIndex(index);
@@ -220,8 +254,9 @@ function PhotosContent() {
   }
 
   async function handleBatchAddToCollection(collectionId: string) {
-    await Promise.all(
-      Array.from(toolbar.selectedIds).map((assetId) =>
+    const ids = Array.from(toolbar.selectedIds);
+    const results = await Promise.allSettled(
+      ids.map((assetId) =>
         fetch(`/api/v1/collections/${collectionId}/assets`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -229,8 +264,24 @@ function PhotosContent() {
         })
       )
     );
+    const failedIds = ids.filter(
+      (_id, i) =>
+        results[i].status === "rejected" ||
+        !(results[i] as PromiseFulfilledResult<Response>).value.ok
+    );
     setShowCollectionModal(false);
-    toolbar.clearSelection();
+    if (failedIds.length === 0) {
+      toolbar.clearSelection();
+      toast.add({ title: `Added ${ids.length} to collection` });
+    } else {
+      toolbar.clearSelection();
+      for (const id of failedIds) toolbar.toggleSelect(id);
+      toast.add({
+        title: `Couldn't add ${failedIds.length} of ${ids.length}`,
+        description: "Left selected — try again.",
+        priority: "high",
+      });
+    }
   }
 
   function handleBatchDownload() {
@@ -240,7 +291,7 @@ function PhotosContent() {
 
   async function handleBatchTrash() {
     const ids = Array.from(toolbar.selectedIds);
-    await Promise.all(
+    const results = await Promise.allSettled(
       ids.map((assetId) =>
         fetch(`/api/v1/assets/${assetId}`, {
           method: "PATCH",
@@ -249,12 +300,30 @@ function PhotosContent() {
         })
       )
     );
-    setPhotos((prev) => prev.filter((p) => !toolbar.selectedIds.has(p.id)));
-    toolbar.clearSelection();
+    const okIds = ids.filter(
+      (_id, i) =>
+        results[i].status === "fulfilled" &&
+        (results[i] as PromiseFulfilledResult<Response>).value.ok
+    );
+    const failedIds = ids.filter((id) => !okIds.includes(id));
+    // Only drop the ones that actually trashed.
+    setRawPhotos((prev) => prev.filter((p) => !okIds.includes(p.id)));
+    if (failedIds.length === 0) {
+      toolbar.clearSelection();
+      toast.add({ title: `Moved ${ids.length} to trash` });
+    } else {
+      toolbar.clearSelection();
+      for (const id of failedIds) toolbar.toggleSelect(id);
+      toast.add({
+        title: `Couldn't trash ${failedIds.length} of ${ids.length}`,
+        description: "Left selected — try again.",
+        priority: "high",
+      });
+    }
   }
 
   function handleLightboxTrash(assetId: string) {
-    setPhotos((prev) => prev.filter((p) => p.id !== assetId));
+    setRawPhotos((prev) => prev.filter((p) => p.id !== assetId));
     setLightboxIndex(null);
   }
 
@@ -300,6 +369,9 @@ function PhotosContent() {
             toolbar={toolbar}
             viewMode="grid"
             onAssetClick={openLightbox}
+            onLoadMore={loadMore}
+            hasMore={cursor !== null}
+            loadingMore={loadingMore}
             onAddToCollection={(assetId) => {
               toolbar.setSelectMode(true);
               // Stage the single asset as the selection so the modal handler

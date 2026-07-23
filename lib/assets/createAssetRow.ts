@@ -15,7 +15,7 @@
 //   asset its own way (the legacy route attaches `possibleDuplicate`, etc.).
 
 import { createHash } from "crypto";
-import { eq, and, isNotNull } from "drizzle-orm";
+import { eq, and, isNotNull, getTableColumns } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { plexoPublishEvent } from "@/lib/plexo";
 import {
@@ -787,6 +787,23 @@ export function jsonSafe(value: unknown): unknown {
  * any nested fields (notably `exif`) to scrub embedded BigInts before they
  * reach JSON.stringify.
  */
+// Column projection for LIST queries (grid/timeline). Every asset column
+// EXCEPT the three heavy per-row payloads the grid never renders:
+//   - clip_vec        512-dim float vector (~2 KB/row of wire+JSON)
+//   - extracted_text  full document text
+//   - ocr_text        full OCR transcript
+// Shipping those on every list row bloated the response by megabytes on a
+// large workspace. Single-asset detail still selects the full row, so the
+// lightbox/detail view keeps OCR + extracted text. serializeAsset() spreads
+// whatever columns it's given, so omitting these here simply drops them from
+// the list payload without any other change.
+export function assetGridColumns() {
+  const { clipVec, extractedText, ocrText, ...rest } = getTableColumns(
+    schema.assets
+  );
+  return rest;
+}
+
 export function serializeAsset<T extends { phash?: bigint | null }>(
   asset: T
 ): T & { phash: string | null } {

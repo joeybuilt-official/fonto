@@ -30,6 +30,7 @@ import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
 import { VirtualizedTimeline, type TimelineMonth } from "../_components/virtualized-timeline";
 import { useToolbarState, type Lifecycle } from "@/lib/hooks/use-toolbar-state";
+import { useSnackbar } from "@/components/ui/snackbar";
 import { downloadAssetsZip } from "@/lib/download-zip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ProcessingNotice } from "../_components/processing-notice";
@@ -132,6 +133,7 @@ function LibraryContent() {
   const router = useRouter();
   const pathname = usePathname();
   const placeFilter = searchParams.get("place");
+  const toast = useSnackbar();
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -322,7 +324,9 @@ function LibraryContent() {
           if (cursorBefore) sp.set("createdBefore", cursorBefore);
           if (cursorId) sp.set("idBefore", cursorId);
           const r = await fetch(`/api/v1/assets?${sp.toString()}`);
-          if (!r.ok) break;
+          // Throw (not break) so a transient failure surfaces as a retryable
+          // month in VirtualizedTimeline rather than being cached as empty.
+          if (!r.ok) throw new Error(`assets ${r.status}`);
           const d = (await r.json()) as {
             assets?: Asset[];
             nextCursor?: { createdBefore: string; idBefore: string } | null;
@@ -350,7 +354,9 @@ function LibraryContent() {
         sp.set("capturedBefore", cursorBefore);
         if (cursorId) sp.set("idBefore", cursorId);
         const r = await fetch(`/api/v1/assets?${sp.toString()}`);
-        if (!r.ok) break;
+        // Throw (not break) so a transient failure surfaces as a retryable
+        // month in VirtualizedTimeline rather than being cached as empty.
+        if (!r.ok) throw new Error(`assets ${r.status}`);
         const d = (await r.json()) as {
           assets?: Asset[];
           nextCursor?: { capturedBefore: string; idBefore: string } | null;
@@ -409,8 +415,9 @@ function LibraryContent() {
 
   const handleBatchAddToCollection = useCallback(
     async (collectionId: string) => {
-      await Promise.all(
-        Array.from(toolbar.selectedIds).map((assetId) =>
+      const ids = Array.from(toolbar.selectedIds);
+      const results = await Promise.allSettled(
+        ids.map((assetId) =>
           fetch(`/api/v1/collections/${collectionId}/assets`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -418,11 +425,31 @@ function LibraryContent() {
           })
         )
       );
+      // A rejected fetch OR a non-2xx response is a failure — the old code
+      // awaited Promise.all and reported success even on HTTP 4xx/5xx.
+      const failedIds = ids.filter(
+        (_id, i) =>
+          results[i].status === "rejected" ||
+          !(results[i] as PromiseFulfilledResult<Response>).value.ok
+      );
+      const okCount = ids.length - failedIds.length;
       setShowCollectionModal(false);
-      toolbar.clearSelection();
-      toolbar.setSelectMode(false);
+      if (failedIds.length === 0) {
+        toolbar.clearSelection();
+        toolbar.setSelectMode(false);
+        toast.add({ title: `Added ${okCount} to collection` });
+      } else {
+        // Keep the failures selected so the user can retry just those.
+        toolbar.clearSelection();
+        for (const id of failedIds) toolbar.toggleSelect(id);
+        toast.add({
+          title: `Couldn't add ${failedIds.length} of ${ids.length}`,
+          description: "Left selected — try again.",
+          priority: "high",
+        });
+      }
     },
-    [toolbar]
+    [toolbar, toast]
   );
 
   const handleBatchDownload = useCallback(() => {
@@ -432,7 +459,7 @@ function LibraryContent() {
 
   const handleBatchTrash = useCallback(async () => {
     const ids = Array.from(toolbar.selectedIds);
-    await Promise.all(
+    const results = await Promise.allSettled(
       ids.map((assetId) =>
         fetch(`/api/v1/assets/${assetId}`, {
           method: "PATCH",
@@ -441,10 +468,32 @@ function LibraryContent() {
         })
       )
     );
-    toolbar.clearSelection();
-    toolbar.setSelectMode(false);
-    setRefreshKey((k) => k + 1);
-  }, [toolbar]);
+    // A rejected fetch OR a non-2xx response is a failure — the old code
+    // reported success even when the PATCH 4xx/5xx'd.
+    const failedIds = ids.filter(
+      (_id, i) =>
+        results[i].status === "rejected" ||
+        !(results[i] as PromiseFulfilledResult<Response>).value.ok
+    );
+    const okCount = ids.length - failedIds.length;
+    if (failedIds.length === 0) {
+      toolbar.clearSelection();
+      toolbar.setSelectMode(false);
+      toast.add({ title: `Moved ${okCount} to trash` });
+    } else {
+      // Keep the failures selected for retry.
+      toolbar.clearSelection();
+      for (const id of failedIds) toolbar.toggleSelect(id);
+      toast.add({
+        title: `Couldn't trash ${failedIds.length} of ${ids.length}`,
+        description: "Left selected — try again.",
+        priority: "high",
+      });
+    }
+    // Only bump the refresh when something actually moved, so the timeline
+    // doesn't needlessly remount on a total failure.
+    if (okCount > 0) setRefreshKey((k) => k + 1);
+  }, [toolbar, toast]);
 
   // Lightbox is URL-based so back button restores chip state.
   // Opening pushes ?lb=<id>; closing calls router.back().
