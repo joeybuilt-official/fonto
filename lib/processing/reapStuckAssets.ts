@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Phase 0.2 — periodic reaper for assets stuck in processing_state='processing'.
+// Phase 0.2 — periodic reaper for assets stuck in a non-terminal
+// processing_state ('captured' / 'classified' / 'extracted').
 //
 // Why this exists: BullMQ's own `attempts: 5` policy retries jobs whose
 // handlers throw, but it cannot recover from a worker that crashed (SIGKILL,
@@ -12,7 +13,8 @@
 // belt-and-braces fix.
 //
 // Algorithm:
-//   1. Scan fonto.assets WHERE processing_state='processing'
+//   1. Scan fonto.assets WHERE processing_state IN
+//        ('captured','classified','extracted')
 //        AND updated_at < NOW() - INTERVAL '<threshold> minutes'.
 //   2. For each row:
 //        - if processing_attempts < 5 → re-enqueue on assetProcessingQueue
@@ -85,7 +87,16 @@ export async function reapStuckAssets(): Promise<ReapResult> {
     .from(schema.assets)
     .where(
       and(
-        eq(schema.assets.processingState, "processing"),
+        // The pipeline never writes a literal 'processing' state — rows move
+        // captured -> classified -> extracted -> ready, or -> failed. A row
+        // sitting in any non-terminal state past the threshold is stuck (the
+        // worker died mid-job, or a failure reset it to 'captured'). Terminal
+        // states 'ready'/'failed' are excluded, so reaped rows drop out.
+        inArray(schema.assets.processingState, [
+          "captured",
+          "classified",
+          "extracted",
+        ]),
         lt(schema.assets.updatedAt, cutoff)
       )
     );

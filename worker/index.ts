@@ -454,14 +454,20 @@ function startAssetProcessingWorker(): Worker<ProcessAssetJob> {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log.error({ err: msg }, "asset processing failed");
+        // Distinguish a retryable failure from the final attempt. On a
+        // retryable failure keep the row in 'captured' so BullMQ (and, as a
+        // backstop, the reaper) retries it. On the LAST attempt terminalize
+        // to 'failed' so it stops counting as "processing" forever and
+        // surfaces to the user instead of silently vanishing.
+        const maxAttempts = job.opts.attempts ?? 1;
+        const isTerminal =
+          err instanceof UnrecoverableError ||
+          job.attemptsMade + 1 >= maxAttempts;
         await db
           .update(schema.assets)
           .set({
             processingError: msg.slice(0, 1000),
-            // Mirror the legacy fire-and-forget behaviour: on terminal
-            // failure the row falls back to 'captured' so a future manual
-            // re-enqueue can pick it up.
-            processingState: "captured",
+            processingState: isTerminal ? "failed" : "captured",
           })
           .where(eq(schema.assets.id, data.assetId))
           .catch(() => undefined);
