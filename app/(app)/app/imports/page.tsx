@@ -5,7 +5,7 @@
 // screen reads cleaner than stacking every importer on one page); this hub
 // links out to them and shows the shared imports-progress list.
 import Link from "next/link";
-import { ChevronRight, Cloud, Package } from "lucide-react";
+import { ChevronRight, Cloud, Package, Server } from "lucide-react";
 import { ImportsList } from "./_components/imports-list";
 import { Card } from "@/components/ui/card";
 
@@ -21,6 +21,12 @@ const PROVIDERS = [
     title: "Amazon Photos",
     desc: "Upload a ZIP exported from Amazon Photos.",
     Icon: Package,
+  },
+  {
+    href: "/app/imports/nextcloud",
+    title: "Nextcloud",
+    desc: "Import photos and documents from your Nextcloud server.",
+    Icon: Server,
   },
 ];
 
