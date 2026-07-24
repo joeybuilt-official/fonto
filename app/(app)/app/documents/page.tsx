@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { ListErrorState } from "../_components/list-states";
+import { ListSkeleton } from "../_components/grid-skeleton";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 import { cn } from "@/lib/utils";
 
@@ -524,9 +525,7 @@ function DocumentsContent() {
                 onRetry={() => setRefreshKey((k) => k + 1)}
               />
             ) : loading ? (
-              <p className="px-2 py-4 text-sm text-[var(--ft-color-on-surface-variant)]">
-                Loading documents…
-              </p>
+              <ListSkeleton count={7} />
             ) : visible.length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-12 text-center">
                 <FileText className="h-8 w-8 text-[var(--ft-color-on-surface-variant)]" />
