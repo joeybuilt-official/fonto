@@ -431,6 +431,12 @@ class FontoClient {
     }
   }
 
+  /// Signed-in user's id/name/email for the inline account row in Settings.
+  Future<AccountInfo> me() async {
+    final j = await _getJson("/api/v1/me");
+    return AccountInfo.fromJson(j);
+  }
+
   Future<Map<String, dynamic>> adminServerStats() =>
       _getJson("/api/v1/admin/server-stats");
 

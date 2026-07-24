@@ -55,12 +55,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
   StoragePlacement? _storage;
   bool _policyBusy = false;
 
+  // Inline account identity (P2) — name/email from GET /api/v1/me. null while
+  // loading; _accountError set when the fetch fails.
+  AccountInfo? _account;
+  bool _accountLoading = false;
+  bool _accountError = false;
+
   @override
   void initState() {
     super.initState();
     _load();
     _loadStorage();
     _loadAdmin();
+    _loadAccount();
+  }
+
+  Future<void> _loadAccount() async {
+    if (widget.auth == null) return;
+    setState(() {
+      _accountLoading = true;
+      _accountError = false;
+    });
+    try {
+      final auth = await AuthStore.load();
+      final client = FontoClient(auth);
+      try {
+        final a = await client.me();
+        if (mounted) setState(() => _account = a);
+      } finally {
+        client.close();
+      }
+    } catch (_) {
+      if (mounted) setState(() => _accountError = true);
+    } finally {
+      if (mounted) setState(() => _accountLoading = false);
+    }
   }
 
   // M14 / ADR 0055 — gate the Instance Admin tile on the server tier check.
@@ -140,6 +169,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _policyBusy = false);
     }
+  }
+
+  // Inline account row: avatar + name/email. Loading spinner while fetching,
+  // a retry affordance on error, and a graceful "Signed in" fallback when the
+  // profile has neither name nor email.
+  Widget _buildAccountIdentity() {
+    final a = _account;
+    if (a != null) {
+      final name = (a.name != null && a.name!.trim().isNotEmpty)
+          ? a.name!.trim()
+          : (a.email ?? "Signed in");
+      return ListTile(
+        leading: const Icon(Icons.person_outline),
+        title: Text(name),
+        subtitle: (a.email != null && a.email!.trim().isNotEmpty)
+            ? Text(a.email!.trim())
+            : null,
+      );
+    }
+    if (_accountError) {
+      return ListTile(
+        leading: const Icon(Icons.person_outline),
+        title: const Text("Couldn't load account"),
+        subtitle: const Text("Tap to retry."),
+        trailing: const Icon(Icons.refresh),
+        onTap: _accountLoading ? null : _loadAccount,
+      );
+    }
+    return const ListTile(
+      leading: Icon(Icons.person_outline),
+      title: Text("Loading account…"),
+      trailing: SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+    );
   }
 
   String _fmtBytes(int bytes) {
@@ -829,13 +895,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                   ),
+                  _buildAccountIdentity(),
                   ListTile(
-                    leading: const Icon(Icons.person_outline),
+                    leading: const Icon(Icons.open_in_new),
                     title: const Text("Manage account"),
                     subtitle: Text(
-                      "Name, email, and password on ${_accountHost()}.",
+                      "Change name, email, or password on ${_accountHost()}.",
                     ),
-                    trailing: const Icon(Icons.open_in_new),
+                    trailing: const Icon(Icons.chevron_right),
                     onTap: _openWebAccount,
                   ),
                   ListTile(

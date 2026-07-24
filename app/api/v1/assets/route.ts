@@ -186,10 +186,21 @@ export async function GET(request: NextRequest) {
   const q = qRaw == null ? "" : qRaw.trim();
   if (q !== "") {
     const pat = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    // OCR text is the heavy arm: a leading-wildcard ILIKE ('%q%') over each
+    // row's (potentially multi-KB) ocr_text forces a sequential scan of the
+    // whole workspace partition on every keystroke. Route that arm through the
+    // SAME tsvector path /api/v1/search uses — `to_tsvector('english',
+    // coalesce(ocr_text,'')) @@ plainto_tsquery(...)` — which is backed by the
+    // existing GIN index `assets_ocr_text_fts_idx` (migration 0002). This flips
+    // OCR matching from substring to token/stem semantics, matching the app's
+    // canonical search behaviour. filename + source stay substring-ILIKE (short
+    // columns; no tsvector/trgm index exists for them — see risks: a pg_trgm
+    // GIN index on lower(filename)/lower(source) is the real fix to make the
+    // whole OR fully index-driven).
     where.push(
       or(
         ilike(schema.assets.filename, pat),
-        ilike(schema.assets.ocrText, pat),
+        sql`to_tsvector('english', coalesce(${schema.assets.ocrText}, '')) @@ plainto_tsquery('english', ${q})`,
         ilike(schema.assets.source, pat)
       )!
     );
@@ -353,34 +364,45 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // UX-3 / Phase 5.5 — surface the stack member count alongside each
-  // asset so PhotoCard can render a "Stack of N" badge without a per-tile
-  // round trip. Correlated subquery returns NULL for standalone assets
-  // (cheap: indexed by `assets_workspace_stack_idx`). The serialized
-  // shape carries it under `stackMemberCount`.
-  // NOTE: `${schema.assets.stackId}` renders as a BARE `"stack_id"` inside a
-  // raw sql fragment, so inside the aliased subquery (`assets a2`) it binds to
-  // a2 — making the correlation `a2.stack_id = a2.stack_id`, which counts EVERY
-  // stacked asset in the workspace instead of just this stack's members. The
-  // outer reference must be TABLE-QUALIFIED (`${schema.assets}.stack_id`) so it
-  // resolves to the outer row; the inner `a2` shadows the base name.
-  const stackMemberCountSql = sql<number | null>`(
-    CASE WHEN ${schema.assets.stackId} IS NULL THEN NULL
-    ELSE (SELECT COUNT(*)::int FROM ${schema.assets} a2
-          WHERE a2.stack_id = ${schema.assets}.stack_id)
-    END
-  )`.as("stack_member_count");
+  // UX-3 / Phase 5.5 — surface the stack member count alongside each asset so
+  // PhotoCard can render a "Stack of N" badge without a per-tile round trip.
+  // Replaces the former per-row correlated `SELECT COUNT(*)` (which ran once
+  // per stacked row of the page) with ONE pre-aggregated pass over the
+  // workspace's stacks, LEFT JOINed by stack_id. Results are identical: the
+  // aggregate counts the FULL stack (independent of this page's filters /
+  // stack-collapse / keyset window), exactly as the old subquery did by
+  // ignoring the outer WHERE. Standalone assets (stack_id NULL) never match the
+  // join → stackMemberCount is NULL, same as the old CASE-WHEN-NULL. stack_ids
+  // are workspace-scoped, so filtering the aggregate by workspace changes no
+  // count while keeping it index-driven (assets_workspace_stack_idx).
+  const stackCounts = db
+    .select({
+      stackId: schema.assets.stackId,
+      memberCount: sql<number>`COUNT(*)::int`.as("member_count"),
+    })
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.workspaceId, workspaceId),
+        isNotNull(schema.assets.stackId)
+      )
+    )
+    .groupBy(schema.assets.stackId)
+    .as("stack_counts");
 
   // LIST projection: every asset column except the heavy clip_vec / OCR /
   // extracted-text payloads (see assetGridColumns). All mime/subtype/etc.
   // filtering now lives in the SQL WHERE above, so the page returned is exact
-  // — no post-fetch trimming — and the keyset cursor stays consistent.
+  // — no post-fetch trimming — and the keyset cursor stays consistent. The
+  // stackCounts LEFT JOIN is 1:1 (grouped by stack_id) so it never fans out the
+  // page or perturbs the ORDER BY / keyset.
   const rows = await db
     .select({
       asset: assetGridColumns(),
-      stackMemberCount: stackMemberCountSql,
+      stackMemberCount: stackCounts.memberCount,
     })
     .from(schema.assets)
+    .leftJoin(stackCounts, eq(stackCounts.stackId, schema.assets.stackId))
     .where(and(...where))
     .orderBy(sql`${sortExpr} DESC`, desc(schema.assets.id))
     .limit(limit);
