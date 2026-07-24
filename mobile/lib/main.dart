@@ -18,6 +18,7 @@ import "package:firebase_messaging/firebase_messaging.dart";
 import "package:flutter/material.dart";
 import "package:flutter_foreground_task/flutter_foreground_task.dart";
 import "package:flutter_local_notifications/flutter_local_notifications.dart";
+import "package:shared_preferences/shared_preferences.dart";
 import "package:url_launcher/url_launcher.dart";
 import "package:workmanager/workmanager.dart";
 
@@ -70,6 +71,41 @@ Future<void> _initLocalNotifications() async {
 
 final _navigatorKey = GlobalKey<NavigatorState>();
 
+// App-wide theme selection (system/light/dark). Persisted in SharedPreferences
+// and surfaced live to MaterialApp via a ValueListenable so the Settings
+// Appearance control flips the theme without a restart. Defaults to system.
+final ValueNotifier<ThemeMode> themeModeNotifier =
+    ValueNotifier<ThemeMode>(ThemeMode.system);
+const _kThemeModeKey = "fonto.theme_mode";
+
+ThemeMode _themeModeFromString(String? s) {
+  switch (s) {
+    case "light":
+      return ThemeMode.light;
+    case "dark":
+      return ThemeMode.dark;
+    default:
+      return ThemeMode.system;
+  }
+}
+
+String themeModeToString(ThemeMode m) => switch (m) {
+      ThemeMode.light => "light",
+      ThemeMode.dark => "dark",
+      ThemeMode.system => "system",
+    };
+
+Future<ThemeMode> loadThemeMode() async {
+  final p = await SharedPreferences.getInstance();
+  return _themeModeFromString(p.getString(_kThemeModeKey));
+}
+
+Future<void> saveThemeMode(ThemeMode m) async {
+  final p = await SharedPreferences.getInstance();
+  await p.setString(_kThemeModeKey, themeModeToString(m));
+  themeModeNotifier.value = m;
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Cap decoded image cache at 60 MB. Default (100 MB) lets preview-size images
@@ -89,6 +125,7 @@ Future<void> main() async {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   } catch (_) {}
+  themeModeNotifier.value = await loadThemeMode();
   final auth = await AuthStore.load();
   if (auth.isConfigured) {
     await registerUploadDrain();
@@ -253,15 +290,18 @@ class _FontoAppState extends State<FontoApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: "Fonto",
-      theme: FontoTheme.light(),
-      darkTheme: FontoTheme.dark(),
-      themeMode: ThemeMode.system,
-      navigatorKey: _navigatorKey,
-      home: _auth.isConfigured
-          ? MainShell(auth: _auth, onSignOut: _handleSignOut)
-          : LoginScreen(auth: _auth, onLoggedIn: _handleLoggedIn),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (context, mode, _) => MaterialApp(
+        title: "Fonto",
+        theme: FontoTheme.light(),
+        darkTheme: FontoTheme.dark(),
+        themeMode: mode,
+        navigatorKey: _navigatorKey,
+        home: _auth.isConfigured
+            ? MainShell(auth: _auth, onSignOut: _handleSignOut)
+            : LoginScreen(auth: _auth, onLoggedIn: _handleLoggedIn),
+      ),
     );
   }
 

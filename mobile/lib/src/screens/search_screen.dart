@@ -64,9 +64,14 @@ bool _looksSemantic(String query) {
 }
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key, required this.client});
+  const SearchScreen({super.key, required this.client, this.active = true});
 
   final FontoClient client;
+
+  /// True while Search is the visible tab. The field autofocuses only on
+  /// activation (never at cold start under an off-screen IndexedStack child),
+  /// so the keyboard doesn't pop over Library on launch.
+  final bool active;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -74,6 +79,7 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final _ctrl = TextEditingController();
+  final _searchFocus = FocusNode();
   bool _busy = false;
   // Monotonic id for the in-flight search. Concurrent _run() calls (chip
   // toggles, repeated submit, filter-apply) can resolve out of order; only the
@@ -129,7 +135,34 @@ class _SearchScreenState extends State<SearchScreen> {
       ].where((v) => v != null).length;
 
   @override
+  void initState() {
+    super.initState();
+    // First entry: if we're built already active (the tab was tapped), focus
+    // the field once the frame is up.
+    if (widget.active) _focusSoon();
+  }
+
+  @override
+  void didUpdateWidget(SearchScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Became the active tab — focus the field (re-entry pops the keyboard the
+    // same as the first entry).
+    if (widget.active && !oldWidget.active) {
+      _focusSoon();
+    } else if (!widget.active && oldWidget.active) {
+      _searchFocus.unfocus();
+    }
+  }
+
+  void _focusSoon() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.active) _searchFocus.requestFocus();
+    });
+  }
+
+  @override
   void dispose() {
+    _searchFocus.dispose();
     _ctrl.dispose();
     super.dispose();
   }
@@ -281,7 +314,8 @@ class _SearchScreenState extends State<SearchScreen> {
       appBar: AppBar(
         title: TextField(
           controller: _ctrl,
-          autofocus: true,
+          focusNode: _searchFocus,
+          autofocus: false,
           textInputAction: TextInputAction.search,
           onSubmitted: (_) => _run(),
           decoration: const InputDecoration(

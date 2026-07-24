@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// M14 / ADR 0056 — mobile OIDC bridge. After the user signs in via the IdP in
-// the system browser (Better Auth session cookie now set), the native app sends
-// them here. We mint a PAT and deep-link it back into the app at
-// /mobile/auth-callback?pat=… — the app stores it in hardware-backed storage
-// exactly like a manually-pasted token. No native OAuth client needed: the
-// browser ran the whole OAuth/PKCE dance.
+// Mobile sign-in bridge. After the user signs in on the web /login?mobile=1 by
+// ANY method — email+password, passkey, one-time link, or SSO — the browser has
+// a Better Auth session cookie and lands here. We mint a PAT and deep-link it
+// back into the native app at /mobile/auth-callback?pat=… — the app stores it
+// in hardware-backed storage exactly like a manually-pasted token. No native
+// OAuth client needed; the browser ran whatever auth flow was used.
 //
-// Dormant-safe: this route only ever runs when a real session exists; with no
-// IdP configured the SSO button that leads here is hidden, so it's never hit.
+// Safe by construction: this route only mints a token when a real session
+// exists (getAuthUser); otherwise it bounces to /login?mobile=1.
 
 import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
@@ -34,7 +34,7 @@ export async function GET() {
 
   const key = await createApiKey({
     userId: user.id,
-    name: "mobile-oidc",
+    name: "mobile",
     scopes: ["read", "write"],
   });
 

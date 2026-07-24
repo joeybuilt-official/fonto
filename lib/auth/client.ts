@@ -34,3 +34,34 @@ export async function signUp(email: string, password: string, name: string) {
 export async function signOut() {
   return _authClient.signOut();
 }
+
+// M-daily-driver — password reset. `requestPasswordReset` emails a link built
+// around `redirectTo` (Better Auth appends the token); the link lands on
+// `redirectTo?token=…` where `resetPassword` sets the new password.
+export async function requestPasswordReset(email: string, redirectTo: string) {
+  return _authClient.requestPasswordReset({ email, redirectTo });
+}
+
+export async function resetPassword(newPassword: string, token: string) {
+  return _authClient.resetPassword({ newPassword, token });
+}
+
+// M-daily-driver — account self-service (Settings › Account).
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+) {
+  return _authClient.changePassword({
+    currentPassword,
+    newPassword,
+    revokeOtherSessions: true,
+  });
+}
+
+export async function updateName(name: string) {
+  return _authClient.updateUser({ name });
+}
+
+export async function changeEmail(newEmail: string) {
+  return _authClient.changeEmail({ newEmail });
+}

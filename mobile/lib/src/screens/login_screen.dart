@@ -86,7 +86,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text("Sign in to Fonto")),
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -100,35 +100,61 @@ class _LoginScreenState extends State<LoginScreen> {
                 keyboardType: TextInputType.url,
                 autocorrect: false,
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _patCtrl,
-                decoration: const InputDecoration(
-                  labelText: "Personal access token",
-                  helperText: "Mint one at /app/settings/tokens in the web UI.",
-                ),
-                obscureText: true,
-                autocorrect: false,
-              ),
               const SizedBox(height: 24),
+              // Primary path — M14 / ADR 0056 + Jex ADR-004. Opens the web login
+              // in the system browser, where email/password, passkey, one-time
+              // link, and SSO all work; every success mints a PAT and deep-links
+              // it back to /mobile/auth-callback (handled in main.dart). No
+              // native OAuth or WebAuthn needed in the app.
               FilledButton(
-                onPressed: _busy ? null : _submit,
-                child: _busy
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text("Sign in"),
+                onPressed: _busy ? null : _ssoLogin,
+                child: const Text("Sign in"),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "Opens your browser to sign in with email & password, a "
+                "passkey, or SSO. You'll return to the app automatically.",
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
               ),
               const SizedBox(height: 12),
-              // M14 / ADR 0056 + Jex ADR-004 — browser-mediated sign-in. Opens
-              // the web login, where password, passkey, one-time link, and SSO
-              // all work; every success path mints a PAT and deep-links it
-              // back. No native OAuth or WebAuthn needed in the app.
-              OutlinedButton(
-                onPressed: _busy ? null : _ssoLogin,
-                child: const Text("Sign in with browser"),
+              // Advanced fallback — paste a Personal Access Token directly. For
+              // headless/self-hosted setups or when the browser round-trip
+              // isn't available.
+              Theme(
+                data: Theme.of(context)
+                    .copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: const EdgeInsets.only(bottom: 8),
+                  expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+                  title: const Text("Advanced: sign in with a token"),
+                  children: [
+                    TextField(
+                      controller: _patCtrl,
+                      decoration: const InputDecoration(
+                        labelText: "Personal access token",
+                        helperText:
+                            "Mint one at /app/settings/tokens in the web UI.",
+                      ),
+                      obscureText: true,
+                      autocorrect: false,
+                    ),
+                    const SizedBox(height: 16),
+                    OutlinedButton(
+                      onPressed: _busy ? null : _submit,
+                      child: _busy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text("Sign in with token"),
+                    ),
+                  ],
+                ),
               ),
               if (_error != null) ...[
                 const SizedBox(height: 16),

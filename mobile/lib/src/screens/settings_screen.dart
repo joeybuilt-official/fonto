@@ -8,8 +8,10 @@
 
 import "package:flutter/material.dart";
 import "package:photo_manager/photo_manager.dart";
+import "package:url_launcher/url_launcher.dart";
 import "package:workmanager/workmanager.dart";
 
+import "../../main.dart" show loadThemeMode, saveThemeMode;
 import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "../state/auth_store.dart";
@@ -28,7 +30,12 @@ import "google_photos_import_screen.dart";
 import "transfers_screen.dart";
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.auth, this.onSignOut});
+
+  /// Present ⇒ the Account section renders (manage-account link + sign out).
+  /// Absent (e.g. a standalone push) ⇒ the section is hidden.
+  final AuthStore? auth;
+  final VoidCallback? onSignOut;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -36,6 +43,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _loading = true;
+  ThemeMode _themeMode = ThemeMode.system;
   bool _autoImport = false;
   bool _wifiOnly = false;
   bool _chargingOnly = false;
@@ -149,6 +157,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final albums = await SettingsStore.getSelectedAlbumIds();
     final wifiOnly = await SettingsStore.getSyncWifiOnly();
     final chargingOnly = await SettingsStore.getSyncChargingOnly();
+    final themeMode = await loadThemeMode();
     if (!mounted) return;
     setState(() {
       _autoImport = enabled;
@@ -156,8 +165,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _selectedAlbumIds = albums;
       _wifiOnly = wifiOnly;
       _chargingOnly = chargingOnly;
+      _themeMode = themeMode;
       _loading = false;
     });
+  }
+
+  Future<void> _onThemeChange(ThemeMode? next) async {
+    if (next == null || next == _themeMode) return;
+    setState(() => _themeMode = next);
+    // Applies live (MaterialApp listens to the same notifier) and persists.
+    await saveThemeMode(next);
+  }
+
+  // Change password / edit profile live on the web account page; open it in the
+  // system browser. Better Auth's session cookie carries over, so no re-login.
+  Future<void> _openWebAccount() async {
+    final base = widget.auth?.baseUrl;
+    if (base == null || base.isEmpty) return;
+    final uri = Uri.parse("$base/app/settings");
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  void _signOut() {
+    // Pop Settings first so the app swaps cleanly to the login screen beneath.
+    Navigator.of(context).pop();
+    widget.onSignOut?.call();
+  }
+
+  String _accountHost() {
+    final base = widget.auth?.baseUrl ?? "";
+    final host = Uri.tryParse(base)?.host;
+    return (host == null || host.isEmpty) ? "the web app" : host;
   }
 
   /// Re-register the upload-drain backstop with the current network + charging
@@ -481,6 +519,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    "APPEARANCE",
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.brightness_6_outlined),
+                  title: const Text("Theme"),
+                  subtitle: const Text(
+                    "Match your device, or force light or dark.",
+                  ),
+                  trailing: DropdownButton<ThemeMode>(
+                    value: _themeMode,
+                    underline: const SizedBox.shrink(),
+                    onChanged: _onThemeChange,
+                    items: const [
+                      DropdownMenuItem(
+                        value: ThemeMode.system,
+                        child: Text("System"),
+                      ),
+                      DropdownMenuItem(
+                        value: ThemeMode.light,
+                        child: Text("Light"),
+                      ),
+                      DropdownMenuItem(
+                        value: ThemeMode.dark,
+                        child: Text("Dark"),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(),
                 ListTile(
                   leading: const Icon(Icons.swap_vert),
                   title: const Text("Transfers"),
@@ -738,6 +814,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: _openAdmin,
+                  ),
+                ],
+                if (widget.auth != null) ...[
+                  const Divider(),
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text(
+                      "ACCOUNT",
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.person_outline),
+                    title: const Text("Manage account"),
+                    subtitle: Text(
+                      "Name, email, and password on ${_accountHost()}.",
+                    ),
+                    trailing: const Icon(Icons.open_in_new),
+                    onTap: _openWebAccount,
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      Icons.logout,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    title: Text(
+                      "Sign out",
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                    onTap: widget.onSignOut == null ? null : _signOut,
                   ),
                 ],
               ],
