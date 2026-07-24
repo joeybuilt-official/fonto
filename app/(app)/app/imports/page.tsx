@@ -5,7 +5,7 @@
 // screen reads cleaner than stacking every importer on one page); this hub
 // links out to them and shows the shared imports-progress list.
 import Link from "next/link";
-import { ChevronRight, Cloud, Package, Server } from "lucide-react";
+import { ChevronRight, Cloud, HardDrive, Image, Package, Server } from "lucide-react";
 import { ImportsList } from "./_components/imports-list";
 import { Card } from "@/components/ui/card";
 
@@ -15,6 +15,18 @@ const PROVIDERS = [
     title: "Google Takeout",
     desc: "Import a Takeout archive from your Google Drive.",
     Icon: Cloud,
+  },
+  {
+    href: "/app/imports/google-drive",
+    title: "Google Drive",
+    desc: "Browse and import photos and documents from your Google Drive.",
+    Icon: HardDrive,
+  },
+  {
+    href: "/app/imports/google-photos",
+    title: "Google Photos",
+    desc: "Pick photos and videos from your Google Photos library.",
+    Icon: Image,
   },
   {
     href: "/app/imports/amazon",
