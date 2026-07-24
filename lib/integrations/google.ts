@@ -31,8 +31,20 @@ export const GOOGLE_REDIRECT_URI = `${
   (process.env.NEXT_PUBLIC_APP_URL ?? "https://myfonto.com").replace(/\/+$/, "")
 }/api/v1/integrations/google/callback`;
 
-/** Least-privilege scope: read-only Drive (Takeout archives live there). */
-export const GOOGLE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"];
+/**
+ * Requested OAuth scopes (least-privilege, read-only):
+ *   - drive.readonly                     → Takeout archives + Drive importer.
+ *   - photospicker.mediaitems.readonly   → Google Photos Picker API: read the
+ *     media items the user explicitly picks in Google's own picker session.
+ *
+ * NOTE: existing connections were granted drive.readonly only — they must
+ * re-consent (reconnect) to gain the Photos Picker scope; a stored refresh
+ * token minted before this change will NOT carry it.
+ */
+export const GOOGLE_SCOPES = [
+  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
+];
 
 /** Row shape this module needs from the `integrations` table. */
 type IntegrationRow = typeof schema.integrations.$inferSelect;
@@ -173,6 +185,40 @@ export async function getFreshAccessToken(integration: IntegrationRow): Promise<
     }
     throw err;
   }
+}
+
+/**
+ * Server-side authed fetch against a Google API. Resolves a live access token
+ * via `getFreshAccessToken` (which handles refresh + the invalid_grant →
+ * `needs_reconnect` transition), attaches it as a Bearer token, and issues the
+ * request. A 401 from Google means the token was rejected mid-flight (e.g.
+ * revoked between refresh and use) → flip the row to `needs_reconnect` and
+ * throw `ReconnectRequiredError`, matching `getFreshAccessToken`'s contract.
+ *
+ * The Drive & Photos importers use this for every Google API call so the
+ * browser never talks to Google directly. Non-401 non-2xx responses are
+ * returned as-is for the caller to inspect (status/body).
+ */
+export async function googleApiFetch(
+  integration: IntegrationRow,
+  url: string,
+  init?: RequestInit
+): Promise<Response> {
+  const token = await getFreshAccessToken(integration);
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+
+  const res = await fetch(url, { ...init, headers });
+
+  if (res.status === 401) {
+    await db
+      .update(schema.integrations)
+      .set({ status: "needs_reconnect", updatedAt: new Date() })
+      .where(eq(schema.integrations.id, integration.id));
+    throw new ReconnectRequiredError(integration.id);
+  }
+
+  return res;
 }
 
 /**
