@@ -37,7 +37,11 @@ builds:
       - printf '\nkotlin.jvm.target.validation.mode=warning\n' >> mobile/android/gradle.properties
       - printf '%s' "$CM_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > /tmp/fonto-upload.jks
       - cd mobile && flutter pub get
-      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release
+      # versionCode = unix seconds (monotonic, < the 2.1e9 int ceiling) so every
+      # Pushd build outranks any prior install and updates in place. Was unset
+      # -> fell back to pubspec 0.1.0+1 (versionCode 1), which Android refused to
+      # install over higher-numbered legacy Codemagic builds.
+      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release --build-name=0.2.0 --build-number=$(date +%s)
     artifacts:
       - mobile/build/app/outputs/flutter-apk/app-release.apk
     deliver:
@@ -59,8 +63,12 @@ builds:
       - printf '\nkotlin.jvm.target.validation.mode=warning\n' >> mobile/android/gradle.properties
       - printf '%s' "$CM_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > /tmp/fonto-upload.jks
       - cd mobile && flutter pub get
-      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release
-      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build appbundle --release
+      # versionCode = unix seconds (monotonic, < the 2.1e9 int ceiling) so every
+      # Pushd build outranks any prior install and updates in place. Was unset
+      # -> fell back to pubspec 0.1.0+1 (versionCode 1), which Android refused to
+      # install over higher-numbered legacy Codemagic builds.
+      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release --build-name=0.2.0 --build-number=$(date +%s)
+      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build appbundle --release --build-name=0.2.0 --build-number=$(date +%s)
     artifacts:
       - mobile/build/app/outputs/flutter-apk/app-release.apk
       - mobile/build/app/outputs/bundle/release/app-release.aab
