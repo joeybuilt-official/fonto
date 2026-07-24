@@ -25,7 +25,10 @@ import { recordAuditEvent, AuditAction } from "@/lib/audit";
 
 type TargetType = "asset" | "collection" | "set";
 
-const ALLOWED_TARGET_TYPES = new Set<TargetType>(["asset", "collection", "set"]);
+// NOTE: "set" (smart_collection) is intentionally excluded. The public
+// /share/[token] page has no working 'set' render branch, so allowing creation
+// would mint dead links. Re-add here once set rendering ships.
+const ALLOWED_TARGET_TYPES = new Set<TargetType>(["asset", "collection"]);
 
 const ABSOLUTE_MAX_EXPIRY_MS = 1000 * 60 * 60 * 24 * 365; // 1 year cap
 
@@ -76,19 +79,6 @@ export async function POST(request: NextRequest) {
       .from(schema.collections)
       .where(
         and(eq(schema.collections.id, targetId), inArray(schema.collections.workspaceId, workspaceIds))
-      )
-      .limit(1);
-    resolvedWorkspaceId = row?.workspaceId ?? null;
-  } else if (targetType === "set") {
-    // "set" maps to smart_collections in our current schema.
-    const [row] = await db
-      .select({ workspaceId: schema.smartCollections.workspaceId })
-      .from(schema.smartCollections)
-      .where(
-        and(
-          eq(schema.smartCollections.id, targetId),
-          inArray(schema.smartCollections.workspaceId, workspaceIds)
-        )
       )
       .limit(1);
     resolvedWorkspaceId = row?.workspaceId ?? null;
