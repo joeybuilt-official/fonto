@@ -20,7 +20,6 @@ import {
   File,
   Image as ImageIcon,
   FileText,
-  Loader2,
   ScanText,
   Sparkles,
 } from "lucide-react";
@@ -29,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { ListErrorState } from "../_components/list-states";
+import { ListSkeleton } from "../_components/grid-skeleton";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 
 // Phase 4.2 — heuristic for "fire a CLIP search alongside the text search".
@@ -152,10 +152,12 @@ function SearchContent() {
     const isDoc = !a.mimeType.startsWith("image/");
     if (isDoc && (a.mimeType === "application/pdf" || a.extractedText)) {
       setViewerAsset(a);
-    } else if (a.mimeType.startsWith("image/")) {
-      router.push("/app/library?kind=moment");
     } else {
-      router.push("/app/library?kind=document");
+      // Deep-link into the library lightbox for THIS asset. The library reads
+      // ?lb=<id> and fetches out-of-list assets directly, so the result the
+      // user clicked actually opens — instead of dumping them into the
+      // generic library with nothing selected.
+      router.push(`/app/library?lb=${a.id}`);
     }
   }
 
@@ -326,9 +328,7 @@ function SearchContent() {
             old order let the truthy-results branch fire briefly with a
             "0 results" pill, which read as a flash of stale state. */}
         {loading ? (
-          <div className="flex justify-center py-8 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-          </div>
+          <ListSkeleton count={6} />
         ) : error ? (
           <ListErrorState
             message="Couldn't run that search. Check your connection and retry."

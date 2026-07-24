@@ -967,6 +967,22 @@ class StoragePlacement {
   }
 }
 
+// Current-user identity from GET /api/v1/me. Renders the account inline in
+// Settings; never carries secrets/tokens.
+class AccountInfo {
+  const AccountInfo({required this.id, this.name, this.email});
+
+  final String id;
+  final String? name;
+  final String? email;
+
+  static AccountInfo fromJson(Map<String, dynamic> j) => AccountInfo(
+        id: (j["id"] as String?) ?? "",
+        name: j["name"] as String?,
+        email: j["email"] as String?,
+      );
+}
+
 // M15.3 — reason-bucketed date review (Tidy Up). Mirrors the web bucket
 // contract from GET /api/admin/review-queue/buckets.
 class ReviewBucketSample {

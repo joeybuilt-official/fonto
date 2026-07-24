@@ -7,7 +7,12 @@ import {
   startRegistration,
   type PublicKeyCredentialCreationOptionsJSON,
 } from "@simplewebauthn/browser";
-import { useSession } from "@/lib/auth/client";
+import {
+  useSession,
+  changePassword,
+  updateName,
+  changeEmail,
+} from "@/lib/auth/client";
 import Link from "next/link";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 import { cn } from "@/lib/utils";
@@ -236,6 +241,85 @@ export default function SettingsPage() {
     }
   }
 
+  // M-daily-driver — account self-service: edit name/email + change password.
+  const fieldCls =
+    "w-full min-w-0 rounded border border-[var(--ft-color-outline-variant)] bg-transparent px-3 py-2 text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)] placeholder:text-[var(--ft-color-on-surface-variant)] focus:outline-none focus:ring-2 focus:ring-[var(--ft-color-primary)]";
+
+  const [name, setName] = useState("");
+  const [emailField, setEmailField] = useState("");
+  useEffect(() => {
+    setName(user?.name ?? "");
+    setEmailField(user?.email ?? "");
+  }, [user?.name, user?.email]);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileMsg, setProfileMsg] = useState<string | null>(null);
+  const [profileErr, setProfileErr] = useState<string | null>(null);
+
+  async function handleSaveProfile() {
+    if (profileBusy) return;
+    setProfileBusy(true);
+    setProfileMsg(null);
+    setProfileErr(null);
+    try {
+      const nextName = name.trim();
+      const nextEmail = emailField.trim();
+      if (nextName && nextName !== (user?.name ?? "")) {
+        const r = await updateName(nextName);
+        if (r.error) throw new Error(r.error.message ?? "Failed to update name");
+      }
+      if (
+        nextEmail &&
+        nextEmail.toLowerCase() !== (user?.email ?? "").toLowerCase()
+      ) {
+        const r = await changeEmail(nextEmail);
+        if (r.error)
+          throw new Error(r.error.message ?? "Failed to update email");
+      }
+      setProfileMsg("Profile updated");
+    } catch (err) {
+      setProfileErr(
+        err instanceof Error ? err.message : "Failed to update profile"
+      );
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwMsg, setPwMsg] = useState<string | null>(null);
+  const [pwErr, setPwErr] = useState<string | null>(null);
+
+  async function handleChangePassword() {
+    if (pwBusy) return;
+    setPwErr(null);
+    setPwMsg(null);
+    if (newPw !== confirmPw) {
+      setPwErr("New passwords don't match");
+      return;
+    }
+    if (newPw.length < 8) {
+      setPwErr("New password must be at least 8 characters");
+      return;
+    }
+    setPwBusy(true);
+    try {
+      const r = await changePassword(currentPw, newPw);
+      if (r.error)
+        throw new Error(r.error.message ?? "Failed to change password");
+      setPwMsg("Password changed");
+      setCurrentPw("");
+      setNewPw("");
+      setConfirmPw("");
+    } catch (err) {
+      setPwErr(err instanceof Error ? err.message : "Failed to change password");
+    } finally {
+      setPwBusy(false);
+    }
+  }
+
   async function handleRescanAll() {
     if (rescanBusy) return;
     setRescanBusy(true);
@@ -293,21 +377,125 @@ export default function SettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-[var(--ft-space-3)]">
-          <div>
-            <label className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase">
+          <div className="space-y-[var(--ft-space-1)]">
+            <label
+              htmlFor="account-name"
+              className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase"
+            >
               Name
             </label>
-            <p className="mt-[var(--ft-space-1)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
-              {user?.name ?? "—"}
-            </p>
+            <input
+              id="account-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Your name"
+              className={fieldCls}
+            />
           </div>
-          <div>
-            <label className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase">
+          <div className="space-y-[var(--ft-space-1)]">
+            <label
+              htmlFor="account-email"
+              className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase"
+            >
               Email
             </label>
-            <p className="mt-[var(--ft-space-1)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
-              {user?.email ?? "—"}
+            <input
+              id="account-email"
+              type="email"
+              value={emailField}
+              onChange={(e) => setEmailField(e.target.value)}
+              placeholder="you@example.com"
+              className={fieldCls}
+            />
+          </div>
+          <div className="flex items-center gap-[var(--ft-space-3)]">
+            <Button
+              variant="filled"
+              size="sm"
+              onClick={handleSaveProfile}
+              disabled={profileBusy}
+              aria-busy={profileBusy}
+            >
+              {profileBusy ? "Saving…" : "Save changes"}
+            </Button>
+            {profileMsg && (
+              <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-success-container)]">
+                {profileMsg}
+              </span>
+            )}
+          </div>
+          {profileErr && (
+            <p
+              role="alert"
+              className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]"
+            >
+              {profileErr}
             </p>
+          )}
+
+          <div className="pt-[var(--ft-space-3)] border-t border-[var(--ft-color-outline-variant)] space-y-[var(--ft-space-3)]">
+            <div>
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Change password
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Signs out other devices when you change it.
+              </p>
+            </div>
+            <input
+              type="password"
+              aria-label="Current password"
+              autoComplete="current-password"
+              value={currentPw}
+              onChange={(e) => setCurrentPw(e.target.value)}
+              placeholder="Current password"
+              className={fieldCls}
+            />
+            <input
+              type="password"
+              aria-label="New password"
+              autoComplete="new-password"
+              value={newPw}
+              onChange={(e) => setNewPw(e.target.value)}
+              placeholder="New password"
+              minLength={8}
+              className={fieldCls}
+            />
+            <input
+              type="password"
+              aria-label="Confirm new password"
+              autoComplete="new-password"
+              value={confirmPw}
+              onChange={(e) => setConfirmPw(e.target.value)}
+              placeholder="Confirm new password"
+              minLength={8}
+              className={fieldCls}
+            />
+            <div className="flex items-center gap-[var(--ft-space-3)]">
+              <Button
+                variant="outlined"
+                size="sm"
+                onClick={handleChangePassword}
+                disabled={pwBusy || !currentPw || !newPw || !confirmPw}
+                aria-busy={pwBusy}
+              >
+                {pwBusy ? "Updating…" : "Update password"}
+              </Button>
+              {pwMsg && (
+                <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-success-container)]">
+                  {pwMsg}
+                </span>
+              )}
+            </div>
+            {pwErr && (
+              <p
+                role="alert"
+                className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]"
+              >
+                {pwErr}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

@@ -134,8 +134,15 @@ export function VirtualizedTimeline({
   const inFlightRef = useRef<Set<string>>(new Set());
   const scrubbingRef = useRef(false);
 
+  // Months whose fetch threw (network/5xx). Kept SEPARATE from `loaded` so a
+  // transient failure isn't cached as a terminal empty month (which made the
+  // whole month silently vanish). Excluded from the auto-load skip so a tap
+  // on the retry row re-attempts, but not auto-retried in a tight loop.
+  const [failed, setFailed] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     setLoaded(new Map());
+    setFailed(new Set());
     inFlightRef.current = new Set();
   }, [fetchMonth]);
 
@@ -196,7 +203,12 @@ export function VirtualizedTimeline({
     for (let i = minIdx; i <= maxIdx; i++) {
       const b = buckets[i];
       if (!b) continue;
-      if (loaded.has(b.month) || inFlightRef.current.has(b.month)) continue;
+      if (
+        loaded.has(b.month) ||
+        inFlightRef.current.has(b.month) ||
+        failed.has(b.month)
+      )
+        continue;
       inFlightRef.current.add(b.month);
       void fetchMonth(b.month)
         .then((assets) => {
@@ -207,15 +219,27 @@ export function VirtualizedTimeline({
           });
         })
         .catch(() => {
-          setLoaded((prev) => {
-            const next = new Map(prev);
-            next.set(b.month, []);
+          // Mark retryable — do NOT cache an empty month, which would read as
+          // "this month has no photos" and hide `b.count` real assets.
+          setFailed((prev) => {
+            const next = new Set(prev);
+            next.add(b.month);
             return next;
           });
         })
         .finally(() => inFlightRef.current.delete(b.month));
     }
-  }, [virtualItems, buckets, loaded, fetchMonth]);
+  }, [virtualItems, buckets, loaded, failed, fetchMonth]);
+
+  // Clearing a month from `failed` lets the auto-load effect pick it up again
+  // (it's in the effect deps). One tap → one retry.
+  const retryMonth = useCallback((month: string) => {
+    setFailed((prev) => {
+      const next = new Set(prev);
+      next.delete(month);
+      return next;
+    });
+  }, []);
 
   // Surface flattened loaded assets (timeline order) for the parent lightbox.
   useEffect(() => {
@@ -384,6 +408,20 @@ export function VirtualizedTimeline({
                         ))}
                       </div>
                     )
+                  ) : failed.has(b.month) ? (
+                    // Fetch threw — offer a retry instead of a silent empty
+                    // month. Height-reserved so the scrollbar stays accurate.
+                    <button
+                      type="button"
+                      onClick={() => retryMonth(b.month)}
+                      className="flex w-full flex-col items-center justify-center gap-1 rounded-md bg-muted/20 text-xs text-muted-foreground transition-colors hover:bg-muted/40"
+                      style={{ height: reservedGridHeight }}
+                    >
+                      <span className="font-medium text-foreground">
+                        Couldn&apos;t load this month
+                      </span>
+                      <span>Tap to retry</span>
+                    </button>
                   ) : (
                     // Height-reserved skeleton so the scrollbar is accurate
                     // before the month's assets arrive.

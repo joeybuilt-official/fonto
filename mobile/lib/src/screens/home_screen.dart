@@ -497,12 +497,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final stats = results[1] as WorkspaceStats;
       final buckets = results[2] as List<AssetBucket>;
       final page = results[3] as AssetPage;
+      // A thumb-URL batch failure must not discard the freshly-fetched list:
+      // degrade to placeholders (empty thumbs) and still commit the new assets,
+      // rather than falling through to the cache and throwing the page away.
       final thumbs = page.assets.isEmpty
           ? <String, String>{}
-          : await _client.assetUrls(
-              page.assets.map((a) => a.id).toList(),
-              variant: "thumb",
-            );
+          : await _client
+              .assetUrls(
+                page.assets.map((a) => a.id).toList(),
+                variant: "thumb",
+              )
+              .catchError((_) => <String, String>{});
       if (!mounted) return;
       setState(() {
         _stats = stats;
@@ -1206,7 +1211,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         selected: _folder,
         onSelect: _selectFolder,
         onSettings: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          MaterialPageRoute(
+            builder: (_) =>
+                SettingsScreen(auth: widget.auth, onSignOut: _signOut),
+          ),
         ),
         onSignOut: _signOut,
       ),

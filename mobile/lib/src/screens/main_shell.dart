@@ -33,6 +33,13 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   late final FontoClient _client = FontoClient(widget.auth);
   int _index = 0;
+  // Tabs whose content has been shown at least once. Library (0) is live at
+  // launch; every other tab stays un-built — so its initState (and the network
+  // fetch + image hydration it kicks off) never fires — until the tab is first
+  // entered. That keeps all five tabs from stampeding the connection pool on
+  // cold start; Library alone loads first. IndexedStack still retains each
+  // tab's state once it has been built.
+  final Set<int> _activated = <int>{0};
 
   @override
   void dispose() {
@@ -40,14 +47,28 @@ class _MainShellState extends State<MainShell> {
     super.dispose();
   }
 
+  Widget _tabAt(int i) {
+    switch (i) {
+      case 0:
+        return HomeScreen(auth: widget.auth, onSignOut: widget.onSignOut);
+      case 1:
+        return ExploreScreen(client: _client);
+      case 2:
+        return CollectionsScreen(client: _client);
+      case 3:
+        return UpdatesScreen(client: _client);
+      default:
+        // Search focuses its field only while it is the active tab, so the
+        // keyboard never pops over Library on launch.
+        return SearchScreen(client: _client, active: _index == 4);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tabs = <Widget>[
-      HomeScreen(auth: widget.auth, onSignOut: widget.onSignOut),
-      ExploreScreen(client: _client),
-      CollectionsScreen(client: _client),
-      UpdatesScreen(client: _client),
-      SearchScreen(client: _client),
+      for (var i = 0; i < 5; i++)
+        _activated.contains(i) ? _tabAt(i) : const SizedBox.shrink(),
     ];
 
     final theme = Theme.of(context);
@@ -83,7 +104,10 @@ class _MainShellState extends State<MainShell> {
         ),
         child: NavigationBar(
           selectedIndex: _index,
-          onDestinationSelected: (i) => setState(() => _index = i),
+          onDestinationSelected: (i) => setState(() {
+            _index = i;
+            _activated.add(i);
+          }),
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.photo_library_outlined),

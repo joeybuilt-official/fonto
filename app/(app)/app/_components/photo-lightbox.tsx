@@ -1047,22 +1047,35 @@ export function PhotoLightbox({
     try {
       const res = await fetch(`/api/v1/assets/${asset.id}/url?variant=original`);
       const data = (await res.json()) as { url?: string };
-      if (!data.url) return;
+      if (!res.ok || !data.url) {
+        pushToast("error", "Download failed");
+        return;
+      }
       const a = document.createElement("a");
       a.href = data.url;
       a.download = asset.filename;
       a.click();
     } catch {
-      /* swallow */
+      pushToast("error", "Download failed");
     }
   }
 
   async function handleTrash() {
-    await fetch(`/api/v1/assets/${asset.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ trash: true }),
-    });
+    try {
+      const res = await fetch(`/api/v1/assets/${asset.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trash: true }),
+      });
+      if (!res.ok) {
+        pushToast("error", "Failed to move to trash");
+        return;
+      }
+    } catch {
+      pushToast("error", "Failed to move to trash");
+      return;
+    }
+    // Only advance the UI once the server actually accepted the change.
     onTrash?.(asset.id);
     onClose();
   }
@@ -1093,7 +1106,11 @@ export function PhotoLightbox({
         } catch {
           /* clipboard unavailable */
         }
+      } else {
+        pushToast("error", "Couldn't create share link");
       }
+    } catch {
+      pushToast("error", "Couldn't create share link");
     } finally {
       setShareLoading(false);
     }

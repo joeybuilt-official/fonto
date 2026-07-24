@@ -23,13 +23,16 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
-import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download, Smartphone, LayoutGrid, Users, Palette } from "lucide-react";
+import Link from "next/link";
+import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download, Smartphone, LayoutGrid, Users, Palette, Upload } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
 import { VirtualizedTimeline, type TimelineMonth } from "../_components/virtualized-timeline";
 import { useToolbarState, type Lifecycle } from "@/lib/hooks/use-toolbar-state";
+import { useSnackbar } from "@/components/ui/snackbar";
 import { downloadAssetsZip } from "@/lib/download-zip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ProcessingNotice } from "../_components/processing-notice";
@@ -43,6 +46,8 @@ import {
   type LibrarySurface,
 } from "../_components/library-surface-control";
 import { LibraryFilesView } from "../_components/library-files-view";
+import { GridSkeleton } from "../_components/grid-skeleton";
+import { ListErrorState } from "../_components/list-states";
 
 const SURFACE_LS_KEY = "fonto:library:surface";
 
@@ -132,6 +137,7 @@ function LibraryContent() {
   const router = useRouter();
   const pathname = usePathname();
   const placeFilter = searchParams.get("place");
+  const toast = useSnackbar();
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -322,7 +328,9 @@ function LibraryContent() {
           if (cursorBefore) sp.set("createdBefore", cursorBefore);
           if (cursorId) sp.set("idBefore", cursorId);
           const r = await fetch(`/api/v1/assets?${sp.toString()}`);
-          if (!r.ok) break;
+          // Throw (not break) so a transient failure surfaces as a retryable
+          // month in VirtualizedTimeline rather than being cached as empty.
+          if (!r.ok) throw new Error(`assets ${r.status}`);
           const d = (await r.json()) as {
             assets?: Asset[];
             nextCursor?: { createdBefore: string; idBefore: string } | null;
@@ -350,7 +358,9 @@ function LibraryContent() {
         sp.set("capturedBefore", cursorBefore);
         if (cursorId) sp.set("idBefore", cursorId);
         const r = await fetch(`/api/v1/assets?${sp.toString()}`);
-        if (!r.ok) break;
+        // Throw (not break) so a transient failure surfaces as a retryable
+        // month in VirtualizedTimeline rather than being cached as empty.
+        if (!r.ok) throw new Error(`assets ${r.status}`);
         const d = (await r.json()) as {
           assets?: Asset[];
           nextCursor?: { capturedBefore: string; idBefore: string } | null;
@@ -409,8 +419,9 @@ function LibraryContent() {
 
   const handleBatchAddToCollection = useCallback(
     async (collectionId: string) => {
-      await Promise.all(
-        Array.from(toolbar.selectedIds).map((assetId) =>
+      const ids = Array.from(toolbar.selectedIds);
+      const results = await Promise.allSettled(
+        ids.map((assetId) =>
           fetch(`/api/v1/collections/${collectionId}/assets`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -418,11 +429,31 @@ function LibraryContent() {
           })
         )
       );
+      // A rejected fetch OR a non-2xx response is a failure — the old code
+      // awaited Promise.all and reported success even on HTTP 4xx/5xx.
+      const failedIds = ids.filter(
+        (_id, i) =>
+          results[i].status === "rejected" ||
+          !(results[i] as PromiseFulfilledResult<Response>).value.ok
+      );
+      const okCount = ids.length - failedIds.length;
       setShowCollectionModal(false);
-      toolbar.clearSelection();
-      toolbar.setSelectMode(false);
+      if (failedIds.length === 0) {
+        toolbar.clearSelection();
+        toolbar.setSelectMode(false);
+        toast.add({ title: `Added ${okCount} to collection` });
+      } else {
+        // Keep the failures selected so the user can retry just those.
+        toolbar.clearSelection();
+        for (const id of failedIds) toolbar.toggleSelect(id);
+        toast.add({
+          title: `Couldn't add ${failedIds.length} of ${ids.length}`,
+          description: "Left selected — try again.",
+          priority: "high",
+        });
+      }
     },
-    [toolbar]
+    [toolbar, toast]
   );
 
   const handleBatchDownload = useCallback(() => {
@@ -432,7 +463,7 @@ function LibraryContent() {
 
   const handleBatchTrash = useCallback(async () => {
     const ids = Array.from(toolbar.selectedIds);
-    await Promise.all(
+    const results = await Promise.allSettled(
       ids.map((assetId) =>
         fetch(`/api/v1/assets/${assetId}`, {
           method: "PATCH",
@@ -441,10 +472,32 @@ function LibraryContent() {
         })
       )
     );
-    toolbar.clearSelection();
-    toolbar.setSelectMode(false);
-    setRefreshKey((k) => k + 1);
-  }, [toolbar]);
+    // A rejected fetch OR a non-2xx response is a failure — the old code
+    // reported success even when the PATCH 4xx/5xx'd.
+    const failedIds = ids.filter(
+      (_id, i) =>
+        results[i].status === "rejected" ||
+        !(results[i] as PromiseFulfilledResult<Response>).value.ok
+    );
+    const okCount = ids.length - failedIds.length;
+    if (failedIds.length === 0) {
+      toolbar.clearSelection();
+      toolbar.setSelectMode(false);
+      toast.add({ title: `Moved ${okCount} to trash` });
+    } else {
+      // Keep the failures selected for retry.
+      toolbar.clearSelection();
+      for (const id of failedIds) toolbar.toggleSelect(id);
+      toast.add({
+        title: `Couldn't trash ${failedIds.length} of ${ids.length}`,
+        description: "Left selected — try again.",
+        priority: "high",
+      });
+    }
+    // Only bump the refresh when something actually moved, so the timeline
+    // doesn't needlessly remount on a total failure.
+    if (okCount > 0) setRefreshKey((k) => k + 1);
+  }, [toolbar, toast]);
 
   // Lightbox is URL-based so back button restores chip state.
   // Opening pushes ?lb=<id>; closing calls router.back().
@@ -705,12 +758,11 @@ function LibraryContent() {
         />
       ) : timelineMode ? (
         bucketsLoading && buckets.length === 0 ? (
-          <div className="flex items-center gap-[var(--ft-space-2)] px-[var(--ft-space-4)] py-[var(--ft-space-4)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Loading…
+          <div className="px-4">
+            <GridSkeleton density={toolbar.view.density} />
           </div>
         ) : loadError ? (
-          <LibraryErrorState onRetry={() => setRefreshKey((k) => k + 1)} />
+          <LibraryError onRetry={() => setRefreshKey((k) => k + 1)} />
         ) : buckets.length === 0 ? (
           <LibraryEmptyState toolbar={toolbar} activeLens={activeLens} placeFilter={placeFilter} />
         ) : (
@@ -730,12 +782,11 @@ function LibraryContent() {
           </div>
         )
       ) : loading ? (
-        <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading…
+        <div className="px-4">
+          <GridSkeleton density={toolbar.view.density} />
         </div>
       ) : loadError ? (
-        <LibraryErrorState onRetry={() => setRefreshKey((k) => k + 1)} />
+        <LibraryError onRetry={() => setRefreshKey((k) => k + 1)} />
       ) : assets.length === 0 ? (
         <LibraryEmptyState toolbar={toolbar} activeLens={activeLens} placeFilter={placeFilter} />
       ) : (
@@ -1212,33 +1263,45 @@ function LibraryEmptyState({
     );
   }
 
+  // Zero-content first-run: no filters, nothing in the library. This is the
+  // primary onboarding moment — give it a real next action (upload direct, or
+  // bulk-import from Google/Amazon) rather than a dead-end message.
   return (
-    <div className="flex flex-col items-center gap-[var(--ft-space-3)] py-16 text-center">
-      <ImageIcon className="h-10 w-10 text-[var(--ft-color-on-surface-variant)]" />
-      <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
-        {LENS_EMPTY[activeLens] ?? "No assets in your library yet."}
-      </p>
+    <div className="flex flex-col items-center gap-[var(--ft-space-4)] py-16 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-[var(--ft-shape-large)] bg-[var(--ft-color-primary-container)] text-[var(--ft-color-on-primary-container)]">
+        <ImageIcon className="h-7 w-7" />
+      </div>
+      <div className="space-y-1">
+        <p className="text-[length:var(--ft-type-title-medium-size)] font-medium leading-[var(--ft-type-title-medium-line)] text-[var(--ft-color-on-surface)]">
+          {LENS_EMPTY[activeLens] ?? "No assets in your library yet."}
+        </p>
+        <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+          Add your photos to get started.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-[var(--ft-space-2)]">
+        <Button variant="filled" render={<Link href="/app/updates?section=uploads" />}>
+          <Upload className="h-4 w-4" />
+          Upload photos
+        </Button>
+        <Button variant="outlined" render={<Link href="/app/imports" />}>
+          Import from Google or Amazon
+        </Button>
+      </div>
     </div>
   );
 }
 
 // Phase 5 — error w/ retry. Used by both timeline and flat-grid fetch paths
 // when the buckets or assets fetch throws / returns non-2xx. Retry bumps
-// refreshKey, which is in the dependency list of both effects.
-function LibraryErrorState({ onRetry }: { onRetry: () => void }) {
+// refreshKey, which is in the dependency list of both effects. Delegates to
+// the shared ListErrorState card so every list surface fails identically.
+function LibraryError({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="flex flex-col items-center gap-[var(--ft-space-3)] py-16 text-center">
-      <ImageIcon className="h-10 w-10 text-[var(--ft-color-error)]/70" />
-      <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
-        Couldn&apos;t load your library. Check your connection and retry.
-      </p>
-      <button
-        onClick={onRetry}
-        className="inline-flex h-8 items-center justify-center rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline)] bg-transparent px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-primary-text)] hover:bg-[color-mix(in_srgb,var(--ft-color-primary)_8%,transparent)]"
-      >
-        Retry
-      </button>
-    </div>
+    <ListErrorState
+      message="Couldn't load your library. Check your connection and retry."
+      onRetry={onRetry}
+    />
   );
 }
 

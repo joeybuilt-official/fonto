@@ -8,8 +8,10 @@
 
 import "package:flutter/material.dart";
 import "package:photo_manager/photo_manager.dart";
+import "package:url_launcher/url_launcher.dart";
 import "package:workmanager/workmanager.dart";
 
+import "../../main.dart" show loadThemeMode, saveThemeMode;
 import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "../state/auth_store.dart";
@@ -28,7 +30,12 @@ import "google_photos_import_screen.dart";
 import "transfers_screen.dart";
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.auth, this.onSignOut});
+
+  /// Present ⇒ the Account section renders (manage-account link + sign out).
+  /// Absent (e.g. a standalone push) ⇒ the section is hidden.
+  final AuthStore? auth;
+  final VoidCallback? onSignOut;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -36,6 +43,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _loading = true;
+  ThemeMode _themeMode = ThemeMode.system;
   bool _autoImport = false;
   bool _wifiOnly = false;
   bool _chargingOnly = false;
@@ -47,12 +55,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
   StoragePlacement? _storage;
   bool _policyBusy = false;
 
+  // Inline account identity (P2) — name/email from GET /api/v1/me. null while
+  // loading; _accountError set when the fetch fails.
+  AccountInfo? _account;
+  bool _accountLoading = false;
+  bool _accountError = false;
+
   @override
   void initState() {
     super.initState();
     _load();
     _loadStorage();
     _loadAdmin();
+    _loadAccount();
+  }
+
+  Future<void> _loadAccount() async {
+    if (widget.auth == null) return;
+    setState(() {
+      _accountLoading = true;
+      _accountError = false;
+    });
+    try {
+      final auth = await AuthStore.load();
+      final client = FontoClient(auth);
+      try {
+        final a = await client.me();
+        if (mounted) setState(() => _account = a);
+      } finally {
+        client.close();
+      }
+    } catch (_) {
+      if (mounted) setState(() => _accountError = true);
+    } finally {
+      if (mounted) setState(() => _accountLoading = false);
+    }
   }
 
   // M14 / ADR 0055 — gate the Instance Admin tile on the server tier check.
@@ -134,6 +171,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // Inline account row: avatar + name/email. Loading spinner while fetching,
+  // a retry affordance on error, and a graceful "Signed in" fallback when the
+  // profile has neither name nor email.
+  Widget _buildAccountIdentity() {
+    final a = _account;
+    if (a != null) {
+      final name = (a.name != null && a.name!.trim().isNotEmpty)
+          ? a.name!.trim()
+          : (a.email ?? "Signed in");
+      return ListTile(
+        leading: const Icon(Icons.person_outline),
+        title: Text(name),
+        subtitle: (a.email != null && a.email!.trim().isNotEmpty)
+            ? Text(a.email!.trim())
+            : null,
+      );
+    }
+    if (_accountError) {
+      return ListTile(
+        leading: const Icon(Icons.person_outline),
+        title: const Text("Couldn't load account"),
+        subtitle: const Text("Tap to retry."),
+        trailing: const Icon(Icons.refresh),
+        onTap: _accountLoading ? null : _loadAccount,
+      );
+    }
+    return const ListTile(
+      leading: Icon(Icons.person_outline),
+      title: Text("Loading account…"),
+      trailing: SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+    );
+  }
+
   String _fmtBytes(int bytes) {
     if (bytes < 1024) return "$bytes B";
     if (bytes < 1024 * 1024) return "${(bytes / 1024).toStringAsFixed(1)} KB";
@@ -149,6 +223,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final albums = await SettingsStore.getSelectedAlbumIds();
     final wifiOnly = await SettingsStore.getSyncWifiOnly();
     final chargingOnly = await SettingsStore.getSyncChargingOnly();
+    final themeMode = await loadThemeMode();
     if (!mounted) return;
     setState(() {
       _autoImport = enabled;
@@ -156,8 +231,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _selectedAlbumIds = albums;
       _wifiOnly = wifiOnly;
       _chargingOnly = chargingOnly;
+      _themeMode = themeMode;
       _loading = false;
     });
+  }
+
+  Future<void> _onThemeChange(ThemeMode? next) async {
+    if (next == null || next == _themeMode) return;
+    setState(() => _themeMode = next);
+    // Applies live (MaterialApp listens to the same notifier) and persists.
+    await saveThemeMode(next);
+  }
+
+  // Change password / edit profile live on the web account page; open it in the
+  // system browser. Better Auth's session cookie carries over, so no re-login.
+  Future<void> _openWebAccount() async {
+    final base = widget.auth?.baseUrl;
+    if (base == null || base.isEmpty) return;
+    final uri = Uri.parse("$base/app/settings");
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  void _signOut() {
+    // Pop Settings first so the app swaps cleanly to the login screen beneath.
+    Navigator.of(context).pop();
+    widget.onSignOut?.call();
+  }
+
+  String _accountHost() {
+    final base = widget.auth?.baseUrl ?? "";
+    final host = Uri.tryParse(base)?.host;
+    return (host == null || host.isEmpty) ? "the web app" : host;
   }
 
   /// Re-register the upload-drain backstop with the current network + charging
@@ -481,6 +585,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    "APPEARANCE",
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.brightness_6_outlined),
+                  title: const Text("Theme"),
+                  subtitle: const Text(
+                    "Match your device, or force light or dark.",
+                  ),
+                  trailing: DropdownButton<ThemeMode>(
+                    value: _themeMode,
+                    underline: const SizedBox.shrink(),
+                    onChanged: _onThemeChange,
+                    items: const [
+                      DropdownMenuItem(
+                        value: ThemeMode.system,
+                        child: Text("System"),
+                      ),
+                      DropdownMenuItem(
+                        value: ThemeMode.light,
+                        child: Text("Light"),
+                      ),
+                      DropdownMenuItem(
+                        value: ThemeMode.dark,
+                        child: Text("Dark"),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(),
                 ListTile(
                   leading: const Icon(Icons.swap_vert),
                   title: const Text("Transfers"),
@@ -738,6 +880,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: _openAdmin,
+                  ),
+                ],
+                if (widget.auth != null) ...[
+                  const Divider(),
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text(
+                      "ACCOUNT",
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                  _buildAccountIdentity(),
+                  ListTile(
+                    leading: const Icon(Icons.open_in_new),
+                    title: const Text("Manage account"),
+                    subtitle: Text(
+                      "Change name, email, or password on ${_accountHost()}.",
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _openWebAccount,
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      Icons.logout,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    title: Text(
+                      "Sign out",
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                    onTap: widget.onSignOut == null ? null : _signOut,
                   ),
                 ],
               ],

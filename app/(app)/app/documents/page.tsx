@@ -28,6 +28,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -40,6 +41,7 @@ import {
 } from "lucide-react";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { ListErrorState } from "../_components/list-states";
+import { ListSkeleton } from "../_components/grid-skeleton";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 import { cn } from "@/lib/utils";
 
@@ -324,6 +326,48 @@ function PreviewPane({
   );
 }
 
+// ---- infinite-scroll sentinel --------------------------------------------
+
+/** IntersectionObserver tripwire that fires `onLoadMore` when it nears the
+ *  bottom of its scroll container. `rootRef` MUST be the scrolling ancestor —
+ *  a `root: null` (viewport) observer never fires for an element clipped
+ *  inside an `overflow-auto` box. */
+function ScrollSentinel({
+  rootRef,
+  onLoadMore,
+  hasMore,
+  loadingMore,
+}: {
+  rootRef: React.RefObject<HTMLElement | null>;
+  onLoadMore: () => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!hasMore) return;
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onLoadMore();
+      },
+      { root: rootRef.current, rootMargin: "400px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loadingMore, onLoadMore, rootRef]);
+
+  if (!hasMore) return null;
+  return (
+    <div ref={ref} className="flex items-center justify-center py-3">
+      {loadingMore && (
+        <Loader2 className="h-4 w-4 animate-spin text-[var(--ft-color-on-surface-variant)]" />
+      )}
+    </div>
+  );
+}
+
 // ---- Page shell -----------------------------------------------------------
 
 function DocumentsContent() {
@@ -336,36 +380,68 @@ function DocumentsContent() {
     availableFilters: ["favorite"],
   });
 
+  const listScrollRef = useRef<HTMLDivElement>(null);
+
   const [docs, setDocs] = useState<Asset[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [subtype, setSubtype] = useState<string | null>(null);
 
+  const buildQuery = useCallback(() => {
+    const sp = new URLSearchParams();
+    sp.set("limit", "200");
+    if (subtype) sp.set("subtype", subtype);
+    return sp;
+  }, [subtype]);
+
+  // First keyset page. The 200-row cap is a page, not the whole set — the
+  // sentinel below the list walks the rest via the cursor. Rows are re-checked
+  // against the doc-mime allowlist (audit bug §UX-4) so an image misclassified
+  // as e.g. "receipt" can't leak into the list.
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
       setLoading(true);
       setError(false);
       try {
-        const sp = new URLSearchParams();
-        if (subtype) sp.set("subtype", subtype);
-        const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        const r = await fetch(`/api/v1/assets?${buildQuery().toString()}`);
         if (!r.ok) throw new Error(`assets ${r.status}`);
-        const d = (await r.json()) as { assets?: Asset[] };
-        const list = (d.assets ?? []).filter((a) =>
-          // Audit bug §UX-4 — even when a subtype filter is set we
-          // re-check the mime so an image misclassified as "receipt"
-          // can't leak into the documents list.
-          isDocMime(a.mimeType)
-        );
-        setDocs(list);
+        const d = (await r.json()) as { assets?: Asset[]; cursor?: string | null };
+        if (cancelled) return;
+        setDocs((d.assets ?? []).filter((a) => isDocMime(a.mimeType)));
+        setCursor(d.cursor ?? null);
       } catch {
-        setError(true);
+        if (!cancelled) setError(true);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, [subtype, refreshKey]);
+    return () => {
+      cancelled = true;
+    };
+  }, [buildQuery, refreshKey]);
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const sp = buildQuery();
+      sp.set("cursor", cursor);
+      const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+      if (r.ok) {
+        const d = (await r.json()) as { assets?: Asset[]; cursor?: string | null };
+        setDocs((prev) => [...prev, ...(d.assets ?? []).filter((a) => isDocMime(a.mimeType))]);
+        setCursor(d.cursor ?? null);
+      }
+    } catch {
+      /* transient — sentinel retries on next scroll */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [cursor, loadingMore, buildQuery]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -442,16 +518,14 @@ function DocumentsContent() {
         <TypeRail counts={counts} selected={subtype} onSelect={setSubtype} />
 
         <section className="flex w-96 max-w-md shrink-0 flex-col border-r border-[var(--ft-color-outline-variant)]">
-          <div className="flex-1 overflow-auto px-2 py-2">
+          <div ref={listScrollRef} className="flex-1 overflow-auto px-2 py-2">
             {error ? (
               <ListErrorState
                 message="Couldn't load your documents. Check your connection and retry."
                 onRetry={() => setRefreshKey((k) => k + 1)}
               />
             ) : loading ? (
-              <p className="px-2 py-4 text-sm text-[var(--ft-color-on-surface-variant)]">
-                Loading documents…
-              </p>
+              <ListSkeleton count={7} />
             ) : visible.length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-12 text-center">
                 <FileText className="h-8 w-8 text-[var(--ft-color-on-surface-variant)]" />
@@ -462,16 +536,24 @@ function DocumentsContent() {
                 </p>
               </div>
             ) : (
-              <div className="flex flex-col gap-0.5">
-                {visible.map((doc) => (
-                  <DocRow
-                    key={doc.id}
-                    doc={doc}
-                    active={doc.id === selectedId}
-                    onClick={() => setSelected(doc.id)}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="flex flex-col gap-0.5">
+                  {visible.map((doc) => (
+                    <DocRow
+                      key={doc.id}
+                      doc={doc}
+                      active={doc.id === selectedId}
+                      onClick={() => setSelected(doc.id)}
+                    />
+                  ))}
+                </div>
+                <ScrollSentinel
+                  rootRef={listScrollRef}
+                  onLoadMore={loadMore}
+                  hasMore={cursor !== null}
+                  loadingMore={loadingMore}
+                />
+              </>
             )}
           </div>
         </section>

@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { classifyDriveInput } from "@/lib/import/driveLink";
+import { Button } from "@/components/ui/button";
 import { ImportsList } from "../_components/imports-list";
 
 const TAKEOUT_DOWNLOAD_HINT =
@@ -155,12 +156,23 @@ function GoogleImport() {
             <p className="text-sm text-muted-foreground">
               Connect Google first so Fonto can read the archive from your Drive.
             </p>
-            <Link
-              href="/app/settings"
-              className="inline-block text-xs font-medium text-primary-text hover:underline"
-            >
-              Go to Settings → Integrations
-            </Link>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                variant="filled"
+                size="sm"
+                render={
+                  <a href="/api/v1/integrations/google/auth?returnTo=/app/imports/google" />
+                }
+              >
+                Connect Google
+              </Button>
+              <Link
+                href="/app/settings"
+                className="text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                Manage in Settings → Integrations
+              </Link>
+            </div>
           </>
         ) : (
           <>
