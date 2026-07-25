@@ -267,16 +267,26 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       if (!mounted) return;
       setState(() => _assets[_index] = updated);
     } on ApiException catch (e) {
-      // A 4xx is a real server rejection — surface it. Anything else is
-      // treated as a transient/offline failure and queued for replay.
-      if (e.status >= 400 && e.status < 500) {
-        _snack("Favorite failed: ${e.status} ${e.message}");
+      // Queuing every 5xx told the user "Saved offline — will sync" for writes
+      // the server had considered and refused, and the replay then failed the
+      // same way. Only the gateway statuses — the shape a restarting container
+      // or a tunnel blip takes — are worth retrying, and they say so honestly.
+      if (e.status == 502 || e.status == 503 || e.status == 504) {
+        await _queueFavoriteOffline(
+          id,
+          next,
+          queuedMessage: "Server busy — saved and will retry.",
+        );
       } else {
-        await _queueFavoriteOffline(id, next);
+        _snack("Favorite failed: ${e.status} ${e.message}");
       }
     } catch (_) {
       // Network down — optimistic + queued replay on reconnect.
-      await _queueFavoriteOffline(id, next);
+      await _queueFavoriteOffline(
+        id,
+        next,
+        queuedMessage: "Saved offline — will sync when you're back online.",
+      );
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -284,7 +294,11 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
 
   /// Offline favorite: optimistically flip the local row and persist the edit
   /// to the pending-mutations queue, which replays on reconnect.
-  Future<void> _queueFavoriteOffline(String id, bool next) async {
+  Future<void> _queueFavoriteOffline(
+    String id,
+    bool next, {
+    required String queuedMessage,
+  }) async {
     var queued = false;
     try {
       final q = await PendingMutations.open();
@@ -302,7 +316,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       if (i >= 0) {
         setState(() => _assets[i] = _assets[i].copyWith(isFavorite: next));
       }
-      _snack("Saved offline — will sync when you're back online.");
+      _snack(queuedMessage);
     } else {
       _snack("Couldn't save — try again.");
     }
@@ -317,6 +331,9 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       _snack("Re-scan queued — recognition will refresh shortly.");
     } on ApiException catch (e) {
       _snack("Re-scan failed: ${e.status} ${e.message}");
+    } catch (_) {
+      // Transport failures used to escape uncaught, leaving no feedback.
+      _snack("Re-scan failed — check your connection and try again.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -341,11 +358,17 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
         ],
       ),
     );
-    if (ok == true) await _trash();
+    // The dialog is an async gap; _trash immediately setStates and pops.
+    if (ok == true && mounted) await _trash();
   }
 
   Future<void> _trash() async {
-    if (_acting) return;
+    if (_acting) {
+      // Confirming "Move to trash" and having nothing at all happen is worse
+      // than saying why.
+      _snack("Another action is still running — try again in a moment.");
+      return;
+    }
     setState(() => _acting = true);
     try {
       await widget.client.trashAsset(_cur.id);
@@ -356,10 +379,9 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       });
     } on ApiException catch (e) {
       _snack("Trash failed: ${e.status} ${e.message}");
-      if (mounted) setState(() => _acting = false);
     } catch (_) {
       // Network down / timeout — surface it and clear the wedged button.
-      if (mounted) _snack("Trash failed — check your connection and try again.");
+      _snack("Trash failed — check your connection and try again.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -379,7 +401,12 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       if (!mounted) return;
       // Refresh preview URL + drop the cached image so the next paint pulls
       // the rotated pixels. The face overlay is invalidated for the same id.
-      await CachedNetworkImage.evictFromCache(_previews[id] ?? "");
+      final cached = _previews[id];
+      if (cached != null && cached.isNotEmpty) {
+        await CachedNetworkImage.evictFromCache(cached);
+      }
+      // evictFromCache is an await — re-check before touching State again.
+      if (!mounted) return;
       setState(() {
         _previews.remove(id);
         _previewFailed.remove(id);
@@ -400,6 +427,9 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       _snack("Rotated");
     } on ApiException catch (e) {
       _snack("Rotate failed: ${e.status} ${e.message}");
+    } catch (_) {
+      // Transport failures used to escape uncaught, leaving no feedback.
+      _snack("Rotate failed — check your connection and try again.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -414,6 +444,9 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     final a = _cur;
     if (!a.mimeType.startsWith("image/")) return;
     setState(() => _acting = true);
+    // Set only once the server has committed the crop; everything after the
+    // try/finally keys off it.
+    String? newId;
     try {
       // 1. Resolve original signed URL + pull bytes into memory. The cropper
       //    needs the source bytes; we don't persist them to disk.
@@ -456,11 +489,25 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       if (nw <= 0 || nh <= 0) {
         throw ApiException(400, "Crop rect is empty");
       }
-      final newId = await widget.client.transformCrop(a.id, nx, ny, nw, nh);
+      newId = await widget.client.transformCrop(a.id, nx, ny, nw, nh);
+    } on ApiException catch (e) {
+      _snack("Crop failed: ${e.status} ${e.message}");
+    } catch (e) {
+      _snack("Crop failed: $e");
+    } finally {
+      // On the success path `_acting` deliberately stays set: the fetch +
+      // navigation below are still part of this action, and dropping the
+      // re-entrancy guard there would let a second action start mid-flight.
+      if (newId == null && mounted) setState(() => _acting = false);
+    }
 
-      if (!mounted) return;
-      _snack("Saved cropped copy");
-      // 4. Mirror the open-by-id navigation used elsewhere in the app.
+    // Steps 4+ live outside the try on purpose. The crop is already committed
+    // server-side by this point, so a failure to fetch the new row or to
+    // navigate must not report "Crop failed" for an operation that succeeded.
+    if (newId == null) return;
+    if (!mounted) return;
+    _snack("Saved cropped copy");
+    try {
       final fresh = await widget.client.getAsset(newId);
       if (!mounted) return;
       await Navigator.of(context).pushReplacement(
@@ -473,11 +520,11 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
           ),
         ),
       );
-    } on ApiException catch (e) {
-      _snack("Crop failed: ${e.status} ${e.message}");
-    } catch (e) {
-      _snack("Crop failed: $e");
+    } catch (_) {
+      _snack("Cropped copy saved, but couldn't open it. Pull to refresh.");
     } finally {
+      // Release the guard the first block deliberately left set. Without this
+      // a failed getAsset would wedge every action on the screen.
       if (mounted) setState(() => _acting = false);
     }
   }
@@ -508,12 +555,20 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       await Share.share(url, subject: _cur.filename);
     } on ApiException catch (e) {
       _snack("Share failed: ${e.status} ${e.message}");
+    } catch (_) {
+      // Without this, an offline share threw past the ApiException clause and
+      // the user saw nothing at all — the button simply un-greyed.
+      _snack("Couldn't create a share link — check your connection.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
   }
 
+  /// Every action in this screen reports through here, and every one of them
+  /// calls it after an await — so the mounted guard belongs here rather than
+  /// at each of the eight call sites.
   void _snack(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 

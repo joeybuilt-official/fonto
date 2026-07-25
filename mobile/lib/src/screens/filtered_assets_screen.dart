@@ -115,14 +115,24 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
         _loadingMore = false;
       });
     } on ApiException catch (e) {
-      _fail("${e.status}: ${e.message}");
+      _fail("${e.status}: ${e.message}", reset: reset);
     } catch (e) {
-      _fail(e.toString());
+      _fail(e.toString(), reset: reset);
     }
   }
 
-  void _fail(String msg) {
+  void _fail(String msg, {required bool reset}) {
     if (!mounted) return;
+    // A failed page 2 must not wipe the 60 assets already on screen. Only the
+    // first load owns the full-page error state; a load-more failure keeps the
+    // grid and reports itself in a SnackBar, leaving the "+" tile to retry.
+    if (!reset) {
+      setState(() => _loadingMore = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't load more: $msg")),
+      );
+      return;
+    }
     setState(() {
       _error = msg;
       _loading = false;
@@ -143,7 +153,65 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
     if (!mounted || result == null) return;
     final trashedId = result["trashedId"] as String?;
     if (trashedId != null) {
+      // Keep the row for Undo: `_load(reset: true)` only refetches the first
+      // page, so a restore outside it would leave "Restored." claiming
+      // something the user can't see.
+      final removed = _assets.cast<Asset?>().firstWhere(
+            (a) => a?.id == trashedId,
+            orElse: () => null,
+          );
       setState(() => _assets.removeWhere((a) => a.id == trashedId));
+      if (!_undoable) return;
+      // Confirm the destructive write and offer its inverse; the tile silently
+      // disappearing was the only signal the user got. The messenger is
+      // captured here because a SnackBar is owned above the route and can
+      // outlive this State.
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        SnackBar(
+          content: const Text("Moved to trash."),
+          action: SnackBarAction(
+            label: "Undo",
+            onPressed: () => _restoreTrashed(trashedId, messenger, removed),
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Whether "Moved to trash." + Undo is honest on this surface.
+  ///
+  /// It isn't on the lifecycle-pinned grids. From Trash the trash write is a
+  /// no-op on an already-trashed asset, so the message would be wrong; from
+  /// Archive, `restore` lands the asset in `active` rather than back in this
+  /// grid, so Undo would silently de-archive it while the tile reappeared
+  /// under an "Archive" title. Those surfaces keep the previous behaviour —
+  /// the tile is removed and nothing is claimed.
+  bool get _undoable =>
+      widget.lifecycle == null || widget.lifecycle == "active";
+
+  Future<void> _restoreTrashed(
+    String id,
+    ScaffoldMessengerState messenger,
+    Asset? removed,
+  ) async {
+    try {
+      await widget.client.restoreAsset(id);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text("Couldn't restore: $e")));
+      return;
+    }
+    messenger.showSnackBar(const SnackBar(content: Text("Restored.")));
+    if (!mounted) return;
+    // Re-derive the slot from the sort key; a pull-to-refresh may have
+    // rewritten the list while the SnackBar was up.
+    if (removed != null && !_assets.any((a) => a.id == id)) {
+      final key = removed.capturedAt ?? removed.createdAt;
+      var at = _assets.indexWhere(
+        (a) => (a.capturedAt ?? a.createdAt).isBefore(key),
+      );
+      if (at < 0) at = _assets.length;
+      setState(() => _assets.insert(at, removed));
     }
   }
 
@@ -155,31 +223,51 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
     );
   }
 
-  bool get _hasFilter =>
-      widget.favorite ||
-      widget.kind != null ||
-      (widget.lifecycle != null && widget.lifecycle != "active") ||
-      widget.place != null;
+  /// Copy for an empty grid. `kind` only describes the lens surfaces, so
+  /// Favorites / Trash / Archive / shoots / place cards used to fall through
+  /// to the generic "No assets match these filters." Web names each one
+  /// (e.g. trash/page.tsx: "Trash is empty."), so mobile does too.
+  (String, IconData) get _emptyState {
+    if (widget.lifecycle == "trashed") {
+      return ("Trash is empty.", Icons.delete_outline);
+    }
+    if (widget.lifecycle == "archived") {
+      return ("Nothing archived yet.", Icons.archive_outlined);
+    }
+    if (widget.favorite) {
+      return ("No favorites yet.", Icons.star_border);
+    }
+    final place = widget.place;
+    if (place != null) {
+      return ("No photos from $place.", Icons.place_outlined);
+    }
+    if (widget.shootId != null) {
+      return ("No assets in this shoot yet.", Icons.camera_alt_outlined);
+    }
+    return (
+      filteredEmptyForKind(widget.kind),
+      Icons.photo_library_outlined,
+    );
+  }
 
   Widget _buildBody() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      // Placeholder tiles on the same 3-col/2px lattice the grid below uses,
+      // instead of a spinner in blank space — parity with web's GridSkeleton.
+      return const GridSkeleton(
+        spacing: 2,
+        padding: EdgeInsets.all(2),
+      );
     }
     if (_error != null) {
       return ListErrorState(onRetry: () => _load(reset: true));
     }
     if (_assets.isEmpty) {
-      // Mirrors the web filter-aware empty state. When a filter is pinned
-      // (this surface always opens w/ at least one) the copy points the
-      // user to clearing it via the back button — there's no in-page
-      // filter UI here, so the CTA pops to Collections.
-      return ListEmptyState(
-        message: _hasFilter
-            ? filteredEmptyForKind(widget.kind)
-            : defaultEmptyForKind(widget.kind),
-        filtered: _hasFilter,
-        onClearFilters: _hasFilter ? () => Navigator.of(context).pop() : null,
-      );
+      // No CTA here: every entry point to this screen is a push, so the
+      // AppBar back arrow is the recovery. The old "Clear filters" button
+      // just popped the route, which is not what its label promised.
+      final (message, icon) = _emptyState;
+      return ListEmptyState(message: message, icon: icon);
     }
 
     return RefreshIndicator(

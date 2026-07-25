@@ -63,9 +63,12 @@ Widget _stateScaffold({
   required VoidCallback onRetry,
   required Widget Function() builder,
   IconData emptyIcon = Icons.explore_outlined,
+  Widget skeleton = const GridSkeleton(),
 }) {
   if (loading) {
-    return const Center(child: CircularProgressIndicator());
+    // Placeholders shaped like the content that's coming, not a spinner in
+    // blank space — parity with the web GridSkeleton/ListSkeleton pass.
+    return skeleton;
   }
   if (error != null) {
     return ListErrorState(onRetry: onRetry);
@@ -498,6 +501,9 @@ class _PlacesTabState extends State<_PlacesTab> {
       isEmpty: _places.isEmpty,
       emptyText: "No geo-tagged photos yet.",
       onRetry: _load,
+      // Places is the one Explore surface that resolves into a map + a list of
+      // rows, not a photo grid, so it opts out of the grid default.
+      skeleton: const ListSkeleton(count: 6),
       builder: () {
         final geo = _places.where((p) => p.hasCoords).toList();
         return Column(
@@ -1281,9 +1287,15 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
     });
     try {
       await widget.client.setPersonGroups(widget.person.id, next);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _personGroupIds = prev);
+      // The chip visibly toggles on and then back — without a message that is
+      // indistinguishable from a mis-tap. Every other mutation in this file
+      // reports; this one didn't.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't update groups: $e")),
+      );
     } finally {
       if (mounted) setState(() => _savingGroups = false);
     }

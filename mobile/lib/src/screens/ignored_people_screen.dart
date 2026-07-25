@@ -137,7 +137,7 @@ class _IgnoredPeopleScreenState extends State<IgnoredPeopleScreen> {
 
   Widget _buildBody() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const ListSkeleton();
     }
     if (_error != null) {
       return ListErrorState(onRetry: _load);

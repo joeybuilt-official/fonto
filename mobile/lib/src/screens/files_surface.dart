@@ -14,6 +14,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../widgets/list_states.dart";
 
 class FilesSurface extends StatefulWidget {
   const FilesSurface({
@@ -59,6 +60,15 @@ class _FilesSurfaceState extends State<FilesSurface> {
     _debounce?.cancel();
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  /// Clear the search box from the empty state's CTA, so "No files match …"
+  /// is recoverable without hunting for the × in the field.
+  void _clearQuery() {
+    _debounce?.cancel();
+    _searchCtrl.clear();
+    _query = "";
+    _load();
   }
 
   void _onSearchChanged(String v) {
@@ -174,26 +184,24 @@ class _FilesSurfaceState extends State<FilesSurface> {
   }
 
   Widget _buildList(ThemeData theme) {
+    // Was a hand-rolled clone of the shared 4-state widgets (bare Text + a
+    // TextButton, no icon, no tokens), which made this the one list surface
+    // that looked different from the other twelve.
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const ListSkeleton();
     }
     if (_error) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("Couldn't load files."),
-            TextButton(onPressed: _load, child: const Text("Retry")),
-          ],
-        ),
+      return ListErrorState(
+        message: "Couldn't load your files. Check your connection and retry.",
+        onRetry: _load,
       );
     }
     if (_assets.isEmpty) {
-      return Center(
-        child: Text(
-          _query.isEmpty ? "No files yet." : "No files match “$_query”.",
-          style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-        ),
+      return ListEmptyState(
+        icon: Icons.folder_open_outlined,
+        message: _query.isEmpty ? "No files yet." : "No files match “$_query”.",
+        filtered: _query.isNotEmpty,
+        onClearFilters: _query.isEmpty ? null : _clearQuery,
       );
     }
 

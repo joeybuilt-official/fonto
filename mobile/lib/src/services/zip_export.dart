@@ -34,6 +34,16 @@ Future<void> exportAndShareZip(
       collectionId: collectionId,
       scope: scope,
     );
+    // The download is the part that can fail meaningfully; confirm it before
+    // handing off, so a cancelled share sheet doesn't read as a failed export.
+    // Without this the last thing the user ever saw was "Preparing export…".
+    // hideCurrentSnackBar first: SnackBars queue, so otherwise this one waits
+    // out the full 4s of "Preparing export…" and surfaces behind the native
+    // share sheet, i.e. after the moment it was meant to describe.
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      const SnackBar(content: Text("Export ready — choose where to save it.")),
+    );
     await Share.shareXFiles(
       [XFile(file.path, mimeType: "application/zip")],
       subject: "Fonto export",

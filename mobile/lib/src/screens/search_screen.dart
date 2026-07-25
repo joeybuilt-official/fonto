@@ -94,6 +94,14 @@ class _SearchScreenState extends State<SearchScreen> {
 
   List<Asset> _results = const [];
   List<Asset> _semanticResults = const [];
+  // Whether the last run fired a CLIP query at all, kept separate from whether
+  // the sidecar reported itself unavailable — a "Matches" header and a
+  // "no semantic matches" note only make sense when CLIP actually ran.
+  bool _clipRan = false;
+  // Whether CLIP returned anything at all, BEFORE the dedup against the text
+  // hits. Without this, a query whose semantic hits were simply already in the
+  // text results reported "No semantic matches." — untrue, they're on screen.
+  bool _clipHadHits = false;
   bool _semanticUnavailable = false;
   Map<String, String> _thumbs = const {};
 
@@ -176,6 +184,8 @@ class _SearchScreenState extends State<SearchScreen> {
         _busy = false;
         _results = const [];
         _semanticResults = const [];
+        _clipRan = false;
+        _clipHadHits = false;
         _semanticUnavailable = false;
         _thumbs = const {};
         _error = null;
@@ -196,8 +206,15 @@ class _SearchScreenState extends State<SearchScreen> {
           _classification == null &&
           _color == null &&
           _exifValues.every((v) => v == null);
-      final clipFuture =
-          runClip ? widget.client.searchClip(q) : Future.value(<Asset>[]);
+      // Web fires CLIP detached — `fetch(...).catch(() => setClipHits([]))` —
+      // so a sidecar outage never discards a perfectly good text result set.
+      // Swallow it here rather than letting it reach the shared catch below,
+      // which would blank the whole screen over an optional side-query.
+      final clipFuture = runClip
+          ? widget.client
+              .searchClip(q)
+              .catchError((Object _) => ClipSearchResult.unavailableResult)
+          : Future.value(ClipSearchResult.empty);
 
       final assets = await widget.client.search(
         q,
@@ -215,7 +232,8 @@ class _SearchScreenState extends State<SearchScreen> {
         semantic: _semantic,
         ocrOnly: _ocrOnly,
       );
-      final clipRaw = await clipFuture;
+      final clipResult = await clipFuture;
+      final clipRaw = clipResult.assets;
       // Drop semantic hits already in the text results: the same asset in both
       // grids means two Hero widgets sharing one tag, which Flutter rejects and
       // renders as flicker. Dedup keeps every Hero tag unique on screen.
@@ -235,7 +253,9 @@ class _SearchScreenState extends State<SearchScreen> {
       setState(() {
         _results = assets;
         _semanticResults = clip;
-        _semanticUnavailable = runClip && clip.isEmpty;
+        _clipRan = runClip;
+        _clipHadHits = clipRaw.isNotEmpty;
+        _semanticUnavailable = runClip && clipResult.unavailable;
         _thumbs = thumbs;
         _busy = false;
       });
@@ -383,28 +403,33 @@ class _SearchScreenState extends State<SearchScreen> {
               child: ActionChip(
                 avatar: const Icon(Icons.clear, size: 18),
                 label: const Text("Clear"),
-                onPressed: () {
-                  setState(() {
-                    _classification = null;
-                    _color = null;
-                    _tagId = null;
-                    _tagName = null;
-                    _from = null;
-                    _to = null;
-                    _cameraMake = null;
-                    _cameraModel = null;
-                    _lensModel = null;
-                    _iso = null;
-                    _fNumber = null;
-                    _focalLength = null;
-                  });
-                  _run();
-                },
+                onPressed: _clearFilters,
               ),
             ),
         ],
       ),
     );
+  }
+
+  /// Drop every structured filter and re-run. Reached from the "Clear" chip in
+  /// the toggle bar and from the filtered empty state, so a zero-result filter
+  /// is recoverable without hunting for the chip.
+  void _clearFilters() {
+    setState(() {
+      _classification = null;
+      _color = null;
+      _tagId = null;
+      _tagName = null;
+      _from = null;
+      _to = null;
+      _cameraMake = null;
+      _cameraModel = null;
+      _lensModel = null;
+      _iso = null;
+      _fNumber = null;
+      _focalLength = null;
+    });
+    _run();
   }
 
   Future<void> _openDetail(List<Asset> set, int i) async {
@@ -429,7 +454,9 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildBody() {
-    if (_busy) return const Center(child: CircularProgressIndicator());
+    // Placeholder tiles at the result grid's own density, not a spinner in
+    // blank space — parity with the web search page's <ListSkeleton/>.
+    if (_busy) return const GridSkeleton();
     if (_error != null) {
       return ListErrorState(
         message: _offline
@@ -446,24 +473,35 @@ class _SearchScreenState extends State<SearchScreen> {
         message: hasInput
             ? "No assets found."
             : "Type to search your photos, text, and descriptions — or set a filter.",
+        // A down sidecar usually means zero text hits too, so this branch —
+        // not the "Semantic matches" section — is where the user actually
+        // lands. Carry the notice here or it is never seen.
+        hint: _semanticUnavailable
+            ? "Semantic search is unavailable right now, so only text and "
+                "filter matches were searched."
+            : null,
+        filtered: _hasFilters,
+        onClearFilters: _hasFilters ? _clearFilters : null,
       );
     }
     return CustomScrollView(
       slivers: [
         if (_results.isNotEmpty) ...[
-          _sectionHeader(
-            _semanticResults.isNotEmpty || _semanticUnavailable
-                ? "Matches"
-                : null,
-          ),
+          _sectionHeader(_clipRan ? "Matches" : null),
           _grid(_results),
         ],
-        if (_semanticUnavailable)
+        // Only claim the service is down when the server actually said so, and
+        // stay quiet when CLIP did return hits that simply duplicated the text
+        // results — those are already on screen, so "No semantic matches."
+        // would be its own small lie.
+        if (_clipRan && _semanticResults.isEmpty && !_clipHadHits)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                "Semantic search unavailable.",
+                _semanticUnavailable
+                    ? "Semantic search unavailable."
+                    : "No semantic matches.",
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),

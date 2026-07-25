@@ -95,14 +95,25 @@ class FontoClient {
     return json.decode(res.body) as Map<String, dynamic>;
   }
 
+  /// Pull the server's `{error: …}` out of a response body. Non-JSON bodies —
+  /// a proxy's HTML error page, a truncated stream — are deliberately NOT
+  /// echoed back: this string ends up verbatim in a SnackBar, and a 5xx from
+  /// Cloudflare or Next would otherwise paint a whole HTML document into it.
   String _extractError(String body) {
     try {
       final j = json.decode(body) as Map<String, dynamic>;
-      return (j["error"] as String?) ?? body;
+      final msg = j["error"] as String?;
+      if (msg != null && msg.trim().isNotEmpty) return _capMessage(msg.trim());
     } catch (_) {
-      return body;
+      // Not JSON — fall through to the plain-text path.
     }
+    final trimmed = body.trim();
+    if (trimmed.isEmpty || trimmed.startsWith("<")) return "Server error";
+    return _capMessage(trimmed);
   }
+
+  static String _capMessage(String s) =>
+      s.length <= 200 ? s : "${s.substring(0, 197)}…";
 
   /// Round-trips /api/v1/stats. Doubles as the "is this PAT valid?"
   /// probe from the login screen.
@@ -261,16 +272,20 @@ class FontoClient {
   }
 
   /// Text→image CLIP semantic search (`/api/v1/search/clip`), best-match-first.
-  /// Returns an empty list when the Plexo vision sidecar is unconfigured or
-  /// errors (server replies `{unavailable:true}`) so callers degrade quietly,
-  /// exactly like the web search page.
-  Future<List<Asset>> searchClip(String q, {int limit = 24}) async {
+  /// The server replies `{unavailable:true}` when the Plexo vision sidecar is
+  /// unconfigured; that arrives on the result rather than collapsing into an
+  /// empty list, because the web page shows different copy for "service down"
+  /// and "no semantic matches" and mobile could not tell them apart.
+  Future<ClipSearchResult> searchClip(String q, {int limit = 24}) async {
     final j = await _getJson("/api/v1/search/clip", {"q": q, "limit": "$limit"});
-    if (j["unavailable"] == true) return const [];
+    if (j["unavailable"] == true) return ClipSearchResult.unavailableResult;
     final raw = (j["results"] as List? ?? const []).cast<Map<String, dynamic>>();
-    return raw
-        .map((r) => Asset.fromJson(r["asset"] as Map<String, dynamic>))
-        .toList();
+    return ClipSearchResult(
+      assets: raw
+          .map((r) => Asset.fromJson(r["asset"] as Map<String, dynamic>))
+          .toList(),
+      unavailable: false,
+    );
   }
 
   /// Folder tree — flat list `[{path, assetCount}]` plus a separate

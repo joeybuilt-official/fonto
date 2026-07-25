@@ -26,11 +26,14 @@ import "../state/pending_mutations.dart";
 import "../state/drive_download_queue.dart";
 import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
+import "../theme/tokens.dart";
 import "../widgets/list_states.dart";
 import "../widgets/live_badge.dart";
 import "asset_detail_screen.dart";
 import "device_asset_viewer.dart";
 import "files_surface.dart";
+import "filtered_assets_screen.dart";
+import "imports_screen.dart";
 import "memories_screen.dart";
 import "settings_screen.dart";
 import "transfers_screen.dart";
@@ -728,6 +731,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (picked.isEmpty) return;
     setState(() => _uploading = true);
     int queued = 0;
+    int failed = 0;
     try {
       final queue = await UploadQueue.open();
       for (final x in picked) {
@@ -742,12 +746,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           if (inserted != null) queued++;
         } catch (_) {
           // Skip this one and keep going — partial success beats abort.
+          failed++;
         }
       }
       if (!mounted) return;
+      // "Queued 0 of 12" read as success. Say what actually happened: a zero
+      // count is either an all-duplicate pick or an outright failure.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Queued $queued of ${picked.length} for upload."),
+          content: Text(
+            queued > 0
+                ? "Queued $queued of ${picked.length} for upload."
+                : failed > 0
+                    ? "Couldn't queue any of the ${picked.length} selected."
+                    : "Already in your library — nothing new to upload.",
+          ),
         ),
       );
       await _refreshQueueBadge();
@@ -1069,10 +1082,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // grid reflects the action without a full refresh.
     final trashedId = result["trashedId"] as String?;
     if (trashedId != null) {
+      // Keep the row and its slot so Undo can put it back exactly where it
+      // was. `_softRefresh` only re-fetches page 1 (the newest 60 by capture
+      // date), so a restored 2019 photo would otherwise never reappear and
+      // "Restored." would be a lie.
+      final removed = _assets.cast<Asset?>().firstWhere(
+            (a) => a?.id == trashedId,
+            orElse: () => null,
+          );
       setState(() {
         _assets.removeWhere((a) => a.id == trashedId);
         _recomputeDerived();
       });
+      // Confirm the destructive action and offer the inverse. Without this the
+      // tile just vanishes and the user is never told the write landed.
+      // The messenger is captured here rather than inside the action: a
+      // SnackBar is owned above the route and can outlive this State.
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        SnackBar(
+          content: const Text("Moved to trash."),
+          action: SnackBarAction(
+            label: "Undo",
+            onPressed: () => _restoreTrashed(trashedId, messenger, removed),
+          ),
+        ),
+      );
     }
   }
 
@@ -1210,6 +1245,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         tree: _tree,
         selected: _folder,
         onSelect: _selectFolder,
+        onMemories: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => MemoriesScreen(client: _client)),
+        ),
         onSettings: () => Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) =>
@@ -1248,6 +1286,81 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   bool get _hasNonLensFilter => _folder != null;
+
+  /// True when the workspace itself is empty — not just this filtered view.
+  /// Web's Home swaps its whole dashboard for an onboarding card at
+  /// `stats.total === 0` (app/(app)/app/home/page.tsx); this tab is the mobile
+  /// equivalent of that surface, so the card takes the place of the dead-end
+  /// empty message. Requires stats to have actually landed: a null `_stats`
+  /// means "we don't know yet", which is not the same as "you have nothing".
+  bool get _isFirstRun =>
+      !_hasNonLensFilter && _stats != null && _stats!.total == 0;
+
+  /// Open a stat tile's filtered grid. Web's StatTile is a link to
+  /// `/app/library?kind=…`; the mobile analogue is the existing filtered grid,
+  /// which avoids mutating this tab's surface/lens state (and racing the
+  /// refresh that would kick off) just to answer "show me my videos".
+  void _openFiltered({required String title, String? kind, bool favorite = false}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FilteredAssetsScreen(
+          client: _client,
+          title: title,
+          kind: kind,
+          favorite: favorite,
+        ),
+      ),
+    );
+  }
+
+  /// Server-side importers (Google Takeout / Amazon Photos zip). Pairs with
+  /// `_showAddSheet` as the secondary first-run CTA, matching the web pair
+  /// "Upload photos" + "Import from Google or Amazon".
+  Future<void> _openImports() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ImportsScreen(client: _client)),
+    );
+    if (!mounted) return;
+    await _softRefresh();
+  }
+
+  /// Restore an asset the user just trashed, from the confirmation SnackBar's
+  /// Undo action. `restoreAsset` is the inverse of `trashAsset`; both go
+  /// through PATCH /api/v1/assets/:id.
+  Future<void> _restoreTrashed(
+    String id,
+    ScaffoldMessengerState messenger,
+    Asset? removed,
+  ) async {
+    try {
+      await _client.restoreAsset(id);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text("Couldn't restore: $e")));
+      return;
+    }
+    messenger.showSnackBar(const SnackBar(content: Text("Restored.")));
+    if (!mounted) return;
+    // Put the row back locally rather than waiting for a refresh to rediscover
+    // it — `_softRefresh` only re-fetches page 1, so a restored 2019 photo
+    // would never reappear and "Restored." would be a lie.
+    //
+    // The slot is re-derived from the sort key rather than remembered: a
+    // background `_softRefresh` can prepend rows while the SnackBar is up, and
+    // `_groupAssetsByMonth` is a run-length grouper, so one out-of-order row
+    // would split a month into two headers.
+    if (removed != null && !_assets.any((a) => a.id == id)) {
+      final key = removed.capturedAt ?? removed.createdAt;
+      var at = _assets.indexWhere(
+        (a) => (a.capturedAt ?? a.createdAt).isBefore(key),
+      );
+      if (at < 0) at = _assets.length;
+      setState(() {
+        _assets.insert(at, removed);
+        _recomputeDerived();
+      });
+    }
+    await _softRefresh();
+  }
 
   /// Slivers for the "On this device" section: a header + a 3-col grid of
   /// local camera-roll thumbnails. Empty when there are no device recents. The
@@ -1365,9 +1478,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     if (_loadingFirst) {
       // Cold start with nothing cached yet: still paint the local camera-roll
-      // strip immediately (no network) above a small loading indicator for the
-      // server grid, so the user sees their phone's photos right away instead
-      // of a blank spinner.
+      // strip immediately (no network) above placeholder tiles for the server
+      // grid, so the user sees their phone's photos right away and then the
+      // shape of the library that's arriving — never a spinner in blank space.
       return Column(
         children: [
           _libraryHeader(),
@@ -1378,11 +1491,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 controller: _scroll,
                 slivers: [
                   if (_folder == null && _isPhotos) ..._deviceSlivers(),
-                  const SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(child: CircularProgressIndicator()),
-                    ),
+                  if (_folder == null)
+                    const SliverToBoxAdapter(child: _StatsBarSkeleton()),
+                  const SliverGridSkeleton(
+                    padding: EdgeInsets.fromLTRB(4, 0, 4, 8),
                   ),
                 ],
               ),
@@ -1409,15 +1521,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
-                        child: Text(
-                          "Your Fonto library will appear here once you're "
-                          "back online. Pull to retry.",
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
+                        child: Column(
+                          children: [
+                            Text(
+                              "Your Fonto library will appear here once you're "
+                              "back online.",
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                            ),
+                            const SizedBox(height: 12),
+                            // Pull-to-refresh alone is undiscoverable; the
+                            // shared ListErrorState always ships a Retry, so
+                            // this variant does too.
+                            OutlinedButton(
+                              onPressed: _refresh,
+                              child: const Text("Retry"),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -1444,6 +1571,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // no longer pays for three O(n) passes on every rebuild.
     final visible = _visible;
     final groups = _groups;
+    // Gate the dashboard on the same condition that shows the onboarding card,
+    // not on `_isFirstRun` alone: an upload prepends to `_assets` before the
+    // stats refresh lands, and a bare `_isFirstRun` would blink the stats bar
+    // away while photos were already on screen.
+    final showOnboarding = visible.isEmpty && _isFirstRun;
     final flatIdxById = _flatIdxById;
 
     final scroll = RefreshIndicator(
@@ -1484,24 +1616,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           // "On this device" — local camera-roll recents, above the server
           // grid. Only the root view (no folder filter) shows it.
           if (_folder == null && _isPhotos) ..._deviceSlivers(),
-          if (_stats != null && _folder == null)
-            SliverToBoxAdapter(child: _StatsBar(stats: _stats!)),
+          // Suppressed on first run: web's Home deletes the whole dashboard at
+          // stats.total === 0 rather than showing a wall of zeroes above the
+          // onboarding card, and so does this.
+          if (_stats != null && _folder == null && !showOnboarding)
+            SliverToBoxAdapter(
+              child: _StatsBar(stats: _stats!, onOpenFiltered: _openFiltered),
+            ),
           // "On this day" recap — parity with the web dashboard MemoryCard.
           // Self-fetches; renders nothing when there's no prior-year history.
           // Root unfiltered Photos view only, same as the device-recents strip.
-          if (_folder == null && _isPhotos)
+          if (_folder == null && _isPhotos && !showOnboarding)
             SliverToBoxAdapter(child: _MemoriesStrip(client: _client)),
           if (visible.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
-              child: ListEmptyState(
-                message: _hasNonLensFilter
-                    ? filteredEmptyForKind(_lens)
-                    : defaultEmptyForKind(_lens),
-                filtered: _hasNonLensFilter,
-                onClearFilters:
-                    _hasNonLensFilter ? () => _selectFolder(null) : null,
-              ),
+              child: showOnboarding
+                  ? FirstRunEmptyState(
+                      title: "Add your photos",
+                      body: "Upload straight from this device, or import your "
+                          "existing library from Google or Amazon.",
+                      primaryLabel: "Upload photos",
+                      onPrimary: _showAddSheet,
+                      secondaryLabel: "Import from Google or Amazon",
+                      onSecondary: _openImports,
+                    )
+                  : ListEmptyState(
+                      message: _hasNonLensFilter
+                          ? filteredEmptyForKind(_effectiveKind())
+                          : defaultEmptyForKind(_effectiveKind()),
+                      filtered: _hasNonLensFilter,
+                      onClearFilters:
+                          _hasNonLensFilter ? () => _selectFolder(null) : null,
+                    ),
             )
           else
             for (final g in groups) ...[
@@ -2315,37 +2462,193 @@ class _ProgressBanners extends StatelessWidget {
   }
 }
 
+/// Thousands separators without pulling in `intl` for one call site.
+/// Counts are non-negative, so no sign handling is needed.
+String _grouped(int n) {
+  final s = n.toString();
+  final out = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 == 0) out.write(",");
+    out.write(s[i]);
+  }
+  return out.toString();
+}
+
 class _StatsBar extends StatelessWidget {
-  const _StatsBar({required this.stats});
+  const _StatsBar({required this.stats, required this.onOpenFiltered});
+
   final WorkspaceStats stats;
+  final void Function({required String title, String? kind, bool favorite})
+      onOpenFiltered;
+
+  /// Floor for one tile (value line + label line). [_StatsBarSkeleton] reuses
+  /// [tileHeightFor] so the placeholder and the real row are the same height
+  /// and the grid below doesn't jump when the numbers land.
+  static const double tileHeight = 44;
+
+  /// The floor is only enough at the default text scale. At Android's "Large"
+  /// setting and above the two text lines are taller than 44, and a fixed
+  /// placeholder would under-reserve and let the grid jump anyway — so both
+  /// widgets derive the row height from the same scaled type metrics.
+  static double tileHeightFor(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final value = FontoType.titleMedium;
+    final label = FontoType.labelSmall;
+    final content = scaler.scale(value.fontSize ?? 16) * (value.height ?? 1.5) +
+        scaler.scale(label.fontSize ?? 11) * (label.height ?? 1.45);
+    return content > tileHeight ? content : tileHeight;
+  }
+
+  /// Web renders six stat tiles in a 2/3/6-column grid; on a phone that grid is
+  /// two or three columns, so mobile mirrors it as two rows of three rather
+  /// than squeezing six labels into one row.
+  static const int columns = 3;
 
   @override
   Widget build(BuildContext context) {
-    final pairs = <(String, int)>[
-      ("Total", stats.total),
-      ("Images", stats.images),
-      ("Videos", stats.videos),
-      ("Docs", stats.documents),
-      ("★", stats.favorites),
+    // Labels and destinations match the web StatTile set
+    // (app/(app)/app/home/page.tsx). "Total" and "This month" have no tap
+    // target: web doesn't link them either, and Total's destination is the
+    // very surface these tiles sit on.
+    //
+    // The kind unions are deliberate. `stats.images` counts `image/%` mime,
+    // which spans the moment / screenshot / graphics classifications — linking
+    // it to `kind=moment` alone (what web's href does) would open a grid
+    // holding fewer items than the number on the tile.
+    final tiles = <(String, int, VoidCallback?)>[
+      ("Total", stats.total, null),
+      (
+        "Photos",
+        stats.images,
+        () => onOpenFiltered(
+              title: "Photos",
+              kind: "moment,screenshot,graphics",
+            ),
+      ),
+      (
+        "Videos",
+        stats.videos,
+        () => onOpenFiltered(title: "Videos", kind: "video"),
+      ),
+      (
+        "Docs",
+        stats.documents,
+        () => onOpenFiltered(title: "Documents", kind: "document"),
+      ),
+      (
+        "Favorites",
+        stats.favorites,
+        () => onOpenFiltered(title: "Favorites", favorite: true),
+      ),
+      ("This month", stats.thisMonth, null),
     ];
+    final theme = Theme.of(context);
+    final rowHeight = tileHeightFor(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: pairs
-            .map((p) => Column(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Column(
+        children: [
+          for (var row = 0; row * columns < tiles.length; row++)
+            Row(
+              children: [
+                for (var col = 0; col < columns; col++)
+                  Expanded(
+                    child: row * columns + col < tiles.length
+                        ? _tile(theme, rowHeight, tiles[row * columns + col])
+                        : SizedBox(height: rowHeight),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tile(
+    ThemeData theme,
+    double minHeight,
+    (String, int, VoidCallback?) t,
+  ) =>
+      InkWell(
+        onTap: t.$3,
+        borderRadius: BorderRadius.circular(FontoShape.small),
+        // minHeight, not a fixed height: it matches the placeholder exactly at
+        // the default text scale but still grows instead of clipping when the
+        // user has larger system text.
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: minHeight),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                _grouped(t.$2),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleMedium,
+              ),
+              Text(
+                t.$1,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+/// Placeholder for the stats row during a cold start, so the grid below
+/// doesn't jump when the numbers land. Mirrors web's pulsing stat blocks
+/// (app/(app)/app/home/page.tsx renders six while `loading || !stats`).
+class _StatsBarSkeleton extends StatelessWidget {
+  const _StatsBarSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final fill = Theme.of(context).colorScheme.surfaceContainerHighest;
+    // Same outer padding, row count and — via tileHeightFor — the same
+    // text-scale-aware row height as _StatsBar, so the placeholder occupies
+    // exactly the space the numbers will. That is the whole point of it.
+    final rowHeight = _StatsBar.tileHeightFor(context);
+    return SkeletonPulse(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Column(
+          children: [
+            for (var row = 0; row < 2; row++)
+              SizedBox(
+                height: rowHeight,
+                child: Row(
+                  // stretch, so each childless DecoratedBox gets a tight
+                  // height instead of collapsing to zero under the Row's
+                  // default centre alignment.
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      "${p.$2}",
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    Text(
-                      p.$1,
-                      style: Theme.of(context).textTheme.labelSmall,
-                    ),
+                    for (var col = 0; col < _StatsBar.columns; col++)
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 6,
+                          ),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: fill,
+                              borderRadius:
+                                  BorderRadius.circular(FontoShape.small),
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
-                ))
-            .toList(),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -2623,6 +2926,7 @@ class _AppDrawer extends StatelessWidget {
     required this.tree,
     required this.selected,
     required this.onSelect,
+    required this.onMemories,
     required this.onSettings,
     required this.onSignOut,
   });
@@ -2630,6 +2934,7 @@ class _AppDrawer extends StatelessWidget {
   final FolderTree? tree;
   final String? selected;
   final ValueChanged<String?> onSelect;
+  final VoidCallback onMemories;
   final VoidCallback onSettings;
   final VoidCallback onSignOut;
 
@@ -2647,6 +2952,18 @@ class _AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.of(context).pop();
                 onSelect(null);
+              },
+            ),
+            // Memories was reachable only through the On-This-Day strip's
+            // "View all", and that strip hides itself when there's no
+            // prior-year history — orphaning the whole screen. Web keeps
+            // Memories in its Discover section unconditionally.
+            ListTile(
+              leading: const Icon(Icons.auto_awesome_outlined),
+              title: const Text("Memories"),
+              onTap: () {
+                Navigator.of(context).pop();
+                onMemories();
               },
             ),
             ListTile(

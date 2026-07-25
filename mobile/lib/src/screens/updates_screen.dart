@@ -156,7 +156,7 @@ class _ActivityFeedState extends State<_ActivityFeed> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const ListSkeleton();
     }
     if (_error != null) {
       return ListErrorState(

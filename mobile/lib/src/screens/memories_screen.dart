@@ -151,7 +151,7 @@ class _MemoriesScreenState extends State<MemoriesScreen> {
   }
 
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const GridSkeleton();
     if (_error != null) return ListErrorState(onRetry: _load);
     if (_years.isEmpty) {
       return ListEmptyState(
