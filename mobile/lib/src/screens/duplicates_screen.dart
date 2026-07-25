@@ -116,7 +116,7 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
   }
 
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const ListSkeleton(count: 6);
     if (_error != null) return ListErrorState(onRetry: _load);
     if (_groups.isEmpty) {
       return const ListEmptyState(

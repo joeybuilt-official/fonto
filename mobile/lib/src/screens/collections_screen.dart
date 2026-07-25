@@ -119,12 +119,20 @@ Widget _stateScaffold({
   required Widget Function() builder,
   String emptyText = "Nothing here yet.",
   IconData emptyIcon = Icons.collections_bookmark_outlined,
+  String? errorText,
+  Widget skeleton = const ListSkeleton(),
 }) {
   if (loading) {
-    return const Center(child: CircularProgressIndicator());
+    // Placeholders shaped like the content that's coming, not a spinner in
+    // blank space. Tabs that render a grid pass a GridSkeleton instead.
+    return skeleton;
   }
   if (error != null) {
-    return ListErrorState(onRetry: onRetry);
+    // Surface-specific copy where web has it; otherwise the shared default.
+    // The raw `error` string is a status line, not user-facing copy.
+    return errorText == null
+        ? ListErrorState(onRetry: onRetry)
+        : ListErrorState(onRetry: onRetry, message: errorText);
   }
   if (isEmpty) {
     return ListEmptyState(icon: emptyIcon, message: emptyText);
@@ -235,7 +243,10 @@ class _AlbumsTabState extends State<_AlbumsTab> {
       error: _error,
       isEmpty: _items.isEmpty,
       onRetry: _load,
-      emptyText: "No albums yet. Create one to organize your assets.",
+      errorText: "Couldn't load your albums. Check your connection and retry.",
+      // Album creation lives on the web app; don't instruct an action this
+      // screen can't perform.
+      emptyText: "No albums yet. Albums you create on the web show up here.",
       emptyIcon: Icons.folder_open_outlined,
       builder: () => ListView.builder(
         itemCount: _items.length,
@@ -247,6 +258,17 @@ class _AlbumsTabState extends State<_AlbumsTab> {
             subtitle: c.description == null
                 ? null
                 : Text(c.description!, overflow: TextOverflow.ellipsis),
+            trailing: const Icon(Icons.chevron_right),
+            // Was a dead row: the album grid already exists, it just had no
+            // route into it from this tab.
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => _CollectionAssetsScreen(
+                  client: widget.client,
+                  collection: c,
+                ),
+              ),
+            ),
           );
         },
       ),
@@ -278,7 +300,9 @@ class _OfflineBanner extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              "Offline — showing your saved albums. Pull to retry.",
+              // No RefreshIndicator on this tab — don't promise a gesture
+              // that does nothing. Retry lives on the error state.
+              "Offline — showing your saved albums.",
               style: TextStyle(
                 fontSize: 12,
                 color: scheme.onSecondaryContainer,
@@ -508,6 +532,12 @@ class _StacksTabState extends State<_StacksTab> {
       emptyText:
           "No stacks yet. RAW+JPEG pairs and bursts will surface here.",
       emptyIcon: Icons.layers_outlined,
+      skeleton: const GridSkeleton(
+        count: 8,
+        crossAxisCount: 2,
+        spacing: 8,
+        padding: EdgeInsets.all(8),
+      ),
       builder: () => GridView.builder(
         padding: const EdgeInsets.all(8),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -634,6 +664,8 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
         error: _error,
         isEmpty: _items.isEmpty,
         onRetry: _load,
+        emptyText: "No collections in this project yet.",
+        emptyIcon: Icons.folder_open_outlined,
         builder: () => ListView.builder(
           itemCount: _items.length,
           itemBuilder: (context, i) {
@@ -764,11 +796,14 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
                   icon: const Icon(Icons.archive_outlined),
                   onPressed: _selected.isEmpty
                       ? null
-                      : () => exportAndShareZip(
-                            context,
-                            widget.client,
-                            ids: _selected.toList(),
-                          ),
+                      : () {
+                          final ids = _selected.toList();
+                          // Leave select mode as the action fires; staying in
+                          // it with N items still ticked read as "nothing
+                          // happened".
+                          _exitSelect();
+                          exportAndShareZip(context, widget.client, ids: ids);
+                        },
                 ),
               ],
             )
@@ -792,6 +827,11 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
         error: _error,
         isEmpty: _assets.isEmpty,
         onRetry: _load,
+        errorText:
+            "Couldn't load this collection. Check your connection and retry.",
+        emptyText: "No photos in this collection yet.",
+        emptyIcon: Icons.photo_library_outlined,
+        skeleton: const GridSkeleton(),
         builder: () => GridView.builder(
           padding: const EdgeInsets.all(4),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(

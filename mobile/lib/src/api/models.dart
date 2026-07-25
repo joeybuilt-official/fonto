@@ -735,6 +735,7 @@ class WorkspaceStats {
     required this.documents,
     required this.videos,
     required this.favorites,
+    this.thisMonth = 0,
     this.processing = 0,
   });
 
@@ -743,6 +744,10 @@ class WorkspaceStats {
   final int documents;
   final int videos;
   final int favorites;
+  // Assets imported since the start of the current month. GET /api/v1/stats has
+  // always returned it; mobile just never parsed it, which is why the Home stat
+  // row was missing web's sixth tile.
+  final int thisMonth;
   // Count of active assets still being processed server-side (not ready/failed).
   final int processing;
 
@@ -752,6 +757,7 @@ class WorkspaceStats {
         documents: (j["documents"] as num).toInt(),
         videos: (j["videos"] as num).toInt(),
         favorites: (j["favorites"] as num).toInt(),
+        thisMonth: (j["thisMonth"] as num?)?.toInt() ?? 0,
         processing: (j["processing"] as num?)?.toInt() ?? 0,
       );
 }
@@ -965,6 +971,22 @@ class StoragePlacement {
       localBytes: (mirror["localBytes"] as num?)?.toInt() ?? 0,
     );
   }
+}
+
+// CLIP semantic-search response. `unavailable` is the server's
+// `{unavailable:true}` flag (Plexo vision sidecar unconfigured or erroring) and
+// is kept distinct from an empty `assets` list so the UI can say "semantic
+// search unavailable" only when that is actually true.
+class ClipSearchResult {
+  const ClipSearchResult({required this.assets, required this.unavailable});
+
+  final List<Asset> assets;
+  final bool unavailable;
+
+  static const ClipSearchResult empty =
+      ClipSearchResult(assets: <Asset>[], unavailable: false);
+  static const ClipSearchResult unavailableResult =
+      ClipSearchResult(assets: <Asset>[], unavailable: true);
 }
 
 // Current-user identity from GET /api/v1/me. Renders the account inline in

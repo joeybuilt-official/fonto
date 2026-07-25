@@ -82,7 +82,7 @@ class _ShootsScreenState extends State<ShootsScreen> {
   }
 
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const ListSkeleton();
     if (_error != null) return ListErrorState(onRetry: _load);
     if (_shoots.isEmpty) {
       return const ListEmptyState(
