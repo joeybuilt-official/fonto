@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // ADR 0001 §4 — edge-case grid coverage for deriveKind. Each row in the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // `/docs/api` — Scalar API Reference UI for the Fonto OpenAPI spec.

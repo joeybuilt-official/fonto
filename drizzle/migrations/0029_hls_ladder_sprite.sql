@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 8b — HLS ladder + hover-scrub sprite state on fonto.assets.
 --
 -- C7 resolution (2026-05-25): ship the 3-rendition ladder on day one.

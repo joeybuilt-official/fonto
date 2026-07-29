@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // M15.3 — Tidy Up reason-bucket review screen.
 import "dart:convert";
 

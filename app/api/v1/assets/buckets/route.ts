@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Per-month asset counts for the timeline scrubber. Powers the fast-scroll

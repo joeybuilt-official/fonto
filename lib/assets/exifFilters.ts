@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Shared EXIF filter predicates. Consumed by the three asset-query surfaces
 // that accept the same query params: /api/v1/search, /api/v1/assets, and
 // smart-collection evaluation (/api/v1/smart-collections/:id/assets). Keeping

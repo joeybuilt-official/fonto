@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // pgvector column helper for Drizzle (ADR 0002, Phase 4.3).

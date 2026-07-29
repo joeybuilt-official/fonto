@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 2.4: outbound webhooks (Stripe-style HMAC).
 --
 -- Two additive tables. `webhook_endpoints` holds the user-managed

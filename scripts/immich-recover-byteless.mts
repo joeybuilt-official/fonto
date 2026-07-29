@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Recovery for the immich→fonto import: delete byte-less / failed-put asset rows

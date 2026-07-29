@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 6.4 — per-device FCM push tokens.
 --
 -- One row per (user, device). `device_id` is a stable client-generated id

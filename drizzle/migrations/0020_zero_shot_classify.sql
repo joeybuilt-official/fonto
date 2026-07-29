@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 4.6 — zero-shot CLIP classify + auto-tag.
 --
 -- Adds four nullable columns to `fonto.assets`:

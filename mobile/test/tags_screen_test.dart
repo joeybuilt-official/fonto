@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // M10 / ADR 0013 — Manage tags tree screen.
 import "dart:convert";
 

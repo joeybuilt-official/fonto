@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: MIT
 # Fonto BullMQ worker image. Mirrors the main Dockerfile up through the deps
 # stage; the final stage runs the worker via `tsx` (the project already pulls
 # tsx in as a transitive dev dep, and pinning it here as a direct dep keeps

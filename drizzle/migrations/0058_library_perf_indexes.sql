@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Copyright (C) 2026 Joeybuilt LLC
 --
 -- Library performance — /app/library first-paint was ~2s of DB before the grid

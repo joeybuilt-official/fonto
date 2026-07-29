@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 3.4 — favorites + 0..5 star ratings on assets.
 --
 -- Two scalar columns and two partial indexes. Additive; no backfill needed

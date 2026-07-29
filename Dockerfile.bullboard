@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: MIT
 # Fonto bull-board sidecar image. Express app that mounts the BullMQ admin
 # UI behind HTTP Basic. Companion to Dockerfile.worker — same multi-stage
 # layout, same `tsx` runtime, no compile step.

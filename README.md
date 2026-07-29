@@ -3,7 +3,7 @@
   <p><strong>Your AI-classified digital asset manager.</strong></p>
   <p>Photos, documents, and scans in one library — auto-tagged, OCR'd, deduped via perceptual hashing, and searchable across every file type. Self-host on your own R2 bucket and Postgres.</p>
 
-  <a href="https://github.com/joeybuilt-official/fonto/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License" /></a>
+  <a href="https://github.com/joeybuilt-official/fonto/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License" /></a>
   <a href="https://getplexo.com"><img src="https://img.shields.io/badge/Built%20on-Plexo-purple" alt="Built on Plexo" /></a>
 </div>
 
@@ -511,7 +511,7 @@ failing the upload.
 
 **License note:** libraw is LGPL and dcraw is public domain. We invoke
 them as subprocesses (`dcraw_emu`) rather than linking — keeps Fonto's
-AGPL-3.0 license uncontaminated.
+MIT license uncontaminated.
 
 ## Observability
 
@@ -1202,6 +1202,6 @@ Fonto is a [Plexo](https://getplexo.com) App Profile. Asset classification, tag 
 
 ## License
 
-[AGPL-3.0-only](./LICENSE) — Copyright (C) 2026 Joeybuilt LLC.
+[MIT](./LICENSE) — Copyright (C) 2026 Joeybuilt LLC.
 
 If you modify Fonto and run it as a network service, you must share your modifications under the same license. For commercial use without copyleft obligations, contact us.

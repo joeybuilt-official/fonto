@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: MIT
 # Phase 9b — fonto-worker autoscaler image.
 #
 # Reuses the project root package.json to share bullmq + ioredis +

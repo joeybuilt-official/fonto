@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Review-at-scale (M15.2) — undo snapshot for bulk bucket actions.
 --
 -- A bulk apply-to-bucket (confirm/reject/quarantine) needs to be undoable from

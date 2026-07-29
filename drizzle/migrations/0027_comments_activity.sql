@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 7a — comments, activity feed, notification mutes, digest cursors.
 --
 -- Four new tables under fonto.* schema. All workspace-scoped + indexed on

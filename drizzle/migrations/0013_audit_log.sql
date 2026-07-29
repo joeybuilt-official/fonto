@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 3.2: append-only audit log.
 --
 -- Records every state-mutating action a user performs against a workspace.

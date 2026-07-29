@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 6.7 — page count for scanned documents (PDFs) on fonto.assets.
 --
 -- The mobile ML Kit scanner uploads multi-page PDFs. The worker runs

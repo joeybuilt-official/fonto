@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 8a — video probe columns on fonto.assets.
 --
 -- ffprobe writes these during processAsset for video/* mime. Optional
