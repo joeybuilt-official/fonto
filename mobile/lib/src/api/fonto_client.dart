@@ -5,6 +5,7 @@
 // Authorization header; every error path collapses into ApiException
 // so screens have one catch-block shape to render.
 
+import "dart:async";
 import "dart:convert";
 import "dart:io";
 import "package:http/http.dart" as http;
@@ -41,61 +42,108 @@ class FontoClient {
         "Accept": "application/json",
       };
 
+  // Bound every request. package:http has no default timeout, so a stalled
+  // connection (cell handoff, dropped Wi-Fi) would otherwise never complete
+  // and never throw, hanging a screen on its loading state forever.
+  static const Duration _timeout = Duration(seconds: 30);
+
   Future<Map<String, dynamic>> _getJson(String path,
       [Map<String, String>? query]) async {
-    final res = await _http.get(_uri(path, query), headers: _headers);
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+    final http.Response res;
+    try {
+      res = await _http
+          .get(_uri(path, query), headers: _headers)
+          .timeout(_timeout);
+    } on TimeoutException {
+      throw ApiException(408, "Request timed out");
     }
-    return json.decode(res.body) as Map<String, dynamic>;
+    return _decoded(res);
   }
 
   Future<Map<String, dynamic>> _postJson(
     String path,
     Map<String, dynamic> body,
   ) async {
-    final res = await _http.post(
-      _uri(path),
-      headers: {..._headers, "Content-Type": "application/json"},
-      body: json.encode(body),
-    );
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+    final http.Response res;
+    try {
+      res = await _http
+          .post(
+            _uri(path),
+            headers: {..._headers, "Content-Type": "application/json"},
+            body: json.encode(body),
+          )
+          .timeout(_timeout);
+    } on TimeoutException {
+      throw ApiException(408, "Request timed out");
     }
-    return json.decode(res.body) as Map<String, dynamic>;
+    return _decoded(res);
   }
 
   Future<Map<String, dynamic>> _putJson(
     String path,
     Map<String, dynamic> body,
   ) async {
-    final res = await _http.put(
-      _uri(path),
-      headers: {..._headers, "Content-Type": "application/json"},
-      body: json.encode(body),
-    );
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+    final http.Response res;
+    try {
+      res = await _http
+          .put(
+            _uri(path),
+            headers: {..._headers, "Content-Type": "application/json"},
+            body: json.encode(body),
+          )
+          .timeout(_timeout);
+    } on TimeoutException {
+      throw ApiException(408, "Request timed out");
     }
-    return json.decode(res.body) as Map<String, dynamic>;
+    return _decoded(res);
   }
 
   Future<Map<String, dynamic>> _patchJson(
     String path,
     Map<String, dynamic> body,
   ) async {
-    final res = await _http.patch(
-      _uri(path),
-      headers: {..._headers, "Content-Type": "application/json"},
-      body: json.encode(body),
-    );
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+    final http.Response res;
+    try {
+      res = await _http
+          .patch(
+            _uri(path),
+            headers: {..._headers, "Content-Type": "application/json"},
+            body: json.encode(body),
+          )
+          .timeout(_timeout);
+    } on TimeoutException {
+      throw ApiException(408, "Request timed out");
     }
-    return json.decode(res.body) as Map<String, dynamic>;
+    return _decoded(res);
   }
 
-  String _extractError(String body) {
+  /// Shared success/error decode for the JSON helpers. Non-2xx → ApiException
+  /// with the server's message. A 204 / empty body decodes to an empty map so
+  /// void actions that ignore the return (resolve/undo/reprocess/…) don't crash
+  /// on an empty success; any non-object or malformed body surfaces as an
+  /// ApiException, never an escaping FormatException / CastError that a screen's
+  /// `catch (ApiException)` would miss.
+  Map<String, dynamic> _decoded(http.Response res) {
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res));
+    }
+    // http.Response.body decodes bytes with the Content-Type charset, defaulting
+    // to LATIN1 when the server omits `charset=utf-8` — read the raw bytes as
+    // UTF-8 so accented / CJK / emoji filenames, OCR text, and names survive.
+    final body = utf8.decode(res.bodyBytes, allowMalformed: true);
+    if (body.isEmpty) return const <String, dynamic>{};
+    try {
+      return json.decode(body) as Map<String, dynamic>;
+    } catch (_) {
+      throw ApiException(res.statusCode, "Bad response body");
+    }
+  }
+
+  /// Human-readable error from an http.Response, decoding the body as UTF-8.
+  String _extractError(http.Response res) =>
+      _extractErrorBody(utf8.decode(res.bodyBytes, allowMalformed: true));
+
+  String _extractErrorBody(String body) {
     try {
       final j = json.decode(body) as Map<String, dynamic>;
       return (j["error"] as String?) ?? body;
@@ -175,7 +223,7 @@ class FontoClient {
     final raw = (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
     final cursorJson = j["nextCursor"] as Map<String, dynamic>?;
     return AssetPage(
-      assets: raw.map(Asset.fromJson).toList(),
+      assets: raw.map(Asset.tryParse).whereType<Asset>().toList(),
       nextCursor: cursorJson == null ? null : AssetCursor.fromJson(cursorJson),
     );
   }
@@ -257,7 +305,7 @@ class FontoClient {
     if (ocrOnly) query["ocrOnly"] = "true";
     final j = await _getJson("/api/v1/search", query);
     final raw = (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
-    return raw.map(Asset.fromJson).toList();
+    return raw.map(Asset.tryParse).whereType<Asset>().toList();
   }
 
   /// Text→image CLIP semantic search (`/api/v1/search/clip`), best-match-first.
@@ -268,8 +316,11 @@ class FontoClient {
     final j = await _getJson("/api/v1/search/clip", {"q": q, "limit": "$limit"});
     if (j["unavailable"] == true) return const [];
     final raw = (j["results"] as List? ?? const []).cast<Map<String, dynamic>>();
+    // A result row missing 'asset' (or with a malformed asset) drops out
+    // quietly instead of a CastError aborting the whole CLIP search.
     return raw
-        .map((r) => Asset.fromJson(r["asset"] as Map<String, dynamic>))
+        .map((r) => Asset.tryParse(r["asset"]))
+        .whereType<Asset>()
         .toList();
   }
 
@@ -381,7 +432,7 @@ class FontoClient {
   Future<List<Asset>> similarAssets(String id) async {
     final j = await _getJson("/api/v1/assets/$id/similar");
     final raw = (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
-    return raw.map(Asset.fromJson).toList();
+    return raw.map(Asset.tryParse).whereType<Asset>().toList();
   }
 
   /// Stacks (near-duplicate groups). Full list; no pagination.
@@ -495,9 +546,9 @@ class FontoClient {
     final res =
         await http.Response.fromStream(streamed).timeout(uploadTimeout);
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+      throw ApiException(res.statusCode, _extractError(res));
     }
-    final j = json.decode(res.body) as Map<String, dynamic>;
+    final j = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     return Asset.fromJson(j["asset"] as Map<String, dynamic>);
   }
 
@@ -541,9 +592,10 @@ class FontoClient {
       return uploadFile(file, virtualPath: virtualPath);
     }
     if (presignRes.statusCode < 200 || presignRes.statusCode >= 300) {
-      throw ApiException(presignRes.statusCode, _extractError(presignRes.body));
+      throw ApiException(presignRes.statusCode, _extractError(presignRes));
     }
-    final presign = json.decode(presignRes.body) as Map<String, dynamic>;
+    final presign =
+        json.decode(utf8.decode(presignRes.bodyBytes)) as Map<String, dynamic>;
     final assetId = presign["assetId"] as String;
     final uploadUrl = presign["uploadUrl"] as String;
     final putHeaders =
@@ -583,9 +635,10 @@ class FontoClient {
       body: json.encode({"source": source}),
     );
     if (completeRes.statusCode < 200 || completeRes.statusCode >= 300) {
-      throw ApiException(completeRes.statusCode, _extractError(completeRes.body));
+      throw ApiException(completeRes.statusCode, _extractError(completeRes));
     }
-    final j = json.decode(completeRes.body) as Map<String, dynamic>;
+    final j =
+        json.decode(utf8.decode(completeRes.bodyBytes)) as Map<String, dynamic>;
     return Asset.fromJson(j["asset"] as Map<String, dynamic>);
   }
 
@@ -638,7 +691,7 @@ class FontoClient {
       }),
     );
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+      throw ApiException(res.statusCode, _extractError(res));
     }
   }
 
@@ -651,7 +704,7 @@ class FontoClient {
       body: json.encode({"deviceId": deviceId}),
     );
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+      throw ApiException(res.statusCode, _extractError(res));
     }
   }
 
@@ -659,15 +712,22 @@ class FontoClient {
   /// { trash, restore, isFavorite, rating, directoryPath }. Returns
   /// the refreshed asset row.
   Future<Asset> patchAsset(String id, Map<String, dynamic> body) async {
-    final res = await _http.patch(
-      _uri("/api/v1/assets/$id"),
-      headers: {..._headers, "Content-Type": "application/json"},
-      body: json.encode(body),
-    );
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+    final http.Response res;
+    try {
+      res = await _http
+          .patch(
+            _uri("/api/v1/assets/$id"),
+            headers: {..._headers, "Content-Type": "application/json"},
+            body: json.encode(body),
+          )
+          .timeout(_timeout);
+    } on TimeoutException {
+      throw ApiException(408, "Request timed out");
     }
-    final j = json.decode(res.body) as Map<String, dynamic>;
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res));
+    }
+    final j = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     return Asset.fromJson(j["asset"] as Map<String, dynamic>);
   }
 
@@ -733,6 +793,9 @@ class FontoClient {
     // M14 / ADR 0057 — "workspace" exports the whole library (manifest + every
     // original), no entry cap. Ignores ids/collectionId when set.
     String? scope,
+    // Optional byte-count progress for a determinate export UI: invoked with the
+    // running received-bytes total as the zip streams to disk.
+    void Function(int receivedBytes)? onProgress,
   }) async {
     final req = http.Request("POST", _uri("/api/v1/assets/export/zip"));
     req.headers.addAll({..._headers, "Content-Type": "application/json"});
@@ -741,14 +804,47 @@ class FontoClient {
       if (collectionId != null) "collectionId": collectionId,
       if (scope != null) "scope": scope,
     });
-    final res = await _http.send(req);
+    // A whole-workspace export can be multi-GB; bound the request with a
+    // generous ceiling (matches the Amazon-ZIP import bound).
+    const exportTimeout = Duration(minutes: 10);
+    final http.StreamedResponse res;
+    try {
+      res = await _http.send(req).timeout(exportTimeout);
+    } on TimeoutException {
+      throw ApiException(408, "Request timed out");
+    }
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(await res.stream.bytesToString()));
+      throw ApiException(
+        res.statusCode,
+        _extractErrorBody(await res.stream.bytesToString()),
+      );
     }
     final dir = await getTemporaryDirectory();
     final ts = DateTime.now().millisecondsSinceEpoch;
     final file = File(p.join(dir.path, "fonto-export-$ts.zip"));
-    await res.stream.pipe(file.openWrite());
+    final sink = file.openWrite();
+    var received = 0;
+    try {
+      await res.stream.forEach((chunk) {
+        received += chunk.length;
+        sink.add(chunk);
+        onProgress?.call(received);
+      }).timeout(exportTimeout);
+      await sink.close();
+    } catch (e) {
+      // A mid-stream drop leaves a truncated .zip that a later share/open would
+      // silently corrupt — close the sink, delete the partial, and surface an
+      // ApiException instead of the raw stream/timeout error.
+      await sink.close();
+      if (await file.exists()) {
+        await file.delete();
+      }
+      if (e is ApiException) rethrow;
+      if (e is TimeoutException) {
+        throw ApiException(408, "Export download timed out");
+      }
+      throw ApiException(0, "Export download failed");
+    }
     return file;
   }
 
@@ -802,9 +898,9 @@ class FontoClient {
       headers: _headers,
     );
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+      throw ApiException(res.statusCode, _extractError(res));
     }
-    final j = json.decode(res.body) as Map<String, dynamic>;
+    final j = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     return (
       targetType: j["targetType"] as String,
       targetId: j["targetId"] as String,
@@ -903,7 +999,7 @@ class FontoClient {
   Future<List<Asset>> assetsByTag(String tagId) async {
     final j = await _getJson("/api/v1/search", {"tagId": tagId});
     final raw = (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
-    return raw.map(Asset.fromJson).toList();
+    return raw.map(Asset.tryParse).whereType<Asset>().toList();
   }
 
   Future<List<Asset>> assetsByPerson(String personId) async {
@@ -944,7 +1040,7 @@ class FontoClient {
       body: json.encode({"person_id": personId}),
     );
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+      throw ApiException(res.statusCode, _extractError(res));
     }
   }
 
@@ -958,7 +1054,7 @@ class FontoClient {
       body: json.encode({"hidden": hidden}),
     );
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+      throw ApiException(res.statusCode, _extractError(res));
     }
   }
 
@@ -970,7 +1066,7 @@ class FontoClient {
       body: json.encode({"hidden": hidden}),
     );
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+      throw ApiException(res.statusCode, _extractError(res));
     }
   }
 
@@ -983,7 +1079,7 @@ class FontoClient {
       body: json.encode({"ignored": ignored}),
     );
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+      throw ApiException(res.statusCode, _extractError(res));
     }
   }
 
@@ -1010,9 +1106,9 @@ class FontoClient {
       body: json.encode({"name": name}),
     );
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+      throw ApiException(res.statusCode, _extractError(res));
     }
-    final j = json.decode(res.body) as Map<String, dynamic>;
+    final j = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     return Person.fromJson(j["person"] as Map<String, dynamic>);
   }
 
@@ -1150,17 +1246,28 @@ class FontoClient {
           onError: req.sink.addError,
           cancelOnError: true,
         );
+    // A dropped connection mid-archive would otherwise leave the import UI stuck
+    // "uploading" forever with no error and no way to advance — bound both the
+    // send and the response read, matching uploadFile.
+    const uploadTimeout = Duration(minutes: 10);
     final http.StreamedResponse streamed;
     try {
-      streamed = await _http.send(req);
+      streamed = await _http.send(req).timeout(uploadTimeout);
+    } on TimeoutException {
+      throw ApiException(408, "Request timed out");
     } finally {
       await pump.cancel();
     }
-    final res = await http.Response.fromStream(streamed);
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException(res.statusCode, _extractError(res.body));
+    final http.Response res;
+    try {
+      res = await http.Response.fromStream(streamed).timeout(uploadTimeout);
+    } on TimeoutException {
+      throw ApiException(408, "Request timed out");
     }
-    final j = json.decode(res.body) as Map<String, dynamic>;
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _extractError(res));
+    }
+    final j = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     return j["importJobId"] as String;
   }
 

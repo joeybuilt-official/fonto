@@ -20,11 +20,14 @@
 import "dart:async";
 
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 import "../state/auth_store.dart";
 import "../state/drive_download_queue.dart";
 import "../state/upload_queue.dart";
+import "../theme/tokens.dart";
+import "../widgets/list_states.dart";
 
 class TransfersScreen extends StatefulWidget {
   const TransfersScreen({super.key});
@@ -41,12 +44,25 @@ class _TransfersScreenState extends State<TransfersScreen> {
   int _processing = 0;
   bool _loading = true;
   bool _busy = false;
+  bool _error = false;
+
+  // Debounce for the queue-tick refresh: progress ticks arrive rapidly during
+  // an active upload, so we coalesce them instead of firing a reload per tick.
+  Timer? _tickDebounce;
+  // Slow poll for the networked stats() call — decoupled from the local-queue
+  // refresh so a fast upload doesn't fire a network request per progress tick.
+  Timer? _statsTimer;
+  // Guards against overlapping local reloads racing their setState.
+  bool _reloadInFlight = false;
+
+  static const _statsPollInterval = Duration(seconds: 5);
 
   @override
   void initState() {
     super.initState();
     UploadQueue.progress.addListener(_onQueueTick);
     DriveDownloadQueue.pending.addListener(_onQueueTick);
+    _statsTimer = Timer.periodic(_statsPollInterval, (_) => _refreshStats());
     _reload();
   }
 
@@ -54,25 +70,65 @@ class _TransfersScreenState extends State<TransfersScreen> {
   void dispose() {
     UploadQueue.progress.removeListener(_onQueueTick);
     DriveDownloadQueue.pending.removeListener(_onQueueTick);
+    _tickDebounce?.cancel();
+    _statsTimer?.cancel();
     super.dispose();
   }
 
   void _onQueueTick() {
-    // A queue advanced in the background — refresh the lists without the
-    // full-screen spinner.
-    if (mounted) _reload(silent: true);
+    // A queue advanced in the background. Debounce so a burst of progress ticks
+    // collapses into a single local refresh (no full-screen spinner, no stats
+    // network call).
+    _tickDebounce?.cancel();
+    _tickDebounce = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) _reloadLocal();
+    });
   }
 
+  /// Full reload: local queues + a one-shot networked stats() read. Used on
+  /// entry, pull-to-refresh, and Retry.
   Future<void> _reload({bool silent = false}) async {
     if (!silent && mounted) setState(() => _loading = true);
-    final dlQueue = await DriveDownloadQueue.open();
-    final upQueue = await UploadQueue.open();
-    final dlPending = await dlQueue.pendingItems();
-    final dlFailed = await dlQueue.failures();
-    final upPending = await upQueue.pendingItems();
-    final upFailed = await upQueue.recentFailures();
+    final ok = await _reloadLocal();
+    if (ok) await _refreshStats();
+    if (!mounted) return;
+    setState(() => _loading = false);
+  }
 
-    int processing = 0;
+  /// Refresh ONLY the local SQLite queues. Guarded (try/catch/finally) so a
+  /// corrupt/locked queue surfaces a retryable error instead of leaving the
+  /// screen stuck on a spinner. Returns true on success.
+  Future<bool> _reloadLocal() async {
+    if (_reloadInFlight) return !_error;
+    _reloadInFlight = true;
+    try {
+      final dlQueue = await DriveDownloadQueue.open();
+      final upQueue = await UploadQueue.open();
+      final dlPending = await dlQueue.pendingItems();
+      final dlFailed = await dlQueue.failures();
+      final upPending = await upQueue.pendingItems();
+      final upFailed = await upQueue.recentFailures();
+      if (!mounted) return false;
+      setState(() {
+        _dlPending = dlPending;
+        _dlFailed = dlFailed;
+        _upPending = upPending;
+        _upFailed = upFailed;
+        _error = false;
+      });
+      return true;
+    } catch (_) {
+      if (mounted) setState(() => _error = true);
+      return false;
+    } finally {
+      _reloadInFlight = false;
+    }
+  }
+
+  /// Poll the networked processing count on its own slow cadence. Failures are
+  /// non-fatal — the rest of the screen is local-only and still useful offline.
+  Future<void> _refreshStats() async {
+    int processing = _processing;
     try {
       final auth = await AuthStore.load();
       if (auth.isConfigured) {
@@ -84,22 +140,14 @@ class _TransfersScreenState extends State<TransfersScreen> {
         }
       }
     } catch (_) {
-      // Offline / not signed in — leave processing at 0; the rest of the
-      // screen is local-only and still useful.
+      return; // Offline / not signed in — keep the last value.
     }
-
     if (!mounted) return;
-    setState(() {
-      _dlPending = dlPending;
-      _dlFailed = dlFailed;
-      _upPending = upPending;
-      _upFailed = upFailed;
-      _processing = processing;
-      _loading = false;
-    });
+    setState(() => _processing = processing);
   }
 
   Future<void> _retryDownloads() async {
+    HapticFeedback.mediumImpact();
     setState(() => _busy = true);
     try {
       final q = await DriveDownloadQueue.open();
@@ -107,10 +155,11 @@ class _TransfersScreenState extends State<TransfersScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    await _reload(silent: true);
+    await _reloadLocal();
   }
 
   Future<void> _clearDownloads() async {
+    HapticFeedback.mediumImpact();
     setState(() => _busy = true);
     try {
       final q = await DriveDownloadQueue.open();
@@ -118,10 +167,11 @@ class _TransfersScreenState extends State<TransfersScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    await _reload(silent: true);
+    await _reloadLocal();
   }
 
   Future<void> _retryUploads() async {
+    HapticFeedback.mediumImpact();
     setState(() => _busy = true);
     try {
       final q = await UploadQueue.open();
@@ -131,10 +181,11 @@ class _TransfersScreenState extends State<TransfersScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    await _reload(silent: true);
+    await _reloadLocal();
   }
 
   Future<void> _clearUploads() async {
+    HapticFeedback.mediumImpact();
     setState(() => _busy = true);
     try {
       final q = await UploadQueue.open();
@@ -142,7 +193,7 @@ class _TransfersScreenState extends State<TransfersScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    await _reload(silent: true);
+    await _reloadLocal();
   }
 
   @override
@@ -150,8 +201,14 @@ class _TransfersScreenState extends State<TransfersScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text("Transfers")),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
+          ? const _TransfersSkeleton()
+          : _error
+              ? ListErrorState(
+                  onRetry: () => _reload(),
+                  message:
+                      "Couldn't read the transfer queue. Pull to refresh or retry.",
+                )
+              : RefreshIndicator(
               onRefresh: () => _reload(silent: true),
               child: ListView(
                 children: [
@@ -383,6 +440,38 @@ class _SectionCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Content-shaped loading placeholder for Transfers — three card-sized blocks
+/// mirroring the Downloads / Uploads / Processing sections. Built from the
+/// shared [imageSkeleton] surface token instead of a bare spinner.
+class _TransfersSkeleton extends StatelessWidget {
+  const _TransfersSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        Container(
+          margin: const EdgeInsets.fromLTRB(
+              FontoSpace.s4, FontoSpace.s4, FontoSpace.s4, FontoSpace.s2),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(FontoShape.medium),
+            child: SizedBox(height: 56, child: imageSkeleton(context)),
+          ),
+        ),
+        for (var i = 0; i < 3; i++)
+          Container(
+            margin: const EdgeInsets.fromLTRB(
+                FontoSpace.s4, FontoSpace.s2, FontoSpace.s4, FontoSpace.s2),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(FontoShape.medium),
+              child: SizedBox(height: 96, child: imageSkeleton(context)),
+            ),
+          ),
+      ],
     );
   }
 }

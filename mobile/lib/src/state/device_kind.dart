@@ -63,10 +63,16 @@ class DeviceKind {
 
   /// Batch resolver. Keyed by `AssetEntity.id` so callers can look kinds up
   /// without re-walking the list.
+  ///
+  /// [resolve] awaits `titleAsync`, a per-asset MethodChannel round-trip, so
+  /// resolving sequentially made a ~120-item strip do 120 serial platform hops
+  /// before its lens filtering was ready. Fan the round-trips out with
+  /// [Future.wait] so they overlap.
   static Future<Map<String, String>> resolveAll(List<AssetEntity> es) async {
+    final kinds = await Future.wait(es.map(resolve));
     final Map<String, String> out = <String, String>{};
-    for (final AssetEntity e in es) {
-      out[e.id] = await resolve(e);
+    for (var i = 0; i < es.length; i++) {
+      out[es[i].id] = kinds[i];
     }
     return out;
   }

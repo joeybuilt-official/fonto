@@ -15,6 +15,12 @@ import "settings_store.dart";
 import "upload_queue.dart";
 
 class CameraRollScanner {
+  /// Minimum spacing between full-library reconciles. Without this throttle a
+  /// single new photo keeps `deviceCount > highWater` true, so every scan would
+  /// drop the createTime window and re-hash (read every byte of) the ENTIRE
+  /// library — every photo AND video — draining battery on a daily shooter.
+  static const _reconcileMinInterval = Duration(days: 7);
+
   /// Scans for new camera-roll assets and enqueues them.
   ///
   /// [virtualPath] is the Fonto folder they land in.
@@ -41,7 +47,17 @@ class CameraRollScanner {
     // Cost ceiling: a count mismatch re-hashes the full library this pass.
     final deviceCount = await PhotoManager.getAssetCount(type: RequestType.common);
     final highWater = await SettingsStore.getEnqueuedHighWater();
-    final reconcile = deviceCount > highWater;
+    // Throttle the full reconcile: only re-hash the whole library when the
+    // device gained assets AND we haven't reconciled within the last window.
+    // Otherwise a single new photo (deviceCount > highWater on every scan)
+    // triggers a full-library byte re-hash each pass. The cheap createTime
+    // window below still catches ordinary new photos between reconciles; the
+    // reconcile exists only to backfill restores that carry an OLD createDate.
+    final lastReconcileTs = await SettingsStore.getLastReconcileTs();
+    final reconcileDue = lastReconcileTs == 0 ||
+        now.millisecondsSinceEpoch - lastReconcileTs >=
+            _reconcileMinInterval.inMilliseconds;
+    final reconcile = deviceCount > highWater && reconcileDue;
 
     final albums = await PhotoManager.getAssetPathList(
       type: RequestType.common,
@@ -117,6 +133,7 @@ class CameraRollScanner {
     await SettingsStore.setLastImportTs(watermark.millisecondsSinceEpoch);
     if (reconcile) {
       await SettingsStore.setEnqueuedHighWater(deviceCount);
+      await SettingsStore.setLastReconcileTs(now.millisecondsSinceEpoch);
     }
     return enqueued;
   }

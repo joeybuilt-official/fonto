@@ -33,12 +33,14 @@ import "dart:io";
 import "package:cached_network_image/cached_network_image.dart";
 import "package:crypto/crypto.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:google_sign_in/google_sign_in.dart";
 import "package:http/http.dart" as http;
 import "package:path_provider/path_provider.dart";
 import "package:url_launcher/url_launcher.dart";
 
 import "../state/upload_queue.dart";
+import "../widgets/list_states.dart";
 
 const _kPickerApiBase = "https://photospicker.googleapis.com/v1";
 const _kPickerScope =
@@ -74,9 +76,14 @@ class _GooglePhotosImportScreenState extends State<GooglePhotosImportScreen> {
   String? _sessionId;
   Duration _pollInterval = const Duration(seconds: 5);
   bool _polling = false;
+  // A user-initiated "Check now" is in flight — drives its inline indicator.
+  bool _checkingNow = false;
 
   // Picked items + import progress.
   List<_GpItem> _items = [];
+  // OAuth access token resolved ONCE when the review grid opens, so a rebuild
+  // of _ReviewGrid doesn't re-fetch a fresh token() future every build.
+  String? _reviewToken;
   int _importDone = 0;
   int _importTotal = 0;
 
@@ -229,6 +236,39 @@ class _GooglePhotosImportScreenState extends State<GooglePhotosImportScreen> {
     }
   }
 
+  // A single-shot session GET fired by the "Check now" button. The background
+  // poll loop sleeps in Future.delayed between ticks, so tapping the button
+  // used to be swallowed by the `if (_polling) return;` guard — nothing
+  // happened. This bypasses that guard: it checks the session immediately,
+  // shows a brief "Checking…" indicator, and hands off to _loadPickedItems if
+  // the user has finished picking.
+  Future<void> _checkNow() async {
+    final id = _sessionId;
+    if (id == null || _checkingNow) return;
+    setState(() => _checkingNow = true);
+    try {
+      final token = await _token();
+      if (token == null) return;
+      final res = await http.get(
+        Uri.parse("$_kPickerApiBase/sessions/$id"),
+        headers: _authHeaders(token),
+      );
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final j = json.decode(res.body) as Map<String, dynamic>;
+        if (j["mediaItemsSet"] == true) {
+          await _loadPickedItems(id);
+          return;
+        }
+      }
+    } catch (_) {
+      // Transient — leave the user in the picking state; the background loop
+      // keeps polling.
+    } finally {
+      if (mounted) setState(() => _checkingNow = false);
+    }
+  }
+
   Future<void> _loadPickedItems(String sessionId) async {
     final out = <_GpItem>[];
     String? pageToken;
@@ -254,9 +294,13 @@ class _GooglePhotosImportScreenState extends State<GooglePhotosImportScreen> {
     } catch (_) {
       // fall through with whatever we collected
     }
+    // Resolve the OAuth token once here so the review grid can reuse it
+    // across rebuilds instead of minting a new future on every build.
+    final tok = await _token();
     if (!mounted) return;
     setState(() {
       _items = out;
+      _reviewToken = tok;
       _phase = _Phase.review;
     });
   }
@@ -278,6 +322,7 @@ class _GooglePhotosImportScreenState extends State<GooglePhotosImportScreen> {
 
   Future<void> _import() async {
     if (_items.isEmpty || _phase == _Phase.importing) return;
+    HapticFeedback.mediumImpact();
     final items = List<_GpItem>.from(_items);
     setState(() {
       _phase = _Phase.importing;
@@ -295,27 +340,44 @@ class _GooglePhotosImportScreenState extends State<GooglePhotosImportScreen> {
           if (token == null) break;
           // Picker baseUrls REQUIRE the Bearer token (unlike old Library API).
           final dlUrl = item.isVideo ? "${item.baseUrl}=dv" : "${item.baseUrl}=d";
-          final res = await http.get(
-            Uri.parse(dlUrl),
-            headers: _authHeaders(token),
-          );
-          if (res.statusCode != 200) {
-            if (!mounted) return;
-            setState(() => _importDone++);
-            continue;
-          }
           final fname =
               item.filename.isNotEmpty ? item.filename : "${item.id}.jpg";
           final tmp = File("${tmpDir.path}/gp_${item.id}_$fname");
-          await tmp.writeAsBytes(res.bodyBytes);
-          final sha = sha256.convert(res.bodyBytes).toString();
-          final q = await UploadQueue.open();
-          await q.enqueue(
-            filePath: tmp.path,
-            virtualPath: widget.virtualPath,
-            sha256Hex: sha,
-          );
-          ok++;
+          // Stream the download to disk and hash incrementally — a picker video
+          // (=dv) can be hundreds of MB, and bodyBytes would buffer the whole
+          // body (plus a second copy for the hash) in RAM, risking an OOM.
+          final req = http.Request("GET", Uri.parse(dlUrl))
+            ..headers.addAll(_authHeaders(token));
+          final client = http.Client();
+          try {
+            final streamed = await client.send(req);
+            if (streamed.statusCode != 200) {
+              if (!mounted) return;
+              setState(() => _importDone++);
+              continue;
+            }
+            final sink = tmp.openWrite();
+            late Digest digest;
+            final hashInput = sha256.startChunkedConversion(
+              ChunkedConversionSink<Digest>.withCallback((d) => digest = d.single),
+            );
+            await for (final chunk in streamed.stream) {
+              sink.add(chunk);
+              hashInput.add(chunk);
+            }
+            hashInput.close();
+            await sink.flush();
+            await sink.close();
+            final q = await UploadQueue.open();
+            await q.enqueue(
+              filePath: tmp.path,
+              virtualPath: widget.virtualPath,
+              sha256Hex: digest.toString(),
+            );
+            ok++;
+          } finally {
+            client.close();
+          }
         } catch (_) {
           // skip; continue
         }
@@ -362,9 +424,14 @@ class _GooglePhotosImportScreenState extends State<GooglePhotosImportScreen> {
       case _Phase.idle:
         return _PickPrompt(error: _error, onPick: _startPicking);
       case _Phase.picking:
-        return _PickingWait(onCheckNow: _pollUntilPicked, onCancel: _cancelPicking);
+        return _PickingWait(
+          onCheckNow: _checkNow,
+          checking: _checkingNow,
+          onCancel: _cancelPicking,
+        );
       case _Phase.review:
-        return _ReviewGrid(items: _items, token: _token, onRepick: _startPicking);
+        return _ReviewGrid(
+            items: _items, token: _reviewToken, onRepick: _startPicking);
       case _Phase.importing:
         return _ImportProgress(done: _importDone, total: _importTotal);
     }
@@ -474,8 +541,13 @@ class _PickPrompt extends StatelessWidget {
 // ── Waiting for the user to finish picking ──────────────────────────────────
 
 class _PickingWait extends StatelessWidget {
-  const _PickingWait({required this.onCheckNow, required this.onCancel});
+  const _PickingWait({
+    required this.onCheckNow,
+    required this.checking,
+    required this.onCancel,
+  });
   final Future<void> Function() onCheckNow;
+  final bool checking;
   final VoidCallback onCancel;
 
   @override
@@ -495,8 +567,21 @@ class _PickingWait extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             OutlinedButton(
-              onPressed: () => onCheckNow(),
-              child: const Text("Check now"),
+              onPressed: checking ? null : () => onCheckNow(),
+              child: checking
+                  ? const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        SizedBox(width: 8),
+                        Text("Checking…"),
+                      ],
+                    )
+                  : const Text("Check now"),
             ),
             TextButton(onPressed: onCancel, child: const Text("Cancel")),
           ],
@@ -515,7 +600,11 @@ class _ReviewGrid extends StatelessWidget {
     required this.onRepick,
   });
   final List<_GpItem> items;
-  final Future<String?> Function() token;
+
+  /// OAuth access token resolved ONCE by the parent (not a future re-run every
+  /// build) so a rebuild of this grid doesn't drop auth headers to empty and
+  /// re-trigger the thumbnails' connection state.
+  final String? token;
   final VoidCallback onRepick;
 
   @override
@@ -532,41 +621,37 @@ class _ReviewGrid extends StatelessWidget {
         ),
       );
     }
-    return FutureBuilder<String?>(
-      future: token(),
-      builder: (ctx, snap) {
-        final headers = snap.data != null
-            ? {"Authorization": "Bearer ${snap.data}"}
-            : <String, String>{};
-        return GridView.builder(
-          padding: const EdgeInsets.all(4),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            crossAxisSpacing: 4,
-            mainAxisSpacing: 4,
-          ),
-          itemCount: items.length,
-          itemBuilder: (ctx, i) {
-            final it = items[i];
-            return Stack(
-              fit: StackFit.expand,
-              children: [
-                CachedNetworkImage(
-                  imageUrl: "${it.baseUrl}=w240-h240-c",
-                  httpHeaders: headers,
-                  fit: BoxFit.cover,
-                  errorWidget: (_, __, ___) =>
-                      const ColoredBox(color: Colors.black12, child: Icon(Icons.image)),
-                ),
-                if (it.isVideo)
-                  const Positioned(
-                    right: 4,
-                    bottom: 4,
-                    child: Icon(Icons.videocam, color: Colors.white, size: 18),
-                  ),
-              ],
-            );
-          },
+    final headers = token != null
+        ? {"Authorization": "Bearer $token"}
+        : <String, String>{};
+    return GridView.builder(
+      padding: const EdgeInsets.all(4),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 4,
+        mainAxisSpacing: 4,
+      ),
+      itemCount: items.length,
+      itemBuilder: (ctx, i) {
+        final it = items[i];
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            CachedNetworkImage(
+              imageUrl: "${it.baseUrl}=w240-h240-c",
+              httpHeaders: headers,
+              fit: BoxFit.cover,
+              placeholder: (ctx, _) => imageSkeleton(ctx),
+              errorWidget: (_, __, ___) =>
+                  const ColoredBox(color: Colors.black12, child: Icon(Icons.image)),
+            ),
+            if (it.isVideo)
+              const Positioned(
+                right: 4,
+                bottom: 4,
+                child: Icon(Icons.videocam, color: Colors.white, size: 18),
+              ),
+          ],
         );
       },
     );

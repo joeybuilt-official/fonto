@@ -6,14 +6,14 @@
 // favorite toggle, trash, native share. Preview-variant URLs fetched
 // lazily as the user scrolls — keeps the initial route push cheap.
 
-import "dart:async" show Timer;
+import "dart:async" show Timer, TimeoutException;
 import "dart:math" show min, max;
-import "dart:typed_data" show Uint8List;
 import "dart:ui" as ui show instantiateImageCodec;
 
 import "package:cached_network_image/cached_network_image.dart";
 import "package:crop_your_image/crop_your_image.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:http/http.dart" as http;
 import "package:photo_view/photo_view.dart";
 import "package:photo_view/photo_view_gallery.dart";
@@ -25,6 +25,7 @@ import "../api/models.dart";
 import "../state/asset_cache.dart";
 import "../state/offline_cache.dart";
 import "../state/pending_mutations.dart";
+import "../theme/tokens.dart";
 import "../widgets/asset_video_player.dart";
 import "../widgets/live_badge.dart";
 
@@ -59,6 +60,9 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   // Phase 6.12 — extracted text layer for text/code assets, fetched lazily
   // from the per-asset detail endpoint as the user scrolls onto one.
   final Map<String, String> _texts = {};
+  // Ids whose text fetch failed — lets _TextPage show an error + Retry instead
+  // of masquerading a transient failure as a genuinely empty file.
+  final Set<String> _textFailed = {};
   bool _acting = false;
   // Faces for the current asset (and ±neighbors as the user pages) +
   // a single bool that toggles the overlay on a tap of the image.
@@ -98,7 +102,12 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       _stopSlideshow();
       return;
     }
-    if (_index >= _assets.length - 1) return;
+    HapticFeedback.selectionClick();
+    // On the last asset, wrap back to the first so Play isn't a dead control
+    // at the end of the set.
+    if (_index >= _assets.length - 1) {
+      _page.jumpToPage(0);
+    }
     setState(() => _slideshow = true);
     _slideTimer = Timer.periodic(_slideshowDwell, (_) {
       if (_index >= _assets.length - 1) {
@@ -106,7 +115,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
         return;
       }
       _page.nextPage(
-        duration: const Duration(milliseconds: 350),
+        duration: FontoMotion.medium,
         curve: Curves.easeInOut,
       );
     });
@@ -205,32 +214,45 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     try {
       final full = await widget.client.getAsset(a.id);
       if (!mounted) return;
-      setState(() => _texts[a.id] = full.ocrText ?? "");
+      setState(() {
+        _texts[a.id] = full.ocrText ?? "";
+        _textFailed.remove(a.id);
+      });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _texts[a.id] = "");
+      // Don't coerce the error to "" (which reads as an empty file and gets
+      // cached). Flag it so _TextPage renders a retry; a later visit re-fetches
+      // because _texts still has no entry for this id.
+      setState(() => _textFailed.add(a.id));
     }
   }
 
   Future<void> _toggleFavorite() async {
     if (_acting) return;
+    HapticFeedback.selectionClick();
     setState(() => _acting = true);
-    final id = _cur.id;
-    final next = !(_cur.isFavorite ?? false);
+    final idx = _index;
+    final prev = _assets[idx];
+    final id = prev.id;
+    final next = !(prev.isFavorite ?? false);
+    // Optimistic: flip the star immediately so the tap feels instant even on a
+    // slow link (parity with Apple Photos). Reverted on a 4xx rejection.
+    setState(() => _assets[idx] = prev.copyWith(isFavorite: next));
     try {
       final updated = await widget.client.setFavorite(id, next);
       if (!mounted) return;
-      setState(() => _assets[_index] = updated);
+      setState(() => _assets[idx] = updated);
     } on ApiException catch (e) {
-      // A 4xx is a real server rejection — surface it. Anything else is
-      // treated as a transient/offline failure and queued for replay.
+      // A 4xx is a real server rejection — revert + surface it. Anything else
+      // is treated as a transient/offline failure and queued for replay.
       if (e.status >= 400 && e.status < 500) {
+        if (mounted) setState(() => _assets[idx] = prev);
         _snack("Favorite failed: ${e.status} ${e.message}");
       } else {
         await _queueFavoriteOffline(id, next);
       }
     } catch (_) {
-      // Network down — optimistic + queued replay on reconnect.
+      // Network down — optimistic (already flipped) + queued replay on reconnect.
       await _queueFavoriteOffline(id, next);
     } finally {
       if (mounted) setState(() => _acting = false);
@@ -272,6 +294,10 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       _snack("Re-scan queued — recognition will refresh shortly.");
     } on ApiException catch (e) {
       _snack("Re-scan failed: ${e.status} ${e.message}");
+    } catch (_) {
+      // SocketException / timeout while offline isn't an ApiException — it would
+      // otherwise escape as an unhandled async error with no user feedback.
+      _snack("Re-scan failed — check your connection.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -296,7 +322,10 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
         ],
       ),
     );
-    if (ok == true) await _trash();
+    if (ok == true) {
+      HapticFeedback.mediumImpact();
+      await _trash();
+    }
   }
 
   Future<void> _trash() async {
@@ -327,6 +356,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   Future<void> _rotate(int degrees) async {
     if (_acting) return;
     if (!_cur.mimeType.startsWith("image/")) return;
+    HapticFeedback.selectionClick();
     setState(() => _acting = true);
     final id = _cur.id;
     try {
@@ -355,6 +385,10 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       _snack("Rotated");
     } on ApiException catch (e) {
       _snack("Rotate failed: ${e.status} ${e.message}");
+    } catch (_) {
+      // Offline / timeout isn't an ApiException — surface it instead of letting
+      // it escape silently once the button re-enables.
+      _snack("Rotate failed — check your connection.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -377,7 +411,23 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       if (url == null) {
         throw ApiException(404, "Original URL unavailable");
       }
-      final res = await http.get(Uri.parse(url));
+      if (!mounted) return;
+      // Originals can be tens of MB (RAW/PSD). Show a blocking spinner so the
+      // user knows the download is in flight, and time out a stalled connection
+      // instead of hanging the whole flow with the toolbar wedged.
+      var progressUp = true;
+      _showBlockingProgress("Preparing original…");
+      final http.Response res;
+      try {
+        res = await http
+            .get(Uri.parse(url))
+            .timeout(const Duration(seconds: 30));
+      } finally {
+        if (progressUp && mounted) {
+          Navigator.of(context, rootNavigator: true).pop();
+          progressUp = false;
+        }
+      }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         throw ApiException(res.statusCode, "Couldn't download original");
       }
@@ -428,6 +478,8 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
           ),
         ),
       );
+    } on TimeoutException catch (_) {
+      _snack("Download timed out — check your connection and try again.");
     } on ApiException catch (e) {
       _snack("Crop failed: ${e.status} ${e.message}");
     } catch (e) {
@@ -435,6 +487,36 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     } finally {
       if (mounted) setState(() => _acting = false);
     }
+  }
+
+  /// Blocking, non-dismissible progress dialog used while a long download is in
+  /// flight (e.g. a multi-MB original before the cropper opens). The caller pops
+  /// it via the root navigator once the work finishes.
+  void _showBlockingProgress([String message = "Working…"]) {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => PopScope(
+        canPop: false,
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.all(FontoSpace.s6),
+            decoration: BoxDecoration(
+              color: Theme.of(dialogCtx).colorScheme.surface,
+              borderRadius: BorderRadius.circular(FontoShape.medium),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: FontoSpace.s4),
+                Text(message, style: Theme.of(dialogCtx).textTheme.bodyMedium),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   /// Decode just enough of [bytes] to recover image dimensions, using the
@@ -463,6 +545,10 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       await Share.share(url, subject: _cur.filename);
     } on ApiException catch (e) {
       _snack("Share failed: ${e.status} ${e.message}");
+    } catch (_) {
+      // Offline / timeout isn't an ApiException — surface it instead of a
+      // silent no-op after the button re-enables.
+      _snack("Share failed — check your connection.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -520,7 +606,8 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       showDragHandle: true,
       builder: (_) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          padding: const EdgeInsets.fromLTRB(
+              FontoSpace.s5, 0, FontoSpace.s5, FontoSpace.s5),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -529,7 +616,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
                 "Details",
                 style: Theme.of(context).textTheme.titleMedium,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: FontoSpace.s3),
               ...rows.map(
                 (r) => Padding(
                   padding: const EdgeInsets.symmetric(vertical: 5),
@@ -709,6 +796,11 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
                   child: _TextPage(
                     text: _texts[a.id],
                     code: a.mimeType != "text/plain",
+                    failed: _textFailed.contains(a.id),
+                    onRetry: () {
+                      setState(() => _textFailed.remove(a.id));
+                      _ensureText(i);
+                    },
                   ),
                 );
               }
@@ -875,13 +967,44 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
 // Phase 6.12 — scrollable monospace renderer for text/code assets. `text` is
 // null while the detail fetch is in flight, "" when there's no content.
 class _TextPage extends StatelessWidget {
-  const _TextPage({required this.text, required this.code});
+  const _TextPage({
+    required this.text,
+    required this.code,
+    this.failed = false,
+    this.onRetry,
+  });
 
   final String? text;
   final bool code;
+  // The fetch errored — render a retry affordance instead of an infinite
+  // spinner or a misleading "no content" message.
+  final bool failed;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
+    if (failed) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(FontoSpace.s6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white54, size: 40),
+              const SizedBox(height: FontoSpace.s3),
+              const Text(
+                "Couldn't load text",
+                style: TextStyle(color: Colors.white70),
+              ),
+              if (onRetry != null) ...[
+                const SizedBox(height: FontoSpace.s4),
+                FilledButton(onPressed: onRetry, child: const Text("Retry")),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
     if (text == null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -1344,6 +1467,9 @@ class _FaceImageOverlay extends StatelessWidget {
       final fh = b.h * dims.height * s;
       final isActive = activeId != null && face.id == activeId;
       final d = max(fw, fh) + (isActive ? 20 : 12);
+      // Keep the drawn ring at `d` but expand the tappable box to a minimum
+      // 44px accessible target so small/distant faces stay easy to hit.
+      final hitD = max(d, 44.0);
       final cx = left + fw / 2;
       final cy = top + fh / 2;
       // Active face stays yellow — high-contrast against any photo content.
@@ -1355,16 +1481,23 @@ class _FaceImageOverlay extends StatelessWidget {
               : Colors.white70;
       final borderWidth = isActive ? 1.5 : 1.0;
       final circle = Positioned(
-        left: cx - d / 2,
-        top: cy - d / 2,
-        width: d,
-        height: d,
+        left: cx - hitD / 2,
+        top: cy - hitD / 2,
+        width: hitD,
+        height: hitD,
         child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: () => onFaceTapped(face),
-          child: Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: borderColor, width: borderWidth),
+          child: Center(
+            child: SizedBox(
+              width: d,
+              height: d,
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: borderColor, width: borderWidth),
+                ),
+              ),
             ),
           ),
         ),
@@ -2056,10 +2189,16 @@ class _MotionPhotoViewState extends State<_MotionPhotoView> {
   VideoPlayerController? _ctrl;
   bool _playing = false;
   bool _loading = false;
+  // True between long-press-down and release. If the press is released while
+  // the controller is still initializing, we tear it down instead of leaving a
+  // muted clip looping over the still forever.
+  bool _pressed = false;
   String? _motionUrl;
 
   Future<void> _start() async {
     if (_playing || _loading) return;
+    _pressed = true;
+    HapticFeedback.lightImpact();
     setState(() => _loading = true);
     try {
       _motionUrl ??= await widget.client.assetMotionUrl(widget.asset.id);
@@ -2070,13 +2209,17 @@ class _MotionPhotoViewState extends State<_MotionPhotoView> {
       }
       final c = VideoPlayerController.networkUrl(Uri.parse(u));
       await c.initialize();
+      // The press may have been released (or the widget unmounted) while we
+      // awaited the URL + initialize(). Bail and dispose so a quick tap can't
+      // wedge a playing overlay that never receives onLongPressUp.
+      if (!mounted || !_pressed) {
+        await c.dispose();
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
       await c.setVolume(0);
       await c.setLooping(true);
       await c.play();
-      if (!mounted) {
-        await c.dispose();
-        return;
-      }
       setState(() {
         _ctrl = c;
         _playing = true;
@@ -2088,6 +2231,7 @@ class _MotionPhotoViewState extends State<_MotionPhotoView> {
   }
 
   Future<void> _stop() async {
+    _pressed = false;
     final c = _ctrl;
     if (mounted) {
       setState(() {

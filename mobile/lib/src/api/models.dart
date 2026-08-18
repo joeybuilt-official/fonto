@@ -121,6 +121,19 @@ class Asset {
         scope: j["scope"] as String?,
         motionPhoto: (j["motionPhoto"] as bool?) ?? false,
       );
+
+  /// Null-safe list parse. Returns null — instead of throwing and aborting the
+  /// entire page — when a single row is missing a required field or carries a
+  /// malformed date. List decoders use `.map(Asset.tryParse).whereType<Asset>()`
+  /// so one bad row drops out rather than blanking the whole grid.
+  static Asset? tryParse(Object? j) {
+    if (j is! Map<String, dynamic>) return null;
+    try {
+      return fromJson(j);
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 /// A candidate near-duplicate group (ADR 0010 / variant_groups). `members` are
@@ -138,7 +151,8 @@ class DupGroup {
         confidence: (j["confidence"] as num?)?.toDouble(),
         members: (j["members"] as List? ?? const [])
             .cast<Map<String, dynamic>>()
-            .map(Asset.fromJson)
+            .map(Asset.tryParse)
+            .whereType<Asset>()
             .toList(),
       );
 }
@@ -189,7 +203,8 @@ class MemoryYear {
         count: (j["count"] as num).toInt(),
         assets: (j["assets"] as List? ?? const [])
             .cast<Map<String, dynamic>>()
-            .map(Asset.fromJson)
+            .map(Asset.tryParse)
+            .whereType<Asset>()
             .toList(),
       );
 }
@@ -513,13 +528,20 @@ class PersonBbox {
   double get cy => y + h / 2;
 
   static PersonBbox? fromJson(dynamic j) {
-    if (j == null) return null;
-    final m = j as Map<String, dynamic>;
+    if (j is! Map<String, dynamic>) return null;
+    // A partial bbox (one key missing, e.g. {"x":0.1}) must return null — not
+    // throw — so AssetFace.fromJson's null-drop guard can discard the unusable
+    // face rather than the whole assetFaces parse crashing.
+    final x = j["x"] as num?;
+    final y = j["y"] as num?;
+    final w = j["w"] as num?;
+    final h = j["h"] as num?;
+    if (x == null || y == null || w == null || h == null) return null;
     return PersonBbox(
-      x: (m["x"] as num).toDouble(),
-      y: (m["y"] as num).toDouble(),
-      w: (m["w"] as num).toDouble(),
-      h: (m["h"] as num).toDouble(),
+      x: x.toDouble(),
+      y: y.toDouble(),
+      w: w.toDouble(),
+      h: h.toDouble(),
     );
   }
 }
@@ -746,12 +768,15 @@ class WorkspaceStats {
   // Count of active assets still being processed server-side (not ready/failed).
   final int processing;
 
+  // Null-safe: stats() doubles as the login "is this PAT valid?" probe, so a
+  // server that omits any field (older build, feature flagged off) must yield a
+  // WorkspaceStats, not an uncatchable TypeError on the login screen.
   static WorkspaceStats fromJson(Map<String, dynamic> j) => WorkspaceStats(
-        total: (j["total"] as num).toInt(),
-        images: (j["images"] as num).toInt(),
-        documents: (j["documents"] as num).toInt(),
-        videos: (j["videos"] as num).toInt(),
-        favorites: (j["favorites"] as num).toInt(),
+        total: (j["total"] as num?)?.toInt() ?? 0,
+        images: (j["images"] as num?)?.toInt() ?? 0,
+        documents: (j["documents"] as num?)?.toInt() ?? 0,
+        videos: (j["videos"] as num?)?.toInt() ?? 0,
+        favorites: (j["favorites"] as num?)?.toInt() ?? 0,
         processing: (j["processing"] as num?)?.toInt() ?? 0,
       );
 }

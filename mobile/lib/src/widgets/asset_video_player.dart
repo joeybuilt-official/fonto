@@ -10,6 +10,7 @@
 import "dart:async";
 
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:video_player/video_player.dart";
 
 import "../api/fonto_client.dart";
@@ -32,11 +33,20 @@ class AssetVideoPlayer extends StatefulWidget {
 class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
   VideoPlayerController? _controller;
   Timer? _poll;
+  // Bounds the transcode wait so "Preparing video…" can't spin forever if the
+  // server never flips ready/failed. ~40 polls × 3s ≈ 2 min.
+  int _pollAttempts = 0;
+  static const int _maxPollAttempts = 40;
   bool _disposed = false;
   // null = still resolving; non-null = terminal error to show.
   String? _error;
   bool _transcoding = false;
   bool _showControls = true;
+  // Auto-hides the overlay controls a few seconds into playback.
+  Timer? _hideTimer;
+  // Tracks the last observed play state so we re-arm the auto-hide only on a
+  // paused→playing edge, not on every position tick the listener fires.
+  bool _lastPlaying = false;
 
   @override
   void initState() {
@@ -65,6 +75,16 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
   }
 
   Future<void> _pollOnce() async {
+    if (_disposed) return;
+    _pollAttempts++;
+    if (_pollAttempts >= _maxPollAttempts) {
+      _poll?.cancel();
+      setState(() {
+        _transcoding = false;
+        _error = "Still preparing — try again later.";
+      });
+      return;
+    }
     try {
       final m = await widget.client.assetHls(widget.asset.id);
       if (_disposed) return;
@@ -81,6 +101,18 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
     } catch (_) {
       // Transient poll error — keep polling; a terminal failure flips state.
     }
+  }
+
+  /// Clears the terminal error/transcode state and re-runs resolution. Wired to
+  /// the Retry button so a failed load isn't a dead end.
+  void _retry() {
+    _poll?.cancel();
+    setState(() {
+      _error = null;
+      _transcoding = false;
+      _pollAttempts = 0;
+    });
+    _resolve();
   }
 
   Future<void> _startPlayback(String playlistUrl) async {
@@ -102,6 +134,9 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
       return;
     }
     await controller.setLooping(false);
+    // Drive the play/pause icon, buffering spinner, and auto-hide off real
+    // player state instead of only on explicit taps.
+    controller.addListener(_onControllerUpdate);
     // Start paused with the first frame + play button shown, so swiping
     // between pages never bleeds audio from an off-screen video.
     setState(() {
@@ -111,9 +146,41 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
     });
   }
 
+  void _onControllerUpdate() {
+    if (_disposed || !mounted) return;
+    final playing = _controller?.value.isPlaying ?? false;
+    if (playing != _lastPlaying) {
+      _lastPlaying = playing;
+      if (playing) {
+        _scheduleHideControls();
+      } else {
+        // Paused or ended — keep the controls up so the play button is reachable.
+        _hideTimer?.cancel();
+        _showControls = true;
+      }
+    }
+    setState(() {});
+  }
+
+  /// Fades the controls out a few seconds into playback (only while playing).
+  void _scheduleHideControls() {
+    _hideTimer?.cancel();
+    final c = _controller;
+    if (c == null || !c.value.isPlaying || !_showControls) return;
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (!_disposed && mounted) setState(() => _showControls = false);
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) _scheduleHideControls();
+  }
+
   void _togglePlay() {
     final c = _controller;
     if (c == null) return;
+    HapticFeedback.selectionClick();
     setState(() {
       if (c.value.isPlaying) {
         c.pause();
@@ -128,6 +195,8 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
   void dispose() {
     _disposed = true;
     _poll?.cancel();
+    _hideTimer?.cancel();
+    _controller?.removeListener(_onControllerUpdate);
     _controller?.dispose();
     super.dispose();
   }
@@ -149,6 +218,11 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Colors.white70,
                   ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: _retry,
+              child: const Text("Retry"),
             ),
           ],
         ),
@@ -179,7 +253,7 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
     }
 
     return GestureDetector(
-      onTap: () => setState(() => _showControls = !_showControls),
+      onTap: _toggleControls,
       child: Stack(
         alignment: Alignment.center,
         children: [
@@ -189,6 +263,10 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
               child: VideoPlayer(c),
             ),
           ),
+          // Mid-stream buffering — a spinner so a stalling stream doesn't read
+          // as a frozen frame.
+          if (c.value.isBuffering)
+            const CircularProgressIndicator(color: Colors.white),
           if (_showControls) ...[
             GestureDetector(
               onTap: _togglePlay,

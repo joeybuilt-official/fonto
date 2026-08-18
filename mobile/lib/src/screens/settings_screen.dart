@@ -7,6 +7,7 @@
 // runs a foreground scan on each launch.
 
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:photo_manager/photo_manager.dart";
 import "package:workmanager/workmanager.dart";
 
@@ -102,6 +103,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (next == null || current == null || _policyBusy || next == current.policy) {
       return;
     }
+    HapticFeedback.selectionClick();
     setState(() => _policyBusy = true);
     try {
       final auth = await AuthStore.load();
@@ -177,12 +179,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _onChargingOnlyToggle(bool value) async {
+    HapticFeedback.selectionClick();
     await SettingsStore.setSyncChargingOnly(value);
     if (mounted) setState(() => _chargingOnly = value);
     await _reRegisterDrain();
   }
 
   Future<void> _onWifiOnlyToggle(bool value) async {
+    HapticFeedback.selectionClick();
     await SettingsStore.setSyncWifiOnly(value);
     if (mounted) setState(() => _wifiOnly = value);
     // Re-apply both constraints to the WorkManager backstop so the setting is
@@ -289,6 +293,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _onToggle(bool value) async {
+    HapticFeedback.selectionClick();
     if (value) {
       final perm = await PhotoManager.requestPermissionExtend();
       if (!mounted) return;
@@ -326,6 +331,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _scanNow() async {
+    HapticFeedback.selectionClick();
     setState(() => _scanning = true);
     try {
       final n = await CameraRollScanner.scanAndEnqueue();
@@ -367,6 +373,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _z(int n) => n.toString().padLeft(2, "0");
 
   Future<void> _reprocessAll() async {
+    HapticFeedback.mediumImpact();
     final scope = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
@@ -457,6 +464,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // M14 / ADR 0057 — export the whole library (manifest + every original) via
   // the M8 streaming-zip pipeline, then hand off to the native share sheet.
   Future<void> _exportLibrary() async {
+    HapticFeedback.mediumImpact();
     final auth = await AuthStore.load();
     if (!mounted) return;
     if (!auth.isConfigured) {
@@ -475,6 +483,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(title: const Text("Settings")),
       body: _loading
@@ -585,12 +594,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // Phase B6 (storage placement) — workspace policy picker +
                 // mirror coverage, mirroring the web Settings → Storage card.
                 if (_storage != null) ...[
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                     child: Text(
                       "STORAGE",
-                      style: TextStyle(
-                        fontSize: 11,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.8,
                       ),
@@ -635,12 +644,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   const Divider(),
                 ],
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                   child: Text(
                     "IMPORT SOURCES",
-                    style: TextStyle(
-                      fontSize: 11,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
                       fontWeight: FontWeight.w600,
                       letterSpacing: 0.8,
                     ),

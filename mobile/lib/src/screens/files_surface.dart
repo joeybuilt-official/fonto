@@ -14,6 +14,8 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../theme/tokens.dart";
+import "../widgets/list_states.dart";
 
 class FilesSurface extends StatefulWidget {
   const FilesSurface({
@@ -33,15 +35,21 @@ class FilesSurface extends StatefulWidget {
 
 class _FilesSurfaceState extends State<FilesSurface> {
   final _searchCtrl = TextEditingController();
+  final _scroll = ScrollController();
   Timer? _debounce;
   String _query = "";
   List<Asset> _assets = const [];
   bool _loading = true;
   bool _error = false;
+  bool _loadingMore = false;
+  AssetCursor? _nextCursor;
+
+  static const _pageSize = 60;
 
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_maybeLoadMore);
     _load();
   }
 
@@ -57,17 +65,33 @@ class _FilesSurfaceState extends State<FilesSurface> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _scroll.dispose();
     _searchCtrl.dispose();
     super.dispose();
   }
 
   void _onSearchChanged(String v) {
+    // Rebuild now so the clear (X) affordance tracks the field immediately.
+    setState(() {});
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
       if (_query == v.trim()) return;
       _query = v.trim();
       _load();
     });
+  }
+
+  // Clear the query WITHOUT waiting on the 350ms debounce so results and the
+  // suffix icon update instantly.
+  void _clearSearch() {
+    _debounce?.cancel();
+    _searchCtrl.clear();
+    if (_query.isEmpty) {
+      setState(() {});
+      return;
+    }
+    setState(() => _query = "");
+    _load();
   }
 
   Future<void> _load() async {
@@ -77,7 +101,7 @@ class _FilesSurfaceState extends State<FilesSurface> {
     });
     try {
       final page = await widget.client.listAssets(
-        limit: 200,
+        limit: _pageSize,
         sort: "created",
         kind: widget.kindParam,
         q: _query.isEmpty ? null : _query,
@@ -86,15 +110,50 @@ class _FilesSurfaceState extends State<FilesSurface> {
       if (!mounted) return;
       setState(() {
         _assets = page.assets;
+        _nextCursor = page.nextCursor;
         _loading = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _assets = const [];
+        _nextCursor = null;
         _loading = false;
         _error = true;
       });
+    }
+  }
+
+  void _maybeLoadMore() {
+    if (!_scroll.hasClients) return;
+    if (_scroll.position.pixels <
+        _scroll.position.maxScrollExtent - 400) {
+      return;
+    }
+    _loadMore();
+  }
+
+  Future<void> _loadMore() async {
+    if (_loading || _loadingMore || _nextCursor == null) return;
+    setState(() => _loadingMore = true);
+    try {
+      final page = await widget.client.listAssets(
+        limit: _pageSize,
+        sort: "created",
+        kind: widget.kindParam,
+        q: _query.isEmpty ? null : _query,
+        directoryPathPrefix: widget.directoryPathPrefix,
+        after: _nextCursor,
+      );
+      if (!mounted) return;
+      setState(() {
+        _assets = [..._assets, ...page.assets];
+        _nextCursor = page.nextCursor;
+        _loadingMore = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingMore = false);
     }
   }
 
@@ -155,10 +214,7 @@ class _FilesSurfaceState extends State<FilesSurface> {
                   ? null
                   : IconButton(
                       icon: const Icon(Icons.close, size: 18),
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        _onSearchChanged("");
-                      },
+                      onPressed: _clearSearch,
                     ),
               hintText: "Search files — name, text, source…",
               border: OutlineInputBorder(
@@ -175,25 +231,18 @@ class _FilesSurfaceState extends State<FilesSurface> {
 
   Widget _buildList(ThemeData theme) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const _FilesSkeleton();
     }
     if (_error) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("Couldn't load files."),
-            TextButton(onPressed: _load, child: const Text("Retry")),
-          ],
-        ),
+      return ListErrorState(
+        onRetry: _load,
+        message: "Couldn't load files. Check your connection and retry.",
       );
     }
     if (_assets.isEmpty) {
-      return Center(
-        child: Text(
-          _query.isEmpty ? "No files yet." : "No files match “$_query”.",
-          style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-        ),
+      return ListEmptyState(
+        icon: Icons.insert_drive_file_outlined,
+        message: _query.isEmpty ? "No files yet." : "No files match “$_query”.",
       );
     }
 
@@ -211,9 +260,24 @@ class _FilesSurfaceState extends State<FilesSurface> {
       }
       rows.add(_FileRow.asset(a));
     }
+    final hasFooter = _nextCursor != null;
     return ListView.builder(
-      itemCount: rows.length,
+      controller: _scroll,
+      itemCount: rows.length + (hasFooter ? 1 : 0),
       itemBuilder: (context, i) {
+        if (i >= rows.length) {
+          // Pagination footer — fires _loadMore via the scroll listener.
+          return const Padding(
+            padding: EdgeInsets.all(FontoSpace.s4),
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
         final row = rows[i];
         if (row.header != null) {
           return Padding(
@@ -323,16 +387,32 @@ class _FilePropertiesState extends State<_FileProperties> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis),
               const SizedBox(height: 12),
-              if (a.mimeType.startsWith("image/") && _previewUrl != null)
+              if (a.mimeType.startsWith("image/"))
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.network(
-                    _previewUrl!,
-                    fit: BoxFit.contain,
-                    height: 200,
-                    width: double.infinity,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                  ),
+                  child: _previewUrl == null
+                      // Thumb URL still resolving — hold the space with a
+                      // skeleton so the sheet doesn't jump when it pops in.
+                      ? SizedBox(
+                          height: 200,
+                          width: double.infinity,
+                          child: imageSkeleton(context),
+                        )
+                      : Image.network(
+                          _previewUrl!,
+                          fit: BoxFit.contain,
+                          height: 200,
+                          width: double.infinity,
+                          loadingBuilder: (ctx, child, progress) =>
+                              progress == null
+                                  ? child
+                                  : SizedBox(
+                                      height: 200,
+                                      width: double.infinity,
+                                      child: imageSkeleton(ctx),
+                                    ),
+                          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                        ),
                 ),
               const SizedBox(height: 12),
               _row(theme, "Type", a.kind ?? "—"),
@@ -399,4 +479,49 @@ class _FileRow {
 
   final String? header;
   final Asset? asset;
+}
+
+/// Content-shaped loading placeholder for the Files list — mirrors the row
+/// layout (avatar + two text lines) so the load reads as content, not a
+/// bare spinner. Built from the shared [imageSkeleton] surface token.
+class _FilesSkeleton extends StatelessWidget {
+  const _FilesSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: FontoSpace.s2),
+      itemCount: 8,
+      itemBuilder: (ctx, _) => Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: FontoSpace.s4, vertical: FontoSpace.s3),
+        child: Row(
+          children: [
+            ClipOval(
+              child: SizedBox(width: 40, height: 40, child: imageSkeleton(ctx)),
+            ),
+            const SizedBox(width: FontoSpace.s3),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: SizedBox(
+                        height: 12, width: 180, child: imageSkeleton(ctx)),
+                  ),
+                  const SizedBox(height: FontoSpace.s2),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: SizedBox(
+                        height: 10, width: 120, child: imageSkeleton(ctx)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

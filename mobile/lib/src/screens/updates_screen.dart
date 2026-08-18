@@ -51,6 +51,9 @@ class _ActivityFeedState extends State<_ActivityFeed> {
   // assetId -> thumb URL, accumulated as pages load.
   final Map<String, String> _thumbs = {};
   String? _cursor;
+  // Row whose asset is being fetched, so we can show a spinner and swallow
+  // repeat taps (a slow getAsset would otherwise queue duplicate detail pushes).
+  String? _openingId;
 
   @override
   void initState() {
@@ -133,9 +136,14 @@ class _ActivityFeedState extends State<_ActivityFeed> {
   }
 
   Future<void> _openAsset(String assetId) async {
+    // Ignore taps while a fetch is already in flight — prevents duplicate
+    // getAsset calls and stacked detail pushes on a slow connection.
+    if (_openingId != null) return;
+    setState(() => _openingId = assetId);
     try {
       final asset = await widget.client.getAsset(assetId);
       if (!mounted) return;
+      setState(() => _openingId = null);
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => AssetDetailScreen(
@@ -147,6 +155,7 @@ class _ActivityFeedState extends State<_ActivityFeed> {
       );
     } catch (e) {
       if (!mounted) return;
+      setState(() => _openingId = null);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Couldn't open asset: $e")),
       );
@@ -197,6 +206,7 @@ class _ActivityFeedState extends State<_ActivityFeed> {
             event: event,
             thumbUrl: assetId == null ? null : _thumbs[assetId],
             onTap: assetId == null ? null : () => _openAsset(assetId),
+            opening: assetId != null && _openingId == assetId,
           );
         },
       ),
@@ -207,17 +217,23 @@ class _ActivityFeedState extends State<_ActivityFeed> {
 /// One compact feed row: actor avatar + summary + relative time, with an
 /// optional trailing micro-thumb when the event references an asset.
 class _FeedRow extends StatelessWidget {
-  const _FeedRow({required this.event, this.thumbUrl, this.onTap});
+  const _FeedRow({
+    required this.event,
+    this.thumbUrl,
+    this.onTap,
+    this.opening = false,
+  });
 
   final ActivityEvent event;
   final String? thumbUrl;
   final VoidCallback? onTap;
+  final bool opening;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return InkWell(
-      onTap: onTap,
+      onTap: opening ? null : onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
@@ -269,6 +285,14 @@ class _FeedRow extends StatelessWidget {
                     child: const Icon(Icons.broken_image, size: 16),
                   ),
                 ),
+              ),
+            ],
+            if (opening) ...[
+              const SizedBox(width: 12),
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ],
           ],

@@ -9,6 +9,7 @@ import "dart:io";
 
 import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 import "../util/drive_link.dart";
@@ -42,6 +43,7 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
 
   Future<void> _pickAndUpload() async {
     if (_uploadBusy) return;
+    HapticFeedback.mediumImpact();
     setState(() {
       _uploadBusy = true;
       _uploadMsg = null;
@@ -85,6 +87,7 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
           "That doesn't look like a Google Drive link or file ID. Paste the link to your Takeout archive in Drive.");
       return;
     }
+    HapticFeedback.mediumImpact();
     setState(() {
       _busy = true;
       _msg = null;
@@ -161,7 +164,11 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
             ),
             if (_msg != null) ...[
               const SizedBox(height: 8),
-              Text(_msg!, style: theme.textTheme.bodySmall),
+              Text(
+                _msg!,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.error),
+              ),
             ],
             const Divider(height: 32),
             Text(
@@ -188,7 +195,11 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
             ),
             if (_uploadMsg != null) ...[
               const SizedBox(height: 8),
-              Text(_uploadMsg!, style: theme.textTheme.bodySmall),
+              Text(
+                _uploadMsg!,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.error),
+              ),
             ],
           ],
         ],

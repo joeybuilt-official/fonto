@@ -17,6 +17,7 @@ import "dart:async";
 import "dart:convert";
 
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:google_sign_in/google_sign_in.dart";
 import "package:http/http.dart" as http;
 import "package:path_provider/path_provider.dart";
@@ -25,6 +26,8 @@ import "package:workmanager/workmanager.dart";
 import "../state/drive_download_queue.dart";
 import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
+import "../theme/tokens.dart";
+import "../widgets/list_states.dart";
 import "../widgets/sync_permission_sheet.dart";
 
 const _kDriveApiBase = "https://www.googleapis.com/drive/v3";
@@ -57,19 +60,32 @@ Future<void> _downloadAndEnqueueAll(
   // 2. Process in the foreground; hold the upload drain open the whole time.
   // Refresh the auth token before each batch — OAuth tokens expire in ~1 hour,
   // and a large import easily spans that window.
+  //
+  // Loop on pendingCount, NOT on `downloaded > 0`: a batch where every claimed
+  // row fails transiently (auth expiry, network blip) returns 0 successes while
+  // those rows are still pending in the queue — the old `while (downloaded > 0)`
+  // exited there and silently dropped them. Mirror _downloadAllPagesFromDrive:
+  // keep going while items remain, with a consecutive-zero breaker + backoff so
+  // a genuinely stuck queue can't spin forever.
   UploadQueue.beginFeeding();
   try {
-    int downloaded;
-    do {
+    int consecutiveZeros = 0;
+    while (await driveQ.pendingCount() > 0 && consecutiveZeros < 3) {
       final auth = await account.authentication;
       final token = auth.accessToken;
       final headers =
           token == null ? <String, String>{} : {"Authorization": "Bearer $token"};
-      downloaded = await DriveDownloadQueue.processAll(
+      final downloaded = await DriveDownloadQueue.processAll(
         headers,
         await getTemporaryDirectory(),
       );
-    } while (downloaded > 0);
+      if (downloaded == 0) {
+        consecutiveZeros++;
+        await Future.delayed(const Duration(seconds: 5));
+      } else {
+        consecutiveZeros = 0;
+      }
+    }
   } finally {
     UploadQueue.endFeeding();
     unawaited(UploadQueue.drain());
@@ -304,6 +320,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
   }
 
   void _toggle(_DriveItem item) {
+    HapticFeedback.selectionClick();
     setState(() {
       if (_selected.containsKey(item.id)) {
         _selected.remove(item.id);
@@ -318,6 +335,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
   // the first 100.
   Future<void> _toggleSelectAll() async {
     if (_selectingAll) return;
+    HapticFeedback.selectionClick();
     if (_selected.isNotEmpty) {
       setState(() => _selected.clear());
       return;
@@ -348,6 +366,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     if (_importing) return;
     final account = _user;
     if (account == null) return;
+    HapticFeedback.mediumImpact();
     // Nudge for the background-reliability permissions before a big import.
     await SyncPermissionSheet.maybePrompt(context);
     if (!mounted) return;
@@ -377,6 +396,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     if (_selected.isEmpty || _importing) return;
     final account = _user;
     if (account == null) return;
+    HapticFeedback.mediumImpact();
     final items = List<_DriveItem>.from(_selected.values);
     final virtualPath = widget.virtualPath;
 
@@ -516,7 +536,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
                 const SizedBox(height: 12),
                 Text(
                   _signInError!,
-                  style: const TextStyle(color: Colors.red),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -527,7 +547,7 @@ class _GoogleDriveImportScreenState extends State<GoogleDriveImportScreen> {
     }
 
     if (_loading && _items.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const _DriveListSkeleton();
     }
     if (_items.isEmpty) {
       return const Center(child: Text("No importable files found in Drive."));
@@ -586,4 +606,54 @@ class _DriveItem {
         mimeType: (j["mimeType"] as String?) ?? "",
         sizeBytes: int.tryParse((j["size"] as String?) ?? "") ?? 0,
       );
+}
+
+/// Content-shaped loading placeholder for the Drive file list — mirrors the
+/// CheckboxListTile row (leading icon + two text lines + trailing box) so the
+/// initial listing reads as content instead of a bare spinner.
+class _DriveListSkeleton extends StatelessWidget {
+  const _DriveListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      itemCount: 10,
+      itemBuilder: (ctx, _) => Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: FontoSpace.s4, vertical: FontoSpace.s3),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(FontoShape.small),
+              child: SizedBox(width: 32, height: 32, child: imageSkeleton(ctx)),
+            ),
+            const SizedBox(width: FontoSpace.s4),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: SizedBox(
+                        height: 12, width: 200, child: imageSkeleton(ctx)),
+                  ),
+                  const SizedBox(height: FontoSpace.s2),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: SizedBox(
+                        height: 10, width: 80, child: imageSkeleton(ctx)),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: FontoSpace.s4),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: SizedBox(width: 20, height: 20, child: imageSkeleton(ctx)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -7,6 +7,7 @@
 // its descendants' photos (resolved server-side). No deletes here.
 
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
@@ -82,15 +83,30 @@ class _TagsScreenState extends State<TagsScreen> {
   }
 
   Future<void> _run(Future<void> Function() op) async {
+    HapticFeedback.selectionClick();
     setState(() => _busy = true);
     try {
       await op();
-      await _load();
+      await _silentReload();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Couldn't save: $e")));
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // Refetch the tree without toggling `_loading`, so a single add/rename/move
+  // never blanks the whole tree to a centered spinner (heavy flicker on a
+  // trivial edit). The tree simply updates in place; `_run` already surfaces
+  // op failures via snackbar and keeps the current tree on a refetch error.
+  Future<void> _silentReload() async {
+    try {
+      final tags = await widget.client.listTags();
+      if (!mounted) return;
+      setState(() => _tags = tags);
+    } catch (_) {
+      // Keep the existing tree; the mutation itself already succeeded.
     }
   }
 
@@ -114,12 +130,18 @@ class _TagsScreenState extends State<TagsScreen> {
           ),
         ],
       ),
-    );
+    ).whenComplete(ctrl.dispose);
   }
 
   Future<void> _move(TagNode node) async {
     // Valid targets exclude the node itself and its descendants (cycle guard).
-    final targets = _tags.where((t) => !t.path.startsWith(node.path)).toList()
+    // Match on a path *boundary* so a sibling sharing a leaf-id prefix (e.g.
+    // "a/b2" vs node "a/b") isn't wrongly excluded. Works whether or not the
+    // materialized path carries a trailing delimiter.
+    final base = node.path.endsWith("/") ? node.path : "${node.path}/";
+    final targets = _tags
+        .where((t) => t.path != node.path && !t.path.startsWith(base))
+        .toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final selected = await showDialog<({bool root, String? id})>(
       context: context,

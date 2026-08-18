@@ -329,23 +329,28 @@ class UploadQueue {
     // created under it. Camera-roll picks flow through this same queue with the
     // user's REAL device file path, which must never be deleted.
     final tmpPath = (await getTemporaryDirectory()).path;
-    _draining = true;
-    // Recover rows the drain would otherwise skip forever (stranded in_flight
-    // + attempt-exhausted pending) before counting, so they're retried this
-    // run instead of the count flooring out.
-    await queue.recoverStuck();
-    var total = await queue.pendingCount();
     var processed = 0;
     var ok = 0;
-    if (total > 0) {
-      progress.value = UploadProgress(done: 0, total: total);
-    }
     // Bulk imports used to bog down because we processed one upload at a
     // time and a single slow file (network glitch → 120s timeout) blocked
     // every queued file behind it. Run a small fan-out (3 in flight) so a
     // stuck upload only burns its own slot — the other two keep draining.
     const concurrency = 3;
+    // Set the re-entrancy flag immediately before the try so the finally that
+    // resets it (and closes the client) ALWAYS runs. recoverStuck()/
+    // pendingCount() hit the DB (which can throw on a locked/full/corrupt db);
+    // if they threw before the try, _draining would stay true forever in this
+    // isolate and every later drain() would silently no-op at the guard.
+    _draining = true;
     try {
+      // Recover rows the drain would otherwise skip forever (stranded in_flight
+      // + attempt-exhausted pending) before counting, so they're retried this
+      // run instead of the count flooring out.
+      await queue.recoverStuck();
+      var total = await queue.pendingCount();
+      if (total > 0) {
+        progress.value = UploadProgress(done: 0, total: total);
+      }
       for (;;) {
         final batch = await queue.nextBatch(limit: 30);
         if (batch.isEmpty) {

@@ -27,6 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _baseUrlCtrl = TextEditingController(text: AuthStore.defaultBaseUrl);
   final _patCtrl = TextEditingController();
   bool _busy = false;
+  bool _obscurePat = true;
   String? _error;
 
   @override
@@ -40,13 +41,23 @@ class _LoginScreenState extends State<LoginScreen> {
   // dance. On success the web deep-links a PAT back to /mobile/auth-callback,
   // handled in main.dart. The base URL field sets which instance to hit.
   Future<void> _ssoLogin() async {
-    final baseUrl = _baseUrlCtrl.text.trim();
+    var baseUrl = _baseUrlCtrl.text.trim();
     if (baseUrl.isEmpty) {
       setState(() => _error = "Enter your Fonto URL first.");
       return;
     }
+    // Normalize a bare domain ("myfonto.com") to an absolute https URL so
+    // Uri.parse doesn't yield a relative URI that launchUrl silently drops.
+    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+      baseUrl = "https://$baseUrl";
+    }
     final uri = Uri.parse("$baseUrl/login?mobile=1");
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && mounted) setState(() => _error = "Could not open browser.");
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
   }
 
   Future<void> _submit() async {
@@ -103,12 +114,23 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 16),
               TextField(
                 controller: _patCtrl,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: "Personal access token",
                   helperText: "Mint one at /app/settings/tokens in the web UI.",
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscurePat
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                    tooltip: _obscurePat ? "Show token" : "Hide token",
+                    onPressed: () => setState(() => _obscurePat = !_obscurePat),
+                  ),
                 ),
-                obscureText: true,
+                obscureText: _obscurePat,
                 autocorrect: false,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _busy ? null : _submit(),
               ),
               const SizedBox(height: 24),
               FilledButton(

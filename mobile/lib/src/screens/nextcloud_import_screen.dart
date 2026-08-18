@@ -14,11 +14,14 @@ import "dart:io";
 
 import "package:crypto/crypto.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:http/http.dart" as http;
 import "package:path_provider/path_provider.dart";
 
 import "../state/upload_queue.dart";
+import "../theme/tokens.dart";
+import "../widgets/list_states.dart";
 
 const _kNcUrl = "nextcloud.url";
 const _kNcUser = "nextcloud.user";
@@ -81,6 +84,7 @@ class _NextcloudImportScreenState extends State<NextcloudImportScreen> {
       "Basic ${base64.encode(utf8.encode("$_user:$_pass"))}";
 
   Future<void> _connect(String url, String user, String pass) async {
+    HapticFeedback.mediumImpact();
     // Normalise: strip trailing slash, ensure scheme.
     var u = url.trim();
     if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://$u";
@@ -225,6 +229,7 @@ class _NextcloudImportScreenState extends State<NextcloudImportScreen> {
     if (e.isDir) {
       _list(e.url.endsWith("/") ? e.url : "${e.url}/");
     } else {
+      HapticFeedback.selectionClick();
       setState(() {
         if (_selected.containsKey(e.url)) {
           _selected.remove(e.url);
@@ -246,6 +251,7 @@ class _NextcloudImportScreenState extends State<NextcloudImportScreen> {
 
   Future<void> _import() async {
     if (_selected.isEmpty || _importing) return;
+    HapticFeedback.mediumImpact();
     final items = List<_NcEntry>.from(_selected.values);
     setState(() {
       _importing = true;
@@ -258,25 +264,43 @@ class _NextcloudImportScreenState extends State<NextcloudImportScreen> {
       for (final e in items) {
         if (!mounted) return;
         try {
-          final res = await http.get(
-            Uri.parse(e.url),
-            headers: {"Authorization": _basicAuth},
-          );
-          if (res.statusCode != 200) {
-            if (!mounted) return;
-            setState(() => _importDone++);
-            continue;
+          // Stream the body straight to disk and hash it incrementally so a
+          // large file never lands wholesale in RAM (bodyBytes would buffer
+          // the entire download, risking an OOM on big videos).
+          final req = http.Request("GET", Uri.parse(e.url))
+            ..headers["Authorization"] = _basicAuth;
+          final client = http.Client();
+          try {
+            final streamed = await client.send(req);
+            if (streamed.statusCode != 200) {
+              if (!mounted) return;
+              setState(() => _importDone++);
+              continue;
+            }
+            final tmp = File(
+                "${tmpDir.path}/nc_${sha256.convert(utf8.encode(e.url))}_${e.name}");
+            final sink = tmp.openWrite();
+            late Digest digest;
+            final hashInput = sha256.startChunkedConversion(
+              ChunkedConversionSink<Digest>.withCallback((d) => digest = d.single),
+            );
+            await for (final chunk in streamed.stream) {
+              sink.add(chunk);
+              hashInput.add(chunk);
+            }
+            hashInput.close();
+            await sink.flush();
+            await sink.close();
+            final q = await UploadQueue.open();
+            await q.enqueue(
+              filePath: tmp.path,
+              virtualPath: widget.virtualPath,
+              sha256Hex: digest.toString(),
+            );
+            ok++;
+          } finally {
+            client.close();
           }
-          final tmp = File("${tmpDir.path}/nc_${sha256.convert(utf8.encode(e.url))}_${e.name}");
-          await tmp.writeAsBytes(res.bodyBytes);
-          final sha = sha256.convert(res.bodyBytes).toString();
-          final q = await UploadQueue.open();
-          await q.enqueue(
-            filePath: tmp.path,
-            virtualPath: widget.virtualPath,
-            sha256Hex: sha,
-          );
-          ok++;
         } catch (_) {
           // Skip; continue.
         }
@@ -329,7 +353,7 @@ class _NextcloudImportScreenState extends State<NextcloudImportScreen> {
               ),
             ),
       body: _loadingCreds
-          ? const Center(child: CircularProgressIndicator())
+          ? const _NcListSkeleton()
           : connected
               ? _buildBrowser()
               : _ConnectForm(onConnect: _connect, busy: _loading, error: _error),
@@ -348,11 +372,12 @@ class _NextcloudImportScreenState extends State<NextcloudImportScreen> {
         if (_error != null)
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Text(_error!, style: const TextStyle(color: Colors.red)),
+            child: Text(_error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ),
         Expanded(
           child: _loading
-              ? const Center(child: CircularProgressIndicator())
+              ? const _NcListSkeleton()
               : _entries.isEmpty
                   ? const Center(child: Text("Empty folder."))
                   : ListView.builder(
@@ -456,7 +481,8 @@ class _ConnectFormState extends State<_ConnectForm> {
         ),
         if (widget.error != null) ...[
           const SizedBox(height: 12),
-          Text(widget.error!, style: const TextStyle(color: Colors.red)),
+          Text(widget.error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error)),
         ],
         const SizedBox(height: 20),
         FilledButton.icon(
@@ -499,5 +525,50 @@ class _NcEntry {
       return "${(sizeBytes / 1024).toStringAsFixed(0)} KB";
     }
     return "${(sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB";
+  }
+}
+
+/// Content-shaped loading placeholder for the Nextcloud browser — mirrors the
+/// list row (leading icon + two text lines) so the folder listing reads as
+/// content instead of a bare spinner.
+class _NcListSkeleton extends StatelessWidget {
+  const _NcListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      itemCount: 10,
+      itemBuilder: (ctx, _) => Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: FontoSpace.s4, vertical: FontoSpace.s3),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(FontoShape.small),
+              child: SizedBox(width: 32, height: 32, child: imageSkeleton(ctx)),
+            ),
+            const SizedBox(width: FontoSpace.s4),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: SizedBox(
+                        height: 12, width: 200, child: imageSkeleton(ctx)),
+                  ),
+                  const SizedBox(height: FontoSpace.s2),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: SizedBox(
+                        height: 10, width: 80, child: imageSkeleton(ctx)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

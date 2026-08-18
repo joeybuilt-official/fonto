@@ -9,6 +9,7 @@
 
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
@@ -76,6 +77,35 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
       _error = msg;
       _loading = false;
     });
+  }
+
+  // Guard the one-tap destructive path with a confirm dialog (there's no
+  // in-context Undo for a group consolidation), then trash on confirm.
+  Future<void> _confirmResolve(DupGroup g) async {
+    final n = g.members.length;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Keep best, trash the rest?"),
+        content: Text(
+          "We'll keep the best of these $n and move the other "
+          "${n - 1} to Trash. They stay recoverable from Trash.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text("Cancel"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text("Keep best, trash rest"),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    HapticFeedback.mediumImpact();
+    await _act(g, true);
   }
 
   Future<void> _act(DupGroup g, bool resolve) async {
@@ -186,14 +216,19 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
               children: [
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: busy ? null : () => _act(g, true),
+                    onPressed: busy ? null : () => _confirmResolve(g),
                     icon: const Icon(Icons.check, size: 18),
                     label: const Text("Keep best, trash rest"),
                   ),
                 ),
                 const SizedBox(width: 8),
                 OutlinedButton(
-                  onPressed: busy ? null : () => _act(g, false),
+                  onPressed: busy
+                      ? null
+                      : () {
+                          HapticFeedback.selectionClick();
+                          _act(g, false);
+                        },
                   child: const Text("Not dupes"),
                 ),
               ],

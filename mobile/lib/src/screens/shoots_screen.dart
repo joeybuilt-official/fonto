@@ -10,6 +10,7 @@ import "package:flutter/material.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../theme/tokens.dart";
 import "../widgets/list_states.dart";
 import "filtered_assets_screen.dart";
 
@@ -81,8 +82,32 @@ class _ShootsScreenState extends State<ShootsScreen> {
     );
   }
 
+  /// Skeleton list shown while the first fetch is in flight — reads smoother
+  /// into the real shoot rows than a lone centered spinner.
+  Widget _loadingSkeleton() {
+    final color = Theme.of(context).colorScheme.surfaceContainerHighest;
+    Widget bar(double w, double h) => Container(
+          width: w,
+          height: h,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(FontoShape.small),
+          ),
+        );
+    return ListView.separated(
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: 8,
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemBuilder: (_, __) => ListTile(
+        leading: bar(24, 24),
+        title: Align(alignment: Alignment.centerLeft, child: bar(160, 14)),
+        subtitle: Align(alignment: Alignment.centerLeft, child: bar(90, 10)),
+      ),
+    );
+  }
+
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return _loadingSkeleton();
     if (_error != null) return ListErrorState(onRetry: _load);
     if (_shoots.isEmpty) {
       return const ListEmptyState(
@@ -95,6 +120,7 @@ class _ShootsScreenState extends State<ShootsScreen> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
         itemCount: _shoots.length,
         separatorBuilder: (_, __) => const Divider(height: 1),
         itemBuilder: (context, i) {

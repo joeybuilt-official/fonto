@@ -11,6 +11,7 @@
 // methods for collections / workspace activity / people-places-things).
 
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 import "../state/auth_store.dart";
@@ -34,20 +35,41 @@ class _MainShellState extends State<MainShell> {
   late final FontoClient _client = FontoClient(widget.auth);
   int _index = 0;
 
+  // Lazily-built tabs: each screen (and its initState network fetch) is only
+  // constructed on first visit, then kept alive. A cold start no longer fans
+  // out five parallel fetches — only the visible Library tab loads.
+  final List<Widget?> _tabs = List<Widget?>.filled(5, null);
+
   @override
   void dispose() {
     _client.close();
     super.dispose();
   }
 
+  Widget _buildTab(int i) {
+    switch (i) {
+      case 0:
+        return HomeScreen(auth: widget.auth, onSignOut: widget.onSignOut);
+      case 1:
+        return ExploreScreen(client: _client);
+      case 2:
+        return CollectionsScreen(client: _client);
+      case 3:
+        return UpdatesScreen(client: _client);
+      case 4:
+        return SearchScreen(client: _client);
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Build the active tab on demand; already-built tabs stay in the list so
+    // their scroll position + fetched data survive tab switches.
+    _tabs[_index] ??= _buildTab(_index);
     final tabs = <Widget>[
-      HomeScreen(auth: widget.auth, onSignOut: widget.onSignOut),
-      ExploreScreen(client: _client),
-      CollectionsScreen(client: _client),
-      UpdatesScreen(client: _client),
-      SearchScreen(client: _client),
+      for (final tab in _tabs) tab ?? const SizedBox.shrink(),
     ];
 
     final theme = Theme.of(context);
@@ -63,12 +85,17 @@ class _MainShellState extends State<MainShell> {
     return Scaffold(
       body: IndexedStack(index: _index, children: tabs),
       bottomNavigationBar: NavigationBarTheme(
-        data: NavigationBarThemeData(
+        // Merge onto the global navigationBarTheme so its backgroundColor,
+        // elevation:0, and height:80 survive — NavigationBarTheme.of() does
+        // NOT merge ThemeData.navigationBarTheme, so a bare data here would
+        // silently re-add the M3 default elevation (drop shadow).
+        data: theme.navigationBarTheme.copyWith(
           indicatorColor: theme.colorScheme.primary.withValues(alpha: 0.12),
           labelTextStyle: WidgetStateProperty.resolveWith((states) {
             final selected = states.contains(WidgetState.selected);
-            return TextStyle(
-              fontSize: 11,
+            // Off theme.textTheme.labelSmall so the Inter family + tracking
+            // carry through instead of a bare TextStyle.
+            return theme.textTheme.labelSmall?.copyWith(
               fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
               color: selected ? activeText : inactiveText,
             );
@@ -83,7 +110,10 @@ class _MainShellState extends State<MainShell> {
         ),
         child: NavigationBar(
           selectedIndex: _index,
-          onDestinationSelected: (i) => setState(() => _index = i),
+          onDestinationSelected: (i) {
+            HapticFeedback.selectionClick();
+            setState(() => _index = i);
+          },
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.photo_library_outlined),
@@ -107,6 +137,7 @@ class _MainShellState extends State<MainShell> {
             ),
             NavigationDestination(
               icon: Icon(Icons.search),
+              selectedIcon: Icon(Icons.search),
               label: "Search",
             ),
           ],

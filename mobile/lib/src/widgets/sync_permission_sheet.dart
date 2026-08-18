@@ -11,6 +11,7 @@
 import "package:flutter/material.dart";
 
 import "../state/sync_service.dart";
+import "../theme/tokens.dart";
 
 class SyncPermissionSheet extends StatefulWidget {
   const SyncPermissionSheet({super.key});
@@ -163,7 +164,10 @@ class _Gate extends StatelessWidget {
         ),
         const SizedBox(width: 12),
         if (enabled)
-          const Icon(Icons.check_circle, color: Colors.green)
+          Icon(
+            Icons.check_circle,
+            color: theme.extension<FontoColors>()!.success,
+          )
         else
           FilledButton.tonal(onPressed: onEnable, child: const Text("Enable")),
       ],

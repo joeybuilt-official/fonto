@@ -12,6 +12,7 @@ import "package:cached_network_image/cached_network_image.dart";
 import "package:connectivity_plus/connectivity_plus.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_doc_scanner/flutter_doc_scanner.dart";
 import "package:image_picker/image_picker.dart";
 
@@ -38,6 +39,7 @@ import "../state/device_photos.dart";
 import "../state/device_kind.dart";
 import "../state/push_notifications.dart";
 import "../state/settings_store.dart";
+import "../theme/tokens.dart";
 import "package:photo_manager/photo_manager.dart";
 
 const _kPageSize = 60;
@@ -70,6 +72,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<Asset> _visible = const [];
   List<_MonthGroup> _groups = const [];
   Map<String, int> _flatIdxById = const {};
+  // Stable per-month header keys so the scrubber can scroll a specific month's
+  // group into view once it's loaded. Keyed by "YYYY-MM".
+  final Map<String, GlobalKey> _monthKeys = {};
   final Map<String, String> _thumbs = {};
   AssetCursor? _cursor;
   // M8 — multi-select export. Long-press a tile to enter selection.
@@ -170,7 +175,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _kickDrain();
     _kickDriveDrain();
     _maybeScanCameraRoll();
-    _loadSplitConfig();
   }
 
   /// Cold-start sequence optimized for instant first paint:
@@ -183,6 +187,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // before any network call resolves.
     unawaited(_maybeLoadDevicePhotos());
     final primed = await _primeFromCache();
+    // Resolve the Photos/Files split (which surface is active) BEFORE the first
+    // server fetch so exactly one initial _refresh runs, with the right params.
+    // Previously _loadSplitConfig fired its own _refresh() that raced this one.
+    await _loadSplitConfig();
     await _refresh(background: primed);
   }
 
@@ -223,10 +231,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (on) _surface = last;
       });
       if (on) {
+        // Surface is now resolved; the caller's single bootstrap _refresh()
+        // will fetch with the correct split params (no second racing fetch).
         _refreshUnsortedCount();
-        // The legacy initial _refresh() ran with the old single-lens kind; when
-        // the restored surface differs (Files/Inbox), refetch with split params.
-        if (last != "photos") _refresh();
       }
     } catch (_) {
       // Leave legacy behaviour.
@@ -234,12 +241,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _refreshUnsortedCount() async {
-    final n = await _client.inboxCount();
-    if (mounted) setState(() => _unsortedCount = n);
+    try {
+      final n = await _client.inboxCount();
+      if (mounted) setState(() => _unsortedCount = n);
+    } catch (_) {
+      // Best-effort — leave the last-known count on failure rather than
+      // throwing an unhandled future error from an unawaited caller.
+    }
   }
 
   Future<void> _setSurface(String s) async {
     if (_surface == s) return;
+    HapticFeedback.lightImpact();
     setState(() {
       _surface = s;
       _splitLens = "all";
@@ -254,6 +267,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _setSplitLens(String lens) {
     if (_splitLens == lens) return;
+    HapticFeedback.lightImpact();
     setState(() => _splitLens = lens);
     // Photos/Inbox grid needs a refetch; FilesSurface reacts via its widget
     // params (didUpdateWidget) on the rebuild this setState triggers.
@@ -453,6 +467,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _stats = stats;
         if (toAdd.isNotEmpty) {
           _assets.insertAll(0, toAdd);
+          // New items aren't always the newest — a freshly-uploaded but
+          // backdated photo (older capturedAt) would otherwise sit at index 0
+          // and pin a stale old-month header above the current month. Re-sort
+          // by capture time (matching _monthKey) so month grouping stays right.
+          _assets.sort((a, b) => (b.capturedAt ?? b.createdAt)
+              .compareTo(a.capturedAt ?? a.createdAt));
           _thumbs.addAll(newThumbs);
           _recomputeDerived();
         }
@@ -1048,6 +1068,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     };
   }
 
+  /// Scrubber release target. Maps a full-library month (from the bucket domain)
+  /// onto the loaded timeline: paginate until that month's group is loaded, then
+  /// scroll it into view. Fixes the old behaviour where the scrubber jumped to
+  /// `fraction * loadedPixels` — unrelated to the month the bubble named, and
+  /// unable to reach months past the last loaded page.
+  Future<void> _seekToMonth(String month) async {
+    if (month.isEmpty) return;
+    // Load newer→older pages until the target month appears among the loaded
+    // groups (the newest months are already loaded, so only older targets loop).
+    var guard = 0;
+    while (mounted &&
+        guard++ < 60 &&
+        !_offline &&
+        _cursor != null &&
+        !_loadingMore &&
+        _groups.indexWhere((g) => g.month == month) < 0) {
+      await _loadMore();
+    }
+    if (!mounted) return;
+    final idx = _groups.indexWhere((g) => g.month == month);
+    if (idx < 0 || !_scroll.hasClients) return;
+    // Proportional first hop so the target header builds near the viewport…
+    final firstId = _groups[idx].assets.first.id;
+    final flat = _flatIdxById[firstId] ?? 0;
+    final total = _visible.isEmpty ? 1 : _visible.length;
+    final max = _scroll.position.maxScrollExtent;
+    _scroll.jumpTo(_clampDouble(flat / total, 0, 1) * max);
+    // …then snap precisely once that header is laid out.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _monthKeys[month]?.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: FontoMotion.short,
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   Future<void> _openDetail(int i) async {
     final result = await Navigator.of(context).push<Map<String, dynamic>?>(
       MaterialPageRoute(
@@ -1072,6 +1132,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   // M8 — multi-select helpers.
   void _toggleSelect(String id) {
+    HapticFeedback.selectionClick();
     setState(() {
       if (_selected.remove(id)) {
         if (_selected.isEmpty) _selecting = false;
@@ -1082,6 +1143,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _enterSelect(String id) {
+    HapticFeedback.selectionClick();
     setState(() {
       _selecting = true;
       _selected.add(id);
@@ -1095,32 +1157,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  // M8 — zip export runs to a temp file + share sheet, which can take seconds
+  // on a large selection. Show an in-progress spinner + disable the button so
+  // it can't be double-tapped, and leave selection mode once it settles.
+  bool _exporting = false;
+
+  Future<void> _exportSelection() async {
+    if (_selected.isEmpty || _exporting) return;
+    final ids = _selected.toList();
+    setState(() => _exporting = true);
+    try {
+      await exportAndShareZip(context, _client, ids: ids);
+      if (!mounted) return;
+      _exitSelect();
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
   PreferredSizeWidget _selectionAppBar() {
     return AppBar(
       leading: IconButton(
         icon: const Icon(Icons.close),
         tooltip: "Cancel selection",
-        onPressed: _exitSelect,
+        onPressed: _exporting ? null : _exitSelect,
       ),
       title: Text("${_selected.length} selected"),
       actions: [
         IconButton(
           tooltip: "Export zip",
-          icon: const Icon(Icons.archive_outlined),
-          onPressed: _selected.isEmpty
-              ? null
-              : () => exportAndShareZip(
-                    context,
-                    _client,
-                    ids: _selected.toList(),
-                  ),
+          icon: _exporting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.archive_outlined),
+          onPressed: (_selected.isEmpty || _exporting) ? null : _exportSelection,
         ),
       ],
     );
   }
 
+  // Folder switch. Does NOT pop the navigator: the drawer's own ListTile
+  // handlers already close the drawer before calling this, and this is also the
+  // empty-state "Clear filters" callback (invoked with no drawer open) — a pop
+  // there threw the user off the whole HomeScreen.
   void _selectFolder(String? folder) {
-    Navigator.of(context).pop(); // close drawer
     if (folder == _folder) return;
     setState(() => _folder = folder);
     _refresh();
@@ -1234,6 +1317,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _setLens(String lens) {
     if (_lens == lens) return;
+    HapticFeedback.lightImpact();
     setState(() => _lens = lens);
     _refresh();
   }
@@ -1355,10 +1439,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 controller: _scroll,
                 slivers: [
                   if (_folder == null && _isPhotos) ..._deviceSlivers(),
+                  // Cold start with nothing cached: a compact spinner as the
+                  // active-fetch cue, over a shimmer-style skeleton grid that
+                  // matches the 3-col layout — so the area reads as loading
+                  // CONTENT, not a stalled lone spinner in empty space.
                   const SliverToBoxAdapter(
                     child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(child: CircularProgressIndicator()),
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                        ),
+                      ),
+                    ),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                    sliver: SliverGrid(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        crossAxisSpacing: 4,
+                        mainAxisSpacing: 4,
+                      ),
+                      delegate: SliverChildBuilderDelegate(
+                        (context, i) => imageSkeleton(context),
+                        childCount: 9,
+                      ),
                     ),
                   ),
                 ],
@@ -1492,6 +1601,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 delegate: _MonthHeaderDelegate(
                   label: _monthLabel(g.month),
                   count: g.assets.length,
+                  headerKey: _monthKeys.putIfAbsent(g.month, () => GlobalKey()),
                 ),
               ),
               SliverPadding(
@@ -1556,6 +1666,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 child: _TimelineScrubber(
                   controller: _scroll,
                   buckets: _buckets,
+                  onSeekMonth: _seekToMonth,
                 ),
               ),
             ],
@@ -1604,38 +1715,43 @@ class _LensSelector extends StatelessWidget {
         itemBuilder: (context, i) {
           final (value, label, icon) = _lenses[i];
           final isActive = value == active;
-          return InkWell(
-            onTap: () => onChange(value),
+          // Material carries the fill so the InkWell ripple/highlight renders
+          // ON TOP of the chip. A bare InkWell over an opaque Container painted
+          // the ripple on the Scaffold underneath — invisible.
+          return Material(
+            color: isActive
+                ? theme.colorScheme.primary
+                : theme.colorScheme.surfaceContainerHighest,
             borderRadius: const BorderRadius.all(Radius.circular(20)),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              decoration: BoxDecoration(
-                color: isActive
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.surfaceContainerHighest,
-                borderRadius: const BorderRadius.all(Radius.circular(20)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    icon,
-                    size: 16,
-                    color: isActive
-                        ? theme.colorScheme.onPrimary
-                        : theme.colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    label,
-                    style: theme.textTheme.labelMedium?.copyWith(
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => onChange(value),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      icon,
+                      size: 16,
                       color: isActive
                           ? theme.colorScheme.onPrimary
-                          : theme.colorScheme.onSurface,
-                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                          : theme.colorScheme.onSurfaceVariant,
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 6),
+                    Text(
+                      label,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: isActive
+                            ? theme.colorScheme.onPrimary
+                            : theme.colorScheme.onSurface,
+                        fontWeight:
+                            isActive ? FontWeight.w600 : FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -1769,36 +1885,37 @@ class _SurfaceSelector extends StatelessWidget {
               itemBuilder: (context, i) {
                 final (value, label, icon) = lenses[i];
                 final isActive = value == lens;
-                return InkWell(
-                  onTap: () => onLens(value),
+                return Material(
+                  color: isActive
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.surfaceContainerHighest,
                   borderRadius: const BorderRadius.all(Radius.circular(20)),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isActive
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.surfaceContainerHighest,
-                      borderRadius: const BorderRadius.all(Radius.circular(20)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(icon,
-                            size: 16,
-                            color: isActive
-                                ? theme.colorScheme.onPrimary
-                                : theme.colorScheme.onSurfaceVariant),
-                        const SizedBox(width: 6),
-                        Text(label,
-                            style: theme.textTheme.labelMedium?.copyWith(
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () => onLens(value),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 6),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(icon,
+                              size: 16,
                               color: isActive
                                   ? theme.colorScheme.onPrimary
-                                  : theme.colorScheme.onSurface,
-                              fontWeight:
-                                  isActive ? FontWeight.w600 : FontWeight.w500,
-                            )),
-                      ],
+                                  : theme.colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 6),
+                          Text(label,
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                color: isActive
+                                    ? theme.colorScheme.onPrimary
+                                    : theme.colorScheme.onSurface,
+                                fontWeight: isActive
+                                    ? FontWeight.w600
+                                    : FontWeight.w500,
+                              )),
+                        ],
+                      ),
                     ),
                   ),
                 );
@@ -1811,35 +1928,37 @@ class _SurfaceSelector extends StatelessWidget {
 
   Widget _seg(ThemeData theme, String value, String label, IconData icon) {
     final isActive = surface == value;
+    // Material (over the transparent segment track) so the tap ripple paints on
+    // top of the active fill rather than on the Scaffold beneath it.
     return Expanded(
-      child: InkWell(
+      child: Material(
+        color: isActive
+            ? theme.colorScheme.secondaryContainer
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(20),
-        onTap: () => onSurface(value),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: isActive
-                ? theme.colorScheme.secondaryContainer
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon,
-                  size: 18,
-                  color: isActive
-                      ? theme.colorScheme.onSecondaryContainer
-                      : theme.colorScheme.onSurfaceVariant),
-              const SizedBox(width: 6),
-              Text(label,
-                  style: theme.textTheme.labelLarge?.copyWith(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => onSurface(value),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon,
+                    size: 18,
                     color: isActive
                         ? theme.colorScheme.onSecondaryContainer
-                        : theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  )),
-            ],
+                        : theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Text(label,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: isActive
+                          ? theme.colorScheme.onSecondaryContainer
+                          : theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    )),
+              ],
+            ),
           ),
         ),
       ),
@@ -1899,9 +2018,16 @@ List<_MonthGroup> _groupAssetsByMonth(List<Asset> assets) {
 }
 
 class _MonthHeaderDelegate extends SliverPersistentHeaderDelegate {
-  const _MonthHeaderDelegate({required this.label, required this.count});
+  const _MonthHeaderDelegate({
+    required this.label,
+    required this.count,
+    this.headerKey,
+  });
   final String label;
   final int count;
+
+  /// Stable key on the header's box so the scrubber can `ensureVisible` it.
+  final Key? headerKey;
 
   @override
   double get minExtent => _kMonthHeaderHeight;
@@ -1913,6 +2039,7 @@ class _MonthHeaderDelegate extends SliverPersistentHeaderDelegate {
   Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
     final theme = Theme.of(context);
     return Container(
+      key: headerKey,
       // Solid (not translucent) so the pinned header fully masks tiles
       // scrolling underneath — and avoids the deprecated withOpacity on
       // current stable Flutter, which fails `flutter analyze`.
@@ -1949,9 +2076,17 @@ class _MonthHeaderDelegate extends SliverPersistentHeaderDelegate {
 /// after it settles. Drag the pill (or anywhere down the right edge) to
 /// fast-scroll; a month/year bubble follows the finger.
 class _TimelineScrubber extends StatefulWidget {
-  const _TimelineScrubber({required this.controller, required this.buckets});
+  const _TimelineScrubber({
+    required this.controller,
+    required this.buckets,
+    this.onSeekMonth,
+  });
   final ScrollController controller;
   final List<AssetBucket> buckets;
+
+  /// Called on drag release with the target month ("YYYY-MM") so the host can
+  /// paginate to it and scroll its group into view.
+  final ValueChanged<String>? onSeekMonth;
 
   @override
   State<_TimelineScrubber> createState() => _TimelineScrubberState();
@@ -2030,10 +2165,14 @@ class _TimelineScrubberState extends State<_TimelineScrubber> {
 
   void _onDrag(double localY, double height) {
     final frac = height > 0 ? _clampDouble(localY, 0, height) / height : 0.0;
+    final month = _monthAt(frac);
+    final crossed = month != _bubbleMonth;
     setState(() {
-      _bubbleMonth = _monthAt(frac);
+      _bubbleMonth = month;
       _visible = true;
     });
+    // Tick each time the finger crosses into a new month.
+    if (crossed && month.isNotEmpty) HapticFeedback.lightImpact();
     _seekToFraction(frac);
   }
 
@@ -2055,10 +2194,16 @@ class _TimelineScrubberState extends State<_TimelineScrubber> {
           },
           onVerticalDragUpdate: (d) => _onDrag(d.localPosition.dy, height),
           onVerticalDragEnd: (_) {
+            final target = _bubbleMonth;
             setState(() {
               _dragging = false;
               _bubbleMonth = null;
             });
+            // Hop to the named month: paginate to it if needed, then scroll its
+            // group into view (the continuous drag only reached loaded pixels).
+            if (target != null && target.isNotEmpty) {
+              widget.onSeekMonth?.call(target);
+            }
             _scheduleHide();
           },
           child: Stack(
@@ -2310,17 +2455,30 @@ class _StatsBar extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: pairs
-            .map((p) => Column(
-                  children: [
-                    Text(
-                      "${p.$2}",
-                      style: Theme.of(context).textTheme.titleMedium,
+            .map((p) => Flexible(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: Column(
+                      children: [
+                        // Large totals (e.g. "123456") on a narrow device
+                        // would overflow the fixed Row — scale the number down
+                        // instead of throwing a RenderFlex overflow stripe.
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            "${p.$2}",
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        Text(
+                          p.$1,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
+                      ],
                     ),
-                    Text(
-                      p.$1,
-                      style: Theme.of(context).textTheme.labelSmall,
-                    ),
-                  ],
+                  ),
                 ))
             .toList(),
       ),
@@ -2443,9 +2601,36 @@ class _AssetTile extends StatelessWidget {
 /// thumbnail straight from the device via [AssetEntity.thumbnailDataWithSize]
 /// — fully offline, no network. A cloud-arrow-up badge signals it's pending
 /// upload to Fonto.
-class _DeviceTile extends StatelessWidget {
+class _DeviceTile extends StatefulWidget {
   const _DeviceTile({required this.entity});
   final AssetEntity entity;
+
+  @override
+  State<_DeviceTile> createState() => _DeviceTileState();
+}
+
+class _DeviceTileState extends State<_DeviceTile> {
+  // Resolve the device thumbnail ONCE and hold the future. Previously this was
+  // created inline in build(), so every parent setState (upload progress, queue
+  // badge, stats poll, softRefresh) kicked a fresh decode and flashed the tile
+  // back to the placeholder mid-scroll.
+  late Future<Uint8List?> _thumb;
+
+  @override
+  void initState() {
+    super.initState();
+    _thumb = _resolve();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DeviceTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Recycled to a different entity (id-keyed) — re-resolve.
+    if (oldWidget.entity.id != widget.entity.id) _thumb = _resolve();
+  }
+
+  Future<Uint8List?> _resolve() =>
+      widget.entity.thumbnailDataWithSize(const ThumbnailSize.square(260));
 
   @override
   Widget build(BuildContext context) {
@@ -2455,7 +2640,7 @@ class _DeviceTile extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         FutureBuilder<Uint8List?>(
-          future: entity.thumbnailDataWithSize(const ThumbnailSize.square(260)),
+          future: _thumb,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
               return Container(color: placeholderColor);

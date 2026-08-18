@@ -17,9 +17,16 @@ class DevicePhotos {
   /// Whether photo access is already granted. Never prompts — the
   /// SettingsScreen / auto-import flow owns the actual permission request, and
   /// HomeScreen only shows the device section when access already exists.
+  ///
+  /// Uses the read-only [PhotoManager.getPermissionState] (never surfaces the OS
+  /// dialog) rather than requestPermissionExtend, which presents the system
+  /// prompt when the state is not-yet-determined — an unexpected pop before the
+  /// intended onboarding flow, contradicting this method's "never prompts" job.
   static Future<bool> hasPermission() async {
-    final perm = await PhotoManager.requestPermissionExtend();
-    return perm.hasAccess;
+    final state = await PhotoManager.getPermissionState(
+      requestOption: const PermissionRequestOption(),
+    );
+    return state.hasAccess;
   }
 
   /// Newest device images, local thumbnails only. Returns an empty list when

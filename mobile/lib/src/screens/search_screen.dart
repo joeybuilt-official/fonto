@@ -11,6 +11,7 @@
 import "package:cached_network_image/cached_network_image.dart";
 import "package:connectivity_plus/connectivity_plus.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
@@ -182,7 +183,15 @@ class _SearchScreenState extends State<SearchScreen> {
         semantic: _semantic,
         ocrOnly: _ocrOnly,
       );
-      final clipRaw = await clipFuture;
+      // A CLIP failure must never sink an otherwise-successful text search:
+      // searchClip() only returns [] for a clean {unavailable:true}; a network
+      // or 5xx error throws. Swallow it here so the text grid still commits, and
+      // flag the semantic section as unavailable.
+      var clipFailed = false;
+      final clipRaw = await clipFuture.catchError((_) {
+        clipFailed = true;
+        return <Asset>[];
+      });
       // Drop semantic hits already in the text results: the same asset in both
       // grids means two Hero widgets sharing one tag, which Flutter rejects and
       // renders as flicker. Dedup keeps every Hero tag unique on screen.
@@ -202,7 +211,7 @@ class _SearchScreenState extends State<SearchScreen> {
       setState(() {
         _results = assets;
         _semanticResults = clip;
-        _semanticUnavailable = runClip && clip.isEmpty;
+        _semanticUnavailable = runClip && (clipFailed || clip.isEmpty);
         _thumbs = thumbs;
         _busy = false;
       });
@@ -318,6 +327,7 @@ class _SearchScreenState extends State<SearchScreen> {
               avatar: const Icon(Icons.auto_awesome, size: 18),
               selected: _semantic,
               onSelected: (v) {
+                HapticFeedback.selectionClick();
                 setState(() => _semantic = v);
                 _run();
               },
@@ -330,6 +340,7 @@ class _SearchScreenState extends State<SearchScreen> {
               avatar: const Icon(Icons.text_fields, size: 18),
               selected: _ocrOnly,
               onSelected: (v) {
+                HapticFeedback.selectionClick();
                 setState(() => _ocrOnly = v);
                 _run();
               },
@@ -395,7 +406,13 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildBody() {
-    if (_busy) return const Center(child: CircularProgressIndicator());
+    final hasResults = _results.isNotEmpty || _semanticResults.isNotEmpty;
+    // Only blank the surface for the very first fetch. A re-run with results
+    // already on screen (chip toggle, filter apply) keeps the grid mounted and
+    // shows a slim top progress bar instead of flashing a full-screen spinner.
+    if (_busy && !hasResults) {
+      return const Center(child: CircularProgressIndicator());
+    }
     if (_error != null) {
       return ListErrorState(
         message: _offline
@@ -405,8 +422,8 @@ class _SearchScreenState extends State<SearchScreen> {
         onRetry: _run,
       );
     }
-    final hasInput = _ctrl.text.trim().isNotEmpty || _ocrOnly || _hasFilters;
-    if (_results.isEmpty && _semanticResults.isEmpty) {
+    if (!hasResults) {
+      final hasInput = _ctrl.text.trim().isNotEmpty || _ocrOnly || _hasFilters;
       return ListEmptyState(
         icon: Icons.search,
         message: hasInput
@@ -414,7 +431,7 @@ class _SearchScreenState extends State<SearchScreen> {
             : "Type to search your photos, text, and descriptions — or set a filter.",
       );
     }
-    return CustomScrollView(
+    final grid = CustomScrollView(
       slivers: [
         if (_results.isNotEmpty) ...[
           _sectionHeader(
@@ -440,6 +457,21 @@ class _SearchScreenState extends State<SearchScreen> {
         ],
       ],
     );
+    // In-place refresh: results stay put under a slim top progress bar.
+    if (_busy) {
+      return Stack(
+        children: [
+          grid,
+          const Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
+        ],
+      );
+    }
+    return grid;
   }
 
   Widget _sectionHeader(String? label) {
@@ -639,7 +671,10 @@ class _FilterSheetState extends State<_FilterSheet> {
   Widget build(BuildContext context) {
     return SafeArea(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        // Lift the content (ISO / ƒ / camera fields + Apply) above the keyboard
+        // so raising it never clips the lower inputs or the Apply button.
+        padding: EdgeInsets.fromLTRB(
+            16, 0, 16, 16 + MediaQuery.of(context).viewInsets.bottom),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -652,8 +687,10 @@ class _FilterSheetState extends State<_FilterSheet> {
                 return ChoiceChip(
                   label: Text(c.$2),
                   selected: _classification == c.$1,
-                  onSelected: (sel) =>
-                      setState(() => _classification = sel ? c.$1 : null),
+                  onSelected: (sel) {
+                    HapticFeedback.selectionClick();
+                    setState(() => _classification = sel ? c.$1 : null);
+                  },
                 );
               }).toList(),
             ),
@@ -661,23 +698,34 @@ class _FilterSheetState extends State<_FilterSheet> {
             Text("Color", style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
             Wrap(
-              spacing: 8,
-              runSpacing: 8,
+              spacing: 0,
+              runSpacing: 0,
               children: _colorChips.map((c) {
                 final selected = _color == c.$1;
+                // 48×48 hit area (WCAG 2.5.5 / MD3 min) around the 32px swatch.
                 return GestureDetector(
-                  onTap: () => setState(() => _color = selected ? null : c.$1),
-                  child: Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: Color(c.$2),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: selected
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).dividerColor,
-                        width: selected ? 3 : 1,
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    setState(() => _color = selected ? null : c.$1);
+                  },
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Center(
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: Color(c.$2),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: selected
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).dividerColor,
+                            width: selected ? 3 : 1,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -723,10 +771,13 @@ class _FilterSheetState extends State<_FilterSheet> {
                   return ChoiceChip(
                     label: Text(t.name),
                     selected: _tagId == t.id,
-                    onSelected: (sel) => setState(() {
-                      _tagId = sel ? t.id : null;
-                      _tagName = sel ? t.name : null;
-                    }),
+                    onSelected: (sel) {
+                      HapticFeedback.selectionClick();
+                      setState(() {
+                        _tagId = sel ? t.id : null;
+                        _tagName = sel ? t.name : null;
+                      });
+                    },
                   );
                 }).toList(),
               ),

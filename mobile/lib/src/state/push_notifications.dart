@@ -7,6 +7,7 @@
 // sign-out. All methods are best-effort and never throw — push is a
 // nice-to-have, not a blocker for any user flow.
 
+import "dart:async";
 import "dart:math";
 
 import "package:firebase_messaging/firebase_messaging.dart";
@@ -17,6 +18,13 @@ import "auth_store.dart";
 
 class PushNotifications {
   static const _kDeviceId = "fonto.device_id";
+
+  /// The single live onTokenRefresh subscription. register() is called on every
+  /// launch and after login; each call would otherwise add a fresh listener to
+  /// the broadcast stream, so a single token rotation fired N duplicate POSTs.
+  /// We cancel any prior subscription before re-listening, keeping exactly one
+  /// (bound to the latest auth/deviceId).
+  static StreamSubscription<String>? _tokenRefreshSub;
 
   /// Stable per-install id so the backend upserts by (user, device) instead
   /// of piling up a new row every token rotation.
@@ -46,8 +54,11 @@ class PushNotifications {
       if (token == null) return;
       final deviceId = await _deviceId();
       await _send(auth, deviceId, token);
-      // Re-register whenever FCM rotates the token.
-      messaging.onTokenRefresh.listen((t) => _send(auth, deviceId, t));
+      // Re-register whenever FCM rotates the token. Cancel any prior listener
+      // first so repeated register() calls don't stack duplicate subscriptions.
+      await _tokenRefreshSub?.cancel();
+      _tokenRefreshSub =
+          messaging.onTokenRefresh.listen((t) => _send(auth, deviceId, t));
     } catch (_) {
       // Missing config (e.g. unconfigured platform), permission edge cases,
       // or transient network — none should surface to the user.
@@ -68,6 +79,10 @@ class PushNotifications {
   /// PAT. Also drops the local FCM token so a fresh one is minted next login.
   static Future<void> deregister(AuthStore auth) async {
     try {
+      // Stop listening first: after sign-out a token rotation must not re-POST
+      // with the auth we're about to clear.
+      await _tokenRefreshSub?.cancel();
+      _tokenRefreshSub = null;
       final deviceId = await _deviceId();
       final client = FontoClient(auth);
       try {

@@ -52,7 +52,9 @@ class OfflinePrefetch {
     final client = FontoClient(auth);
     try {
       // Whether we're allowed to spend bytes warming images right now.
-      final warmImages =
+      // Re-evaluated each page in the loop below so dropping off Wi-Fi mid-pass
+      // (on the "Wi-Fi only" setting) stops the heavy image warming immediately.
+      var warmImages =
           await SyncService.transferableNow() == TransferState.ok;
 
       // ── Phase 1: metadata (always, when online) ──────────────────────────
@@ -63,6 +65,13 @@ class OfflinePrefetch {
       var thumbs = 0;
       var previews = 0;
       while (thumbs < _maxThumbs) {
+        // Re-check the transfer gate each page: a "Wi-Fi only" user who drops to
+        // cellular partway through must stop Phase-2 image warming (heavy bytes)
+        // even though the cheap metadata phase keeps paging.
+        if (warmImages &&
+            await SyncService.transferableNow() != TransferState.ok) {
+          warmImages = false;
+        }
         final page = await client.listAssets(limit: _pageSize, after: cursor);
         if (page.assets.isEmpty) break;
         final ids = page.assets.map((a) => a.id).toList();

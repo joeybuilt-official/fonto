@@ -129,8 +129,16 @@ class AssetCache {
       args.addAll([beforeSortTs, beforeSortTs, beforeId]);
     }
     if (folderPrefix != null && folderPrefix.isNotEmpty) {
-      where.add("directory_path LIKE ?");
-      args.add("$folderPrefix%");
+      // LIKE treats _ and % as wildcards, so a real folder segment containing
+      // one (e.g. "/My_Trip") would also match sibling folders ("/MyXTrip").
+      // Escape them (backslash first) and declare ESCAPE so the prefix matches
+      // literally — parameterization alone doesn't stop LIKE-pattern bleed.
+      final escaped = folderPrefix
+          .replaceAll("\\", "\\\\")
+          .replaceAll("%", "\\%")
+          .replaceAll("_", "\\_");
+      where.add("directory_path LIKE ? ESCAPE '\\'");
+      args.add("$escaped%");
     }
     final rows = await _db.query(
       "cached_assets",

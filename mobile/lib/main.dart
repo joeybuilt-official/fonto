@@ -169,7 +169,7 @@ class _FontoAppState extends State<FontoApp> {
     final client = FontoClient(_auth);
     try {
       final asset = await client.getAsset(assetId);
-      _navigatorKey.currentState?.push(
+      final route = _navigatorKey.currentState?.push(
         MaterialPageRoute(
           builder: (_) => AssetDetailScreen(
             client: client,
@@ -178,6 +178,14 @@ class _FontoAppState extends State<FontoApp> {
           ),
         ),
       );
+      // AssetDetailScreen doesn't own the client's lifecycle, and GC won't
+      // close its keep-alive sockets — close it deterministically once the
+      // pushed route pops (or immediately if the navigator wasn't available).
+      if (route == null) {
+        client.close();
+      } else {
+        unawaited(route.whenComplete(client.close));
+      }
     } catch (_) {
       client.close();
     }
@@ -227,7 +235,7 @@ class _FontoAppState extends State<FontoApp> {
 
       if (asset != null) {
         navigated = true;
-        _navigatorKey.currentState?.push(
+        final route = _navigatorKey.currentState?.push(
           MaterialPageRoute(
             builder: (_) => AssetDetailScreen(
               client: client,
@@ -236,6 +244,13 @@ class _FontoAppState extends State<FontoApp> {
             ),
           ),
         );
+        // Close the client once the detail route pops — AssetDetailScreen
+        // doesn't own it, and GC won't reliably close its keep-alive sockets.
+        if (route == null) {
+          client.close();
+        } else {
+          unawaited(route.whenComplete(client.close));
+        }
       }
     } on ApiException catch (e) {
       if (e.status == 403) {
@@ -246,8 +261,10 @@ class _FontoAppState extends State<FontoApp> {
     } catch (_) {
       // Network error or unknown — ignore.
     } finally {
+      // When navigated, the client is closed via the route's whenComplete
+      // above (deterministically, on pop). Only close here when we never
+      // pushed a screen.
       if (!navigated) client.close();
-      // If navigated, client lives with AssetDetailScreen; GC'd when screen pops.
     }
   }
 

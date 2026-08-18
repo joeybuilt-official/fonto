@@ -161,9 +161,11 @@ class SyncService {
   /// be invoked while the app is foregrounded.
   static Future<void> ensureRunning() async {
     init();
-    if (await _pendingTotal() == 0) return;
-    if (await FlutterForegroundTask.isRunningService) return;
+    // One _pendingTotal() (two COUNT queries across both queues) is enough — it
+    // was computed twice here on a hot path called from home/import flows.
     final remaining = await _pendingTotal();
+    if (remaining == 0) return;
+    if (await FlutterForegroundTask.isRunningService) return;
     await FlutterForegroundTask.startService(
       serviceId: _kServiceId,
       notificationTitle: "Fonto sync",

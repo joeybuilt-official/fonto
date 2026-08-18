@@ -16,6 +16,7 @@ class SettingsStore {
   static const _kChargingOnly = "fonto.sync_charging_only";
   static const _kLastSurface = "fonto.last_library_surface";
   static const _kEnqueuedHighWater = "fonto.enqueued_high_water";
+  static const _kLastReconcileTs = "fonto.last_reconcile_ts";
 
   /// Photos-Files split — last-used Library surface ("photos" | "files").
   /// Inbox is never persisted (it is transient triage). Defaults to "photos".
@@ -90,6 +91,19 @@ class SettingsStore {
   static Future<void> setEnqueuedHighWater(int count) async {
     final p = await SharedPreferences.getInstance();
     await p.setInt(_kEnqueuedHighWater, count);
+  }
+
+  /// Epoch milliseconds of the last completed full-library reconcile; 0 when
+  /// none has ever run. Throttles the expensive drop-the-watermark re-hash pass
+  /// so a single new photo can't trigger a full-library byte re-hash every scan.
+  static Future<int> getLastReconcileTs() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getInt(_kLastReconcileTs) ?? 0;
+  }
+
+  static Future<void> setLastReconcileTs(int epochMs) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_kLastReconcileTs, epochMs);
   }
 
   /// Album IDs the user chose to import from. Empty list ⇒ import everything

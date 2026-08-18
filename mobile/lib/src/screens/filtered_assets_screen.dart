@@ -54,11 +54,28 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
   final List<Asset> _assets = [];
   final Map<String, String> _thumbs = {};
   AssetCursor? _cursor;
+  final ScrollController _scroll = ScrollController();
 
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_maybeLoadMore);
     _load(reset: true);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  // Auto-paginate as the grid nears its tail — parity with home_screen.dart
+  // (no tap-to-load tile).
+  void _maybeLoadMore() {
+    if (!_scroll.hasClients) return;
+    if (_scroll.position.pixels < _scroll.position.maxScrollExtent - 600) return;
+    if (_loading || _loadingMore || _cursor == null) return;
+    _load(reset: false);
   }
 
   Future<void> _load({required bool reset}) async {
@@ -115,14 +132,30 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
         _loadingMore = false;
       });
     } on ApiException catch (e) {
-      _fail("${e.status}: ${e.message}");
+      _fail("${e.status}: ${e.message}", reset: reset);
     } catch (e) {
-      _fail(e.toString());
+      _fail(e.toString(), reset: reset);
     }
   }
 
-  void _fail(String msg) {
+  void _fail(String msg, {required bool reset}) {
     if (!mounted) return;
+    // A failed "load more" must not discard the pages already on screen (and
+    // the scroll position). Keep the grid, surface a retriable snackbar, and
+    // only fall back to the full-screen error state on the initial load.
+    if (!reset) {
+      setState(() => _loadingMore = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text("Couldn't load more. Check your connection."),
+          action: SnackBarAction(
+            label: "Retry",
+            onPressed: () => _load(reset: false),
+          ),
+        ),
+      );
+      return;
+    }
     setState(() {
       _error = msg;
       _loading = false;
@@ -185,18 +218,26 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
     return RefreshIndicator(
       onRefresh: () => _load(reset: true),
       child: GridView.builder(
+        controller: _scroll,
         padding: const EdgeInsets.all(2),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 3,
           mainAxisSpacing: 2,
           crossAxisSpacing: 2,
         ),
-        itemCount: _assets.length + (_cursor != null ? 1 : 0),
+        itemCount: _assets.length + (_loadingMore ? 1 : 0),
         itemBuilder: (context, i) {
           if (i >= _assets.length) {
-            return _LoadMoreTile(
-              loading: _loadingMore,
-              onTap: () => _load(reset: false),
+            // Tail loader only — pagination is driven by the scroll listener.
+            return const ColoredBox(
+              color: Colors.transparent,
+              child: Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
             );
           }
           final a = _assets[i];
@@ -232,31 +273,6 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
                 : tile,
           );
         },
-      ),
-    );
-  }
-}
-
-class _LoadMoreTile extends StatelessWidget {
-  const _LoadMoreTile({required this.loading, required this.onTap});
-  final bool loading;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: loading ? null : onTap,
-      child: Container(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        child: Center(
-          child: loading
-              ? const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.add),
-        ),
       ),
     );
   }

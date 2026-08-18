@@ -9,6 +9,7 @@
 
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
@@ -53,20 +54,25 @@ class _IgnoredPeopleScreenState extends State<IgnoredPeopleScreen> {
     try {
       final data = await widget.client.listIgnored();
 
+      // Per-face/per-person signed-URL resolution isn't batched server-side
+      // (unlike asset thumbs), so cap concurrency to avoid bursting N requests
+      // at once on a large ignored set.
       final personCrops = <String, String>{};
-      await Future.wait(
-        data.persons.where((p) => p.coverFaceCropUrl != null).map((p) async {
+      await _resolveChunked(
+        data.persons.where((p) => p.coverFaceCropUrl != null),
+        (p) async {
           final u = await widget.client.resolveSignedUrl(p.coverFaceCropUrl!);
           if (u != null) personCrops[p.id] = u;
-        }),
+        },
       );
 
       final faceCrops = <String, String>{};
-      await Future.wait(
-        data.faces.where((f) => f.faceCropUrl != null).map((f) async {
+      await _resolveChunked(
+        data.faces.where((f) => f.faceCropUrl != null),
+        (f) async {
           final u = await widget.client.resolveSignedUrl(f.faceCropUrl!);
           if (u != null) faceCrops[f.id] = u;
-        }),
+        },
       );
 
       final photoIds = data.photos.map((p) => p.id).toList();
@@ -99,9 +105,24 @@ class _IgnoredPeopleScreenState extends State<IgnoredPeopleScreen> {
     });
   }
 
+  // Run [task] over [items] at most [concurrency] at a time, so a large
+  // ignored set doesn't fire N un-batched signed-URL requests in one burst.
+  Future<void> _resolveChunked<T>(
+    Iterable<T> items,
+    Future<void> Function(T) task, {
+    int concurrency = 6,
+  }) async {
+    final list = items.toList();
+    for (var i = 0; i < list.length; i += concurrency) {
+      final end = (i + concurrency < list.length) ? i + concurrency : list.length;
+      await Future.wait(list.sublist(i, end).map(task));
+    }
+  }
+
   Future<void> _restore(Future<void> Function() call, void Function() drop,
       String label) async {
     final messenger = ScaffoldMessenger.of(context);
+    HapticFeedback.lightImpact();
     try {
       await call();
       if (!mounted) return;

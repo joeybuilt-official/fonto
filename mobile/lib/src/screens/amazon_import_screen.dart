@@ -8,6 +8,7 @@ import "dart:io";
 
 import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 
@@ -26,6 +27,7 @@ class _AmazonImportScreenState extends State<AmazonImportScreen> {
 
   Future<void> _pickAndUpload() async {
     if (_busy) return;
+    HapticFeedback.mediumImpact();
     setState(() {
       _busy = true;
       _msg = null;
@@ -80,7 +82,13 @@ class _AmazonImportScreenState extends State<AmazonImportScreen> {
           ),
           if (_msg != null) ...[
             const SizedBox(height: 8),
-            Text(_msg!, style: const TextStyle(fontSize: 12)),
+            Text(
+              _msg!,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ),
           ],
         ],
       ),

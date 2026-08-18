@@ -32,6 +32,7 @@ import "package:path_provider/path_provider.dart";
 import "package:sqflite/sqflite.dart";
 import "package:workmanager/workmanager.dart";
 
+import "settings_store.dart";
 import "upload_queue.dart";
 
 const _kDriveApiBase = "https://www.googleapis.com/drive/v3";
@@ -153,8 +154,15 @@ class DriveDownloadQueue {
         conflictAlgorithm: ConflictAlgorithm.ignore,
       );
     }
-    await batch.commit(noResult: true);
-    totalEnqueued.value += items.length;
+    // Count only rows that actually inserted: INSERT OR IGNORE returns a 0
+    // rowid for a conflict (already-queued Drive file), so re-importing a folder
+    // must not bump the per-run banner total for the duplicates it skips.
+    final results = await batch.commit(noResult: false);
+    var inserted = 0;
+    for (final r in results) {
+      if (r is int && r != 0) inserted++;
+    }
+    totalEnqueued.value += inserted;
     await _refreshPending();
   }
 
@@ -331,6 +339,20 @@ class DriveDownloadQueue {
 
   Future<void> _refreshPending() async {
     pending.value = await pendingCount();
+  }
+
+  /// Background-task constraints derived from the sync settings, so WorkManager
+  /// itself won't fire the Drive download task on a connection/charge state the
+  /// user opted out of ("Wi-Fi only" ⇒ unmetered network, "charging only" ⇒
+  /// requiresCharging). Without this the task ran on any connected network,
+  /// bypassing the Wi-Fi-only gate.
+  static Future<Constraints> _bgConstraints() async {
+    final wifiOnly = await SettingsStore.getSyncWifiOnly();
+    final chargingOnly = await SettingsStore.getSyncChargingOnly();
+    return Constraints(
+      networkType: wifiOnly ? NetworkType.unmetered : NetworkType.connected,
+      requiresCharging: chargingOnly ? true : null,
+    );
   }
 
   /// Items still waiting / actively downloading, oldest first. For the
@@ -532,7 +554,7 @@ class DriveDownloadQueue {
           kDriveDownloadTask,
           kDriveDownloadTask,
           existingWorkPolicy: ExistingWorkPolicy.keep,
-          constraints: Constraints(networkType: NetworkType.connected),
+          constraints: await _bgConstraints(),
         );
       }
     } finally {
@@ -562,7 +584,7 @@ class DriveDownloadQueue {
         kDriveDownloadTask,
         kDriveDownloadTask,
         existingWorkPolicy: ExistingWorkPolicy.keep,
-        constraints: Constraints(networkType: NetworkType.connected),
+        constraints: await _bgConstraints(),
       );
     }
   }

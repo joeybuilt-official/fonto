@@ -10,6 +10,7 @@
 
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
@@ -162,6 +163,7 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
   // Switch the grouping axis: reset the optimistic state + refetch.
   void _changeAxis(String axis) {
     if (axis == _axis) return;
+    HapticFeedback.selectionClick();
     setState(() {
       _axis = axis;
       _hidden.clear();
@@ -190,6 +192,7 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
   }
 
   Future<void> _apply(ReviewBucket b, String action) async {
+    HapticFeedback.mediumImpact();
     setState(() {
       _busy.add(b.bucketKey);
       _hidden.add(b.bucketKey);
@@ -231,16 +234,20 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
   }
 
   Future<void> _undo(ReviewBucket b, String action) async {
-    // Roll the visit tally back (P1-5).
-    setState(() {
-      if (action == "confirm") {
-        _fixed = (_fixed - b.count).clamp(0, 1 << 31);
-      } else {
-        _kept = (_kept - b.count).clamp(0, 1 << 31);
-      }
-    });
+    HapticFeedback.lightImpact();
     try {
       await widget.client.undoReviewBucket(bucketKey: b.bucketKey);
+      if (!mounted) return;
+      // Roll the visit tally back only once the undo actually succeeded (P1-5),
+      // otherwise a failed undo would leave the counter too low with the bucket
+      // still hidden.
+      setState(() {
+        if (action == "confirm") {
+          _fixed = (_fixed - b.count).clamp(0, 1 << 31);
+        } else {
+          _kept = (_kept - b.count).clamp(0, 1 << 31);
+        }
+      });
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -261,7 +268,6 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
   }
 
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
     if (_forbidden) {
       return const ListEmptyState(
         icon: Icons.lock_outline,
@@ -269,6 +275,25 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
       );
     }
     if (_error != null) return ListErrorState(onRetry: _load);
+    if (_loading) {
+      // First load has no scaffolding yet — a full-screen spinner is fine.
+      if (_data == null) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      // Axis switch / refresh with data already loaded: keep the segmented
+      // control (the thing the user just touched) mounted and show an inline
+      // loader below it instead of blanking the whole screen.
+      return ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          _axisTabs(),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(child: CircularProgressIndicator()),
+          ),
+        ],
+      );
+    }
 
     final data = _data;
     final buckets =
@@ -714,6 +739,7 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
 
   Future<void> _applyItem(ReviewBucketSample s, String action) async {
     if (_itemBusy.contains(s.assetId)) return;
+    HapticFeedback.mediumImpact();
     setState(() {
       _itemBusy.add(s.assetId);
       _itemHidden.add(s.assetId);

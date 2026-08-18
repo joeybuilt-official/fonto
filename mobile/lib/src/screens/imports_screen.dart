@@ -30,10 +30,13 @@
 import "dart:async";
 
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:google_sign_in/google_sign_in.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../theme/tokens.dart";
+import "../widgets/list_states.dart";
 import "amazon_import_screen.dart";
 import "takeout_import_screen.dart";
 
@@ -73,6 +76,7 @@ class _ImportsScreenState extends State<ImportsScreen> {
   List<Integration> _integrations = const [];
   List<ImportJob> _jobs = const [];
   bool _loading = true;
+  bool _error = false;
 
   bool _connecting = false;
   String? _connectError;
@@ -134,11 +138,17 @@ class _ImportsScreenState extends State<ImportsScreen> {
         _integrations = integrations;
         _jobs = jobs;
         _loading = false;
+        _error = false;
       });
       _schedulePoll();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _loading = false);
+      // Distinguish a network/500 failure from a genuinely empty list — a
+      // silent fall-through renders a healthy-looking (but wrong) screen.
+      setState(() {
+        _loading = false;
+        _error = true;
+      });
     }
   }
 
@@ -163,6 +173,7 @@ class _ImportsScreenState extends State<ImportsScreen> {
 
   Future<void> _connectGoogle() async {
     if (_connecting) return;
+    HapticFeedback.mediumImpact();
     setState(() {
       _connecting = true;
       _connectError = null;
@@ -201,8 +212,14 @@ class _ImportsScreenState extends State<ImportsScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(_screenTitle)),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
+          ? const _ImportsSkeleton()
+          : _error
+              ? ListErrorState(
+                  onRetry: _refresh,
+                  message:
+                      "Couldn't load your imports. Check your connection and retry.",
+                )
+              : RefreshIndicator(
               onRefresh: _refresh,
               child: ListView(
                 padding: const EdgeInsets.all(16),
@@ -419,5 +436,28 @@ class _ImportsScreenState extends State<ImportsScreen> {
       default:
         return null;
     }
+  }
+}
+
+/// Content-shaped loading placeholder for the Imports screen — card-sized
+/// blocks standing in for the connect tile + import options + jobs card.
+/// Built from the shared [imageSkeleton] surface token instead of a spinner.
+class _ImportsSkeleton extends StatelessWidget {
+  const _ImportsSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(FontoSpace.s4),
+      children: [
+        for (final h in const [120.0, 72.0, 72.0, 160.0]) ...[
+          ClipRRect(
+            borderRadius: BorderRadius.circular(FontoShape.medium),
+            child: SizedBox(height: h, child: imageSkeleton(context)),
+          ),
+          const SizedBox(height: FontoSpace.s4),
+        ],
+      ],
+    );
   }
 }

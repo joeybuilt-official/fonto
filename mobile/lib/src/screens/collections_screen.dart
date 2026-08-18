@@ -15,11 +15,13 @@ import "dart:async";
 import "package:cached_network_image/cached_network_image.dart";
 import "package:connectivity_plus/connectivity_plus.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
 import "../services/zip_export.dart";
 import "../state/collection_cache.dart";
+import "../theme/tokens.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 import "duplicates_screen.dart";
@@ -119,9 +121,13 @@ Widget _stateScaffold({
   required Widget Function() builder,
   String emptyText = "Nothing here yet.",
   IconData emptyIcon = Icons.collections_bookmark_outlined,
+  // When set, a grid surface renders a shimmer-free skeleton grid instead of a
+  // lone centered spinner while loading — reads smoother into the real grid.
+  Widget Function()? loadingBuilder,
 }) {
   if (loading) {
-    return const Center(child: CircularProgressIndicator());
+    return loadingBuilder?.call() ??
+        const Center(child: CircularProgressIndicator());
   }
   if (error != null) {
     return ListErrorState(onRetry: onRetry);
@@ -130,6 +136,34 @@ Widget _stateScaffold({
     return ListEmptyState(icon: emptyIcon, message: emptyText);
   }
   return builder();
+}
+
+/// Skeleton grid of neutral surface tiles — the loading placeholder for grid
+/// surfaces. Uses the same MD3 surface scale + rounding as loaded tiles so the
+/// swap into real thumbnails is a fade, not a jump.
+Widget _skeletonGrid(
+  BuildContext context, {
+  int crossAxisCount = 3,
+  double childAspectRatio = 1,
+}) {
+  final color = Theme.of(context).colorScheme.surfaceContainerHighest;
+  return GridView.builder(
+    padding: const EdgeInsets.all(FontoSpace.s2),
+    physics: const NeverScrollableScrollPhysics(),
+    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: crossAxisCount,
+      crossAxisSpacing: FontoSpace.s2,
+      mainAxisSpacing: FontoSpace.s2,
+      childAspectRatio: childAspectRatio,
+    ),
+    itemCount: crossAxisCount * 4,
+    itemBuilder: (_, __) => DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(FontoShape.small),
+      ),
+    ),
+  );
 }
 
 class _AlbumsTab extends StatefulWidget {
@@ -237,18 +271,31 @@ class _AlbumsTabState extends State<_AlbumsTab> {
       onRetry: _load,
       emptyText: "No albums yet. Create one to organize your assets.",
       emptyIcon: Icons.folder_open_outlined,
-      builder: () => ListView.builder(
-        itemCount: _items.length,
-        itemBuilder: (context, i) {
-          final c = _items[i];
-          return ListTile(
-            leading: const Icon(Icons.photo_album_outlined),
-            title: Text(c.name),
-            subtitle: c.description == null
-                ? null
-                : Text(c.description!, overflow: TextOverflow.ellipsis),
-          );
-        },
+      builder: () => RefreshIndicator(
+        onRefresh: _load,
+        child: ListView.builder(
+          physics: const AlwaysScrollableScrollPhysics(),
+          itemCount: _items.length,
+          itemBuilder: (context, i) {
+            final c = _items[i];
+            return ListTile(
+              leading: const Icon(Icons.photo_album_outlined),
+              title: Text(c.name),
+              subtitle: c.description == null
+                  ? null
+                  : Text(c.description!, overflow: TextOverflow.ellipsis),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => _CollectionAssetsScreen(
+                    client: widget.client,
+                    collection: c,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
     if (!_offline) return list;
@@ -346,18 +393,22 @@ class _SmartTabState extends State<_SmartTab> {
       onRetry: _load,
       emptyText: "No smart collections yet. Saved searches show up here.",
       emptyIcon: Icons.auto_awesome_outlined,
-      builder: () => ListView.builder(
-        itemCount: _items.length,
-        itemBuilder: (context, i) {
-          final c = _items[i];
-          return ListTile(
-            leading: const Icon(Icons.auto_awesome_outlined),
-            title: Text(c.name),
-            subtitle: c.query == null
-                ? null
-                : Text(c.query!, overflow: TextOverflow.ellipsis),
-          );
-        },
+      builder: () => RefreshIndicator(
+        onRefresh: _load,
+        child: ListView.builder(
+          physics: const AlwaysScrollableScrollPhysics(),
+          itemCount: _items.length,
+          itemBuilder: (context, i) {
+            final c = _items[i];
+            return ListTile(
+              leading: const Icon(Icons.auto_awesome_outlined),
+              title: Text(c.name),
+              subtitle: c.query == null
+                  ? null
+                  : Text(c.query!, overflow: TextOverflow.ellipsis),
+            );
+          },
+        ),
       ),
     );
   }
@@ -419,25 +470,29 @@ class _ProjectsTabState extends State<_ProjectsTab> {
       emptyText:
           "No projects yet. Create a project to organize albums and collections.",
       emptyIcon: Icons.folder_special_outlined,
-      builder: () => ListView.builder(
-        itemCount: _items.length,
-        itemBuilder: (context, i) {
-          final p = _items[i];
-          return ListTile(
-            leading: const Icon(Icons.folder_special_outlined),
-            title: Text(p.name),
-            subtitle: p.description == null
-                ? null
-                : Text(p.description!, overflow: TextOverflow.ellipsis),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) =>
-                    _ProjectDetailScreen(client: widget.client, project: p),
+      builder: () => RefreshIndicator(
+        onRefresh: _load,
+        child: ListView.builder(
+          physics: const AlwaysScrollableScrollPhysics(),
+          itemCount: _items.length,
+          itemBuilder: (context, i) {
+            final p = _items[i];
+            return ListTile(
+              leading: const Icon(Icons.folder_special_outlined),
+              title: Text(p.name),
+              subtitle: p.description == null
+                  ? null
+                  : Text(p.description!, overflow: TextOverflow.ellipsis),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      _ProjectDetailScreen(client: widget.client, project: p),
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
@@ -508,22 +563,28 @@ class _StacksTabState extends State<_StacksTab> {
       emptyText:
           "No stacks yet. RAW+JPEG pairs and bursts will surface here.",
       emptyIcon: Icons.layers_outlined,
-      builder: () => GridView.builder(
-        padding: const EdgeInsets.all(8),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
-          childAspectRatio: 0.85,
+      loadingBuilder: () =>
+          _skeletonGrid(context, crossAxisCount: 2, childAspectRatio: 0.85),
+      builder: () => RefreshIndicator(
+        onRefresh: _load,
+        child: GridView.builder(
+          padding: const EdgeInsets.all(8),
+          physics: const AlwaysScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            childAspectRatio: 0.85,
+          ),
+          itemCount: _items.length,
+          itemBuilder: (context, i) {
+            final s = _items[i];
+            return _StackTile(
+              stack: s,
+              url: _thumbs[s.primaryAssetId],
+            );
+          },
         ),
-        itemCount: _items.length,
-        itemBuilder: (context, i) {
-          final s = _items[i];
-          return _StackTile(
-            stack: s,
-            url: _thumbs[s.primaryAssetId],
-          );
-        },
       ),
     );
   }
@@ -691,6 +752,7 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
   }
 
   void _toggleSelect(String id) {
+    HapticFeedback.selectionClick();
     setState(() {
       if (_selected.remove(id)) {
         if (_selected.isEmpty) _selecting = false;
@@ -701,6 +763,7 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
   }
 
   void _enterSelect(String id) {
+    HapticFeedback.lightImpact();
     setState(() {
       _selecting = true;
       _selected.add(id);
@@ -792,6 +855,7 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
         error: _error,
         isEmpty: _assets.isEmpty,
         onRetry: _load,
+        loadingBuilder: () => _skeletonGrid(context),
         builder: () => GridView.builder(
           padding: const EdgeInsets.all(4),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -1058,6 +1122,7 @@ class _PeopleCard extends StatefulWidget {
 }
 
 class _PeopleCardState extends State<_PeopleCard> {
+  bool _loading = true;
   List<Person> _people = const [];
   int? _total;
   // coverFaceCropUrl points at /api/v1/faces/<id>/crop-url which returns
@@ -1078,28 +1143,51 @@ class _PeopleCardState extends State<_PeopleCard> {
       final all = await widget.client.listPersons();
       if (!mounted) return;
       final preview = all.take(4).toList();
-      setState(() {
-        _people = preview;
-        _total = all.length;
-      });
-      // Resolve face-crop URLs in parallel. Failures stay null and the
-      // tile falls back to the person-icon placeholder.
+      // Resolve every face-crop URL first, then commit ONCE. Previously each
+      // resolved URL fired its own setState — up to four card rebuilds in
+      // quick succession. Failures stay unresolved and the tile falls back to
+      // the person-icon placeholder.
+      final resolved = <String, String>{};
       await Future.wait(preview.map((p) async {
         final ref = p.coverFaceCropUrl;
         if (ref == null) return;
-        final signed = await widget.client.resolveSignedUrl(ref);
-        if (signed == null || !mounted) return;
-        setState(() => _resolvedFaceUrls[p.id] = signed);
+        try {
+          final signed = await widget.client.resolveSignedUrl(ref);
+          if (signed != null) resolved[p.id] = signed;
+        } catch (_) {
+          // Per-crop failure is non-fatal.
+        }
       }));
+      if (!mounted) return;
+      setState(() {
+        _people = preview;
+        _total = all.length;
+        _resolvedFaceUrls
+          ..clear()
+          ..addAll(resolved);
+        _loading = false;
+      });
     } catch (_) {
-      // Section is best-effort; stays hidden on failure.
+      // Section is best-effort; drop the loading skeleton on failure.
+      if (mounted) setState(() => _loading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_people.isEmpty) return const SizedBox.shrink();
     final theme = Theme.of(context);
+    // Reserve the card's footprint while the first fetch is in flight so the
+    // header (and the tabs below it) don't jump when People lands mid-scroll.
+    if (_loading) {
+      return Container(
+        height: 120,
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(FontoShape.medium),
+        ),
+      );
+    }
+    if (_people.isEmpty) return const SizedBox.shrink();
 
     return Material(
       color: theme.colorScheme.surface,
@@ -1238,8 +1326,47 @@ class _PlacesSectionState extends State<_PlacesSection> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading || _places.isEmpty) return const SizedBox.shrink();
     final theme = Theme.of(context);
+    // Reserve the Places strip's height while loading so the tabs below don't
+    // get shoved down when the mosaic lands mid-scroll.
+    if (_loading) {
+      final color = theme.colorScheme.surfaceContainerHighest;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Container(
+              width: 72,
+              height: 16,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(FontoShape.small),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 160,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: 3,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (_, __) => Container(
+                width: 132,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(FontoShape.medium),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    if (_places.isEmpty) return const SizedBox.shrink();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

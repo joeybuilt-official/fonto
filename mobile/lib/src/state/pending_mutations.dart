@@ -85,11 +85,20 @@ class PendingMutations {
   /// A row is deleted once it lands (2xx) or on a permanent 4xx (the local
   /// optimistic state already reflects intent). Transient/5xx/network errors
   /// leave the row for the next pass. Returns the number successfully applied.
+  /// Re-entrancy guard (mirrors UploadQueue/DriveDownloadQueue). Two near-
+  /// simultaneous reconnect/resume triggers would otherwise both read the same
+  /// rows and replay them, double-firing every PATCH and racing the per-row
+  /// deletes. Set synchronously after the guard so no await can slip a second
+  /// drain past the check.
+  static bool _draining = false;
+
   Future<int> drain(AuthStore auth) async {
-    if (await pendingCount() == 0) return 0;
+    if (_draining) return 0;
+    _draining = true;
     final client = FontoClient(auth);
     var applied = 0;
     try {
+      if (await pendingCount() == 0) return applied;
       final rows = await _db.query("pending_mutations", orderBy: "id ASC");
       for (final r in rows) {
         final rowId = r["id"] as int;
@@ -123,6 +132,7 @@ class PendingMutations {
       }
     } finally {
       client.close();
+      _draining = false;
     }
     return applied;
   }

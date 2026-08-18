@@ -151,7 +151,7 @@ class _MemoriesScreenState extends State<MemoriesScreen> {
   }
 
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return _loadingSkeleton();
     if (_error != null) return ListErrorState(onRetry: _load);
     if (_years.isEmpty) {
       return ListEmptyState(
@@ -167,6 +167,23 @@ class _MemoriesScreenState extends State<MemoriesScreen> {
         itemCount: _years.length,
         itemBuilder: (context, i) => _yearSection(_years[i]),
       ),
+    );
+  }
+
+  /// Skeleton grid shown while the first fetch is in flight — reads smoother
+  /// into the real thumbnail grid than a lone centered spinner. Reuses the
+  /// shared `imageSkeleton` token so dark mode stays neutral.
+  Widget _loadingSkeleton() {
+    return GridView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 2,
+        crossAxisSpacing: 2,
+      ),
+      itemCount: 12,
+      itemBuilder: (context, _) => imageSkeleton(context),
     );
   }
 

@@ -10,11 +10,13 @@
 
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_map/flutter_map.dart";
 import "package:latlong2/latlong.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
+import "../theme/tokens.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 import "ignored_people_screen.dart";
@@ -63,9 +65,13 @@ Widget _stateScaffold({
   required VoidCallback onRetry,
   required Widget Function() builder,
   IconData emptyIcon = Icons.explore_outlined,
+  // When set, a grid surface renders a skeleton grid instead of a lone
+  // centered spinner while loading — reads smoother into the real grid.
+  Widget Function()? loadingBuilder,
 }) {
   if (loading) {
-    return const Center(child: CircularProgressIndicator());
+    return loadingBuilder?.call() ??
+        const Center(child: CircularProgressIndicator());
   }
   if (error != null) {
     return ListErrorState(onRetry: onRetry);
@@ -74,6 +80,29 @@ Widget _stateScaffold({
     return ListEmptyState(icon: emptyIcon, message: emptyText);
   }
   return builder();
+}
+
+/// Skeleton grid of neutral surface tiles — the loading placeholder for grid
+/// surfaces. Same surface scale + rounding as loaded tiles so the swap into
+/// real thumbnails is a fade, not a jump.
+Widget _skeletonGrid(BuildContext context, {int crossAxisCount = 3}) {
+  final color = Theme.of(context).colorScheme.surfaceContainerHighest;
+  return GridView.builder(
+    padding: const EdgeInsets.all(FontoSpace.s2),
+    physics: const NeverScrollableScrollPhysics(),
+    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: crossAxisCount,
+      crossAxisSpacing: FontoSpace.s2,
+      mainAxisSpacing: FontoSpace.s2,
+    ),
+    itemCount: crossAxisCount * 4,
+    itemBuilder: (_, __) => DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(FontoShape.small),
+      ),
+    ),
+  );
 }
 
 // --------------------------------------------------------------------------
@@ -130,8 +159,14 @@ class _PeopleTabState extends State<_PeopleTab> {
           items.where((p) => p.coverFaceCropUrl != null).toList();
       final crops = <String, String>{};
       await Future.wait(cropTargets.map((p) async {
-        final u = await widget.client.resolveSignedUrl(p.coverFaceCropUrl!);
-        if (u != null) crops[p.id] = u;
+        // Isolate each crop resolve — one network flap must not reject the
+        // whole batch and drop the entire People grid to the error state.
+        try {
+          final u = await widget.client.resolveSignedUrl(p.coverFaceCropUrl!);
+          if (u != null) crops[p.id] = u;
+        } catch (_) {
+          // Per-crop failure is non-fatal — the tile falls back to the thumb.
+        }
       }));
       if (!mounted) return;
       setState(() {
@@ -194,7 +229,10 @@ class _PeopleTabState extends State<_PeopleTab> {
                   label: "All",
                   color: const Color(0xFF6B7280),
                   selected: _activeGroupId == null,
-                  onTap: () => setState(() => _activeGroupId = null),
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    setState(() => _activeGroupId = null);
+                  },
                 ),
                 const SizedBox(width: 6),
                 ...visibleGroups.map((g) => Padding(
@@ -203,9 +241,11 @@ class _PeopleTabState extends State<_PeopleTab> {
                         label: g.name,
                         color: _parseColor(g.color),
                         selected: _activeGroupId == g.id,
-                        onTap: () => setState(() =>
-                            _activeGroupId =
-                                _activeGroupId == g.id ? null : g.id),
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          setState(() => _activeGroupId =
+                              _activeGroupId == g.id ? null : g.id);
+                        },
                       ),
                     )),
               ],
@@ -220,30 +260,35 @@ class _PeopleTabState extends State<_PeopleTab> {
                 ? "No people in this group yet."
                 : "No people yet. Faces get grouped as your library grows.",
             onRetry: _load,
-            builder: () => GridView.builder(
-              padding: const EdgeInsets.all(8),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-                childAspectRatio: 0.8,
-              ),
-              itemCount: filtered.length,
-              itemBuilder: (context, i) => _PersonTile(
-                person: filtered[i],
-                url: _thumbs[filtered[i].coverAssetId],
-                faceCropUrl: _faceCrops[filtered[i].id],
-                onTap: () async {
-                  final merged = await Navigator.of(context).push<bool>(
-                    MaterialPageRoute(
-                      builder: (_) => _PersonAssetsScreen(
-                        client: widget.client,
-                        person: filtered[i],
+            loadingBuilder: () => _skeletonGrid(context),
+            builder: () => RefreshIndicator(
+              onRefresh: _load,
+              child: GridView.builder(
+                padding: const EdgeInsets.all(8),
+                physics: const AlwaysScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
+                  childAspectRatio: 0.8,
+                ),
+                itemCount: filtered.length,
+                itemBuilder: (context, i) => _PersonTile(
+                  person: filtered[i],
+                  url: _thumbs[filtered[i].coverAssetId],
+                  faceCropUrl: _faceCrops[filtered[i].id],
+                  onTap: () async {
+                    final merged = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => _PersonAssetsScreen(
+                          client: widget.client,
+                          person: filtered[i],
+                        ),
                       ),
-                    ),
-                  );
-                  if (merged == true) _load();
-                },
+                    );
+                    if (merged == true) _load();
+                  },
+                ),
               ),
             ),
           ),
@@ -508,8 +553,11 @@ class _PlacesTabState extends State<_PlacesTab> {
                 child: _PlacesMap(places: geo, onTap: _openPlace),
               ),
             Expanded(
-              child: ListView.separated(
+              child: RefreshIndicator(
+                onRefresh: _load,
+                child: ListView.separated(
                 padding: const EdgeInsets.symmetric(vertical: 8),
+                physics: const AlwaysScrollableScrollPhysics(),
                 itemCount: _places.length,
                 separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (context, i) {
@@ -548,6 +596,7 @@ class _PlacesTabState extends State<_PlacesTab> {
                     onTap: () => _openPlace(p),
                   );
                 },
+                ),
               ),
             ),
           ],
@@ -682,22 +731,27 @@ class _PlaceAssetsScreenState extends State<_PlaceAssetsScreen> {
         isEmpty: _assets.isEmpty,
         emptyText: "No photos for this place.",
         onRetry: _load,
-        builder: () => GridView.builder(
-          padding: const EdgeInsets.all(4),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            crossAxisSpacing: 4,
-            mainAxisSpacing: 4,
-          ),
-          itemCount: _assets.length,
-          itemBuilder: (context, i) => _PlaceThumb(
-            url: _thumbs[_assets[i].id],
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => AssetDetailScreen(
-                  client: widget.client,
-                  assets: _assets,
-                  initialIndex: i,
+        loadingBuilder: () => _skeletonGrid(context),
+        builder: () => RefreshIndicator(
+          onRefresh: _load,
+          child: GridView.builder(
+            padding: const EdgeInsets.all(4),
+            physics: const AlwaysScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              crossAxisSpacing: 4,
+              mainAxisSpacing: 4,
+            ),
+            itemCount: _assets.length,
+            itemBuilder: (context, i) => _PlaceThumb(
+              url: _thumbs[_assets[i].id],
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AssetDetailScreen(
+                    client: widget.client,
+                    assets: _assets,
+                    initialIndex: i,
+                  ),
                 ),
               ),
             ),
@@ -822,21 +876,26 @@ class _ThingsTabState extends State<_ThingsTab> {
       emptyText:
           "No labels yet. Objects and scenes show up here as your photos are processed.",
       onRetry: _load,
-      builder: () => GridView.builder(
-        padding: const EdgeInsets.all(8),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
-        ),
-        itemCount: _items.length,
-        itemBuilder: (context, i) => _ThingTile(
-          tag: _items[i],
-          url: _thumbs[_items[i].sampleAssetId],
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) =>
-                  _TagAssetsScreen(client: widget.client, tag: _items[i]),
+      loadingBuilder: () => _skeletonGrid(context),
+      builder: () => RefreshIndicator(
+        onRefresh: _load,
+        child: GridView.builder(
+          padding: const EdgeInsets.all(8),
+          physics: const AlwaysScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+          ),
+          itemCount: _items.length,
+          itemBuilder: (context, i) => _ThingTile(
+            tag: _items[i],
+            url: _thumbs[_items[i].sampleAssetId],
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) =>
+                    _TagAssetsScreen(client: widget.client, tag: _items[i]),
+              ),
             ),
           ),
         ),
@@ -987,8 +1046,12 @@ class _TagAssetsScreenState extends State<_TagAssetsScreen> {
         isEmpty: _assets.isEmpty,
         emptyText: "No assets for this label.",
         onRetry: _load,
-        builder: () => GridView.builder(
+        loadingBuilder: () => _skeletonGrid(context),
+        builder: () => RefreshIndicator(
+          onRefresh: _load,
+          child: GridView.builder(
           padding: const EdgeInsets.all(4),
+          physics: const AlwaysScrollableScrollPhysics(),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 3,
             crossAxisSpacing: 4,
@@ -1019,6 +1082,7 @@ class _TagAssetsScreenState extends State<_TagAssetsScreen> {
                     ),
                   ),
           ),
+        ),
         ),
       ),
     );
@@ -1115,6 +1179,7 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       ),
     );
     if (target == null || !mounted) return;
+    HapticFeedback.mediumImpact();
     setState(() => _merging = true);
     try {
       final result =
@@ -1225,6 +1290,7 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       ),
     );
     if (ok != true || !mounted) return;
+    HapticFeedback.mediumImpact();
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     try {
@@ -1271,6 +1337,8 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   }
 
   Future<void> _toggleGroup(String groupId) async {
+    HapticFeedback.selectionClick();
+    final messenger = ScaffoldMessenger.of(context);
     final next = _personGroupIds.contains(groupId)
         ? _personGroupIds.where((g) => g != groupId).toList()
         : [..._personGroupIds, groupId];
@@ -1283,7 +1351,12 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       await widget.client.setPersonGroups(widget.person.id, next);
     } catch (_) {
       if (!mounted) return;
+      // Revert the optimistic chip flip AND surface the failure — previously
+      // the chip just snapped back with no explanation of why.
       setState(() => _personGroupIds = prev);
+      messenger.showSnackBar(
+        const SnackBar(content: Text("Couldn't update groups")),
+      );
     } finally {
       if (mounted) setState(() => _savingGroups = false);
     }
@@ -1417,8 +1490,12 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
         isEmpty: _assets.isEmpty,
         emptyText: "No photos found for this person.",
         onRetry: _load,
-        builder: () => GridView.builder(
+        loadingBuilder: () => _skeletonGrid(context),
+        builder: () => RefreshIndicator(
+          onRefresh: _load,
+          child: GridView.builder(
           padding: const EdgeInsets.all(4),
+          physics: const AlwaysScrollableScrollPhysics(),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 3,
             crossAxisSpacing: 4,
@@ -1458,6 +1535,7 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
                     ),
                   ),
           ),
+        ),
         ),
       ),
             ),
@@ -1506,6 +1584,72 @@ class _LikelihoodBadge extends StatelessWidget {
   }
 }
 
+/// One flattened row in the Merge picker — a section header, a ranked
+/// candidate, a divider, or a plain person. Lets the picker render via
+/// `ListView.builder` so tiles lazy-build instead of all materialising when
+/// the sheet opens.
+class _MergeRow {
+  const _MergeRow.header(this.label)
+      : candidate = null,
+        person = null,
+        _kind = 0;
+  const _MergeRow.candidate(this.candidate)
+      : label = null,
+        person = null,
+        _kind = 1;
+  const _MergeRow.divider()
+      : label = null,
+        candidate = null,
+        person = null,
+        _kind = 2;
+  const _MergeRow.person(this.person)
+      : label = null,
+        candidate = null,
+        _kind = 3;
+
+  final int _kind;
+  final String? label;
+  final MergeCandidate? candidate;
+  final Person? person;
+
+  Widget build(BuildContext context) {
+    switch (_kind) {
+      case 0:
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+          child: Text(
+            label!,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+          ),
+        );
+      case 1:
+        final c = candidate!;
+        return ListTile(
+          // "Likely match" sparkle — amber is the intentional "this is the AI
+          // suggesting" signal across the app, kept as-is.
+          leading: const Icon(Icons.auto_awesome, color: Colors.amber),
+          title: Text(c.person.name!),
+          subtitle: Text("${c.person.instanceCount} faces"),
+          trailing: _LikelihoodBadge(distance: c.distance),
+          onTap: () => Navigator.of(context).pop(c.person),
+        );
+      case 2:
+        return const Divider();
+      default:
+        final p = person!;
+        return ListTile(
+          leading: const Icon(Icons.person_outline),
+          title: Text(p.name!),
+          subtitle: Text("${p.instanceCount} faces"),
+          onTap: () => Navigator.of(context).pop(p),
+        );
+    }
+  }
+}
+
 /// Bottom-sheet picker for "Merge into…". A TextField at the top filters
 /// both the ranked likely-matches list and the named-people list as the
 /// user types. Unnamed clusters never appear here — the caller filters
@@ -1536,6 +1680,16 @@ class _MergePickerState extends State<_MergePicker> {
             .where((p) => (p.name ?? "").toLowerCase().contains(q))
             .toList();
     final empty = cand.isEmpty && rest.isEmpty;
+    // Flatten headers + rows into one list so ListView.builder lazily builds
+    // tiles — a library with hundreds of named people no longer materialises
+    // every ListTile the moment the sheet opens.
+    final rows = <_MergeRow>[
+      if (cand.isNotEmpty) const _MergeRow.header("LIKELY MATCHES"),
+      for (final c in cand) _MergeRow.candidate(c),
+      if (cand.isNotEmpty && rest.isNotEmpty) const _MergeRow.divider(),
+      if (rest.isNotEmpty) const _MergeRow.header("ALL PEOPLE"),
+      for (final p in rest) _MergeRow.person(p),
+    ];
 
     return SafeArea(
       child: Padding(
@@ -1583,71 +1737,10 @@ class _MergePickerState extends State<_MergePicker> {
                             ),
                       ),
                     )
-                  : ListView(
+                  : ListView.builder(
                       shrinkWrap: true,
-                      children: [
-                        if (cand.isNotEmpty) ...[
-                          Padding(
-                            padding:
-                                const EdgeInsets.fromLTRB(16, 0, 16, 6),
-                            child: Text(
-                              "LIKELY MATCHES",
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
-                            ),
-                          ),
-                          for (final c in cand)
-                            ListTile(
-                              // "Likely match" sparkle — amber is the
-                              // intentional "this is the AI suggesting"
-                              // signal across the app, kept as-is.
-                              leading: const Icon(
-                                Icons.auto_awesome,
-                                color: Colors.amber,
-                              ),
-                              title: Text(c.person.name!),
-                              subtitle: Text(
-                                "${c.person.instanceCount} faces",
-                              ),
-                              trailing:
-                                  _LikelihoodBadge(distance: c.distance),
-                              onTap: () =>
-                                  Navigator.of(context).pop(c.person),
-                            ),
-                          if (rest.isNotEmpty) const Divider(),
-                        ],
-                        if (rest.isNotEmpty)
-                          Padding(
-                            padding:
-                                const EdgeInsets.fromLTRB(16, 6, 16, 6),
-                            child: Text(
-                              "ALL PEOPLE",
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
-                            ),
-                          ),
-                        for (final p in rest)
-                          ListTile(
-                            leading: const Icon(Icons.person_outline),
-                            title: Text(p.name!),
-                            subtitle: Text("${p.instanceCount} faces"),
-                            onTap: () => Navigator.of(context).pop(p),
-                          ),
-                      ],
+                      itemCount: rows.length,
+                      itemBuilder: (context, i) => rows[i].build(context),
                     ),
             ),
           ],
