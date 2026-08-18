@@ -130,19 +130,30 @@ class _PeopleTabState extends State<_PeopleTab> {
       final thumbs = coverIds.isEmpty
           ? <String, String>{}
           : await widget.client.assetUrls(coverIds, variant: "thumb");
-      final cropTargets =
-          items.where((p) => p.coverFaceCropUrl != null).toList();
       final crops = <String, String>{};
-      await Future.wait(cropTargets.map((p) async {
-        // Isolate each crop resolve — one network flap must not reject the
-        // whole batch and drop the entire People grid to the error state.
-        try {
-          final u = await widget.client.resolveSignedUrl(p.coverFaceCropUrl!);
-          if (u != null) crops[p.id] = u;
-        } catch (_) {
-          // Per-crop failure is non-fatal — the tile falls back to the thumb.
-        }
-      }));
+      // Prefer the server-signed cover URL — zero per-card round-trips, so the
+      // grid never fires a request storm no matter how many people there are.
+      for (final p in items) {
+        final signed = p.coverFaceCropSignedUrl;
+        if (signed != null && signed.isNotEmpty) crops[p.id] = signed;
+      }
+      // Fallback for covers the server didn't pre-sign (older server /
+      // mid-backfill): resolve in bounded batches so this path can't exhaust
+      // sockets either, and isolate each resolve so one flap can't drop the
+      // whole grid to the error state.
+      final fallback = items
+          .where((p) => !crops.containsKey(p.id) && p.coverFaceCropUrl != null)
+          .toList();
+      for (var i = 0; i < fallback.length; i += 8) {
+        await Future.wait(fallback.skip(i).take(8).map((p) async {
+          try {
+            final u = await widget.client.resolveSignedUrl(p.coverFaceCropUrl!);
+            if (u != null) crops[p.id] = u;
+          } catch (_) {
+            // Per-crop failure is non-fatal — the tile falls back to the thumb.
+          }
+        }));
+      }
       if (!mounted) return;
       setState(() {
         _items = items;

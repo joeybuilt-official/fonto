@@ -597,6 +597,7 @@ class Person {
     this.coverAssetId,
     this.coverBbox,
     this.coverFaceCropUrl,
+    this.coverFaceCropSignedUrl,
     this.groupIds = const [],
     this.hidden = false,
   });
@@ -606,7 +607,12 @@ class Person {
   final String? name;
   final String? coverAssetId;
   final PersonBbox? coverBbox;
+  // RELATIVE resolve path (legacy) — resolve via resolveSignedUrl only as a
+  // fallback when the server didn't provide the pre-signed URL below.
   final String? coverFaceCropUrl;
+  // Absolute pre-signed R2 URL resolved server-side — use directly in the tile
+  // (no per-card resolve round-trip). Preferred when present.
+  final String? coverFaceCropSignedUrl;
   final List<String> groupIds;
   // `true` when the cluster has been ignored (hidden from People). Mirrors the
   // web `hidden` flag; restore via PATCH /persons/:id { hidden:false }.
@@ -619,6 +625,7 @@ class Person {
         coverAssetId: j["coverAssetId"] as String?,
         coverBbox: PersonBbox.fromJson(j["coverBbox"]),
         coverFaceCropUrl: j["coverFaceCropUrl"] as String?,
+        coverFaceCropSignedUrl: j["coverFaceCropSignedUrl"] as String?,
         groupIds: (j["groupIds"] as List? ?? const []).cast<String>(),
         hidden: j["hidden"] as bool? ?? false,
       );
