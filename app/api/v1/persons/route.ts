@@ -48,6 +48,7 @@ interface PersonOut {
   coverBbox: { x: number; y: number; w: number; h: number } | null;
   coverFaceCropKey: string | null;
   coverFaceCropUrl: string | null;
+  coverFaceCropSignedUrl: string | null;
   groupIds: string[];
 }
 
@@ -254,9 +255,15 @@ export async function GET(request: NextRequest) {
       coverAssetId: cover?.assetId ?? null,
       coverBbox: bbox,
       coverFaceCropKey: cover?.faceCropKey ?? null,
-      // Signed R2 URL resolved server-side (no per-card client round-trip).
-      // NULL only when the person has no cover face or the sign failed.
-      coverFaceCropUrl: cover?.coverUrl ?? null,
+      // RELATIVE resolve URL — mobile clients call resolveSignedUrl() on this,
+      // so it MUST stay relative for backward-compat with installed apps.
+      coverFaceCropUrl:
+        cover && cover.faceCropKey && p.coverFaceId
+          ? `/api/v1/assets/${cover.assetId}/url?variant=face&faceId=${p.coverFaceId}`
+          : null,
+      // Absolute pre-signed R2 URL resolved server-side — the web grid uses
+      // this to skip the per-card round-trip. NULL when no cover / sign failed.
+      coverFaceCropSignedUrl: cover?.coverUrl ?? null,
       groupIds: groupsByPerson.get(p.id) ?? [],
     };
   });

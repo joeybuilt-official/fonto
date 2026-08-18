@@ -36,6 +36,7 @@ interface PersonGridEntry {
   coverBbox: { x: number; y: number; w: number; h: number } | null;
   coverFaceCropKey: string | null;
   coverFaceCropUrl: string | null;
+  coverFaceCropSignedUrl: string | null;
   groupIds: string[];
 }
 
@@ -280,9 +281,9 @@ function FaceCrop({ entry }: { entry: PersonGridEntry }) {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale fail flag when the signed URL changes
     setCropFailed(false);
-  }, [entry.coverFaceCropUrl]);
+  }, [entry.coverFaceCropSignedUrl]);
 
-  const showCrop = !!entry.coverFaceCropUrl && !cropFailed;
+  const showCrop = !!entry.coverFaceCropSignedUrl && !cropFailed;
 
   // Fallback: only fetch the preview (for the legacy CSS-zoom) when there's no
   // signed crop URL, or that crop 403'd/expired.
@@ -306,7 +307,7 @@ function FaceCrop({ entry }: { entry: PersonGridEntry }) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={entry.coverFaceCropUrl!}
+        src={entry.coverFaceCropSignedUrl!}
         alt={entry.name ?? "Unnamed person"}
         loading="lazy"
         decoding="async"

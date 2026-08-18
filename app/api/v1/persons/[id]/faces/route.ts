@@ -131,8 +131,13 @@ export async function GET(
       // Phase 1 (faces/UX) — dedicated square crop (NULL until generated). The
       // detail grid renders this sharp crop instead of CSS-zooming `preview`.
       faceCropKey: f.faceCropKey,
-      // Signed R2 URL resolved server-side (no per-card client round-trip).
-      faceCropUrl: faceCropUrls[i],
+      // RELATIVE resolve URL — mobile clients call resolveSignedUrl() on this,
+      // so it MUST stay relative for backward-compat with installed apps.
+      faceCropUrl: f.faceCropKey
+        ? `/api/v1/assets/${f.assetId}/url?variant=face&faceId=${f.id}`
+        : null,
+      // Absolute pre-signed R2 URL — the web detail grid uses this directly.
+      faceCropSignedUrl: faceCropUrls[i],
       asset: {
         id: f.assetId,
         filename: f.assetFilename,

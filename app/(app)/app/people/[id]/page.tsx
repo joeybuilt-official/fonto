@@ -115,6 +115,7 @@ interface FaceEntry {
   // NULL until backfilled; falls back to the legacy preview CSS-zoom.
   faceCropKey?: string | null;
   faceCropUrl?: string | null;
+  faceCropSignedUrl?: string | null;
   asset: FaceAssetMeta;
 }
 
@@ -138,7 +139,7 @@ function FaceCropBox({
   // preview fallback still resolves (previewUrl stays a relative API path).
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  const showCrop = !!face.faceCropUrl;
+  const showCrop = !!face.faceCropSignedUrl;
   const needPreviewFallback = !showCrop;
   useEffect(() => {
     if (!needPreviewFallback) return;
@@ -159,7 +160,7 @@ function FaceCropBox({
     // Sharp dedicated crop — render object-cover (background-size cover) so the
     // square already-centered face fills the tile.
     style = {
-      backgroundImage: `url(${face.faceCropUrl})`,
+      backgroundImage: `url(${face.faceCropSignedUrl})`,
       backgroundRepeat: "no-repeat",
       backgroundSize: "cover",
       backgroundPosition: "center",
