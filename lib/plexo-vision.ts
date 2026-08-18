@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Plexo Vision client — thin HTTP wrapper around the `apps/vision` service
@@ -16,8 +16,8 @@
 // URL and uses the same shared `PLEXO_SERVICE_KEY` as Plexo Core but as a
 // distinct deployable.
 //
-// AGPL note: OpenCLIP weights are MIT, PaddleOCR PP-OCRv5 is Apache 2.0 —
-// shipping them inside our own ONNX runtime is fine with an AGPL app.
+// License note: OpenCLIP weights are MIT, PaddleOCR PP-OCRv5 is Apache 2.0 —
+// shipping them inside our own ONNX runtime is fine with an MIT app.
 
 import { logger } from "@/lib/logger";
 

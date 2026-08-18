@@ -4,7 +4,7 @@
   "description": "Fonto CLI — terminal interface to your Fonto instance",
   "type": "module",
   "private": false,
-  "license": "AGPL-3.0-only",
+  "license": "MIT",
   "bin": {
     "fonto": "./dist/index.js"
   },

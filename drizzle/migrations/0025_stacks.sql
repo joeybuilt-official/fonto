@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 5.5 — Manual stacks (RAW+JPEG, bursts, multiple edits).
 --
 -- A stack groups related assets where one is the "primary": the timeline

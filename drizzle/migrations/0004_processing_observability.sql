@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 0 item 0.1: BullMQ queue + worker — observability columns.
 --
 -- Records the last processing error message and a per-asset attempt count

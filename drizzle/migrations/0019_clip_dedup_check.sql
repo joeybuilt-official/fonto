@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 4.5: CLIP-similarity duplicate detection (second pass after pHash).
 --
 -- Adds a `clip_dedup_checked_at` column to `fonto.assets`. The CLIP-dedup

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // `GET /api/v1/openapi.json` — emits the OpenAPI 3.1 document derived from
@@ -29,7 +29,7 @@ export async function GET() {
         "Fonto's public REST API. Authenticate via session cookie (web client), " +
         "personal access token (`Authorization: Bearer fonto_pat_...`), or the " +
         "equivalent `x-api-key` header.",
-      license: { name: "AGPL-3.0", url: "https://www.gnu.org/licenses/agpl-3.0.txt" },
+      license: { name: "MIT", url: "https://www.gnu.org/licenses/agpl-3.0.txt" },
     },
     servers: [{ url: "/", description: "Same-origin" }],
   });

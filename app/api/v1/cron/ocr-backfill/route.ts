@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Nightly OCR backfill. Picks up `ocr_state='pending'` rows in batches and
 // pushes them through the Plexo vision sidecar (PaddleOCR PP-OCRv5 since
 // Phase 4.4) — or, if OCR_LLM_FALLBACK=true and the vision service is down,

@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 3.5: virtual folder view.
 --
 -- Adds a `directory_path` column to `fonto.assets` so uploads can carry the

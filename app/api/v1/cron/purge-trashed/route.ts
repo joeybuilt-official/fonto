@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Called by an external scheduler (e.g. cron) to hard-purge trashed assets
 // past the grace period. Protected by CRON_SECRET header.
 export const dynamic = "force-dynamic";

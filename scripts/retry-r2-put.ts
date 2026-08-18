@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // One-shot — re-PUT the bytes for assets whose row exists but whose R2 upload
 // failed (sync_state='error'), then flip them back to 'synced'. Pair with
 // reprocess-one.ts to re-enqueue processing.

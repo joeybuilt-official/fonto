@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Task 20 — KIND: the library's primary partition (lens-based library).
 --
 -- KIND is a deterministic function of (mime_type, classification) computed in

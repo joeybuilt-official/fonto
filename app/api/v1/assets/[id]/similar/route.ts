@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // "More like this" — visual similarity via the asset's own CLIP embedding
 // (pgvector kNN over fonto.assets.clip_vec). Falls back to same-classification
 // when the asset has no embedding yet. The previous implementation ran a Plexo

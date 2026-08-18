@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 // T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue. GET is
 // wrapped in `unstable_cache` keyed by workspaceId and tagged with

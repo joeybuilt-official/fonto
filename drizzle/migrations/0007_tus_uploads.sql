@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 1.4: resumable/chunked uploads via tus.
 --
 -- Tracks tus uploads from creation through completion so the upload can be

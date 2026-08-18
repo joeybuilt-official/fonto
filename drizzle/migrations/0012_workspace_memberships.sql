@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 3.1 — workspace_memberships (see ADR 0004).
 --
 -- Today, workspaces are single-owner: `fonto.workspaces.user_id` is the de

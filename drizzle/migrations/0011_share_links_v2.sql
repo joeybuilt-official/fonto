@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 2.5 — share_links overhaul (see ADR 0004).
 --
 -- Additive only on share_links so existing rows + token-based URLs keep

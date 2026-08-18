@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Public, time-bounded share tokens for individual assets.
 
 CREATE TABLE IF NOT EXISTS fonto.share_links (

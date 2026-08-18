@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Executes a smart collection's saved query against the assets table.
 //
 // T1.3' (fonto-perf-audit.md) — class-B aggregate. The cache key is the

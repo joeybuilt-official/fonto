@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 5.3 — Memories ("On this day").
 --
 -- The memories feature answers "show me everything I captured on this
