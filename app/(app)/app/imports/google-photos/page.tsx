@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, ImageIcon, Loader2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ImportsList } from "../_components/imports-list";
 
@@ -348,6 +348,3 @@ function PickAndImport({ onDisconnected }: { onDisconnected: () => void }) {
     </div>
   );
 }
-
-// Icon kept exported-adjacent for the hub's provider registry parity (unused here).
-export const GooglePhotosIcon = ImageIcon;

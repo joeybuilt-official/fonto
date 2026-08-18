@@ -27,6 +27,35 @@ class ApiException implements Exception {
 /// `null` (clear it) from absent (leave unchanged). See updateTag.
 const Object _unset = Object();
 
+/// Cooperative cancel handle for a streaming upload ([FontoClient.uploadAmazonZip]).
+/// The screen creates one, hands it to the upload, and calls [cancel] from a
+/// Cancel button; the in-flight upload then stops reading and completes with
+/// `ApiException(499, "Upload cancelled")`.
+class UploadCancelToken {
+  bool _cancelled = false;
+  void Function()? _onCancel;
+
+  bool get isCancelled => _cancelled;
+
+  /// Wire the abort action. Called once by the client at the start of an upload.
+  void bind(void Function() onCancel) {
+    _onCancel = onCancel;
+    // If cancel raced ahead of bind, honour it immediately.
+    if (_cancelled) onCancel();
+  }
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    _onCancel?.call();
+  }
+}
+
+/// Internal marker pushed into a streamed upload body to abort it on cancel.
+class _UploadCancelled implements Exception {
+  const _UploadCancelled();
+}
+
 class FontoClient {
   FontoClient(this.auth, {http.Client? httpClient})
       : _http = httpClient ?? http.Client();
@@ -387,18 +416,35 @@ class FontoClient {
     return raw.map(Collection.fromJson).toList();
   }
 
-  /// Assets in a manual collection. GET /collections/:id/assets → full rows.
+  /// Assets in a manual collection. GET /collections/:id/assets → trimmed
+  /// rows (no sizeBytes/createdAt). Parsed straight through — `Asset.sizeBytes`
+  /// / `createdAt` are nullable now, so we no longer fabricate 0 / now() that
+  /// then leaked into the detail sheet as a real-looking value.
   Future<List<Asset>> assetsByCollection(String collectionId) async {
     final j = await _getJson("/api/v1/collections/$collectionId/assets");
     final raw =
         (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
-    return raw
-        .map((a) => Asset.fromJson({
-              "sizeBytes": 0,
-              "createdAt": DateTime.now().toIso8601String(),
-              ...a,
-            }))
-        .toList();
+    return raw.map(Asset.tryParse).whereType<Asset>().toList();
+  }
+
+  /// Saved-search (smart collection) results. GET
+  /// /smart-collections/:id/assets executes the stored query and returns full
+  /// asset rows. Backs the Collections → Smart tab drill-in.
+  Future<List<Asset>> assetsBySmartCollection(String smartCollectionId) async {
+    final j =
+        await _getJson("/api/v1/smart-collections/$smartCollectionId/assets");
+    final raw =
+        (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(Asset.tryParse).whereType<Asset>().toList();
+  }
+
+  /// Members of a stack, primary first. GET /stacks/:id → { stack, assets }.
+  /// Backs the Collections → Stacks tab drill-in.
+  Future<List<Asset>> assetsByStack(String stackId) async {
+    final j = await _getJson("/api/v1/stacks/$stackId");
+    final raw =
+        (j["assets"] as List? ?? const []).cast<Map<String, dynamic>>();
+    return raw.map(Asset.tryParse).whereType<Asset>().toList();
   }
 
   /// Duplicates (ADR 0010) — candidate near-duplicate groups with their member
@@ -419,6 +465,14 @@ class FontoClient {
   /// resurfacing. POST /api/v1/duplicates/:id/dismiss.
   Future<void> dismissDuplicate(String groupId) async {
     await _postJson("/api/v1/duplicates/$groupId/dismiss", const {});
+  }
+
+  /// Reverse of [resolveDuplicate]: un-trash the members trashed by a resolve
+  /// and revert the group to a candidate. POST /api/v1/duplicates/:id/undo →
+  /// { groupId, restored }. Returns the number of members restored.
+  Future<int> undoDuplicate(String groupId) async {
+    final j = await _postJson("/api/v1/duplicates/$groupId/undo", const {});
+    return (j["restored"] as num?)?.toInt() ?? 0;
   }
 
   /// Shoots (ADR 0008) — deliberate sessions, newest first, with per-shoot
@@ -461,9 +515,16 @@ class FontoClient {
   /// Batched presigned-URL fetch. Mirrors the web grid and CLI download
   /// flow: ids → { id: presignedUrl }. Variant is one of thumb /
   /// preview / original.
+  ///
+  /// Non-breaking signal for the ~30 callers: pass an [unresolved] set and it's
+  /// filled with the ids the server returned no URL for (missing key or
+  /// non-string value). Callers that don't care omit it and keep the plain
+  /// `Map<String, String>` return; callers that do can render a retry state on
+  /// those blank tiles instead of a permanent placeholder.
   Future<Map<String, String>> assetUrls(
     List<String> ids, {
     String variant = "thumb",
+    Set<String>? unresolved,
   }) async {
     final j = await _postJson(
       "/api/v1/assets/urls",
@@ -474,6 +535,11 @@ class FontoClient {
     urls.forEach((k, v) {
       if (v is String) out[k as String] = v;
     });
+    if (unresolved != null) {
+      for (final id in ids) {
+        if (!out.containsKey(id)) unresolved.add(id);
+      }
+    }
     return out;
   }
 
@@ -1036,11 +1102,10 @@ class FontoClient {
       if (a == null) continue;
       final id = a["id"] as String?;
       if (id == null || !seen.add(id)) continue;
-      assets.add(Asset.fromJson({
-        "sizeBytes": 0,
-        "createdAt": DateTime.now().toIso8601String(),
-        ...a,
-      }));
+      // Trimmed face-row asset (no sizeBytes/createdAt). Parse straight through
+      // — the nullable fields render "Unknown" instead of a fabricated 0/now().
+      final parsed = Asset.tryParse(a);
+      if (parsed != null) assets.add(parsed);
     }
     return assets;
   }
@@ -1246,11 +1311,21 @@ class FontoClient {
   /// The file is streamed off disk via a StreamedRequest so peak RAM is bounded
   /// by one chunk regardless of archive size — the http package would otherwise
   /// buffer the whole body in memory.
+  ///
+  /// [onProgress] is invoked as bytes stream off disk with the running
+  /// sent-byte count and the archive's total length, for a determinate
+  /// progress bar. [cancelToken] lets the screen abort mid-stream (Cancel
+  /// button); an aborted upload throws `ApiException(499, "Upload cancelled")`.
   Future<String> uploadAmazonZip(
     File zip,
     String workspaceId, {
     String? provider,
+    void Function(int sent, int total)? onProgress,
+    UploadCancelToken? cancelToken,
   }) async {
+    if (cancelToken?.isCancelled == true) {
+      throw ApiException(499, "Upload cancelled");
+    }
     final len = await zip.length();
     final query = {"workspaceId": workspaceId};
     if (provider != null) query["provider"] = provider;
@@ -1261,12 +1336,30 @@ class FontoClient {
       ..headers.addAll(_headers)
       ..headers["Content-Type"] = "application/zip"
       ..contentLength = len;
+    var sent = 0;
+    onProgress?.call(0, len);
     final pump = zip.openRead().listen(
-          req.sink.add,
-          onDone: req.sink.close,
-          onError: req.sink.addError,
-          cancelOnError: true,
-        );
+      (chunk) {
+        req.sink.add(chunk);
+        sent += chunk.length;
+        onProgress?.call(sent, len);
+      },
+      onDone: req.sink.close,
+      onError: req.sink.addError,
+      cancelOnError: true,
+    );
+    // Cancel: stop reading the file and error the request body so the in-flight
+    // `send` unwinds instead of hanging until timeout. The error object is a
+    // marker we translate to a clean cancelled ApiException below.
+    cancelToken?.bind(() {
+      unawaited(pump.cancel());
+      // The sink may already be closing (onDone) — guard so a late addError/
+      // close can't throw StateError back into the Cancel button handler.
+      try {
+        req.sink.addError(const _UploadCancelled());
+        unawaited(req.sink.close());
+      } catch (_) {}
+    });
     // A dropped connection mid-archive would otherwise leave the import UI stuck
     // "uploading" forever with no error and no way to advance — bound both the
     // send and the response read, matching uploadFile.
@@ -1276,6 +1369,13 @@ class FontoClient {
       streamed = await _http.send(req).timeout(uploadTimeout);
     } on TimeoutException {
       throw ApiException(408, "Request timed out");
+    } on _UploadCancelled {
+      throw ApiException(499, "Upload cancelled");
+    } catch (_) {
+      if (cancelToken?.isCancelled == true) {
+        throw ApiException(499, "Upload cancelled");
+      }
+      rethrow;
     } finally {
       await pump.cancel();
     }
@@ -1290,6 +1390,47 @@ class FontoClient {
     }
     final j = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     return j["importJobId"] as String;
+  }
+
+  /// M14 / ADR 0056 — redeem a single-use mobile auth-exchange code for the
+  /// underlying PAT. The browser deep-links `?code=…` (never the PAT itself);
+  /// the native app POSTs it here exactly once. No auth header — the unguessable
+  /// code IS the credential. Static because it runs BEFORE the app has any
+  /// stored session. Throws ApiException on a non-200 / missing token.
+  static Future<String> exchangeMobileCode(
+    String origin,
+    String code, {
+    http.Client? httpClient,
+  }) async {
+    final client = httpClient ?? http.Client();
+    try {
+      final http.Response res;
+      try {
+        res = await client
+            .post(
+              Uri.parse("$origin/mobile/auth-exchange"),
+              headers: const {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+              },
+              body: json.encode({"code": code}),
+            )
+            .timeout(_timeout);
+      } on TimeoutException {
+        throw ApiException(408, "Request timed out");
+      }
+      if (res.statusCode != 200) {
+        throw ApiException(res.statusCode, "Exchange failed");
+      }
+      final j = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+      final pat = j["pat"] as String?;
+      if (pat == null || pat.isEmpty) {
+        throw ApiException(500, "No token in exchange response");
+      }
+      return pat;
+    } finally {
+      if (httpClient == null) client.close();
+    }
   }
 
   void close() => _http.close();

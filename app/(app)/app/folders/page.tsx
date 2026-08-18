@@ -52,6 +52,7 @@ import {
   TextFieldLabel,
 } from "@/components/ui";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
+import { useSnackbar } from "@/components/ui/snackbar";
 import { cn } from "@/lib/utils";
 
 interface FolderEntry {
@@ -240,6 +241,7 @@ function FoldersContent() {
     page: "folders",
     availableFilters: ["mime", "type", "favorite", "ratingMin"],
   });
+  const toast = useSnackbar();
 
   const [state, setState] = useState<{
     loadedPrefix: string | null;
@@ -409,15 +411,22 @@ function FoldersContent() {
         });
         if (!r.ok) {
           const body = (await r.json().catch(() => ({}))) as { error?: string };
-          window.alert(`Move failed: ${body.error ?? r.status}`);
+          toast.add({
+            title: "Move failed",
+            description: String(body.error ?? r.status),
+            priority: "high",
+          });
           return;
         }
         reload();
       } catch {
-        window.alert("Network error during move");
+        toast.add({
+          title: "Network error during move",
+          priority: "high",
+        });
       }
     },
-    [reload]
+    [reload, toast]
   );
 
   function navLightbox(delta: number) {

@@ -657,7 +657,8 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     ));
   }
 
-  String _fmtSize(int bytes) {
+  String _fmtSize(int? bytes) {
+    if (bytes == null) return "Unknown";
     if (bytes <= 0) return "—";
     if (bytes < 1024) return "$bytes B";
     if (bytes < 1024 * 1024) return "${(bytes / 1024).toStringAsFixed(0)} KB";

@@ -385,6 +385,18 @@ class _SmartTabState extends State<_SmartTab> {
               subtitle: c.query == null
                   ? null
                   : Text(c.query!, overflow: TextOverflow.ellipsis),
+              trailing: const Icon(Icons.chevron_right),
+              // Was a dead row — run the saved search and show its results.
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => _AssetGridScreen(
+                    client: widget.client,
+                    title: c.name,
+                    fetch: () => widget.client.assetsBySmartCollection(c.id),
+                    emptyText: "No photos match this saved search yet.",
+                  ),
+                ),
+              ),
             );
           },
         ),
@@ -559,9 +571,22 @@ class _StacksTabState extends State<_StacksTab> {
         itemCount: _items.length,
         itemBuilder: (context, i) {
           final s = _items[i];
-          return _StackTile(
-            stack: s,
-            url: _thumbs[s.primaryAssetId],
+          return GestureDetector(
+            // Was a dead tile — open the stack's members.
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => _AssetGridScreen(
+                  client: widget.client,
+                  title: s.name,
+                  fetch: () => widget.client.assetsByStack(s.id),
+                  emptyText: "This stack has no members.",
+                ),
+              ),
+            ),
+            child: _StackTile(
+              stack: s,
+              url: _thumbs[s.primaryAssetId],
+            ),
           );
         },
       ),
@@ -903,6 +928,176 @@ class _CollectionAssetsScreenState extends State<_CollectionAssetsScreen> {
                     ),
                 ],
               ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// Generic tap-through grid for a fetched asset list (Smart-collection results,
+/// Stack members). Kept lean vs [_CollectionAssetsScreen] — no multi-select /
+/// zip export — because those surfaces don't own a collection id to export.
+///
+/// Demonstrates the non-breaking `assetUrls(unresolved:)` out-set: a tile whose
+/// thumb the server didn't sign renders a tap-to-retry affordance instead of a
+/// permanently blank box.
+class _AssetGridScreen extends StatefulWidget {
+  const _AssetGridScreen({
+    required this.client,
+    required this.title,
+    required this.fetch,
+    this.emptyText = "Nothing here yet.",
+  });
+
+  final FontoClient client;
+  final String title;
+  final Future<List<Asset>> Function() fetch;
+  final String emptyText;
+
+  @override
+  State<_AssetGridScreen> createState() => _AssetGridScreenState();
+}
+
+class _AssetGridScreenState extends State<_AssetGridScreen> {
+  bool _loading = true;
+  String? _error;
+  List<Asset> _assets = const [];
+  final Map<String, String> _thumbs = {};
+  final Set<String> _unresolved = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final assets = await widget.fetch();
+      final unresolved = <String>{};
+      Map<String, String> thumbs = const {};
+      if (assets.isNotEmpty) {
+        try {
+          thumbs = await widget.client.assetUrls(
+            assets.map((a) => a.id).toList(),
+            unresolved: unresolved,
+          );
+        } catch (_) {
+          // Whole batch failed to sign — every tile is retriable.
+          unresolved
+            ..clear()
+            ..addAll(assets.map((a) => a.id));
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _assets = assets;
+        _thumbs
+          ..clear()
+          ..addAll(thumbs);
+        _unresolved
+          ..clear()
+          ..addAll(unresolved);
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      _fail("${e.status}: ${e.message}");
+    } catch (e) {
+      _fail(e.toString());
+    }
+  }
+
+  void _fail(String msg) {
+    if (!mounted) return;
+    setState(() {
+      _error = msg;
+      _loading = false;
+    });
+  }
+
+  Future<void> _retryThumb(String id) async {
+    try {
+      final urls = await widget.client.assetUrls([id]);
+      final u = urls[id];
+      if (!mounted || u == null) return;
+      setState(() {
+        _thumbs[id] = u;
+        _unresolved.remove(id);
+      });
+    } catch (_) {
+      // Still blank — leave the retry affordance in place.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.title)),
+      body: _stateScaffold(
+        loading: _loading,
+        error: _error,
+        isEmpty: _assets.isEmpty,
+        onRetry: _load,
+        emptyText: widget.emptyText,
+        emptyIcon: Icons.photo_library_outlined,
+        skeleton: const GridSkeleton(),
+        builder: () => GridView.builder(
+          padding: const EdgeInsets.all(4),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 4,
+            mainAxisSpacing: 4,
+          ),
+          itemCount: _assets.length,
+          itemBuilder: (context, i) {
+            final a = _assets[i];
+            final url = _thumbs[a.id];
+            final retriable = url == null && _unresolved.contains(a.id);
+            final placeholder =
+                Theme.of(context).colorScheme.surfaceContainerHighest;
+            return GestureDetector(
+              onTap: () {
+                if (retriable) {
+                  _retryThumb(a.id);
+                  return;
+                }
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => AssetDetailScreen(
+                      client: widget.client,
+                      assets: _assets,
+                      initialIndex: i,
+                    ),
+                  ),
+                );
+              },
+              child: url != null
+                  ? CachedNetworkImage(
+                      imageUrl: url,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 260,
+                      memCacheHeight: 260,
+                      placeholder: (ctx, _) => imageSkeleton(ctx),
+                      errorWidget: (ctx, _, __) => ColoredBox(
+                        color: placeholder,
+                        child: const Icon(Icons.broken_image),
+                      ),
+                    )
+                  : retriable
+                      ? ColoredBox(
+                          color: placeholder,
+                          child: Icon(
+                            Icons.refresh,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        )
+                      : imageSkeleton(context),
             );
           },
         ),

@@ -585,10 +585,8 @@ export default function SettingsPage() {
                         storage.usageBytes / storage.quotaBytes >= 0.9
                           ? "bg-[var(--ft-color-error)]"
                           : storage.usageBytes / storage.quotaBytes >= 0.75
-                          ? // No --ft-color-warning token in globals.css yet
-                            // (outside this file's edit scope); reference the
-                            // token with an amber fallback so it themes once
-                            // the token lands. See deferred note.
+                          ? // --ft-color-warning (amber) themed via globals.css;
+                            // keep the amber fallback for older cached CSS.
                             "bg-[var(--ft-color-warning,#F59E0B)]"
                           : "bg-[var(--ft-color-primary)]"
                       )}

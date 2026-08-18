@@ -28,6 +28,7 @@ import { ensurePersonalWorkspace } from "@/lib/workspace";
 import { requireWorkspaceOwner } from "@/lib/authz";
 import { commitConsolidation } from "@/lib/variants/consolidate";
 import { logger } from "@/lib/logger";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 
 type DateAction = "confirm" | "reject" | "quarantine";
 type VariantAction = "commit";
@@ -53,12 +54,9 @@ export async function POST(request: NextRequest) {
   const authz = await requireWorkspaceOwner(workspace.id);
   if (!authz.ok) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  let body: Body;
-  try {
-    body = (await request.json()) as Body;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsed = await parseJson<Body>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
 
   const log = logger.child({ component: "review.confirm", workspaceId: workspace.id });
   const dateResults: Array<{ assetId: string; action: DateAction; ok: boolean; reason?: string }> = [];

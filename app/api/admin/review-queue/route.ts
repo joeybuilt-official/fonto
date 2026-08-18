@@ -20,7 +20,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth/server";
 import { ensurePersonalWorkspace } from "@/lib/workspace";
@@ -148,6 +148,24 @@ export async function GET() {
     .orderBy(desc(schema.persons.instanceCount))
     .limit(IDENTITY_LANE_LIMIT);
 
+  // Resolve each cluster's cover FACE → its cover ASSET so the "Who's this?"
+  // card can render the actual photo the face was cropped from (the face id
+  // alone isn't enough — the client needs the asset id to fetch bytes).
+  const coverFaceIds = unnamed
+    .map((p) => p.coverFaceId)
+    .filter((id): id is string => typeof id === "string");
+  const coverAssetByFace = new Map<string, string>();
+  if (coverFaceIds.length > 0) {
+    const faceRows = await db
+      .select({
+        id: schema.faceInstances.id,
+        assetId: schema.faceInstances.assetId,
+      })
+      .from(schema.faceInstances)
+      .where(inArray(schema.faceInstances.id, coverFaceIds));
+    for (const f of faceRows) coverAssetByFace.set(f.id, f.assetId);
+  }
+
   return NextResponse.json({
     workspaceId: workspace.id,
     thresholds: DEFAULT_GATE_THRESHOLDS,
@@ -164,6 +182,9 @@ export async function GET() {
         personId: p.id,
         instanceCount: p.instanceCount,
         coverFaceId: p.coverFaceId,
+        coverAssetId: p.coverFaceId
+          ? coverAssetByFace.get(p.coverFaceId) ?? null
+          : null,
       })),
     },
   });

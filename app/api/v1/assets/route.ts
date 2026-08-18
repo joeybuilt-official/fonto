@@ -4,7 +4,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { eq, and, desc, gte, isNull, isNotNull, lt, or, sql, SQL, like, ilike, inArray, exists } from "drizzle-orm";
+import { eq, and, asc, desc, gt, gte, isNull, isNotNull, lt, or, sql, SQL, like, ilike, inArray, exists } from "drizzle-orm";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
@@ -25,18 +25,31 @@ import { exifFilterConditions } from "@/lib/assets/exifFilters";
 // can page purely by echoing `cursor` without re-sending `?sort=`. The
 // discrete ?createdBefore/?capturedBefore/?idBefore params remain accepted
 // for backward compatibility.
-type CursorPayload = { s: "created" | "captured"; b: string; i: string };
+// Sort axes. "created" (ingestion order, default) and "captured" (EXIF capture
+// time, falling back to ingestion) are DESC time axes and keep the legacy
+// discrete ?createdBefore/?capturedBefore params. "name" (filename A→Z, ASC),
+// "rating" (0..5 stars, DESC) and "largest" (byte size, DESC) sort globally
+// server-side so the flat grid is correct across pages; those three page purely
+// via the opaque `cursor` (no discrete legacy param).
+type SortAxis = "created" | "captured" | "name" | "rating" | "largest";
+const SORT_AXES: readonly SortAxis[] = [
+  "created",
+  "captured",
+  "name",
+  "rating",
+  "largest",
+];
+function isSortAxis(v: unknown): v is SortAxis {
+  return typeof v === "string" && (SORT_AXES as readonly string[]).includes(v);
+}
+type CursorPayload = { s: SortAxis; b: string; i: string };
 function encodeCursor(p: CursorPayload): string {
   return Buffer.from(JSON.stringify(p), "utf8").toString("base64url");
 }
 function decodeCursor(raw: string): CursorPayload | null {
   try {
     const p = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (
-      (p?.s === "created" || p?.s === "captured") &&
-      typeof p?.b === "string" &&
-      typeof p?.i === "string"
-    ) {
+    if (isSortAxis(p?.s) && typeof p?.b === "string" && typeof p?.i === "string") {
       return p as CursorPayload;
     }
   } catch {
@@ -221,6 +234,26 @@ export async function GET(request: NextRequest) {
     where.push(isNull(schema.assets.capturedAt));
   }
 
+  // Date-range filter over the captured timeline (COALESCE(capturedAt,
+  // createdAt)). `?dateFrom=<iso>` (inclusive lower) and `?dateTo=<iso>`
+  // (inclusive upper) narrow the flat grid SERVER-side (unlike a post-fetch JS
+  // trim) so keyset pagination + the /buckets counts stay exact. Either bound
+  // is optional; a malformed value is ignored. Independent of the sort axis so
+  // a name/rating/largest sort can still be scoped to a date window.
+  const dateFromRaw = searchParams.get("dateFrom");
+  const dateToRaw = searchParams.get("dateTo");
+  const capturedCoalesce = sql`COALESCE(${schema.assets.capturedAt}, ${schema.assets.createdAt})`;
+  if (dateFromRaw && !Number.isNaN(Date.parse(dateFromRaw))) {
+    where.push(
+      sql`${capturedCoalesce} >= ${new Date(dateFromRaw).toISOString()}::timestamptz`
+    );
+  }
+  if (dateToRaw && !Number.isNaN(Date.parse(dateToRaw))) {
+    where.push(
+      sql`${capturedCoalesce} <= ${new Date(dateToRaw).toISOString()}::timestamptz`
+    );
+  }
+
   // Person-group filter: show only assets where at least one face belongs to
   // a person in the requested group.
   const groupIdParam = searchParams.get("group_id");
@@ -326,45 +359,79 @@ export async function GET(request: NextRequest) {
   // the discrete ?createdBefore/?capturedBefore/?idBefore params.
   const cursorRaw = searchParams.get("cursor");
   const decodedCursor = cursorRaw ? decodeCursor(cursorRaw) : null;
-  const sortAxis = decodedCursor
+  const sortParam = searchParams.get("sort");
+  const sortAxis: SortAxis = decodedCursor
     ? decodedCursor.s
-    : searchParams.get("sort") === "captured"
-      ? "captured"
+    : isSortAxis(sortParam)
+      ? sortParam
       : "created";
+  // ASC for name (A→Z); DESC for the time / rating / size axes.
+  const sortDir: "asc" | "desc" = sortAxis === "name" ? "asc" : "desc";
   const sortExpr =
     sortAxis === "captured"
       ? sql`COALESCE(${schema.assets.capturedAt}, ${schema.assets.createdAt})`
-      : sql`${schema.assets.createdAt}`;
+      : sortAxis === "name"
+        ? sql`LOWER(${schema.assets.filename})`
+        : sortAxis === "rating"
+          ? sql`${schema.assets.rating}`
+          : sortAxis === "largest"
+            ? sql`${schema.assets.sizeBytes}`
+            : sql`${schema.assets.createdAt}`;
 
   // Phase 6.2 — keyset pagination. The cursor param name tracks the sort axis:
   //   created  → ?createdBefore=<iso>   captured → ?capturedBefore=<iso>
   // plus ?idBefore=<uuid> as the tie-break. Returns rows strictly older than
   // the cursor under the same ordering, so pages concatenate cleanly.
   const idBeforeRaw = decodedCursor?.i ?? searchParams.get("idBefore");
+  // Where the keyset "before" value comes from. The opaque cursor carries it
+  // for every axis; the discrete ?createdBefore/?capturedBefore params stay
+  // accepted for the two legacy time axes. name/rating/largest page only via
+  // the opaque cursor.
   const beforeRaw =
     decodedCursor?.b ??
-    searchParams.get(sortAxis === "captured" ? "capturedBefore" : "createdBefore");
-  // Keep the cursor as the original ISO string and cast to timestamptz in
-  // SQL. postgres-js can't infer the bind type for a Date when the LHS is a
-  // COALESCE expression (the `captured` sort path), so binding a string + an
-  // explicit ::timestamptz cast keeps both sort axes happy.
-  const before =
-    beforeRaw && !Number.isNaN(Date.parse(beforeRaw))
-      ? new Date(beforeRaw).toISOString()
-      : null;
-  if (before) {
+    (sortAxis === "created"
+      ? searchParams.get("createdBefore")
+      : sortAxis === "captured"
+        ? searchParams.get("capturedBefore")
+        : null);
+  // Turn the raw "before" string into a typed, cast SQL bind for the active
+  // axis (or null when missing/invalid). timestamptz for the time axes, int for
+  // rating, bigint for size, lowercased text for the filename. postgres-js
+  // can't infer the bind type when the LHS is an expression (COALESCE / LOWER),
+  // so every bind carries an explicit cast.
+  const sortBound: SQL | null = (() => {
+    if (beforeRaw == null) return null;
+    switch (sortAxis) {
+      case "created":
+      case "captured": {
+        if (Number.isNaN(Date.parse(beforeRaw))) return null;
+        return sql`${new Date(beforeRaw).toISOString()}::timestamptz`;
+      }
+      case "rating": {
+        const n = Number.parseInt(beforeRaw, 10);
+        return Number.isInteger(n) ? sql`${n}::int` : null;
+      }
+      case "largest":
+        return /^\d+$/.test(beforeRaw) ? sql`${beforeRaw}::bigint` : null;
+      case "name":
+        return sql`${beforeRaw.toLowerCase()}`;
+    }
+  })();
+  if (sortBound) {
+    // Direction-aware keyset: strict comparison on the sort key, id as the
+    // tie-break when two rows share the same key. ASC for name, DESC otherwise.
+    const strictCmp =
+      sortDir === "asc"
+        ? sql`${sortExpr} > ${sortBound}`
+        : sql`${sortExpr} < ${sortBound}`;
     if (idBeforeRaw) {
-      where.push(
-        or(
-          sql`${sortExpr} < ${before}::timestamptz`,
-          and(
-            sql`${sortExpr} = ${before}::timestamptz`,
-            lt(schema.assets.id, idBeforeRaw)
-          )
-        )!
-      );
+      const idTie =
+        sortDir === "asc"
+          ? gt(schema.assets.id, idBeforeRaw)
+          : lt(schema.assets.id, idBeforeRaw);
+      where.push(or(strictCmp, and(sql`${sortExpr} = ${sortBound}`, idTie))!);
     } else {
-      where.push(sql`${sortExpr} < ${before}::timestamptz`);
+      where.push(strictCmp);
     }
   }
 
@@ -408,7 +475,10 @@ export async function GET(request: NextRequest) {
     .from(schema.assets)
     .leftJoin(stackCounts, eq(stackCounts.stackId, schema.assets.stackId))
     .where(and(...where))
-    .orderBy(sql`${sortExpr} DESC`, desc(schema.assets.id))
+    .orderBy(
+      sortDir === "asc" ? sql`${sortExpr} ASC` : sql`${sortExpr} DESC`,
+      sortDir === "asc" ? asc(schema.assets.id) : desc(schema.assets.id)
+    )
     .limit(limit);
 
   // Cursor for the next page: derived from the last row of a FULL page. A
@@ -420,15 +490,33 @@ export async function GET(request: NextRequest) {
   let nextCursor: Record<string, string> | null = null;
   let cursor: string | null = null;
   if (lastRow && rows.length === limit) {
-    const b =
-      sortAxis === "captured"
-        ? (lastRow.asset.capturedAt ?? lastRow.asset.createdAt).toISOString()
-        : lastRow.asset.createdAt.toISOString();
-    cursor = encodeCursor({ s: sortAxis, b, i: lastRow.asset.id });
+    const a = lastRow.asset;
+    let b: string;
+    switch (sortAxis) {
+      case "captured":
+        b = (a.capturedAt ?? a.createdAt).toISOString();
+        break;
+      case "name":
+        b = a.filename.toLowerCase();
+        break;
+      case "rating":
+        b = String(a.rating);
+        break;
+      case "largest":
+        b = String(a.sizeBytes);
+        break;
+      default:
+        b = a.createdAt.toISOString();
+    }
+    cursor = encodeCursor({ s: sortAxis, b, i: a.id });
+    // The legacy discrete-param `nextCursor` object only exists for the two
+    // time axes; name/rating/largest callers page via the opaque `cursor`.
     nextCursor =
       sortAxis === "captured"
-        ? { capturedBefore: b, idBefore: lastRow.asset.id }
-        : { createdBefore: b, idBefore: lastRow.asset.id };
+        ? { capturedBefore: b, idBefore: a.id }
+        : sortAxis === "created"
+          ? { createdBefore: b, idBefore: a.id }
+          : null;
   }
 
   return NextResponse.json({

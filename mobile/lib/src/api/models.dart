@@ -10,8 +10,8 @@ class Asset {
     required this.id,
     required this.filename,
     required this.mimeType,
-    required this.sizeBytes,
-    required this.createdAt,
+    this.sizeBytes,
+    this.createdAt,
     this.description,
     this.classification,
     this.capturedAt,
@@ -32,14 +32,23 @@ class Asset {
   final String id;
   final String filename;
   final String mimeType;
-  final int sizeBytes;
+  // Nullable: the timeline / search / stack endpoints always send it, but the
+  // trimmed asset rows the collection- and person-face endpoints return omit
+  // it. Display sites render "Unknown" rather than a fabricated 0.
+  final int? sizeBytes;
   final String? description;
   final String? classification;
   final DateTime? capturedAt;
-  // Ingest time — always present (notNull server-side). The timeline groups
-  // by capturedAt and falls back to this when EXIF capture time is missing,
-  // mirroring the server's COALESCE(captured_at, created_at) sort.
-  final DateTime createdAt;
+  // Ingest time. Present on full asset rows (timeline/search/stacks); null on
+  // the trimmed collection/person-face rows. The timeline groups by capturedAt
+  // and falls back to this, mirroring the server's COALESCE(captured_at,
+  // created_at) sort — see `effectiveDate`.
+  final DateTime? createdAt;
+
+  /// Best available timeline date: EXIF capture time, else ingest time. Null
+  /// only for the trimmed rows that carry neither; sort sites fall back to
+  /// the epoch so those sink to the bottom instead of throwing.
+  DateTime? get effectiveDate => capturedAt ?? createdAt;
   final String? directoryPath;
   final bool? isFavorite;
   final int? rating;
@@ -108,13 +117,15 @@ class Asset {
         id: j["id"] as String,
         filename: j["filename"] as String,
         mimeType: j["mimeType"] as String,
-        sizeBytes: (j["sizeBytes"] as num).toInt(),
+        sizeBytes: (j["sizeBytes"] as num?)?.toInt(),
         description: j["description"] as String?,
         classification: j["classification"] as String?,
         capturedAt: j["capturedAt"] == null
             ? null
             : DateTime.parse(j["capturedAt"] as String),
-        createdAt: DateTime.parse(j["createdAt"] as String),
+        createdAt: j["createdAt"] == null
+            ? null
+            : DateTime.parse(j["createdAt"] as String),
         directoryPath: j["directoryPath"] as String?,
         isFavorite: j["isFavorite"] as bool?,
         rating: (j["rating"] as num?)?.toInt(),

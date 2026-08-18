@@ -71,6 +71,10 @@ Future<void> _initLocalNotifications() async {
 
 final _navigatorKey = GlobalKey<NavigatorState>();
 
+// App-wide messenger so deep-link handlers (which run without a Scaffold in
+// context) can surface a SnackBar — e.g. the auth-exchange retry prompt.
+final _messengerKey = GlobalKey<ScaffoldMessengerState>();
+
 // App-wide theme selection (system/light/dark). Persisted in SharedPreferences
 // and surfaced live to MaterialApp via a ValueListenable so the Settings
 // Appearance control flips the theme without a restart. Defaults to system.
@@ -228,14 +232,58 @@ class _FontoAppState extends State<FontoApp> {
     }
   }
 
+  /// Surface a transient message from a deep-link handler (no Scaffold in
+  /// scope) via the app-wide messenger.
+  void _showAuthMessage(String message) {
+    _messengerKey.currentState
+      ?..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _handleDeepLink(Uri uri) async {
     // M14 / ADR 0056 — OIDC handoff: the web minted a PAT after IdP login and
     // deep-linked it back. Handle BEFORE the configured-guard (the app isn't
     // logged in yet). Save it like a manually-pasted token, verify, go home.
     if (uri.path == "/mobile/auth-callback") {
-      final pat = uri.queryParameters["pat"];
-      if (pat != null && pat.isNotEmpty) {
+      // Valkey was down at hand-off so the browser couldn't mint an exchange
+      // code — tell the user to retry rather than silently stalling.
+      if (uri.queryParameters["error"] == "exchange_unavailable") {
+        _showAuthMessage("Sign-in is temporarily unavailable. Please try again.");
+        return;
+      }
+      // The PAT no longer rides in the URL — the browser deep-links a single-use
+      // CODE, which we redeem once at /mobile/auth-exchange for the real PAT.
+      final code = uri.queryParameters["code"];
+      if (code != null && code.isNotEmpty) {
+        String pat;
+        try {
+          pat = await FontoClient.exchangeMobileCode(uri.origin, code);
+        } catch (_) {
+          // Expired / already-redeemed / store unavailable — uniform retry.
+          _showAuthMessage("That sign-in link has expired. Please try again.");
+          return;
+        }
         await _auth.save(pat: pat, baseUrl: uri.origin);
+        final client = FontoClient(_auth);
+        try {
+          await client.stats();
+          await registerUploadDrain();
+          if (!mounted) return;
+          _handleLoggedIn();
+        } catch (_) {
+          await _auth.clear();
+        } finally {
+          client.close();
+        }
+        return;
+      }
+      // Backward-compat: web deployments that still deep-link the PAT directly
+      // (the current server flow until the operator flips the handoff to the
+      // code-based exchange) land here. Accept the legacy ?pat= param so an
+      // updated app never breaks SSO against an un-flipped server.
+      final legacyPat = uri.queryParameters["pat"];
+      if (legacyPat != null && legacyPat.isNotEmpty) {
+        await _auth.save(pat: legacyPat, baseUrl: uri.origin);
         final client = FontoClient(_auth);
         try {
           await client.stats();
@@ -315,6 +363,7 @@ class _FontoAppState extends State<FontoApp> {
         darkTheme: FontoTheme.dark(),
         themeMode: mode,
         navigatorKey: _navigatorKey,
+        scaffoldMessengerKey: _messengerKey,
         home: _auth.isConfigured
             ? MainShell(auth: _auth, onSignOut: _handleSignOut)
             : LoginScreen(auth: _auth, onLoggedIn: _handleLoggedIn),

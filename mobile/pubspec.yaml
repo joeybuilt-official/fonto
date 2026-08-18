@@ -57,6 +57,22 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+  # Inter (OFL) — the brand type family the `lib/src/theme` scale targets.
+  # Bundled as static instances (wght 400/500/600/700) extracted from the
+  # upstream variable font so the discrete FontWeight values in FontoType
+  # render exactly, instead of silently falling back to Roboto on-device.
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700
+
 # Launcher icon config. Regenerate with: dart run flutter_launcher_icons
 # Mipmaps + adaptive resources in android/app/src/main/res were generated
 # manually (no Flutter SDK in the icon-authoring env); rerunning the tool is safe.

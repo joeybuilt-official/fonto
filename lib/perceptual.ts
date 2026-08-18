@@ -167,6 +167,16 @@ export function phashFromDb(signed: bigint): bigint {
   return signed < 0n ? signed + TWO_POW_64 : signed;
 }
 
+/**
+ * Unsigned 64-bit pHash → 64-char '0'/'1' string for a Postgres `bit(64)`
+ * literal (the `assets.phash_bits` near-dup column, migration 0059). The bit
+ * pattern is identical to the signed value stored in `phash`, so `<~>` Hamming
+ * comparisons agree across freshly-inserted and legacy-backfilled rows.
+ */
+export function phashToBits(unsigned: bigint): string {
+  return (unsigned & (TWO_POW_64 - 1n)).toString(2).padStart(64, "0");
+}
+
 /* ─── Color palette ─────────────────────────────────────────────────── */
 
 const PALETTE_SIZE = 8;

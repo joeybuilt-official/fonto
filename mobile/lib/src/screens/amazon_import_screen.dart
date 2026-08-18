@@ -24,6 +24,9 @@ class AmazonImportScreen extends StatefulWidget {
 class _AmazonImportScreenState extends State<AmazonImportScreen> {
   bool _busy = false;
   String? _msg;
+  int _sent = 0;
+  int _total = 0;
+  UploadCancelToken? _cancelToken;
 
   Future<void> _pickAndUpload() async {
     if (_busy) return;
@@ -31,6 +34,8 @@ class _AmazonImportScreenState extends State<AmazonImportScreen> {
     setState(() {
       _busy = true;
       _msg = null;
+      _sent = 0;
+      _total = 0;
     });
     try {
       final picked = await FilePicker.platform.pickFiles(
@@ -43,15 +48,30 @@ class _AmazonImportScreenState extends State<AmazonImportScreen> {
         if (mounted) setState(() => _busy = false);
         return; // User cancelled the picker.
       }
+      final token = UploadCancelToken();
+      if (mounted) setState(() => _cancelToken = token);
       final workspaceId = await widget.client.workspaceId();
-      await widget.client.uploadAmazonZip(File(path), workspaceId);
+      await widget.client.uploadAmazonZip(
+        File(path),
+        workspaceId,
+        cancelToken: token,
+        onProgress: (sent, total) {
+          if (!mounted) return;
+          setState(() {
+            _sent = sent;
+            _total = total;
+          });
+        },
+      );
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
+      final cancelled = e is ApiException && e.status == 499;
       setState(() {
         _busy = false;
-        _msg = "Upload failed: $e";
+        _cancelToken = null;
+        _msg = cancelled ? "Upload cancelled." : "Upload failed: $e";
       });
     }
   }
@@ -80,6 +100,14 @@ class _AmazonImportScreenState extends State<AmazonImportScreen> {
                 : const Icon(Icons.upload_file),
             label: Text(_busy ? "Uploading…" : "Choose .zip & import"),
           ),
+          if (_busy) ...[
+            const SizedBox(height: 16),
+            UploadProgress(
+              sent: _sent,
+              total: _total,
+              onCancel: _cancelToken?.cancel,
+            ),
+          ],
           if (_msg != null) ...[
             const SizedBox(height: 8),
             Text(
@@ -92,6 +120,65 @@ class _AmazonImportScreenState extends State<AmazonImportScreen> {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// Determinate ZIP-upload progress: percent + bytes + Cancel. Shared by the
+/// Amazon and Takeout import screens. Shows an indeterminate bar until the
+/// first byte-count arrives (total known).
+class UploadProgress extends StatelessWidget {
+  const UploadProgress({
+    super.key,
+    required this.sent,
+    required this.total,
+    this.onCancel,
+  });
+
+  final int sent;
+  final int total;
+  final VoidCallback? onCancel;
+
+  static String _fmtBytes(int b) {
+    if (b < 1024) return "$b B";
+    if (b < 1024 * 1024) return "${(b / 1024).toStringAsFixed(0)} KB";
+    if (b < 1024 * 1024 * 1024) {
+      return "${(b / (1024 * 1024)).toStringAsFixed(1)} MB";
+    }
+    return "${(b / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final fraction = total > 0 ? (sent / total).clamp(0.0, 1.0) : null;
+    final label = total > 0
+        ? "${((fraction ?? 0) * 100).toStringAsFixed(0)}% · "
+            "${_fmtBytes(sent)} / ${_fmtBytes(total)}"
+        : "Preparing…";
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(value: fraction),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            if (onCancel != null)
+              TextButton(onPressed: onCancel, child: const Text("Cancel")),
+          ],
+        ),
+      ],
     );
   }
 }

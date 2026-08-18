@@ -133,32 +133,13 @@ function FaceCropBox({
   selected: boolean;
   onToggleSelect: (id: string) => void;
 }) {
-  // Phase 2 (faces/UX) — prefer the sharp dedicated crop. Resolve the signed
-  // face-crop URL when present; otherwise fall back to the preview CSS-zoom.
-  const [cropUrl, setCropUrl] = useState<string | null>(null);
-  const [cropFailed, setCropFailed] = useState(false);
+  // Phase 2 (faces/UX) — prefer the sharp dedicated crop. faceCropUrl is now an
+  // absolute *signed* R2 URL, so use it directly (no resolve round-trip); the
+  // preview fallback still resolves (previewUrl stays a relative API path).
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale crop when face changes before refetch
-    setCropUrl(null);
-    setCropFailed(false);
-    if (!face.faceCropUrl) return;
-    let cancelled = false;
-    fetch(face.faceCropUrl)
-      .then((r) => r.json())
-      .then((d: { url?: string }) => {
-        if (!cancelled) setCropUrl(d.url ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setCropFailed(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [face.faceCropUrl]);
-
-  const needPreviewFallback = !face.faceCropUrl || cropFailed;
+  const showCrop = !!face.faceCropUrl;
+  const needPreviewFallback = !showCrop;
   useEffect(() => {
     if (!needPreviewFallback) return;
     let cancelled = false;
@@ -174,11 +155,11 @@ function FaceCropBox({
   }, [needPreviewFallback, face.asset.previewUrl]);
 
   let style: React.CSSProperties = {};
-  if (cropUrl) {
+  if (showCrop) {
     // Sharp dedicated crop — render object-cover (background-size cover) so the
     // square already-centered face fills the tile.
     style = {
-      backgroundImage: `url(${cropUrl})`,
+      backgroundImage: `url(${face.faceCropUrl})`,
       backgroundRepeat: "no-repeat",
       backgroundSize: "cover",
       backgroundPosition: "center",
@@ -607,19 +588,17 @@ export default function PersonDetailPage({
     }
   }, [person, selected, load, showToast]);
 
+  // Opening only fetches the ranked candidates; the flat "All people" list is
+  // loaded server-side (limit + name-filter) by the debounced effect below, so
+  // a large workspace never pulls the whole persons table into the picker.
   const openMerge = useCallback(async () => {
     setShowMerge(true);
     setMergeQuery("");
     setCandidatesLoading(true);
     try {
-      const [personsRes, candidatesRes] = await Promise.all([
-        fetch("/api/v1/persons"),
-        fetch(`/api/v1/persons/${id}/merge-candidates`),
-      ]);
-      if (personsRes.ok) {
-        const data = (await personsRes.json()) as { persons: PersonGridEntry[] };
-        setAllPersons((data.persons ?? []).filter((p) => p.id !== id));
-      }
+      const candidatesRes = await fetch(
+        `/api/v1/persons/${id}/merge-candidates`
+      );
       if (candidatesRes.ok) {
         const data = (await candidatesRes.json()) as {
           candidates: { id: string; name: string; instanceCount: number; distance: number }[];
@@ -632,6 +611,36 @@ export default function PersonDetailPage({
       setCandidatesLoading(false);
     }
   }, [id]);
+
+  // Merge-picker "All people" list. Loaded from the persons endpoint with a
+  // server-side `limit` + name `q` (which excludes unnamed clusters), so typing
+  // surfaces matches beyond the first page instead of client-filtering a giant
+  // pre-loaded list. Empty query loads immediately; typing is debounced.
+  useEffect(() => {
+    if (!showMerge) return;
+    const q = mergeQuery.trim();
+    let cancelled = false;
+    const t = setTimeout(
+      () => {
+        const sp = new URLSearchParams();
+        sp.set("limit", "500");
+        if (q) sp.set("q", q);
+        fetch(`/api/v1/persons?${sp.toString()}`)
+          .then((r) => (r.ok ? r.json() : { persons: [] }))
+          .then((data: { persons?: PersonGridEntry[] }) => {
+            if (!cancelled) {
+              setAllPersons((data.persons ?? []).filter((p) => p.id !== id));
+            }
+          })
+          .catch(() => undefined);
+      },
+      q ? 250 : 0
+    );
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [showMerge, mergeQuery, id]);
 
   const doMerge = useCallback(
     async (targetId: string, targetName?: string | null) => {

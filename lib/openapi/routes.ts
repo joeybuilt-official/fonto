@@ -274,6 +274,44 @@ registry.registerPath({
         .enum(["active", "archivable", "archived", "trashed"])
         .optional()
         .openapi({ description: "Lifecycle bucket (default `active`)." }),
+      sort: z
+        .enum(["created", "captured", "name", "rating", "largest"])
+        .optional()
+        .openapi({
+          description:
+            "Global server-side sort axis (default `created`). `created`/" +
+            "`captured` are DESC time axes; `name` is filename A→Z (ASC); " +
+            "`rating` (0..5) and `largest` (byte size) are DESC. The flat " +
+            "grid is sorted server-side, so it stays correct across pages. " +
+            "`name`/`rating`/`largest` page only via the opaque `cursor`.",
+        }),
+      dateFrom: z.string().optional().openapi({
+        description:
+          "Inclusive lower bound (ISO) on the captured timeline " +
+          "(COALESCE(capturedAt, createdAt)). Applied server-side.",
+      }),
+      dateTo: z.string().optional().openapi({
+        description:
+          "Inclusive upper bound (ISO) on the captured timeline. Applied " +
+          "server-side.",
+      }),
+      q: z.string().optional().openapi({
+        description:
+          "Server-side search over filename / OCR text / source (substring " +
+          "on filename+source, tsvector on OCR).",
+      }),
+      cursor: z.string().optional().openapi({
+        description:
+          "Opaque keyset cursor (echo the previous response's `cursor`). " +
+          "Self-describes the sort axis + position; supersedes `?sort=` and " +
+          "the discrete `?createdBefore/?capturedBefore/?idBefore` params.",
+      }),
+      limit: z.coerce.number().int().min(1).max(1000).optional().openapi({
+        description:
+          "Page size (default 200, max 1000). Omitting BOTH `limit` and a " +
+          "`cursor` still caps the response at the 200-row default — the " +
+          "response is never unbounded.",
+      }),
       // Phase 5.5 — stack expansion override.
       expandStacks: z
         .enum(["true", "1"])
@@ -287,7 +325,7 @@ registry.registerPath({
     }),
   },
   responses: {
-    200: json(AssetsEnvelopeSchema, "Assets, newest first."),
+    200: json(AssetsEnvelopeSchema, "Assets, sorted by the active axis."),
     401: errorResponse("Not authenticated."),
   },
 });
@@ -322,6 +360,48 @@ registry.registerPath({
     401: errorResponse("Not authenticated."),
     413: errorResponse("File exceeds the 50 MB legacy limit."),
     500: errorResponse("R2 upload failed."),
+  },
+});
+
+// /api/v1/assets/bulk/trash -------------------------------------------------
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/assets/bulk/trash",
+  summary: "Bulk trash (or restore) assets in one request",
+  description:
+    "Trashes every id the caller can reach in ONE request (replaces the " +
+    "N-parallel-PATCH pattern). Pass `restore: true` to un-trash instead. " +
+    "ids are filtered to the caller's workspaces (IDOR guard) and each " +
+    "affected workspace is `editor`-gated. Each mutated row gets a distinct " +
+    "delta-sync seq. Max 1000 ids per call.",
+  tags: ["Assets"],
+  security: AUTH_SECURITY,
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({
+            ids: z.array(UuidSchema).min(1).max(1000),
+            restore: z.boolean().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: json(
+      z.object({
+        trashed: z.number().int().nonnegative(),
+        restored: z.number().int().nonnegative(),
+        requested: z.number().int().nonnegative(),
+      }),
+      "Counts of rows mutated vs requested."
+    ),
+    400: errorResponse("Missing/invalid ids or over the 1000 cap."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required on an affected workspace."),
+    404: errorResponse("No workspace."),
   },
 });
 
@@ -795,6 +875,44 @@ registry.registerPath({
     200: json(z.object({ ok: z.literal(true) }), "Removed."),
     401: errorResponse("Not authenticated."),
     404: errorResponse("Not found."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/collections/{id}/assets/bulk",
+  summary: "Bulk add assets to a collection in one request",
+  description:
+    "Links every reachable asset id to the collection in ONE request " +
+    "(replaces the N-parallel-POST pattern). The collection must belong to " +
+    "the caller's workspace and `editor` is required; asset ids are filtered " +
+    "to the caller's workspaces (IDOR guard). Already-linked assets are " +
+    "no-ops. Max 1000 ids per call.",
+  tags: ["Collections", "Assets"],
+  security: AUTH_SECURITY,
+  request: {
+    params: PathIdParam,
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({ assetIds: z.array(UuidSchema).min(1).max(1000) }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: json(
+      z.object({
+        added: z.number().int().nonnegative(),
+        requested: z.number().int().nonnegative(),
+      }),
+      "Count of newly-linked assets vs requested."
+    ),
+    400: errorResponse("Missing/invalid assetIds or over the 1000 cap."),
+    401: errorResponse("Not authenticated."),
+    403: errorResponse("Editor role required."),
+    404: errorResponse("Collection not found."),
   },
 });
 
@@ -1680,13 +1798,22 @@ registry.registerPath({
   description:
     "Ordered by `instanceCount` desc. Hidden persons are excluded by " +
     "default; pass `?hidden=true` to include them. Each entry carries the " +
-    "resolved cover-face asset id + bbox so the People grid can render a " +
-    "crop without an extra round-trip.",
+    "resolved cover-face asset id + bbox AND a server-signed cover-crop URL " +
+    "(`coverFaceCropUrl`) so the People grid renders without a per-card " +
+    "round-trip. `?limit=` + `?q=` (name substring) drive the merge picker.",
   tags: ["People"],
   security: AUTH_SECURITY,
   request: {
     query: z.object({
       hidden: z.enum(["true", "false"]).optional(),
+      limit: z.coerce.number().int().min(1).max(500).optional().openapi({
+        description: "Cap the number of returned clusters (merge picker).",
+      }),
+      q: z.string().optional().openapi({
+        description:
+          "Case-insensitive substring match on the person name. Unnamed " +
+          "clusters are excluded when set (merge picker).",
+      }),
     }),
   },
   responses: {

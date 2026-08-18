@@ -229,9 +229,10 @@ class _FilteredAssetsScreenState extends State<FilteredAssetsScreen> {
     // Re-derive the slot from the sort key; a pull-to-refresh may have
     // rewritten the list while the SnackBar was up.
     if (removed != null && !_assets.any((a) => a.id == id)) {
-      final key = removed.capturedAt ?? removed.createdAt;
+      final key = removed.effectiveDate ?? DateTime.fromMillisecondsSinceEpoch(0);
       var at = _assets.indexWhere(
-        (a) => (a.capturedAt ?? a.createdAt).isBefore(key),
+        (a) => (a.effectiveDate ?? DateTime.fromMillisecondsSinceEpoch(0))
+            .isBefore(key),
       );
       if (at < 0) at = _assets.length;
       setState(() => _assets.insert(at, removed));

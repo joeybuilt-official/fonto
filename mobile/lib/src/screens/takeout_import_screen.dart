@@ -13,6 +13,7 @@ import "package:flutter/services.dart";
 
 import "../api/fonto_client.dart";
 import "../util/drive_link.dart";
+import "amazon_import_screen.dart" show UploadProgress;
 
 class TakeoutImportScreen extends StatefulWidget {
   const TakeoutImportScreen({
@@ -34,6 +35,9 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
   String? _msg;
   bool _uploadBusy = false;
   String? _uploadMsg;
+  int _uSent = 0;
+  int _uTotal = 0;
+  UploadCancelToken? _uCancel;
 
   @override
   void dispose() {
@@ -47,6 +51,8 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
     setState(() {
       _uploadBusy = true;
       _uploadMsg = null;
+      _uSent = 0;
+      _uTotal = 0;
     });
     try {
       final picked = await FilePicker.platform.pickFiles(
@@ -59,16 +65,31 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
         if (mounted) setState(() => _uploadBusy = false);
         return; // User cancelled the picker.
       }
+      final token = UploadCancelToken();
+      if (mounted) setState(() => _uCancel = token);
       final workspaceId = await widget.client.workspaceId();
-      await widget.client
-          .uploadAmazonZip(File(path), workspaceId, provider: "google-takeout");
+      await widget.client.uploadAmazonZip(
+        File(path),
+        workspaceId,
+        provider: "google-takeout",
+        cancelToken: token,
+        onProgress: (sent, total) {
+          if (!mounted) return;
+          setState(() {
+            _uSent = sent;
+            _uTotal = total;
+          });
+        },
+      );
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
+      final cancelled = e is ApiException && e.status == 499;
       setState(() {
         _uploadBusy = false;
-        _uploadMsg = "Upload failed: $e";
+        _uCancel = null;
+        _uploadMsg = cancelled ? "Upload cancelled." : "Upload failed: $e";
       });
     }
   }
@@ -193,6 +214,14 @@ class _TakeoutImportScreenState extends State<TakeoutImportScreen> {
                   : const Icon(Icons.upload_file),
               label: Text(_uploadBusy ? "Uploading…" : "Choose .zip & import"),
             ),
+            if (_uploadBusy) ...[
+              const SizedBox(height: 16),
+              UploadProgress(
+                sent: _uSent,
+                total: _uTotal,
+                onCancel: _uCancel?.cancel,
+              ),
+            ],
             if (_uploadMsg != null) ...[
               const SizedBox(height: 8),
               Text(

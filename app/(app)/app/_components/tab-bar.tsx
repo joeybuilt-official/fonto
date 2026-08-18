@@ -24,6 +24,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useRef } from "react";
 import { cn } from "@/lib/utils";
 
 export interface TabDef {
@@ -48,17 +49,49 @@ export function TabBar({
   className?: string;
 }) {
   const pathname = usePathname();
+  const tabRefs = useRef<(HTMLAnchorElement | null)[]>([]);
+
+  // Roving-tabindex keyboard nav (WAI-ARIA tabs, manual activation): arrows move
+  // focus between tabs, Home/End jump to the ends; Enter (native anchor) then
+  // navigates. Only the selected tab is in the Tab order (tabIndex below).
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const count = tabs.length;
+    if (count === 0) return;
+    const current = tabs.findIndex((t) => t.key === active);
+    let next: number;
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        next = (current + 1) % count;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        next = (current - 1 + count) % count;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = count - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    tabRefs.current[next]?.focus();
+  };
 
   return (
     <div
       role="tablist"
       aria-label={label}
+      onKeyDown={onKeyDown}
       className={cn(
         "flex gap-[var(--ft-space-1)] overflow-x-auto border-b border-[var(--ft-color-outline-variant)] px-[var(--ft-space-4)]",
         className,
       )}
     >
-      {tabs.map((t) => {
+      {tabs.map((t, i) => {
         const isActive = t.key === active;
         const href =
           t.key === defaultKey
@@ -68,6 +101,9 @@ export function TabBar({
         return (
           <Link
             key={t.key}
+            ref={(el) => {
+              tabRefs.current[i] = el;
+            }}
             href={href}
             role="tab"
             aria-selected={isActive}

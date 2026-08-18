@@ -179,7 +179,8 @@ class _FilesSurfaceState extends State<FilesSurface> {
     }
   }
 
-  String _fmtDate(DateTime d) {
+  String _fmtDate(DateTime? d) {
+    if (d == null) return "Unknown";
     const m = [
       "Jan", "Feb", "Mar", "Apr", "May", "Jun",
       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
@@ -187,13 +188,16 @@ class _FilesSurfaceState extends State<FilesSurface> {
     return "${m[d.month - 1]} ${d.day}, ${d.year}";
   }
 
-  String _fmtSize(int b) {
+  String _fmtSize(int? b) {
+    if (b == null) return "Unknown";
     if (b < 1024) return "$b B";
     if (b < 1024 * 1024) return "${(b / 1024).round()} KB";
     return "${(b / (1024 * 1024)).toStringAsFixed(1)} MB";
   }
 
-  String _band(DateTime d) {
+  // Undated rows (trimmed API shapes) sink into "Earlier" rather than crash.
+  String _band(DateTime? d) {
+    if (d == null) return "Earlier";
     final age = DateTime.now().difference(d);
     return age.inDays <= 7 ? "This week" : "Earlier";
   }
@@ -369,7 +373,8 @@ class _FilePropertiesState extends State<_FileProperties> {
     } catch (_) {}
   }
 
-  String _fmtDate(DateTime d) {
+  String _fmtDate(DateTime? d) {
+    if (d == null) return "Unknown";
     const m = [
       "Jan", "Feb", "Mar", "Apr", "May", "Jun",
       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
@@ -377,7 +382,8 @@ class _FilePropertiesState extends State<_FileProperties> {
     return "${m[d.month - 1]} ${d.day}, ${d.year}";
   }
 
-  String _fmtSize(int b) {
+  String _fmtSize(int? b) {
+    if (b == null) return "Unknown";
     if (b < 1024) return "$b B";
     if (b < 1024 * 1024) return "${(b / 1024).round()} KB";
     return "${(b / (1024 * 1024)).toStringAsFixed(1)} MB";

@@ -16,9 +16,15 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
+import { assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 
 const DEFAULT_LIMIT = 60;
 const MAX_LIMIT = 200;
+// Face crop + preview are immutable content-addressed derivatives → sign toward
+// the SigV4 ceiling (7 days); the original fallback stays short-lived.
+const CROP_TTL_DERIVATIVE_SEC = 7 * 24 * 60 * 60; // 604800
+const CROP_TTL_ORIGINAL_SEC = 3600; // 1 hour
 
 export async function GET(
   request: NextRequest,
@@ -70,6 +76,7 @@ export async function GET(
       hidden: schema.faceInstances.hidden,
       createdAt: schema.faceInstances.createdAt,
       faceCropKey: schema.faceInstances.faceCropKey,
+      assetWorkspaceId: schema.assets.workspaceId,
       assetFilename: schema.assets.filename,
       assetMimeType: schema.assets.mimeType,
       thumbnailKey: schema.assets.thumbnailKey,
@@ -85,8 +92,36 @@ export async function GET(
     .limit(limit)
     .offset(offset);
 
+  // Resolve + presign each face crop INLINE so the detail grid renders without
+  // a per-card GET /assets/{id}/url round-trip. Prefer the dedicated square
+  // crop; fall back to the asset preview, then the original, so a crop always
+  // resolves even mid-backfill.
+  const faceCropUrls = await Promise.all(
+    faces.map(async (f) => {
+      let key: string;
+      let expiresIn: number;
+      if (f.faceCropKey) {
+        key = f.faceCropKey;
+        expiresIn = CROP_TTL_DERIVATIVE_SEC;
+      } else if (f.previewKey) {
+        key = f.previewKey;
+        expiresIn = CROP_TTL_DERIVATIVE_SEC;
+      } else {
+        key = assetStorageKey(f.assetWorkspaceId, f.assetId, f.assetFilename);
+        expiresIn = CROP_TTL_ORIGINAL_SEC;
+      }
+      try {
+        return await storage().presignGet(key, { expiresIn });
+      } catch {
+        // A sign failure must not sink the whole grid — the card falls back to
+        // the client's bbox/CSS crop off `bbox` + the asset preview.
+        return null;
+      }
+    })
+  );
+
   return NextResponse.json({
-    faces: faces.map((f) => ({
+    faces: faces.map((f, i) => ({
       id: f.id,
       assetId: f.assetId,
       bbox: f.bbox,
@@ -96,9 +131,8 @@ export async function GET(
       // Phase 1 (faces/UX) — dedicated square crop (NULL until generated). The
       // detail grid renders this sharp crop instead of CSS-zooming `preview`.
       faceCropKey: f.faceCropKey,
-      faceCropUrl: f.faceCropKey
-        ? `/api/v1/assets/${f.assetId}/url?variant=face&faceId=${f.id}`
-        : null,
+      // Signed R2 URL resolved server-side (no per-card client round-trip).
+      faceCropUrl: faceCropUrls[i],
       asset: {
         id: f.assetId,
         filename: f.assetFilename,

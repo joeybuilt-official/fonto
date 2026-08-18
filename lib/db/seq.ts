@@ -61,6 +61,47 @@ export async function nextSeq(workspaceId: string, kind: SeqKind): Promise<bigin
 }
 
 /**
+ * Allocate a CONTIGUOUS block of `n` per-workspace seqs for `kind` in a single
+ * atomic upsert — the block-allocation twin of `nextSeq`. Bulk writers (media
+ * import, batch tag/collection creation) call this once and stamp the entity
+ * rows locally instead of round-tripping `nextSeq` per row, while preserving
+ * the monotonic-per-workspace ordering the delta-sync feed relies on.
+ *
+ * Returns the inclusive `{ start, end }` range; the caller owns every seq in
+ * `[start, end]` (that's `n` values, `end - start + 1 === n`). Safe under
+ * concurrency: the single UPDATE takes the row lock, so concurrent callers get
+ * disjoint blocks.
+ */
+export async function nextSeqBlock(
+  workspaceId: string,
+  kind: SeqKind,
+  n: number
+): Promise<{ start: bigint; end: bigint }> {
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`nextSeqBlock: n must be a positive integer, got ${n}`);
+  }
+  const column = COLUMN_BY_KIND[kind];
+  // INSERT the block width on first use; on conflict advance the counter by
+  // `n` and return the new (highest) value — the top of the reserved block.
+  // sql.raw(column) is safe: `column` comes from the fixed enum, not user input.
+  const rows = (await db.execute(sql`
+    INSERT INTO fonto.workspace_seq (workspace_id, ${sql.raw(column)})
+    VALUES (${workspaceId}, ${n})
+    ON CONFLICT (workspace_id) DO UPDATE
+      SET ${sql.raw(column)} = fonto.workspace_seq.${sql.raw(column)} + ${n}
+    RETURNING ${sql.raw(column)} AS seq
+  `)) as unknown as Array<{ seq: string | number | bigint }>;
+
+  const raw = rows[0]?.seq;
+  if (raw == null) {
+    throw new Error(`nextSeqBlock: no row returned for workspace=${workspaceId} kind=${kind}`);
+  }
+  const end = typeof raw === "bigint" ? raw : BigInt(raw as string | number);
+  const start = end - BigInt(n) + 1n;
+  return { start, end };
+}
+
+/**
  * Convenience: bump the seq for an existing entity row (e.g. after a
  * lifecycle mutation, tag rename, etc.). The mutation itself is the
  * caller's job — this just stamps the row with a fresh seq.

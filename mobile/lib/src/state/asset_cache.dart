@@ -85,15 +85,20 @@ class AssetCache {
     final now = DateTime.now().millisecondsSinceEpoch;
     final batch = _db.batch();
     for (final a in assets) {
-      final sortTs = _ms(a.capturedAt ?? a.createdAt);
+      // Only the fully-shaped timeline rows are cached, and they always carry
+      // a created_at (the column is NOT NULL). Skip the trimmed collection/
+      // person rows if one ever reaches here rather than fabricate a date.
+      final createdAt = a.createdAt;
+      if (createdAt == null) continue;
+      final sortTs = _ms(a.capturedAt ?? createdAt);
       batch.insert(
         "cached_assets",
         {
           "id": a.id,
           "filename": a.filename,
           "mime_type": a.mimeType,
-          "size_bytes": a.sizeBytes,
-          "created_at": _ms(a.createdAt),
+          "size_bytes": a.sizeBytes ?? 0,
+          "created_at": _ms(createdAt),
           "captured_at": a.capturedAt == null ? null : _ms(a.capturedAt!),
           "description": a.description,
           "classification": a.classification,

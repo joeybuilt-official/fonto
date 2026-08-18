@@ -55,6 +55,9 @@ const SURFACE_LS_KEY = "fonto:library:surface";
 // path is cursor-paged from here rather than fetching every matching row.
 const FLAT_PAGE_SIZE = 200;
 
+// Bulk endpoints cap at 1000 ids/request — chunk larger selections.
+const BULK_CHUNK = 1000;
+
 // The app shell scrolls its <main>, not the window. Lightbox scroll save +
 // restore must target that element (window.scrollY/scrollTo are inert here).
 function getLibraryScroller(): HTMLElement | null {
@@ -163,7 +166,10 @@ function LibraryContent() {
   // instead of pulling every matching row in one unbounded response.
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const flatCursorRef = useRef<Record<string, string> | null>(null);
+  // Opaque keyset cursor — self-describing (encodes the sort axis + position),
+  // so paging works for every axis, incl. name/rating/largest where the list
+  // route emits no legacy `nextCursor`. Echo it verbatim as ?cursor=.
+  const flatCursorRef = useRef<string | null>(null);
   const flatRawRef = useRef<Asset[]>([]);
   // Bumped on every first-page (re)load so an in-flight loadMore from a prior
   // filter set can't commit its page onto the fresh accumulation.
@@ -445,34 +451,34 @@ function LibraryContent() {
   const handleBatchAddToCollection = useCallback(
     async (collectionId: string) => {
       const ids = Array.from(toolbar.selectedIds);
-      const results = await Promise.allSettled(
-        ids.map((assetId) =>
-          fetch(`/api/v1/collections/${collectionId}/assets`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ assetId }),
-          })
-        )
-      );
-      // A rejected fetch OR a non-2xx response is a failure — the old code
-      // awaited Promise.all and reported success even on HTTP 4xx/5xx.
-      const failedIds = ids.filter(
-        (_id, i) =>
-          results[i].status === "rejected" ||
-          !(results[i] as PromiseFulfilledResult<Response>).value.ok
-      );
-      const okCount = ids.length - failedIds.length;
+      if (ids.length === 0) return;
       setShowCollectionModal(false);
-      if (failedIds.length === 0) {
+      try {
+        // One bulk request per ≤1000-id chunk instead of N parallel POSTs.
+        // `added` counts newly-linked rows; already-linked are no-op no-counts.
+        let added = 0;
+        for (let i = 0; i < ids.length; i += BULK_CHUNK) {
+          const assetIds = ids.slice(i, i + BULK_CHUNK);
+          const r = await fetch(
+            `/api/v1/collections/${collectionId}/assets/bulk`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ assetIds }),
+            }
+          );
+          if (!r.ok) throw new Error(`add ${r.status}`);
+          const d = (await r.json()) as { added: number };
+          added += d.added;
+        }
         toolbar.clearSelection();
         toolbar.setSelectMode(false);
-        toast.add({ title: `Added ${okCount} to collection` });
-      } else {
-        // Keep the failures selected so the user can retry just those.
-        toolbar.clearSelection();
-        for (const id of failedIds) toolbar.toggleSelect(id);
+        toast.add({ title: `Added ${added} to collection` });
+      } catch {
+        // Bulk is all-or-nothing per chunk — leave the selection intact so the
+        // user can retry the whole set.
         toast.add({
-          title: `Couldn't add ${failedIds.length} of ${ids.length}`,
+          title: "Couldn't add to collection",
           description: "Left selected — try again.",
           priority: "high",
         });
@@ -488,40 +494,35 @@ function LibraryContent() {
 
   const handleBatchTrash = useCallback(async () => {
     const ids = Array.from(toolbar.selectedIds);
-    const results = await Promise.allSettled(
-      ids.map((assetId) =>
-        fetch(`/api/v1/assets/${assetId}`, {
-          method: "PATCH",
+    if (ids.length === 0) return;
+    try {
+      // One bulk request per ≤1000-id chunk instead of N parallel PATCHes.
+      let trashed = 0;
+      for (let i = 0; i < ids.length; i += BULK_CHUNK) {
+        const batch = ids.slice(i, i + BULK_CHUNK);
+        const r = await fetch("/api/v1/assets/bulk/trash", {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ trash: true }),
-        })
-      )
-    );
-    // A rejected fetch OR a non-2xx response is a failure — the old code
-    // reported success even when the PATCH 4xx/5xx'd.
-    const failedIds = ids.filter(
-      (_id, i) =>
-        results[i].status === "rejected" ||
-        !(results[i] as PromiseFulfilledResult<Response>).value.ok
-    );
-    const okCount = ids.length - failedIds.length;
-    if (failedIds.length === 0) {
+          body: JSON.stringify({ ids: batch }),
+        });
+        if (!r.ok) throw new Error(`trash ${r.status}`);
+        const d = (await r.json()) as { trashed: number };
+        trashed += d.trashed;
+      }
       toolbar.clearSelection();
       toolbar.setSelectMode(false);
-      toast.add({ title: `Moved ${okCount} to trash` });
-    } else {
-      // Keep the failures selected for retry.
-      toolbar.clearSelection();
-      for (const id of failedIds) toolbar.toggleSelect(id);
+      toast.add({ title: `Moved ${trashed} to trash` });
+      // Only bump the refresh when something actually moved, so the timeline
+      // doesn't needlessly remount.
+      if (trashed > 0) setRefreshKey((k) => k + 1);
+    } catch {
+      // Bulk is all-or-nothing per chunk — leave the selection intact for retry.
       toast.add({
-        title: `Couldn't trash ${failedIds.length} of ${ids.length}`,
+        title: "Couldn't move to trash",
         description: "Left selected — try again.",
         priority: "high",
       });
     }
-    // Only bump the refresh when something actually moved, so the timeline
-    // doesn't needlessly remount on a total failure.
-    if (okCount > 0) setRefreshKey((k) => k + 1);
   }, [toolbar, toast]);
 
   // Per-card quick-action trash succeeded → drop the tile optimistically from
@@ -598,7 +599,21 @@ function LibraryContent() {
     if (placeFilter) {
       sp.set("place", placeFilter);
     }
-    sp.set("sort", "captured");
+    // Sort/date-range/free-text now resolve server-side so name/rating/largest
+    // and the date window are globally correct across the whole result set —
+    // not just a re-sort over the loaded pages. "newest"/"oldest" both use the
+    // captured axis (DESC); "oldest" is a display-only reversal (§applyClient-
+    // Transforms) since the list route exposes no ascending date axis.
+    const sortAxis =
+      toolbar.filters.sort === "name" ||
+      toolbar.filters.sort === "rating" ||
+      toolbar.filters.sort === "largest"
+        ? toolbar.filters.sort
+        : "captured";
+    sp.set("sort", sortAxis);
+    if (toolbar.filters.from) sp.set("dateFrom", toolbar.filters.from);
+    if (toolbar.filters.to) sp.set("dateTo", toolbar.filters.to);
+    if (toolbar.filters.q) sp.set("q", toolbar.filters.q);
     sp.set("limit", String(FLAT_PAGE_SIZE));
     return sp;
   }, [
@@ -615,54 +630,19 @@ function LibraryContent() {
     toolbar.filters.directoryPathPrefix,
     toolbar.filters.groupId,
     placeFilter,
+    toolbar.filters.sort,
+    toolbar.filters.from,
+    toolbar.filters.to,
+    toolbar.filters.q,
   ]);
 
-  // Client-side transforms the list endpoint can't express (date-range bounds,
-  // name/rating/largest sort, free-text). Applied over the loaded-so-far set.
+  // The list route now handles sort/date/free-text; the only transform left is
+  // "oldest", a display reversal of the captured-DESC pages (no server-side
+  // ascending date axis exists). Applied over the loaded-so-far set.
   const applyClientTransforms = useCallback(
-    (rows: Asset[]): Asset[] => {
-      let list = rows;
-      if (toolbar.filters.from) {
-        const from = new Date(toolbar.filters.from).getTime();
-        list = list.filter(
-          (a) => new Date(a.capturedAt ?? a.createdAt).getTime() >= from
-        );
-      }
-      if (toolbar.filters.to) {
-        const to = new Date(toolbar.filters.to).getTime();
-        list = list.filter(
-          (a) => new Date(a.capturedAt ?? a.createdAt).getTime() <= to
-        );
-      }
-      if (toolbar.filters.sort === "oldest") {
-        list = [...list].sort(
-          (a, b) =>
-            new Date(a.capturedAt ?? a.createdAt).getTime() -
-            new Date(b.capturedAt ?? b.createdAt).getTime()
-        );
-      } else if (toolbar.filters.sort === "name") {
-        list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
-      } else if (toolbar.filters.sort === "rating") {
-        list = [...list].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
-      } else if (toolbar.filters.sort === "largest") {
-        list = [...list].sort((a, b) => b.sizeBytes - a.sizeBytes);
-      }
-      if (toolbar.filters.q) {
-        const needle = toolbar.filters.q.toLowerCase();
-        list = list.filter(
-          (a) =>
-            a.filename.toLowerCase().includes(needle) ||
-            (a.description?.toLowerCase().includes(needle) ?? false)
-        );
-      }
-      return list;
-    },
-    [
-      toolbar.filters.from,
-      toolbar.filters.to,
-      toolbar.filters.sort,
-      toolbar.filters.q,
-    ]
+    (rows: Asset[]): Asset[] =>
+      toolbar.filters.sort === "oldest" ? [...rows].reverse() : rows,
+    [toolbar.filters.sort]
   );
 
   // Flat-grid first-page fetch — runs when search / date-range / a client-side
@@ -688,12 +668,12 @@ function LibraryContent() {
         if (!r.ok) throw new Error(`assets ${r.status}`);
         const d = (await r.json()) as {
           assets?: Asset[];
-          nextCursor?: Record<string, string> | null;
+          cursor?: string | null;
         };
         if (cancelled) return;
         flatRawRef.current = (d.assets ?? []) as Asset[];
-        flatCursorRef.current = d.nextCursor ?? null;
-        setHasMore(!!d.nextCursor);
+        flatCursorRef.current = d.cursor ?? null;
+        setHasMore(!!d.cursor);
         setAssets(applyClientTransforms(flatRawRef.current));
       } catch {
         if (cancelled) return;
@@ -728,12 +708,12 @@ function LibraryContent() {
     setLoadingMore(true);
     try {
       const sp = flatParams();
-      for (const [k, v] of Object.entries(cursor)) sp.set(k, v);
+      sp.set("cursor", cursor);
       const r = await fetch(`/api/v1/assets?${sp.toString()}`);
       if (!r.ok) throw new Error(`assets ${r.status}`);
       const d = (await r.json()) as {
         assets?: Asset[];
-        nextCursor?: Record<string, string> | null;
+        cursor?: string | null;
       };
       // A first-page reload (filter change) happened while we were in flight —
       // drop this now-stale page rather than appending it to fresh data.
@@ -742,8 +722,8 @@ function LibraryContent() {
         ...flatRawRef.current,
         ...((d.assets ?? []) as Asset[]),
       ];
-      flatCursorRef.current = d.nextCursor ?? null;
-      setHasMore(!!d.nextCursor);
+      flatCursorRef.current = d.cursor ?? null;
+      setHasMore(!!d.cursor);
       setAssets(applyClientTransforms(flatRawRef.current));
     } catch {
       if (gen === flatGenRef.current) setHasMore(false);

@@ -58,6 +58,9 @@ interface IdentityCluster {
   personId: string;
   instanceCount: number;
   coverFaceId: string | null;
+  // Asset the cover face lives on — lets "Who's this?" show the real photo
+  // (thumb via /assets/urls) instead of a generic avatar glyph.
+  coverAssetId: string | null;
 }
 
 interface QueueResponse {
@@ -227,6 +230,9 @@ export function TidyUpClient(): React.ReactElement {
   // out to their native surface. See plans/photos-vs-files-split.
   const [unsortedCount, setUnsortedCount] = useState(0);
   const [stackCount, setStackCount] = useState(0);
+  // True once both off-page count fetches have settled — lets the summary hold
+  // a reserved slot while loading instead of popping in (layout shift).
+  const [attentionLoaded, setAttentionLoaded] = useState(false);
 
   // Variant lane is fetched lazily + paged (the SSIM manifest build is the slow
   // tail), so it lives in its own state rather than on `data`.
@@ -350,6 +356,13 @@ export function TidyUpClient(): React.ReactElement {
       setHiddenGroups(new Set());
       setHiddenBuckets(new Set());
 
+      // Warm cover-face thumbs so "Who's this?" shows the real photo.
+      void fetchThumbs(
+        json.identity.clusters
+          .map((c) => c.coverAssetId)
+          .filter((x): x is string => !!x)
+      );
+
       // M15.2 / M15.4 — the date lane is reason-bucketed along the active axis.
       // Axis is read from a ref so load() stays stable across axis switches
       // (changeAxis owns the per-axis buckets refetch).
@@ -358,7 +371,7 @@ export function TidyUpClient(): React.ReactElement {
       if (dataRef.current) showToast("We couldn't reach the server — please retry.");
       else setError("We couldn't reach the server. Check your connection and retry.");
     }
-  }, [loadBuckets, showToast]);
+  }, [loadBuckets, showToast, fetchThumbs]);
 
   // Fetch one page of variant manifests. `reset` starts from offset 0 and
   // replaces the list (used on first open / after an action refetch); otherwise
@@ -406,13 +419,13 @@ export function TidyUpClient(): React.ReactElement {
   // Off-page queue counts for the attention summary (best-effort, parallel).
   useEffect(() => {
     let alive = true;
-    fetch("/api/v1/assets/buckets?unclassified=1", { cache: "no-store" })
+    const unsorted = fetch("/api/v1/assets/buckets?unclassified=1", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : { buckets: [] }))
       .then((d: { buckets?: { count: number }[] }) => {
         if (alive) setUnsortedCount((d.buckets ?? []).reduce((s, b) => s + b.count, 0));
       })
       .catch(() => {});
-    fetch("/api/v1/stacks/suggestions", { cache: "no-store" })
+    const stacks = fetch("/api/v1/stacks/suggestions", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { suggestions?: unknown[] } | unknown[] | null) => {
         if (!alive || !d) return;
@@ -424,6 +437,9 @@ export function TidyUpClient(): React.ReactElement {
         setStackCount(n);
       })
       .catch(() => {});
+    void Promise.allSettled([unsorted, stacks]).then(() => {
+      if (alive) setAttentionLoaded(true);
+    });
     return () => {
       alive = false;
     };
@@ -649,7 +665,11 @@ export function TidyUpClient(): React.ReactElement {
         <LoadingSkeleton />
       ) : (
         <>
-          <AttentionSummary unsorted={unsortedCount} stacks={stackCount} />
+          <AttentionSummary
+            unsorted={unsortedCount}
+            stacks={stackCount}
+            loading={!attentionLoaded}
+          />
           <SessionSummary stats={sessionStats} />
           {allClear ? (
         <div className="flex flex-col items-center gap-[var(--ft-space-3)] py-20 text-center">
@@ -737,7 +757,9 @@ export function TidyUpClient(): React.ReactElement {
             />
           )}
 
-          {section === "identity" && <IdentitySection clusters={clusters} />}
+          {section === "identity" && (
+            <IdentitySection clusters={clusters} urls={urls} />
+          )}
             </>
           )}
         </>
@@ -779,9 +801,11 @@ export function TidyUpClient(): React.ReactElement {
 function AttentionSummary({
   unsorted,
   stacks,
+  loading = false,
 }: {
   unsorted: number;
   stacks: number;
+  loading?: boolean;
 }) {
   const cards: {
     key: string;
@@ -809,7 +833,17 @@ function AttentionSummary({
       n: stacks,
       icon: Layers,
     });
-  if (cards.length === 0) return null;
+  if (cards.length === 0) {
+    // Reserve a fixed min-height slot while the counts are still loading so the
+    // rest of the queue doesn't jump when the cards resolve; once loaded with
+    // nothing to show, collapse entirely.
+    return loading ? (
+      <div
+        className="mb-[var(--ft-space-5)] min-h-[76px]"
+        aria-hidden="true"
+      />
+    ) : null;
+  }
 
   return (
     <div className="mb-[var(--ft-space-5)] space-y-[var(--ft-space-2)]">
@@ -1489,27 +1523,44 @@ function VariantCard({
   );
 }
 
-function IdentitySection({ clusters }: { clusters: IdentityCluster[] }) {
+function IdentitySection({
+  clusters,
+  urls,
+}: {
+  clusters: IdentityCluster[];
+  urls: Record<string, string>;
+}) {
   if (clusters.length === 0) {
     return <SectionEmpty text="No new faces to identify right now." />;
   }
   return (
     <div>
       <div className="flex flex-wrap gap-[var(--ft-space-4)]">
-        {clusters.map((c) => (
+        {clusters.map((c) => {
+          const coverUrl = c.coverAssetId ? urls[c.coverAssetId] : undefined;
+          return (
           <Link
             key={c.personId}
             href="/app/people"
             className="flex w-28 flex-col items-center gap-[var(--ft-space-2)] text-center"
           >
             <span className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-highest)] text-[var(--ft-color-on-surface-variant)] ring-1 ring-[var(--ft-color-outline-variant)] transition-shadow hover:shadow-[var(--ft-elev-2)]">
-              <Users className="h-8 w-8" />
+              {coverUrl ? (
+                <Thumb
+                  url={coverUrl}
+                  alt="Unidentified face"
+                  className="h-full w-full"
+                />
+              ) : (
+                <Users className="h-8 w-8" />
+              )}
             </span>
             <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
               Seen in {c.instanceCount} photo{c.instanceCount === 1 ? "" : "s"}
             </span>
           </Link>
-        ))}
+          );
+        })}
       </div>
       <Link
         href="/app/people"

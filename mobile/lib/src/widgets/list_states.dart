@@ -462,9 +462,80 @@ Widget _skeletonBar(Color fill, double widthFactor, double height) =>
 /// `placeholder`/`errorWidget` for `CachedNetworkImage` and the fallback
 /// box for tiles whose URL isn't loaded yet. Dark mode renders a sensible
 /// neutral instead of a hard `Colors.black12` tint.
-Widget imageSkeleton(BuildContext context) => ColoredBox(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+///
+/// Renders a subtle looping shimmer sweep in production. Under `flutter test`
+/// (see [_shimmerAnimates]) it collapses to a static fill so `pumpAndSettle`
+/// never spins forever on the perpetual ticker.
+Widget imageSkeleton(BuildContext context) => const _Shimmer();
+
+/// True only when we're driving frames for real (production `WidgetsFlutterBinding`).
+/// The automated test binding is a `TestWidgetsFlutterBinding`, NOT a
+/// `WidgetsFlutterBinding`, so this is false under `flutter test` — which is
+/// exactly when a repeating animation would hang `pumpAndSettle`.
+bool get _shimmerAnimates => WidgetsBinding.instance is WidgetsFlutterBinding;
+
+/// Looping shimmer fill for image placeholders. One lightweight ticker per
+/// tile; only alive while the tile is unresolved, so it disappears the moment
+/// the real image loads. Static (no ticker) in the test environment.
+class _Shimmer extends StatefulWidget {
+  const _Shimmer();
+
+  @override
+  State<_Shimmer> createState() => _ShimmerState();
+}
+
+class _ShimmerState extends State<_Shimmer>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_shimmerAnimates) {
+      _controller = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 1200),
+      )..repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final base = scheme.surfaceContainerHighest;
+    final controller = _controller;
+    // Test / headless binding: static box, identical to the pre-shimmer
+    // placeholder, so no perpetual frame keeps `pumpAndSettle` from settling.
+    if (controller == null) return ColoredBox(color: base);
+    // Faint streak relative to the base, direction-agnostic across light/dark.
+    final highlight = Color.alphaBlend(
+      scheme.onSurface.withValues(alpha: 0.06),
+      base,
     );
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final shift = controller.value * 3.0 - 1.5; // sweep -1.5 → 1.5
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment(shift - 1, 0),
+              end: Alignment(shift + 1, 0),
+              colors: [base, highlight, base],
+              stops: const [0.25, 0.5, 0.75],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 /// Kind-aware default empty copy for the Library and filtered-asset surfaces.
 /// Used when no filter is set — pairs with the web LENS_EMPTY map.

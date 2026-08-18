@@ -258,6 +258,14 @@
   --ft-color-on-success: #FFFFFF;
   --ft-color-success-container: #ABF59B;
   --ft-color-on-success-container: #002106;
+  /* Color — warning (another Fonto extension, same rationale as success:
+   * "approaching quota", "degraded", "review needed" states sit between
+   * success/primary and error and were overloading tertiary. Amber tone-40
+   * light / tone-80 dark per the same generation rules. ADR 0009. */
+  --ft-color-warning: #825500;
+  --ft-color-on-warning: #FFFFFF;
+  --ft-color-warning-container: #FFDDB3;
+  --ft-color-on-warning-container: #2A1800;
   /* Color — surface scale */
   --ft-color-surface: #FAFDFB;
   --ft-color-on-surface: #191C1B;
@@ -367,6 +375,10 @@
   --ft-color-on-success: #003910;
   --ft-color-success-container: #005313;
   --ft-color-on-success-container: #A4F49C;
+  --ft-color-warning: #FFB951;
+  --ft-color-on-warning: #452B00;
+  --ft-color-warning-container: #633F00;
+  --ft-color-on-warning-container: #FFDDB3;
   --ft-color-surface: #101413;
   --ft-color-on-surface: #E0E3E1;
   --ft-color-surface-container-lowest: #0B0F0E;

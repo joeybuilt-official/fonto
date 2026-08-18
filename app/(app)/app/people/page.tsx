@@ -271,35 +271,22 @@ async function limitedFetch(input: string): Promise<Response> {
 }
 
 function FaceCrop({ entry }: { entry: PersonGridEntry }) {
-  const [cropUrl, setCropUrl] = useState<string | null>(null);
   const [cropFailed, setCropFailed] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // Resolve the signed face-crop URL (the API returns a relative API path
-  // that itself redirects to / returns a signed object URL).
+  // The persons payload now carries an absolute *signed* R2 URL for the cover
+  // crop, so render it directly — no per-card resolve round-trip. Reset the
+  // fail flag when the URL itself changes (e.g. a refetch re-signs the cover).
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale crop when entry changes before refetch
-    setCropUrl(null);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale fail flag when the signed URL changes
     setCropFailed(false);
-    if (!entry.coverFaceCropUrl) return;
-    let cancelled = false;
-    limitedFetch(entry.coverFaceCropUrl)
-      .then((r) => r.json())
-      .then((d: { url?: string }) => {
-        if (!cancelled) setCropUrl(d.url ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setCropFailed(true);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [entry.coverFaceCropUrl]);
 
-  // Fallback: only fetch the preview (for the legacy CSS-zoom) when there's
-  // no crop derivative yet, or the crop URL failed to resolve.
-  const needPreviewFallback =
-    (!entry.coverFaceCropUrl || cropFailed) && !!entry.coverAssetId;
+  const showCrop = !!entry.coverFaceCropUrl && !cropFailed;
+
+  // Fallback: only fetch the preview (for the legacy CSS-zoom) when there's no
+  // signed crop URL, or that crop 403'd/expired.
+  const needPreviewFallback = !showCrop && !!entry.coverAssetId;
   useEffect(() => {
     if (!needPreviewFallback || !entry.coverAssetId) return;
     let cancelled = false;
@@ -315,20 +302,18 @@ function FaceCrop({ entry }: { entry: PersonGridEntry }) {
   }, [needPreviewFallback, entry.coverAssetId]);
 
   // Preferred: the sharp dedicated crop, object-cover in a circle.
-  if (cropUrl) {
+  if (showCrop) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={cropUrl}
+        src={entry.coverFaceCropUrl!}
         alt={entry.name ?? "Unnamed person"}
         loading="lazy"
         decoding="async"
         onError={() => {
-          // Signed URL expired / 403'd after resolving — drop it and fall
-          // through to the preview + placeholder instead of the browser's
-          // broken-image glyph.
+          // Signed URL expired / 403'd — fall through to the preview +
+          // placeholder instead of the browser's broken-image glyph.
           setCropFailed(true);
-          setCropUrl(null);
         }}
         className="aspect-square w-full rounded-full bg-muted/30 object-cover"
       />

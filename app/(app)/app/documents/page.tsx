@@ -366,8 +366,19 @@ function ScrollSentinel({
   if (!hasMore) return null;
   return (
     <div ref={ref} className="flex items-center justify-center py-3">
-      {loadingMore && (
+      {loadingMore ? (
         <Loader2 className="h-4 w-4 animate-spin text-[var(--ft-color-on-surface-variant)]" />
+      ) : (
+        // Explicit control alongside the IntersectionObserver auto-load — keeps
+        // paging reachable by keyboard/AT and as a fallback when the sentinel
+        // never intersects (short lists, reduced-motion).
+        <button
+          type="button"
+          onClick={onLoadMore}
+          className="rounded-[var(--ft-shape-full)] border border-[var(--ft-color-outline-variant)] px-3 py-1.5 text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-on-surface-variant)] transition-colors hover:bg-[var(--ft-color-surface-container-low)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ft-color-primary)]"
+        >
+          Load more
+        </button>
       )}
     </div>
   );

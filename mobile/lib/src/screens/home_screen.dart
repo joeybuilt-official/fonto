@@ -474,8 +474,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           // backdated photo (older capturedAt) would otherwise sit at index 0
           // and pin a stale old-month header above the current month. Re-sort
           // by capture time (matching _monthKey) so month grouping stays right.
-          _assets.sort((a, b) => (b.capturedAt ?? b.createdAt)
-              .compareTo(a.capturedAt ?? a.createdAt));
+          _assets.sort((a, b) =>
+              (b.effectiveDate ?? DateTime.fromMillisecondsSinceEpoch(0))
+                  .compareTo(
+                      a.effectiveDate ?? DateTime.fromMillisecondsSinceEpoch(0)));
           _thumbs.addAll(newThumbs);
           _recomputeDerived();
         }
@@ -618,7 +620,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ..addAll(cached.thumbs);
         _recomputeDerived();
         _cursor = null;
-        _offBeforeTs = (last.capturedAt ?? last.createdAt).millisecondsSinceEpoch;
+        _offBeforeTs = last.effectiveDate?.millisecondsSinceEpoch ?? 0;
         _offBeforeId = last.id;
         _offHasMore = cached.assets.length == _kPageSize;
         _loadingFirst = false;
@@ -651,7 +653,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _recomputeDerived();
         if (cached.assets.isNotEmpty) {
           final last = cached.assets.last;
-          _offBeforeTs = (last.capturedAt ?? last.createdAt).millisecondsSinceEpoch;
+          _offBeforeTs = last.effectiveDate?.millisecondsSinceEpoch ?? 0;
           _offBeforeId = last.id;
         }
         _offHasMore = cached.assets.length == _kPageSize;
@@ -1432,9 +1434,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // `_groupAssetsByMonth` is a run-length grouper, so one out-of-order row
     // would split a month into two headers.
     if (removed != null && !_assets.any((a) => a.id == id)) {
-      final key = removed.capturedAt ?? removed.createdAt;
+      final key = removed.effectiveDate ?? DateTime.fromMillisecondsSinceEpoch(0);
       var at = _assets.indexWhere(
-        (a) => (a.capturedAt ?? a.createdAt).isBefore(key),
+        (a) => (a.effectiveDate ?? DateTime.fromMillisecondsSinceEpoch(0))
+            .isBefore(key),
       );
       if (at < 0) at = _assets.length;
       setState(() {
@@ -2120,7 +2123,7 @@ double _clampDouble(double v, double lo, double hi) =>
 /// "YYYY-MM" key from an asset, using captured-at when present so the
 /// grouping matches the server's sort=captured ordering.
 String _monthKey(Asset a) {
-  final ts = a.capturedAt ?? a.createdAt;
+  final ts = a.effectiveDate ?? DateTime.fromMillisecondsSinceEpoch(0);
   return "${ts.year.toString().padLeft(4, '0')}-"
       "${ts.month.toString().padLeft(2, '0')}";
 }

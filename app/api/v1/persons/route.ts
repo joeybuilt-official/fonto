@@ -14,16 +14,24 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, gt, inArray, sql, exists } from "drizzle-orm";
+import { and, desc, eq, gt, ilike, inArray, sql, exists } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { propagateNamedPerson } from "@/lib/faces/propagate";
 import { db, schema } from "@/lib/db";
+import { assetStorageKey } from "@/lib/r2";
+import { storage } from "@/lib/storage";
 import { cacheInvalidate, getCacheLayer } from "@/lib/cache/valkey";
 import { revalidateTag } from "next/cache";
 
 const PERSONS_CACHE_TTL_SEC = 300;
+// Cover-crop presign TTLs. The dedicated face crop + asset preview are
+// immutable, content-addressed derivatives → sign toward the SigV4 ceiling
+// (7 days) so a re-list doesn't churn the URL. The original fallback is
+// sensitive + full-res, so it stays short-lived.
+const COVER_TTL_DERIVATIVE_SEC = 7 * 24 * 60 * 60; // 604800
+const COVER_TTL_ORIGINAL_SEC = 3600; // 1 hour
 
 type CachedPersonsResponse = { persons: PersonOut[] };
 
@@ -64,7 +72,17 @@ export async function GET(request: NextRequest) {
     request.nextUrl.searchParams.get("include_singletons") === "true";
   const minInstances = includeSingletons ? 1 : 2;
 
-  const cacheKey = `persons:${sortedIds.join(",")}:h=${includeHidden ? 1 : 0}:g=${filterGroupId ?? ""}:s=${includeSingletons ? 1 : 0}`;
+  // Merge-picker support. `?limit=` caps the returned clusters (max 500);
+  // `?q=` does a case-insensitive substring match on the person NAME (unnamed
+  // clusters drop out when q is set — you merge INTO a named person). Both fold
+  // into the cache key so a filtered response never masks the full grid.
+  const limitRaw = request.nextUrl.searchParams.get("limit");
+  const limitParsed = limitRaw == null ? NaN : Number.parseInt(limitRaw, 10);
+  const limit =
+    Number.isInteger(limitParsed) && limitParsed > 0 ? Math.min(limitParsed, 500) : null;
+  const nameQuery = (request.nextUrl.searchParams.get("q") ?? "").trim();
+
+  const cacheKey = `persons:${sortedIds.join(",")}:h=${includeHidden ? 1 : 0}:g=${filterGroupId ?? ""}:s=${includeSingletons ? 1 : 0}:l=${limit ?? ""}:q=${nameQuery}`;
   const cache = getCacheLayer<CachedPersonsResponse>();
   const payload = await cache.getOrCompute(
     cacheKey,
@@ -94,24 +112,37 @@ export async function GET(request: NextRequest) {
         gt(schema.persons.instanceCount, minInstances - 1)
       );
 
-  const where = filterGroupId
-    ? and(
-        baseWhere,
-        exists(
-          db
-            .select({ one: sql`1` })
-            .from(schema.personGroupMembers)
-            .where(
-              and(
-                eq(schema.personGroupMembers.personId, schema.persons.id),
-                eq(schema.personGroupMembers.groupId, filterGroupId)
-              )
-            )
+  // Optional name substring filter (merge picker). `and(x, undefined)` is a
+  // no-op in drizzle, so an empty query leaves the grid untouched.
+  const nameCond =
+    nameQuery !== ""
+      ? ilike(
+          schema.persons.name,
+          `%${nameQuery.replace(/[%_\\]/g, (c) => `\\${c}`)}%`
         )
-      )
-    : baseWhere;
+      : undefined;
 
-  const rows = await db
+  const where = and(
+    filterGroupId
+      ? and(
+          baseWhere,
+          exists(
+            db
+              .select({ one: sql`1` })
+              .from(schema.personGroupMembers)
+              .where(
+                and(
+                  eq(schema.personGroupMembers.personId, schema.persons.id),
+                  eq(schema.personGroupMembers.groupId, filterGroupId)
+                )
+              )
+          )
+        )
+      : baseWhere,
+    nameCond
+  );
+
+  const personsQuery = db
     .select()
     .from(schema.persons)
     .where(where)
@@ -119,6 +150,7 @@ export async function GET(request: NextRequest) {
       sql`(${schema.persons.name} IS NOT NULL) DESC`,
       desc(schema.persons.instanceCount)
     );
+  const rows = limit ? await personsQuery.limit(limit) : await personsQuery;
 
   // Resolve cover face -> asset + bbox in a single batch lookup.
   const coverFaceIds = rows
@@ -127,7 +159,7 @@ export async function GET(request: NextRequest) {
 
   const facesById = new Map<
     string,
-    { assetId: string; bbox: unknown; faceCropKey: string | null }
+    { assetId: string; bbox: unknown; faceCropKey: string | null; coverUrl: string | null }
   >();
   if (coverFaceIds.length > 0) {
     const faceRows = await db
@@ -136,16 +168,47 @@ export async function GET(request: NextRequest) {
         assetId: schema.faceInstances.assetId,
         bbox: schema.faceInstances.bbox,
         faceCropKey: schema.faceInstances.faceCropKey,
+        workspaceId: schema.assets.workspaceId,
+        filename: schema.assets.filename,
+        previewKey: schema.assets.previewKey,
       })
       .from(schema.faceInstances)
+      .innerJoin(schema.assets, eq(schema.faceInstances.assetId, schema.assets.id))
       .where(inArray(schema.faceInstances.id, coverFaceIds));
-    for (const f of faceRows) {
-      facesById.set(f.id, {
-        assetId: f.assetId,
-        bbox: f.bbox,
-        faceCropKey: f.faceCropKey,
-      });
-    }
+    // Resolve + presign the cover crop INLINE so the People grid renders each
+    // card without a per-card GET /assets/{id}/url round-trip. Prefer the
+    // dedicated square face crop; fall back to the asset preview, then the
+    // original, so a cover always resolves even mid-backfill.
+    await Promise.all(
+      faceRows.map(async (f) => {
+        let key: string;
+        let expiresIn: number;
+        if (f.faceCropKey) {
+          key = f.faceCropKey;
+          expiresIn = COVER_TTL_DERIVATIVE_SEC;
+        } else if (f.previewKey) {
+          key = f.previewKey;
+          expiresIn = COVER_TTL_DERIVATIVE_SEC;
+        } else {
+          key = assetStorageKey(f.workspaceId, f.assetId, f.filename);
+          expiresIn = COVER_TTL_ORIGINAL_SEC;
+        }
+        let coverUrl: string | null = null;
+        try {
+          coverUrl = await storage().presignGet(key, { expiresIn });
+        } catch {
+          // A sign failure must not sink the whole grid — the card falls back
+          // to the client's bbox/CSS crop off `coverAssetId` + `coverBbox`.
+          coverUrl = null;
+        }
+        facesById.set(f.id, {
+          assetId: f.assetId,
+          bbox: f.bbox,
+          faceCropKey: f.faceCropKey,
+          coverUrl,
+        });
+      })
+    );
   }
 
   // Batch-load group memberships for all returned persons.
@@ -191,10 +254,9 @@ export async function GET(request: NextRequest) {
       coverAssetId: cover?.assetId ?? null,
       coverBbox: bbox,
       coverFaceCropKey: cover?.faceCropKey ?? null,
-      coverFaceCropUrl:
-        cover && cover.faceCropKey && p.coverFaceId
-          ? `/api/v1/assets/${cover.assetId}/url?variant=face&faceId=${p.coverFaceId}`
-          : null,
+      // Signed R2 URL resolved server-side (no per-card client round-trip).
+      // NULL only when the person has no cover face or the sign failed.
+      coverFaceCropUrl: cover?.coverUrl ?? null,
       groupIds: groupsByPerson.get(p.id) ?? [],
     };
   });

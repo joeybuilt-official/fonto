@@ -121,11 +121,22 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
         _groups = _groups.where((x) => x.groupId != g.groupId).toList();
         _busy.remove(g.groupId);
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+      // Capture the messenger before the SnackBar's async Undo — the bar is
+      // owned above this widget and can outlive it if the user navigates away.
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
         SnackBar(
           content: Text(resolve
               ? "Kept best, trashed the rest (recoverable)."
               : "Marked as not duplicates."),
+          // Only a resolve is reversible — un-consolidate un-trashes the
+          // members and reverts the group to a candidate.
+          action: resolve
+              ? SnackBarAction(
+                  label: "Undo",
+                  onPressed: () => _undo(g.groupId, messenger),
+                )
+              : null,
         ),
       );
     } catch (e) {
@@ -133,6 +144,26 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
       setState(() => _busy.remove(g.groupId));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Couldn't update: $e")),
+      );
+    }
+  }
+
+  /// Reverse a resolve via the un-consolidate endpoint, then refetch so the
+  /// restored group reappears in the review list.
+  Future<void> _undo(String groupId, ScaffoldMessengerState messenger) async {
+    try {
+      final restored = await widget.client.undoDuplicate(groupId);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(restored == 1
+              ? "Restored 1 photo."
+              : "Restored $restored photos."),
+        ),
+      );
+      if (mounted) await _load();
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text("Couldn't undo: $e")),
       );
     }
   }

@@ -816,9 +816,23 @@ export const PersonGridEntrySchema = registry.register(
         "faces yet, or `coverFaceId` is stale.",
     }),
     coverBbox: FaceBboxSchema.nullable(),
+    coverFaceCropKey: z.string().nullable().openapi({
+      description:
+        "R2 key of the dedicated square cover crop (NULL until generated).",
+    }),
+    coverFaceCropUrl: z.string().nullable().openapi({
+      description:
+        "Signed R2 URL for the cover crop, resolved server-side so the grid " +
+        "renders each card without a per-card round-trip. Falls back to the " +
+        "asset preview / original when the square crop isn't generated yet; " +
+        "NULL only when the person has no cover face or signing failed.",
+    }),
+    groupIds: z.array(UuidSchema).openapi({
+      description: "person_group ids this cluster belongs to (may be empty).",
+    }),
   }).openapi({
     description:
-      "Person row plus the resolved cover-face crop. Returned by " +
+      "Person row plus the resolved, pre-signed cover-face crop. Returned by " +
       "`GET /api/v1/persons`.",
   })
 );
@@ -837,6 +851,17 @@ export const PersonEnvelopeSchema = z.object({ person: PersonSchema });
 export const PersonFaceEntrySchema = registry.register(
   "PersonFaceEntry",
   FaceInstanceSchema.extend({
+    faceCropKey: z.string().nullable().optional().openapi({
+      description:
+        "R2 key of the dedicated square face crop (NULL until generated).",
+    }),
+    faceCropUrl: z.string().nullable().openapi({
+      description:
+        "Signed R2 URL for the face crop, resolved server-side so the detail " +
+        "grid renders without a per-card round-trip. Falls back to the asset " +
+        "preview / original when the square crop isn't generated yet; NULL " +
+        "only when signing failed.",
+    }),
     asset: z
       .object({
         id: UuidSchema,

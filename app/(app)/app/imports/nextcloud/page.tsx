@@ -13,7 +13,6 @@ import Link from "next/link";
 import {
   ArrowLeft,
   ChevronRight,
-  Cloud,
   File as FileIcon,
   Folder,
   Home,
@@ -520,6 +519,3 @@ function BrowseAndImport({
     </div>
   );
 }
-
-// Icon kept exported-adjacent for the hub's provider registry parity (unused here).
-export const NextcloudIcon = Cloud;

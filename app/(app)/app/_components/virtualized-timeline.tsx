@@ -22,6 +22,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { PhotoCard, type Asset } from "./photo-card";
 import { TimelineScrubber, type ScrubBucket } from "./timeline-scrubber";
@@ -277,6 +278,28 @@ export function VirtualizedTimeline({
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, [buckets.length]);
+
+  // Scroll-restore across lightbox open/close. This timeline rides its OWN
+  // overflow-y-auto container (not AppShell's <main>), so the parent's
+  // <main>-based save/restore is inert here — we save/restore this scroller's
+  // scrollTop ourselves, keyed on the ?lb= param. Mirrors the shared-scroller
+  // pattern the flat grid uses. Prev/next (id→id) keeps the original position.
+  const searchParams = useSearchParams();
+  const lb = searchParams.get("lb");
+  const savedScrollRef = useRef(0);
+  const prevLbRef = useRef<string | null>(lb);
+  useEffect(() => {
+    const prev = prevLbRef.current;
+    if (prev === null && lb !== null) {
+      savedScrollRef.current = scrollElRef.current?.scrollTop ?? 0;
+    } else if (prev !== null && lb === null) {
+      const saved = savedScrollRef.current;
+      requestAnimationFrame(() => {
+        if (scrollElRef.current) scrollElRef.current.scrollTop = saved;
+      });
+    }
+    prevLbRef.current = lb;
+  }, [lb]);
 
   // Drag-to-scrub: map a 0..1 fraction straight onto the scroll container's
   // scroll range. Continuous, so the timeline scrolls as the thumb moves.
