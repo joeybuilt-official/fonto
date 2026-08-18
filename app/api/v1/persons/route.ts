@@ -151,7 +151,15 @@ export async function GET(request: NextRequest) {
       sql`(${schema.persons.name} IS NOT NULL) DESC`,
       desc(schema.persons.instanceCount)
     );
-  const rows = limit ? await personsQuery.limit(limit) : await personsQuery;
+  // Default cap: the People grid is a curated set — named people first (the
+  // ORDER BY above), then the most-photographed clusters. Without a cap a large
+  // library returns thousands of clusters, and a client that resolves each
+  // cover-crop URL upfront (the mobile People tab) fires thousands of
+  // concurrent requests, exhausts its sockets, and the whole grid fails to
+  // load. `?limit=` overrides (up to 500); this default also bounds the
+  // `?include_singletons=true` path.
+  const DEFAULT_PERSONS_LIMIT = 200;
+  const rows = await personsQuery.limit(limit ?? DEFAULT_PERSONS_LIMIT);
 
   // Resolve cover face -> asset + bbox in a single batch lookup.
   const coverFaceIds = rows
