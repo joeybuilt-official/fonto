@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Photos-Files split — Files surface (mobile).
@@ -68,6 +68,15 @@ class _FilesSurfaceState extends State<FilesSurface> {
     _scroll.dispose();
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  /// Clear the search box from the empty state's CTA, so "No files match …"
+  /// is recoverable without hunting for the × in the field.
+  void _clearQuery() {
+    _debounce?.cancel();
+    _searchCtrl.clear();
+    _query = "";
+    _load();
   }
 
   void _onSearchChanged(String v) {
@@ -230,19 +239,24 @@ class _FilesSurfaceState extends State<FilesSurface> {
   }
 
   Widget _buildList(ThemeData theme) {
+    // Was a hand-rolled clone of the shared 4-state widgets (bare Text + a
+    // TextButton, no icon, no tokens), which made this the one list surface
+    // that looked different from the other twelve.
     if (_loading) {
-      return const _FilesSkeleton();
+      return const ListSkeleton();
     }
     if (_error) {
       return ListErrorState(
+        message: "Couldn't load your files. Check your connection and retry.",
         onRetry: _load,
-        message: "Couldn't load files. Check your connection and retry.",
       );
     }
     if (_assets.isEmpty) {
       return ListEmptyState(
-        icon: Icons.insert_drive_file_outlined,
+        icon: Icons.folder_open_outlined,
         message: _query.isEmpty ? "No files yet." : "No files match “$_query”.",
+        filtered: _query.isNotEmpty,
+        onClearFilters: _query.isEmpty ? null : _clearQuery,
       );
     }
 
@@ -479,49 +493,4 @@ class _FileRow {
 
   final String? header;
   final Asset? asset;
-}
-
-/// Content-shaped loading placeholder for the Files list — mirrors the row
-/// layout (avatar + two text lines) so the load reads as content, not a
-/// bare spinner. Built from the shared [imageSkeleton] surface token.
-class _FilesSkeleton extends StatelessWidget {
-  const _FilesSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: FontoSpace.s2),
-      itemCount: 8,
-      itemBuilder: (ctx, _) => Padding(
-        padding: const EdgeInsets.symmetric(
-            horizontal: FontoSpace.s4, vertical: FontoSpace.s3),
-        child: Row(
-          children: [
-            ClipOval(
-              child: SizedBox(width: 40, height: 40, child: imageSkeleton(ctx)),
-            ),
-            const SizedBox(width: FontoSpace.s3),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: SizedBox(
-                        height: 12, width: 180, child: imageSkeleton(ctx)),
-                  ),
-                  const SizedBox(height: FontoSpace.s2),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: SizedBox(
-                        height: 10, width: 120, child: imageSkeleton(ctx)),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

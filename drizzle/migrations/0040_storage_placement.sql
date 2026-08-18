@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Migration 0040: per-workspace storage placement (storage-placement Track B,
 -- Phase B2). See /workspace/.fonto-phased/adr/0001-storage-placement.md.
 --

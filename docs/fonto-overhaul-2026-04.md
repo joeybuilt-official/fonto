@@ -1,6 +1,6 @@
 # Fonto Overhaul — 2026-04 Panel Audit
 
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- SPDX-License-Identifier: MIT -->
 
 ## Panel summary
 

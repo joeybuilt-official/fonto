@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Panel-audit deferred features: perceptual dedup (pHash), color search,
 -- OCR-only search.
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // M10 / ADR 0013 — Manage tags (native parity with web /app/tags). A nested
@@ -87,13 +87,20 @@ class _TagsScreenState extends State<TagsScreen> {
     setState(() => _busy = true);
     try {
       await op();
-      await _silentReload();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Couldn't save: $e")));
+      return;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+    // The refetch is deliberately outside the try: it runs after the write has
+    // already committed, so its failure must not be reported as "Couldn't
+    // save" — that told users to retry an edit that had actually landed. It is
+    // also silent (see _silentReload) so a routine edit never blanks the whole
+    // tree to a skeleton spinner.
+    if (!mounted) return;
+    await _silentReload();
   }
 
   // Refetch the tree without toggling `_loading`, so a single add/rename/move
@@ -189,7 +196,7 @@ class _TagsScreenState extends State<TagsScreen> {
   }
 
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const ListSkeleton();
     if (_error != null) return ListErrorState(onRetry: _load);
 
     final rows = _flatten();

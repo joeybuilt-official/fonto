@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 //
 // Legacy per-asset share endpoint. Phase 2.5 kept this in place for one
 // release alongside the new /api/v1/shares API. New rows are written through

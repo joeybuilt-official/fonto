@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 4.4 — PaddleOCR PP-OCRv5 line-level bounding boxes.
 --
 -- `ocr_boxes` stores per-line OCR results so the lightbox can highlight

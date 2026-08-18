@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // UX-3 — shared asset grid primitive. Wraps PhotoCard.
@@ -28,7 +28,7 @@ import {
   useState,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Image as ImageIcon } from "lucide-react";
+import { Image as ImageIcon, Loader2 } from "lucide-react";
 import { PhotoCard, type Asset } from "./photo-card";
 import { cn } from "@/lib/utils";
 import type {
@@ -115,6 +115,13 @@ interface AssetGridProps {
   className?: string;
   /** When empty, render this instead of the empty grid. */
   emptyState?: React.ReactNode;
+  /** Keyset "load more on scroll". `onLoadMore` fires when the bottom of the
+   *  rendered set nears the viewport (or the virtualizer reaches its last
+   *  row). `hasMore` gates it; `loadingMore` shows a spinner + suppresses
+   *  re-entrant calls. Omit all three for a non-paged grid. */
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
 }
 
 export function AssetGrid({
@@ -128,6 +135,9 @@ export function AssetGrid({
   onTrashed,
   className,
   emptyState,
+  onLoadMore,
+  hasMore,
+  loadingMore,
 }: AssetGridProps) {
   const mode = viewMode ?? (toolbar.view.viewMode === "list" ? "list" : "grid");
   const dens = density ?? toolbar.view.density;
@@ -135,7 +145,24 @@ export function AssetGrid({
   const orderedIds = useMemo(() => assets.map((a) => a.id), [assets]);
   const lastClickedRef = useRef<string | null>(null);
 
-  const { thumbUrls, responsiveUrls } = useBatchThumbUrls(orderedIds);
+  // Render path: virtualise when the list is big enough that DOM count would
+  // hurt, otherwise render directly. Computed here so the thumb-signing ids can
+  // key off it without a setState-in-effect.
+  const virtualise =
+    mode === "grid"
+      ? assets.length >= VIRT_THRESHOLD_GRID
+      : assets.length >= VIRT_THRESHOLD_LIST;
+
+  // Perf fix: sign only the ids the virtualizer currently renders (visible +
+  // overscan), not the whole feed. Virtualized children report their visible
+  // slice via onVisibleIdsChange; non-virtualized paths render every asset, so
+  // every id is already on screen — pass orderedIds directly (no effect needed;
+  // deriving at render avoids the cascading re-render an effect would cause).
+  // useBatchThumbUrls keeps a knownRef cache so an id is never signed twice.
+  const [visibleIds, setVisibleIds] = useState<string[]>([]);
+  const { thumbUrls, responsiveUrls } = useBatchThumbUrls(
+    virtualise ? visibleIds : orderedIds
+  );
 
   // Container width drives the column count. ResizeObserver is the only
   // source of truth — `window.innerWidth` would be wrong inside a split
@@ -175,14 +202,6 @@ export function AssetGrid({
     );
   }
 
-  // Pick a render path: virtualise when the list is big enough that DOM
-  // count would actually hurt, otherwise render directly so layout shifts
-  // are zero and Cmd-F / inspector work on every tile.
-  const virtualise =
-    mode === "grid"
-      ? assets.length >= VIRT_THRESHOLD_GRID
-      : assets.length >= VIRT_THRESHOLD_LIST;
-
   if (mode === "list") {
     return (
       <div ref={containerRef} className={cn("flex-1", className)}>
@@ -193,22 +212,33 @@ export function AssetGrid({
             thumbUrls={thumbUrls}
             onAssetClick={onAssetClick}
             onSelect={handleSelect}
+            onVisibleIdsChange={setVisibleIds}
+            onLoadMore={onLoadMore}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
           />
         ) : (
-          <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
-            {assets.map((a, i) => (
-              <AssetRow
-                key={a.id}
-                asset={a}
-                index={i}
-                thumbUrl={thumbUrls[a.id]}
-                selected={toolbar.selectedIds.has(a.id)}
-                selectMode={toolbar.selectMode}
-                onSelect={(e) => handleSelect(a.id, e)}
-                onClick={() => onAssetClick?.(a.id, i)}
-              />
-            ))}
-          </ul>
+          <>
+            <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
+              {assets.map((a, i) => (
+                <AssetRow
+                  key={a.id}
+                  asset={a}
+                  index={i}
+                  thumbUrl={thumbUrls[a.id]}
+                  selected={toolbar.selectedIds.has(a.id)}
+                  selectMode={toolbar.selectMode}
+                  onSelect={(e) => handleSelect(a.id, e)}
+                  onClick={() => onAssetClick?.(a.id, i)}
+                />
+              ))}
+            </ul>
+            <LoadMoreSentinel
+              onLoadMore={onLoadMore}
+              hasMore={hasMore}
+              loadingMore={loadingMore}
+            />
+          </>
         )}
       </div>
     );
@@ -230,28 +260,79 @@ export function AssetGrid({
           onAddToCollection={onAddToCollection}
           onRemove={onRemove}
           onTrashed={onTrashed}
+          onVisibleIdsChange={setVisibleIds}
+          onLoadMore={onLoadMore}
+          hasMore={hasMore}
+          loadingMore={loadingMore}
         />
       ) : (
-        <div
-          className="grid gap-2"
-          style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
-        >
-          {assets.map((a, i) => (
-            <PhotoCard
-              key={a.id}
-              asset={a}
-              thumbUrl={thumbUrls[a.id]}
-              responsiveUrls={responsiveUrls[a.id]}
-              selected={toolbar.selectedIds.has(a.id)}
-              selectMode={toolbar.selectMode}
-              onSelect={(e) => handleSelect(a.id, e)}
-              onClick={() => onAssetClick?.(a.id, i)}
-              onAddToCollection={onAddToCollection}
-              onRemove={onRemove}
-              onTrashed={onTrashed}
-            />
-          ))}
-        </div>
+        <>
+          <div
+            className="grid gap-2"
+            style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+          >
+            {assets.map((a, i) => (
+              <PhotoCard
+                key={a.id}
+                asset={a}
+                thumbUrl={thumbUrls[a.id]}
+                responsiveUrls={responsiveUrls[a.id]}
+                selected={toolbar.selectedIds.has(a.id)}
+                selectMode={toolbar.selectMode}
+                onSelect={(e) => handleSelect(a.id, e)}
+                onClick={() => onAssetClick?.(a.id, i)}
+                onAddToCollection={onAddToCollection}
+                onRemove={onRemove}
+                onTrashed={onTrashed}
+              />
+            ))}
+          </div>
+          <LoadMoreSentinel
+            onLoadMore={onLoadMore}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---- infinite-scroll sentinel (non-virtualized paths) ---------------------
+
+/** IntersectionObserver tripwire rendered below a page-flow grid/list. Fires
+ *  `onLoadMore` when it nears the viewport. Virtualized paths don't use this —
+ *  their own scroll container clips a page-viewport observer — they trip
+ *  load-more off the virtualizer's last rendered row instead. */
+function LoadMoreSentinel({
+  onLoadMore,
+  hasMore,
+  loadingMore,
+}: {
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!hasMore || !onLoadMore) return;
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onLoadMore();
+      },
+      { rootMargin: "600px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loadingMore, onLoadMore]);
+
+  if (!hasMore) return null;
+  return (
+    <div ref={ref} className="flex items-center justify-center py-4">
+      {loadingMore && (
+        <Loader2 className="h-5 w-5 animate-spin text-[var(--ft-color-on-surface-variant)]" />
       )}
     </div>
   );
@@ -458,6 +539,10 @@ interface VirtualGridProps {
   onAddToCollection?: (assetId: string) => void;
   onRemove?: (assetId: string) => void;
   onTrashed?: (assetId: string) => void;
+  onVisibleIdsChange?: (ids: string[]) => void;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
 }
 
 function VirtualGrid({
@@ -471,6 +556,10 @@ function VirtualGrid({
   onAddToCollection,
   onRemove,
   onTrashed,
+  onVisibleIdsChange,
+  onLoadMore,
+  hasMore,
+  loadingMore,
 }: VirtualGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const rowCount = Math.ceil(assets.length / cols);
@@ -488,6 +577,32 @@ function VirtualGrid({
     scrollMargin,
   });
 
+  const virtualRows = rowVirt.getVirtualItems();
+
+  // Report the ids currently rendered (visible + overscan) so the parent
+  // signs only those thumb URLs. Guarded by a join-key so we don't churn the
+  // parent every frame when the slice is unchanged.
+  const lastVisibleKey = useRef("");
+  useEffect(() => {
+    if (!onVisibleIdsChange) return;
+    const ids: string[] = [];
+    for (const v of virtualRows) {
+      const start = v.index * cols;
+      for (const a of assets.slice(start, start + cols)) ids.push(a.id);
+    }
+    const key = ids.join(",");
+    if (key === lastVisibleKey.current) return;
+    lastVisibleKey.current = key;
+    onVisibleIdsChange(ids);
+  }, [virtualRows, cols, assets, onVisibleIdsChange]);
+
+  // Keyset load-more: trip when the last row scrolls into the overscan window.
+  useEffect(() => {
+    const last = virtualRows[virtualRows.length - 1];
+    if (!last) return;
+    if (last.index >= rowCount - 1 && hasMore && !loadingMore) onLoadMore?.();
+  }, [virtualRows, rowCount, hasMore, loadingMore, onLoadMore]);
+
   return (
     <div ref={parentRef} className="relative">
       <div
@@ -497,7 +612,7 @@ function VirtualGrid({
           position: "relative",
         }}
       >
-        {rowVirt.getVirtualItems().map((vRow) => {
+        {virtualRows.map((vRow) => {
           const start = vRow.index * cols;
           const rowAssets = assets.slice(start, start + cols);
           return (
@@ -539,6 +654,11 @@ function VirtualGrid({
           );
         })}
       </div>
+      {hasMore && loadingMore && (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="h-5 w-5 animate-spin text-[var(--ft-color-on-surface-variant)]" />
+        </div>
+      )}
     </div>
   );
 }
@@ -551,6 +671,10 @@ interface VirtualListProps {
   thumbUrls: Record<string, string | null>;
   onAssetClick?: (assetId: string, index: number) => void;
   onSelect: (assetId: string, e?: React.MouseEvent) => void;
+  onVisibleIdsChange?: (ids: string[]) => void;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
 }
 
 function VirtualList({
@@ -559,6 +683,10 @@ function VirtualList({
   thumbUrls,
   onAssetClick,
   onSelect,
+  onVisibleIdsChange,
+  onLoadMore,
+  hasMore,
+  loadingMore,
 }: VirtualListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   // T2.5 (fonto-perf-audit 2026-06-15): dropped overscan 10 → 5. At 56px row
@@ -575,6 +703,24 @@ function VirtualList({
     scrollMargin,
   });
 
+  const virtualRows = rowVirt.getVirtualItems();
+
+  const lastVisibleKey = useRef("");
+  useEffect(() => {
+    if (!onVisibleIdsChange) return;
+    const ids = virtualRows.map((v) => assets[v.index]?.id).filter(Boolean) as string[];
+    const key = ids.join(",");
+    if (key === lastVisibleKey.current) return;
+    lastVisibleKey.current = key;
+    onVisibleIdsChange(ids);
+  }, [virtualRows, assets, onVisibleIdsChange]);
+
+  useEffect(() => {
+    const last = virtualRows[virtualRows.length - 1];
+    if (!last) return;
+    if (last.index >= assets.length - 1 && hasMore && !loadingMore) onLoadMore?.();
+  }, [virtualRows, assets.length, hasMore, loadingMore, onLoadMore]);
+
   return (
     <div ref={parentRef} className="relative">
       <div
@@ -583,7 +729,7 @@ function VirtualList({
           position: "relative",
         }}
       >
-        {rowVirt.getVirtualItems().map((vRow) => {
+        {virtualRows.map((vRow) => {
           const a = assets[vRow.index];
           return (
             <Fragment key={vRow.key}>
@@ -614,6 +760,11 @@ function VirtualList({
           );
         })}
       </div>
+      {hasMore && loadingMore && (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="h-5 w-5 animate-spin text-[var(--ft-color-on-surface-variant)]" />
+        </div>
+      )}
     </div>
   );
 }

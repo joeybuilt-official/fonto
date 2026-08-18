@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Migration 0038: media import (Phase 0) — Google Takeout + Amazon Photos.
 --
 -- Two additive tables, no changes to existing schema, safe in the

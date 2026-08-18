@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // M8 — bulk zip export (ADR 0011). Downloads the server-streamed zip to a temp
@@ -68,7 +68,14 @@ Future<void> exportAndShareZip(
       collectionId: collectionId,
       scope: scope,
     );
+    // Download resolved — dismiss the progress dialog before handing off, then
+    // confirm the export is ready. The download is the part that can fail
+    // meaningfully; confirming it here means a cancelled share sheet doesn't
+    // read as a failed export.
     closeDialog();
+    messenger.showSnackBar(
+      const SnackBar(content: Text("Export ready — choose where to save it.")),
+    );
     await Share.shareXFiles(
       [XFile(file.path, mimeType: "application/zip")],
       subject: "Fonto export",

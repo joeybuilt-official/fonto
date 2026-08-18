@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { use } from "react";
 import Link from "next/link";
 import {
@@ -34,32 +34,62 @@ function AddPhotosModal({
   onAdded: (assets: Asset[]) => void;
 }) {
   const [allPhotos, setAllPhotos] = useState<Asset[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const scrollRef = useRef<HTMLDivElement>(null);
 
+  // First keyset page. The 200-row cap is a page, not the whole library — the
+  // sentinel walks the rest via the cursor so a large library isn't hidden.
   useEffect(() => {
-    fetch("/api/v1/assets?mime=image/")
+    let cancelled = false;
+    fetch("/api/v1/assets?mime=image/&limit=200")
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: { assets?: Asset[]; cursor?: string | null }) => {
+        if (cancelled) return;
         const photos = (d.assets ?? []) as Asset[];
-        // Filter out already-in-collection
         setAllPhotos(photos.filter((p) => !existingIds.has(p.id)));
+        setCursor(d.cursor ?? null);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [existingIds]);
 
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const r = await fetch(`/api/v1/assets?mime=image/&limit=200&cursor=${encodeURIComponent(cursor)}`);
+      if (r.ok) {
+        const d = (await r.json()) as { assets?: Asset[]; cursor?: string | null };
+        const photos = (d.assets ?? []).filter((p) => !existingIds.has(p.id));
+        setAllPhotos((prev) => [...prev, ...photos]);
+        setCursor(d.cursor ?? null);
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [cursor, loadingMore, existingIds]);
+
   useEffect(() => {
-    // Lazy-load URLs for visible photos
-    allPhotos.slice(0, 24).forEach((photo) => {
+    // Lazy-load URLs for every loaded candidate (paging keeps this bounded to
+    // what the user has scrolled to).
+    allPhotos.forEach((photo) => {
       if (!photoUrls[photo.id]) {
         fetch(`/api/v1/assets/${photo.id}/url`)
           .then((r) => r.json())
           .then((d) => {
             if (d.url) setPhotoUrls((prev) => ({ ...prev, [photo.id]: d.url }));
-          });
+          })
+          .catch(() => undefined);
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -123,7 +153,7 @@ function AddPhotosModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -176,6 +206,13 @@ function AddPhotosModal({
               })}
             </div>
           )}
+          {!loading && cursor !== null && (
+            <ModalScrollSentinel
+              rootRef={scrollRef}
+              onLoadMore={loadMore}
+              loadingMore={loadingMore}
+            />
+          )}
         </div>
 
         {addError && (
@@ -203,6 +240,38 @@ function AddPhotosModal({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// IntersectionObserver tripwire for the Add-Photos modal's own scroll box.
+// root MUST be the modal's scroll container — a viewport observer never fires
+// for an element clipped inside overflow-y-auto.
+function ModalScrollSentinel({
+  rootRef,
+  onLoadMore,
+  loadingMore,
+}: {
+  rootRef: React.RefObject<HTMLDivElement | null>;
+  onLoadMore: () => void;
+  loadingMore: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onLoadMore();
+      },
+      { root: rootRef.current, rootMargin: "400px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [onLoadMore, rootRef]);
+  return (
+    <div ref={ref} className="flex items-center justify-center py-3">
+      {loadingMore && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
     </div>
   );
 }

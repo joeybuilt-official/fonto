@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Intelligence Core — Phase 3. Orchestrate the evidence adapters for ONE asset
@@ -16,7 +16,7 @@ import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
-import { labelImageUrl, visionConfigured } from "@/lib/plexo-vision";
+import { intelligence } from "@/lib/intelligence/client";
 import { logger } from "@/lib/logger";
 import type { EvidenceInput, EvidenceType } from "./types";
 import {
@@ -160,14 +160,15 @@ export async function extractAssetEvidence(assetId: string): Promise<ExtractResu
 
   // --- Plexo perception adapter (scene_season), gated + non-fatal ---
   let sceneSeasonSkipped: string | undefined;
-  if (visionConfigured() && asset.mimeType.startsWith("image/")) {
+  if (intelligence.available("label") && asset.mimeType.startsWith("image/")) {
     try {
       const visionKey =
         asset.previewKey ??
         assetStorageKey(asset.workspaceId, asset.id, asset.filename);
       const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
-      const { labels, modelId } = await labelImageUrl(signedUrl);
-      const scene = sceneSeasonEvidence(labels, modelId);
+      const base64 = Buffer.from(await (await fetch(signedUrl)).arrayBuffer()).toString("base64");
+      const r = await intelligence.label(base64);
+      const scene = sceneSeasonEvidence(r.labels.map((l) => l.label), r.modelId);
       if (scene) inputs.push(scene);
       else sceneSeasonSkipped = "no-seasonal-labels";
     } catch (err) {
@@ -175,7 +176,7 @@ export async function extractAssetEvidence(assetId: string): Promise<ExtractResu
       log.warn({ err: sceneSeasonSkipped }, "scene_season extraction failed — skipping");
     }
   } else {
-    sceneSeasonSkipped = visionConfigured() ? "non-image" : "vision-unconfigured";
+    sceneSeasonSkipped = intelligence.available("label") ? "non-image" : "vision-unconfigured";
   }
 
   await writeEvidence(asset.id, inputs);

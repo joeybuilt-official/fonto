@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // UX-3 — batch presigned URL endpoint. Replaces the per-card N+1 round-trip
@@ -75,6 +75,14 @@ function parseVariants(raw: unknown): Variant[] | null {
 // per-call wall-clock cost is still well under 1s for the worst case.
 const MAX_BATCH = 5000;
 
+// Presign TTLs. Derivatives (thumb/responsive/preview) are cheap, immutable,
+// content-addressed by variant key, and safe to hand out long-lived — so we
+// sign them toward the SigV4 ceiling (7 days) to slash re-sign churn on grids
+// that keep the same thumb URL across a session. Originals are full-res +
+// sensitive, so they stay short-lived and get re-signed on demand.
+const ORIGINAL_TTL_SECONDS = 3600; // 1 hour
+const DERIVATIVE_TTL_SECONDS = 7 * 24 * 60 * 60; // 604800 — AWS SigV4 max
+
 export async function POST(request: NextRequest) {
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -150,7 +158,9 @@ export async function POST(request: NextRequest) {
       ? resolved.key
       : assetStorageKey(asset.workspaceId, asset.id, asset.filename);
     const served: Variant = resolved.key ? resolved.resolvedVariant : "original";
-    const url = await storage().presignGet(key, { expiresIn: 3600 });
+    const expiresIn =
+      served === "original" ? ORIGINAL_TTL_SECONDS : DERIVATIVE_TTL_SECONDS;
+    const url = await storage().presignGet(key, { expiresIn });
     return { url, served };
   }
 
@@ -177,11 +187,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Multi-variant responses are derivative-only by definition (the
-    // responsive set doesn't include `original`), so a long max-age is
-    // always safe.
+    // responsive set doesn't include `original`), so the long derivative TTL
+    // and matching max-age are always safe.
     return NextResponse.json(
-      { urls, expiresIn: 3600 },
-      { headers: { "Cache-Control": "private, max-age=3600" } }
+      { urls, expiresIn: DERIVATIVE_TTL_SECONDS },
+      { headers: { "Cache-Control": `private, max-age=${DERIVATIVE_TTL_SECONDS}` } }
     );
   }
 
@@ -204,12 +214,13 @@ export async function POST(request: NextRequest) {
   // single-id route's no-store behaviour for originals.
   const headers: Record<string, string> = {};
   const anyOriginal = Object.values(variants).some((v) => v === "original");
+  const expiresIn = anyOriginal ? ORIGINAL_TTL_SECONDS : DERIVATIVE_TTL_SECONDS;
   if (!anyOriginal) {
-    headers["Cache-Control"] = "private, max-age=3600";
+    headers["Cache-Control"] = `private, max-age=${DERIVATIVE_TTL_SECONDS}`;
   }
 
   return NextResponse.json(
-    { urls, variants, expiresIn: 3600 },
+    { urls, variants, expiresIn },
     { headers }
   );
 }

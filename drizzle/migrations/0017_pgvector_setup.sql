@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 4.3: pgvector adoption + retire the FalkorDB mirror (ADR 0002).
 --
 -- This migration enables the pgvector extension on the target database and

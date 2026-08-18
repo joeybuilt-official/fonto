@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Shared asset row creation: dedup check + EXIF + perceptual hash + insert +
@@ -15,7 +15,7 @@
 //   asset its own way (the legacy route attaches `possibleDuplicate`, etc.).
 
 import { createHash } from "crypto";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, getTableColumns } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { plexoPublishEvent } from "@/lib/plexo";
 import {
@@ -35,7 +35,7 @@ import { emitWebhook } from "@/lib/webhooks/emit";
 import { emitActivity } from "@/lib/activity/emit";
 import { nextSeq } from "@/lib/db/seq";
 import { deriveScope, type Scope } from "@/lib/scope";
-import { embedImage, visionServiceConfigured } from "@/lib/plexo-vision";
+import { intelligence } from "@/lib/intelligence/client";
 import { nearestNeighbors } from "@/lib/vectors";
 // Phase 1.1 `thumbnailQueue` + `JobNames.GenerateThumbnails` resolved
 // dynamically below so this module stays buildable if those exports
@@ -278,7 +278,7 @@ async function embedImageWithBudget(
   mimeType: string,
   budgetMs: number
 ): Promise<number[] | "timeout" | null> {
-  if (!visionServiceConfigured()) return null;
+  if (!intelligence.available("embedImage")) return null;
   if (!mimeType.startsWith("image/")) return null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -286,8 +286,9 @@ async function embedImageWithBudget(
       // Phase 4.2 client returns { vector, modelId }; we only need vector here.
       // Internal timeout (15s default) is independent of the inline budget —
       // the budget races against the call as a whole.
-      embedImage(buffer)
-        .then((r) => r.vector)
+      intelligence
+        .embedImage(buffer.toString("base64"), mimeType)
+        .then((r) => [...r.vector])
         .catch((err) => {
           console.warn("[fonto] inline CLIP embed failed:", err);
           return null;
@@ -703,6 +704,9 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
   // image assets and only when pHash didn't already produce a hit. If the
   // inline embed takes longer than CLIP_DEDUP_INLINE_TIMEOUT_MS we hand
   // off to the BullMQ worker so the upload response isn't blocked.
+  // FONTO_IMPORT_SKIP_INLINE_CLIP=1 skips the inline embed entirely — bulk
+  // importers set it so throughput isn't bounded by the vision sidecar; the
+  // clip-embedding backfill queue covers the skipped assets afterwards.
   if (
     process.env.FONTO_IMPORT_SKIP_INLINE_CLIP !== "1" &&
     mimeType.startsWith("image/") &&
@@ -740,7 +744,7 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
         .catch((err) => {
           console.warn("[fonto] failed to stamp clipDedupCheckedAt:", err);
         });
-    } else if (visionServiceConfigured()) {
+    } else if (intelligence.available("embedImage")) {
       void tryEnqueueClipDedupCheck(asset.id, workspaceId);
     }
   }
@@ -786,6 +790,23 @@ export function jsonSafe(value: unknown): unknown {
  * any nested fields (notably `exif`) to scrub embedded BigInts before they
  * reach JSON.stringify.
  */
+// Column projection for LIST queries (grid/timeline). Every asset column
+// EXCEPT the three heavy per-row payloads the grid never renders:
+//   - clip_vec        512-dim float vector (~2 KB/row of wire+JSON)
+//   - extracted_text  full document text
+//   - ocr_text        full OCR transcript
+// Shipping those on every list row bloated the response by megabytes on a
+// large workspace. Single-asset detail still selects the full row, so the
+// lightbox/detail view keeps OCR + extracted text. serializeAsset() spreads
+// whatever columns it's given, so omitting these here simply drops them from
+// the list payload without any other change.
+export function assetGridColumns() {
+  const { clipVec, extractedText, ocrText, ...rest } = getTableColumns(
+    schema.assets
+  );
+  return rest;
+}
+
 export function serializeAsset<T extends { phash?: bigint | null }>(
   asset: T
 ): T & { phash: string | null } {

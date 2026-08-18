@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 5.2 — GPS + map view.
 --
 -- Adds one nullable column to `fonto.assets`:

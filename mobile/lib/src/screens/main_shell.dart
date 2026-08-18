@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Bottom-nav shell mirroring the web app's mobile navigation
@@ -34,11 +34,13 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   late final FontoClient _client = FontoClient(widget.auth);
   int _index = 0;
-
-  // Lazily-built tabs: each screen (and its initState network fetch) is only
-  // constructed on first visit, then kept alive. A cold start no longer fans
-  // out five parallel fetches — only the visible Library tab loads.
-  final List<Widget?> _tabs = List<Widget?>.filled(5, null);
+  // Tabs whose content has been shown at least once. Library (0) is live at
+  // launch; every other tab stays un-built — so its initState (and the network
+  // fetch + image hydration it kicks off) never fires — until the tab is first
+  // entered. That keeps all five tabs from stampeding the connection pool on
+  // cold start; Library alone loads first. IndexedStack still retains each
+  // tab's state once it has been built.
+  final Set<int> _activated = <int>{0};
 
   @override
   void dispose() {
@@ -46,7 +48,7 @@ class _MainShellState extends State<MainShell> {
     super.dispose();
   }
 
-  Widget _buildTab(int i) {
+  Widget _tabAt(int i) {
     switch (i) {
       case 0:
         return HomeScreen(auth: widget.auth, onSignOut: widget.onSignOut);
@@ -56,20 +58,18 @@ class _MainShellState extends State<MainShell> {
         return CollectionsScreen(client: _client);
       case 3:
         return UpdatesScreen(client: _client);
-      case 4:
-        return SearchScreen(client: _client);
       default:
-        return const SizedBox.shrink();
+        // Search focuses its field only while it is the active tab, so the
+        // keyboard never pops over Library on launch.
+        return SearchScreen(client: _client, active: _index == 4);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Build the active tab on demand; already-built tabs stay in the list so
-    // their scroll position + fetched data survive tab switches.
-    _tabs[_index] ??= _buildTab(_index);
     final tabs = <Widget>[
-      for (final tab in _tabs) tab ?? const SizedBox.shrink(),
+      for (var i = 0; i < 5; i++)
+        _activated.contains(i) ? _tabAt(i) : const SizedBox.shrink(),
     ];
 
     final theme = Theme.of(context);
@@ -112,7 +112,10 @@ class _MainShellState extends State<MainShell> {
           selectedIndex: _index,
           onDestinationSelected: (i) {
             HapticFeedback.selectionClick();
-            setState(() => _index = i);
+            setState(() {
+              _index = i;
+              _activated.add(i);
+            });
           },
           destinations: const [
             NavigationDestination(

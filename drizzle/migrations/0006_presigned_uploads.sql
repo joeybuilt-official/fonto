@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 1.2 (Fonto → Immich parity): presigned direct-to-R2 PUT uploads.
 --
 -- Tracks two-step uploads driven by POST /api/v1/assets/init +

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Nightly OCR backfill. Picks up `ocr_state='pending'` rows in batches and
 // pushes them through the Plexo vision sidecar (PaddleOCR PP-OCRv5 since
 // Phase 4.4) — or, if OCR_LLM_FALLBACK=true and the vision service is down,
@@ -19,7 +19,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, schema } from "@/lib/db";
 import { eq, and, isNotNull } from "drizzle-orm";
 import { runOcrForAsset } from "@/lib/processing";
-import { plexoEnsureWorkspace, plexoAvailable } from "@/lib/plexo";
+import { plexoEnsureWorkspace } from "@/lib/plexo";
+import { intelligence } from "@/lib/intelligence/client";
 
 const DEFAULT_BATCH_SIZE = (() => {
   const fromEnv = parseInt(process.env.OCR_BACKFILL_BATCH_SIZE ?? "", 10);
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  if (!plexoAvailable()) {
+  if (!intelligence.available("ocr")) {
     return NextResponse.json({ skipped: true, reason: "plexo_unavailable" });
   }
 

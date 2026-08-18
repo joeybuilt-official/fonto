@@ -1,15 +1,15 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// M14 / ADR 0056 — mobile OIDC bridge. After the user signs in via the IdP in
-// the system browser (Better Auth session cookie now set), the native app sends
-// them here. We mint a PAT and deep-link it back into the app at
-// /mobile/auth-callback?pat=… — the app stores it in hardware-backed storage
-// exactly like a manually-pasted token. No native OAuth client needed: the
-// browser ran the whole OAuth/PKCE dance.
+// Mobile sign-in bridge. After the user signs in on the web /login?mobile=1 by
+// ANY method — email+password, passkey, one-time link, or SSO — the browser has
+// a Better Auth session cookie and lands here. We mint a PAT and deep-link it
+// back into the native app at /mobile/auth-callback?pat=… — the app stores it
+// in hardware-backed storage exactly like a manually-pasted token. No native
+// OAuth client needed; the browser ran whatever auth flow was used.
 //
-// Dormant-safe: this route only ever runs when a real session exists; with no
-// IdP configured the SSO button that leads here is hidden, so it's never hit.
+// Safe by construction: this route only mints a token when a real session
+// exists (getAuthUser); otherwise it bounces to /login?mobile=1.
 
 import { NextResponse } from "next/server";
 import { and, eq, isNull } from "drizzle-orm";
@@ -19,7 +19,7 @@ import { db, schema } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-const MOBILE_OIDC_KEY_NAME = "mobile-oidc";
+const MOBILE_KEY_NAME = "mobile";
 
 function appBase(): string {
   return (
@@ -47,24 +47,24 @@ export async function GET(req: Request) {
     return NextResponse.redirect(`${appBase()}/login?mobile=1`);
   }
 
-  // Replace-in-place: revoke any prior `mobile-oidc` keys for this user before
+  // Replace-in-place: revoke any prior `mobile` keys for this user before
   // minting a fresh one. Without this, every hit inserts a new row — a repeated
   // (even accidental) hand-off could flood the key table. Now at most one live
-  // `mobile-oidc` key exists per user at a time.
+  // `mobile` key exists per user at a time.
   await db
     .update(schema.apiKeys)
     .set({ revokedAt: new Date() })
     .where(
       and(
         eq(schema.apiKeys.userId, user.id),
-        eq(schema.apiKeys.name, MOBILE_OIDC_KEY_NAME),
+        eq(schema.apiKeys.name, MOBILE_KEY_NAME),
         isNull(schema.apiKeys.revokedAt)
       )
     );
 
   const key = await createApiKey({
     userId: user.id,
-    name: MOBILE_OIDC_KEY_NAME,
+    name: MOBILE_KEY_NAME,
     scopes: ["read", "write"],
   });
 

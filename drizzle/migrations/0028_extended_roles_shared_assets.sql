@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 7b — extended workspace role ladder + cross-workspace sharing.
 --
 -- 1. Extend the role vocabulary on workspace_memberships and

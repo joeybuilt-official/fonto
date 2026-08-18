@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 2.1: Personal Access Tokens (PATs).
 --
 -- Programmatic API authentication for mobile + CLI clients. The plaintext

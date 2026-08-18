@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // UX-3 sweep: shared toolbar + grid. VirtualizedTimeline's month-grouping
@@ -7,7 +7,7 @@
 // flat chronological grid with q / sort / filter / select / ask.
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Clock, Loader2 } from "lucide-react";
 import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
@@ -23,68 +23,99 @@ function TimelineContent() {
     availableFilters: ["mime", "type", "favorite", "ratingMin"],
   });
 
-  const [assets, setAssets] = useState<Asset[]>([]);
+  const [rawAssets, setRawAssets] = useState<Asset[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [askOpen, setAskOpen] = useState(false);
 
+  const buildQuery = useCallback(() => {
+    const sp = new URLSearchParams();
+    sp.set("limit", "200");
+    if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
+    if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
+    if (toolbar.filters.favorite) sp.set("favorite", "1");
+    if (toolbar.filters.ratingMin != null) sp.set("ratingMin", String(toolbar.filters.ratingMin));
+    return sp;
+  }, [toolbar.filters.mime, toolbar.filters.type, toolbar.filters.favorite, toolbar.filters.ratingMin]);
+
+  // First keyset page (and refetch on filter change). The 200-row page is not
+  // the whole library — load-more-on-scroll walks the rest via the cursor.
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
       setLoading(true);
       setError(false);
-      const sp = new URLSearchParams();
-      if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
-      if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
-      if (toolbar.filters.favorite) sp.set("favorite", "1");
-      if (toolbar.filters.ratingMin != null) sp.set("ratingMin", String(toolbar.filters.ratingMin));
       try {
-        const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        const r = await fetch(`/api/v1/assets?${buildQuery().toString()}`);
         if (!r.ok) throw new Error(`assets ${r.status}`);
-        const d = (await r.json()) as { assets?: Asset[] };
-        let list = (d.assets ?? []) as Asset[];
-        if (toolbar.filters.sort === "oldest") {
-          list = [...list].sort(
-            (a, b) =>
-              new Date(a.capturedAt ?? a.createdAt).getTime() -
-              new Date(b.capturedAt ?? b.createdAt).getTime()
-          );
-        } else if (toolbar.filters.sort === "name") {
-          list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
-        } else if (toolbar.filters.sort === "rating") {
-          list = [...list].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
-        } else {
-          list = [...list].sort(
-            (a, b) =>
-              new Date(b.capturedAt ?? b.createdAt).getTime() -
-              new Date(a.capturedAt ?? a.createdAt).getTime()
-          );
-        }
-        if (toolbar.filters.q) {
-          const needle = toolbar.filters.q.toLowerCase();
-          list = list.filter(
-            (a) =>
-              a.filename.toLowerCase().includes(needle) ||
-              (a.description?.toLowerCase().includes(needle) ?? false)
-          );
-        }
-        setAssets(list);
+        const d = (await r.json()) as { assets?: Asset[]; cursor?: string | null };
+        if (cancelled) return;
+        setRawAssets(d.assets ?? []);
+        setCursor(d.cursor ?? null);
       } catch {
-        setError(true);
+        if (!cancelled) setError(true);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, [
-    toolbar.filters.mime,
-    toolbar.filters.type,
-    toolbar.filters.favorite,
-    toolbar.filters.ratingMin,
-    toolbar.filters.sort,
-    toolbar.filters.q,
-    refreshKey,
-  ]);
+    return () => {
+      cancelled = true;
+    };
+  }, [buildQuery, refreshKey]);
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const sp = buildQuery();
+      sp.set("cursor", cursor);
+      const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+      if (r.ok) {
+        const d = (await r.json()) as { assets?: Asset[]; cursor?: string | null };
+        setRawAssets((prev) => [...prev, ...(d.assets ?? [])]);
+        setCursor(d.cursor ?? null);
+      }
+    } catch {
+      /* transient — sentinel retries on next scroll */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [cursor, loadingMore, buildQuery]);
+
+  // Client-side sort + text search over the loaded window.
+  const assets = useMemo(() => {
+    let list = rawAssets;
+    if (toolbar.filters.sort === "oldest") {
+      list = [...list].sort(
+        (a, b) =>
+          new Date(a.capturedAt ?? a.createdAt).getTime() -
+          new Date(b.capturedAt ?? b.createdAt).getTime()
+      );
+    } else if (toolbar.filters.sort === "name") {
+      list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
+    } else if (toolbar.filters.sort === "rating") {
+      list = [...list].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+    } else {
+      list = [...list].sort(
+        (a, b) =>
+          new Date(b.capturedAt ?? b.createdAt).getTime() -
+          new Date(a.capturedAt ?? a.createdAt).getTime()
+      );
+    }
+    if (toolbar.filters.q) {
+      const needle = toolbar.filters.q.toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.filename.toLowerCase().includes(needle) ||
+          (a.description?.toLowerCase().includes(needle) ?? false)
+      );
+    }
+    return list;
+  }, [rawAssets, toolbar.filters.sort, toolbar.filters.q]);
 
   const openLightbox = useCallback((_id: string, index: number) => {
     setLightboxIndex(index);
@@ -97,7 +128,7 @@ function TimelineContent() {
   }
 
   function handleLightboxTrash(assetId: string) {
-    setAssets((prev) => prev.filter((a) => a.id !== assetId));
+    setRawAssets((prev) => prev.filter((a) => a.id !== assetId));
     setLightboxIndex(null);
   }
 
@@ -105,7 +136,7 @@ function TimelineContent() {
   // grid badges (heart, star count) update without a round-trip.
   const handleAssetUpdate = useCallback(
     (assetId: string, patch: { isFavorite?: boolean; rating?: number }) => {
-      setAssets((prev) =>
+      setRawAssets((prev) =>
         prev.map((a) => (a.id === assetId ? { ...a, ...patch } : a))
       );
     },
@@ -156,6 +187,9 @@ function TimelineContent() {
             toolbar={toolbar}
             viewMode="grid"
             onAssetClick={openLightbox}
+            onLoadMore={loadMore}
+            hasMore={cursor !== null}
+            loadingMore={loadingMore}
           />
         </div>
       )}

@@ -49,76 +49,164 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Fonto — light-first, cool white + teal accent */
+/* ============================================================================
+   CRISP ENTERPRISE ELEVATION — CANONICAL TOKEN SPEC (OKLCH)
+   Locked, WCAG-AA-audited baseline shared across all 9 apps. Do not edit values.
+   shadcn --background/--primary/etc. below are MAPPED onto these tokens.
+   ============================================================================ */
 :root {
-  --background: #F8F9FA;
-  --foreground: #1A1D23;
-  --card: #FFFFFF;
-  --card-foreground: #1A1D23;
-  --popover: #FFFFFF;
-  --popover-foreground: #1A1D23;
-  --primary: #2AB0A5;
-  --primary-foreground: #FFFFFF;
-  --primary-text: #0F7E76;
-  --secondary: #FFFFFF;
-  --secondary-foreground: #1A1D23;
-  --muted: #F8F9FA;
-  --muted-foreground: #6B7280;
-  --accent: #2AB0A5;
-  --accent-foreground: #FFFFFF;
-  --destructive: #DC2626;
-  --border: #E5E7EB;
-  --input: #E5E7EB;
-  --ring: #2AB0A5;
-  --chart-1: #2AB0A5;
-  --chart-2: #1D9089;
-  --chart-3: #6B7280;
-  --chart-4: #9CA3AF;
-  --chart-5: #D1D5DB;
-  --radius: 0.25rem;
-  --sidebar: #FFFFFF;
-  --sidebar-foreground: #1A1D23;
-  --sidebar-primary: #2AB0A5;
-  --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #F8F9FA;
-  --sidebar-accent-foreground: #1A1D23;
-  --sidebar-border: #E5E7EB;
-  --sidebar-ring: #2AB0A5;
+  /* 1. Surface ramp */
+  --bg:              oklch(98.4% 0.002 250);
+  --surface:         oklch(100%  0     0  );
+  --surface-raised:  oklch(100%  0     0  );
+  --surface-sunken:  oklch(96.6% 0.002 250);
+  --surface-overlay: oklch(100%  0     0  );
+  --scrim:           oklch(21%   0.008 250 / 0.45);
+
+  /* 2. Text ramp */
+  --text:            oklch(23% 0.005 250);
+  --text-muted:      oklch(45% 0.005 250);
+  --text-subtle:     oklch(52% 0.005 250);
+  --text-on-accent:  oklch(99% 0     0  );
+
+  /* 3. Accent scale */
+  --accent:          oklch(51% 0.09  175);
+  --accent-hover:    oklch(46% 0.095 175);
+  --accent-active:   oklch(41% 0.10  175);
+  --accent-subtle:   oklch(96% 0.02  175);
+  --accent-ring:     oklch(51% 0.09  175 / 0.45);
+
+  /* 4. Semantic status */
+  --success-bg:      oklch(96% 0.03 150);  --success-fg: oklch(46% 0.10 150);
+  --warning-bg:      oklch(96% 0.04  85);  --warning-fg: oklch(50% 0.11  75);
+  --danger-bg:       oklch(96% 0.03  25);  --danger-fg:  oklch(50% 0.14  25);
+  --info-bg:         oklch(96% 0.03 235);  --info-fg:    oklch(48% 0.10 235);
+
+  /* 5. Border/hairline */
+  --border:          oklch(92% 0.003 250);
+  --border-strong:   oklch(85% 0.004 250);
+  --ring:            oklch(51% 0.09 175);
+
+  /* 6. Radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* 7. Elevation (LIGHT) */
+  --shadow-sm: 0 1px 2px 0 oklch(0% 0 0 / 0.05),
+               0 1px 3px 0 oklch(0% 0 0 / 0.06);
+  --shadow-md: 0 1px 2px 0 oklch(0% 0 0 / 0.05),
+               0 2px 6px -1px oklch(0% 0 0 / 0.08),
+               0 4px 12px -2px oklch(0% 0 0 / 0.06);
+  --shadow-lg: 0 1px 2px 0 oklch(0% 0 0 / 0.05),
+               0 4px 10px -2px oklch(0% 0 0 / 0.08),
+               0 12px 28px -6px oklch(0% 0 0 / 0.10);
+  --shadow-xl: 0 2px 4px 0 oklch(0% 0 0 / 0.06),
+               0 8px 20px -4px oklch(0% 0 0 / 0.10),
+               0 24px 56px -12px oklch(0% 0 0 / 0.14);
+
+  --elevation-card:    var(--shadow-sm);
+  --elevation-raised:  var(--shadow-md);
+  --elevation-popover: var(--shadow-lg);
+  --elevation-modal:   var(--shadow-xl);
+
+  /* shadcn compatibility — mapped onto Crisp Enterprise Elevation tokens */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface-overlay);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: var(--text-on-accent);
+  --primary-text: var(--accent);
+  --secondary: var(--surface);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-sunken);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: var(--text-on-accent);
+  --destructive: var(--danger-fg);
+  --input: var(--border);
+  --chart-1: var(--accent);
+  --chart-2: var(--accent-active);
+  --chart-3: var(--text-muted);
+  --chart-4: var(--text-subtle);
+  --chart-5: var(--border-strong);
+  --radius: var(--radius-md);
+  --sidebar: var(--surface);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--text-on-accent);
+  --sidebar-accent: var(--accent-subtle);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
 }
 
 .dark {
-  --background: #111318;
-  --foreground: #F8F9FA;
-  --card: #1A1D23;
-  --card-foreground: #F8F9FA;
-  --popover: #1A1D23;
-  --popover-foreground: #F8F9FA;
-  --primary: #2AB0A5;
-  --primary-foreground: #FFFFFF;
-  --primary-text: #2AB0A5;
-  --secondary: #1A1D23;
-  --secondary-foreground: #F8F9FA;
-  --muted: #1A1D23;
-  --muted-foreground: #9CA3AF;
-  --accent: #2AB0A5;
-  --accent-foreground: #FFFFFF;
-  --destructive: #EF4444;
-  --border: #2A2D35;
-  --input: #2A2D35;
-  --ring: #2AB0A5;
-  --chart-1: #2AB0A5;
-  --chart-2: #1D9089;
-  --chart-3: #6B7280;
-  --chart-4: #4B5563;
-  --chart-5: #374151;
-  --sidebar: #1A1D23;
-  --sidebar-foreground: #F8F9FA;
-  --sidebar-primary: #2AB0A5;
-  --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #111318;
-  --sidebar-accent-foreground: #F8F9FA;
-  --sidebar-border: #2A2D35;
-  --sidebar-ring: #2AB0A5;
+  /* 1. Surface ramp */
+  --bg:              oklch(17%   0.006 250);
+  --surface:         oklch(21%   0.006 250);
+  --surface-raised:  oklch(24.5% 0.006 250);
+  --surface-sunken:  oklch(14.5% 0.006 250);
+  --surface-overlay: oklch(26%   0.007 250);
+  --scrim:           oklch(10%   0.008 250 / 0.60);
+
+  /* 2. Text ramp */
+  --text:            oklch(96% 0.003 250);
+  --text-muted:      oklch(76% 0.004 250);
+  --text-subtle:     oklch(64% 0.004 250);
+  --text-on-accent:  oklch(17% 0.01 175);
+
+  /* 3. Accent scale */
+  --accent:          oklch(72% 0.11 175);
+  --accent-hover:    oklch(77% 0.115 175);
+  --accent-active:   oklch(67% 0.11  175);
+  --accent-subtle:   oklch(30% 0.04  175);
+  --accent-ring:     oklch(72% 0.11 175 / 0.50);
+
+  /* 4. Semantic status */
+  --success-bg:      oklch(28% 0.05 150);  --success-fg: oklch(82% 0.11 150);
+  --warning-bg:      oklch(30% 0.05  80);  --warning-fg: oklch(85% 0.11  85);
+  --danger-bg:       oklch(29% 0.06  25);  --danger-fg:  oklch(80% 0.13  25);
+  --info-bg:         oklch(29% 0.05 235);  --info-fg:    oklch(82% 0.10 235);
+
+  /* 5. Border/hairline */
+  --border:          oklch(30% 0.005 250);
+  --border-strong:   oklch(38% 0.006 250);
+  --ring:            oklch(72% 0.11 175);
+
+  /* 6. Radius */
+  --radius-xs: 4px;  --radius-sm: 6px;  --radius-md: 8px;
+  --radius-lg: 12px; --radius-xl: 16px;
+
+  /* 7. Elevation (DARK) */
+  --shadow-sm: inset 0 1px 0 0 oklch(100% 0 0 / 0.05);
+  --shadow-md: inset 0 1px 0 0 oklch(100% 0 0 / 0.06),
+               0 2px 6px -2px oklch(0% 0 0 / 0.40);
+  --shadow-lg: inset 0 1px 0 0 oklch(100% 0 0 / 0.07),
+               0 8px 24px -6px oklch(0% 0 0 / 0.50);
+  --shadow-xl: inset 0 1px 0 0 oklch(100% 0 0 / 0.08),
+               0 16px 48px -12px oklch(0% 0 0 / 0.60);
+
+  --elevation-card:    var(--shadow-sm);
+  --elevation-raised:  var(--shadow-md);
+  --elevation-popover: var(--shadow-lg);
+  --elevation-modal:   var(--shadow-xl);
+
+  /* shadcn compatibility — dark roles inherit mapped vars; only tier-specific overrides */
+  --popover: var(--surface-overlay);
+  --primary-text: var(--accent);
+  --secondary: var(--surface-raised);
+  --muted: var(--surface-sunken);
+  --destructive: var(--danger-fg);
+  --input: var(--border);
+  --sidebar: var(--surface);
+  --sidebar-accent: var(--accent-subtle);
+  --chart-4: var(--text-subtle);
+  --chart-5: var(--border-strong);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -292,6 +380,16 @@
   --ft-color-inverse-surface: #E0E3E1;
   --ft-color-on-inverse-surface: #2D3231;
   --ft-color-inverse-primary: #006B61;
+
+  /* Dark elevation — black drop-shadows vanish on dark surfaces, so MD3 dark
+   * reads elevation as a surface *tint*: a deeper shadow plus a lightening
+   * inset top-edge highlight that grows with the level. This makes the Card
+   * rest→hover bump (elev-1→elev-2) actually perceptible in dark theme. */
+  --ft-elev-1: 0 1px 2px 0 rgba(0,0,0,0.40), 0 1px 3px 1px rgba(0,0,0,0.30), inset 0 1px 0 0 rgba(255,255,255,0.03);
+  --ft-elev-2: 0 2px 4px 0 rgba(0,0,0,0.48), 0 4px 10px 2px rgba(0,0,0,0.38), inset 0 1px 0 0 rgba(255,255,255,0.06);
+  --ft-elev-3: 0 4px 8px 3px rgba(0,0,0,0.44), 0 2px 4px 0 rgba(0,0,0,0.52), inset 0 1px 0 0 rgba(255,255,255,0.08);
+  --ft-elev-4: 0 6px 12px 4px rgba(0,0,0,0.46), 0 3px 5px 0 rgba(0,0,0,0.54), inset 0 1px 0 0 rgba(255,255,255,0.10);
+  --ft-elev-5: 0 10px 16px 6px rgba(0,0,0,0.50), 0 5px 6px 0 rgba(0,0,0,0.58), inset 0 1px 0 0 rgba(255,255,255,0.12);
 }
 
 @layer base {

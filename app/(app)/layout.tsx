@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 import { redirect } from "next/navigation";
 import { getAuthUser } from "@/lib/auth/server";
 import { ensurePersonalWorkspace } from "@/lib/workspace";
 import { getRecentAlbumsForWorkspace } from "@/lib/sidebar/recent-albums";
 import { AppShell } from "@/components/app-shell";
+import { SnackbarHost } from "@/components/ui/snackbar-host";
 
 export default async function AppLayout({
   children,
@@ -22,8 +23,10 @@ export default async function AppLayout({
   const recentAlbums = await getRecentAlbumsForWorkspace(workspace.id);
 
   return (
-    <AppShell user={user} recentAlbums={recentAlbums}>
-      {children}
-    </AppShell>
+    <SnackbarHost>
+      <AppShell user={user} recentAlbums={recentAlbums}>
+        {children}
+      </AppShell>
+    </SnackbarHost>
   );
 }

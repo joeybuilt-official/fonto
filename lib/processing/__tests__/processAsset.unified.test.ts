@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // ADR 0002 — unified analyze-image client tests.
@@ -16,7 +16,7 @@ import {
   analyzeImageUnified,
   unifiedAnalyzeEnabled,
   type AnalyzeImageResult,
-} from "../../plexo-analyze";
+} from "../../intelligence/adapters/plexo-unified";
 
 const SAMPLE_PAYLOAD: AnalyzeImageResult = {
   classification: "photo",

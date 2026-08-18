@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 //
 // T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue. GET is
 // wrapped in `unstable_cache` keyed by the sorted workspaceId list and

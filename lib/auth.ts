@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 import { betterAuth } from "better-auth";
 import { genericOAuth } from "better-auth/plugins";
+import { APIError } from "better-auth/api";
 import { Pool } from "pg";
+import { sendPasswordResetEmail } from "@/lib/invitations/email";
+import { hasPendingInvitationForEmail } from "@/lib/invitations/core";
 
 // M14 / ADR 0056 — OIDC/SSO, additive to email+password. Dormant until the
 // operator wires an IdP: with OIDC_* unset, `oidcProviders()` returns [], the
@@ -35,10 +38,63 @@ const pool = new Pool({
   options: "-c search_path=auth",
 });
 
+// Invite-only registration (owner-approved policy). Open self-signup is
+// disabled by default: a new user may only register if (a) the deploy opts
+// back into open signup via FONTO_ALLOW_OPEN_SIGNUP=true, (b) they are the
+// very first user on the instance (bootstrap owner), or (c) their email has a
+// pending workspace invitation — the legitimate funnel (app/invitations). The
+// invitation-accept path is unaffected: an invited user's email matches a
+// pending invitation, so the gate lets them through.
+async function assertSignupAllowed(email: string): Promise<void> {
+  if (process.env.FONTO_ALLOW_OPEN_SIGNUP === "true") return;
+
+  // Bootstrap: the first-ever user (instance owner) has no invitation. The
+  // Better Auth user table lives in the `auth` schema (pool search_path).
+  const existing = await pool.query('SELECT 1 FROM "user" LIMIT 1');
+  if (existing.rows.length === 0) return;
+
+  if (email && (await hasPendingInvitationForEmail(email))) return;
+
+  throw new APIError("FORBIDDEN", {
+    message:
+      "Registration is invite-only. Ask a workspace owner to invite you.",
+  });
+}
+
 export const auth = betterAuth({
   database: pool,
   emailAndPassword: {
     enabled: true,
+    // M-daily-driver — password reset. Better Auth builds the reset URL and
+    // hands it here; we deliver it via the shared transactional-email sender
+    // (lib/invitations/email.ts → Resend). Runs in the background, so an
+    // unconfigured/misfiring transport is logged, never surfaced to the
+    // requester (avoids leaking which addresses are registered).
+    sendResetPassword: async ({ user, url }) => {
+      await sendPasswordResetEmail({ to: user.email, resetUrl: url });
+    },
+  },
+  // M-daily-driver — allow editing the account email from Settings. Emails in
+  // this app are never verified (no email-verification flow is wired), so
+  // updateEmailWithoutVerification lets an unverified address change directly.
+  user: {
+    changeEmail: {
+      enabled: true,
+      updateEmailWithoutVerification: true,
+    },
+  },
+  // M-daily-driver — invite-only registration gate. `create.before` runs
+  // inside the sign-up flow; throwing an APIError aborts it with a 403 the
+  // client surfaces as the form error. Password/passkey/one-time-link sign-in
+  // never creates a user, so only genuine registrations hit this.
+  databaseHooks: {
+    user: {
+      create: {
+        before: async (userData: { email?: string }) => {
+          await assertSignupAllowed((userData.email ?? "").trim());
+        },
+      },
+    },
   },
   // better-auth's built-in rate limiter defaults to a very tight per-path
   // budget for sensitive endpoints — a user who mistypes their password a

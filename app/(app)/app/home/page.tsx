@@ -1,13 +1,14 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // UX-1 — /app/home landing page.
 //
-// Audit §4 calls for a real Home (stats, memory of day, quick-jump
-// tiles) separated from the Inbox (upload + recent + queue, which
-// stays at /app/dashboard for now). This page is presentational over
-// /api/v1/stats and the existing MemoryCard component; it carries no
-// upload UI so the action bar stays uncluttered.
+// Audit §4 calls for a real Home (stats, memory of day, a small set of
+// discovery links for destinations without a sidebar entry) separated
+// from the Inbox (upload + recent + queue). This page is presentational
+// over /api/v1/stats and the existing MemoryCard component. When the
+// library is empty it collapses to a single "add your photos" onboarding
+// card; otherwise it carries no upload UI so the action bar stays clean.
 //
 // MD3 migration (ADR 0009, Phase 2): tiles use the MD3 Card primitive
 // (outlined variant) and reach for the --ft-* surface roles. Accent
@@ -23,22 +24,20 @@ import Link from "next/link";
 import { ListErrorState } from "../_components/list-states";
 import {
   Calendar,
-  Clock,
   FileText,
-  FolderTree,
   Heart,
   Image as ImageIcon,
-  Inbox,
   Layers,
   Map as MapIcon,
-  Search,
   Sparkles,
   TrendingUp,
+  Upload,
   Users,
   Video,
 } from "lucide-react";
 import { MemoryCard } from "../_components/memory-card";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 interface Stats {
   total: number;
@@ -50,22 +49,21 @@ interface Stats {
   thisMonth: number;
 }
 
-const QUICK_JUMP: Array<{
+// Discovery destinations that are NOT already a primary sidebar entry —
+// Memories / Map / People / Stacks have no top-level nav row, so Home is
+// where they get surfaced. The old grid also duplicated Photos / Timeline /
+// Documents / Folders / Search / Inbox (all reachable from the sidebar);
+// those were dropped so Home stops being a link-farm mirror of the nav.
+const DISCOVER: Array<{
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   hint: string;
 }> = [
-  { href: "/app/library?kind=moment", label: "Photos", icon: ImageIcon, hint: "Browse the grid" },
-  { href: "/app/library", label: "Timeline", icon: Clock, hint: "Chronological" },
   { href: "/app/memories", label: "Memories", icon: Sparkles, hint: "On this day" },
   { href: "/app/map", label: "Map", icon: MapIcon, hint: "Geo-tagged photos" },
-  { href: "/app/library?pathPrefix=/", label: "Folders", icon: FolderTree, hint: "Browse by folder" },
   { href: "/app/people", label: "People", icon: Users, hint: "Face clusters" },
-  { href: "/app/library?kind=document", label: "Documents", icon: FileText, hint: "PDFs + text" },
   { href: "/app/collections?tab=stacks", label: "Stacks", icon: Layers, hint: "Bursts + RAW pairs" },
-  { href: "/app/search", label: "Search", icon: Search, hint: "Find anything" },
-  { href: "/app/updates?section=uploads", label: "Inbox", icon: Inbox, hint: "Upload + recent" },
 ];
 
 function StatTile({
@@ -126,6 +124,53 @@ export default function HomePage() {
   useEffect(() => {
     void loadStats();
   }, [loadStats]);
+
+  // First-run: library loaded successfully but is empty. Replace the wall of
+  // zero stat tiles + discovery links (all dead ends with no content behind
+  // them) with a single focused "add your photos" card — the primary
+  // onboarding action.
+  const isEmpty = !loading && !error && stats?.total === 0;
+
+  if (isEmpty) {
+    return (
+      <div className="space-y-6 px-4 py-4">
+        <div>
+          <h1 className="font-heading text-2xl font-semibold text-foreground">
+            Welcome to fonto
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Your library is empty. Add your photos to get started.
+          </p>
+        </div>
+        <Card
+          variant="filled"
+          className="flex flex-col items-center gap-[var(--ft-space-4)] px-[var(--ft-space-6)] py-[var(--ft-space-10)] text-center"
+        >
+          <div className="flex h-16 w-16 items-center justify-center rounded-[var(--ft-shape-large)] bg-[var(--ft-color-primary-container)] text-[var(--ft-color-on-primary-container)]">
+            <ImageIcon className="h-8 w-8" />
+          </div>
+          <div className="space-y-1">
+            <p className="text-[length:var(--ft-type-title-medium-size)] font-medium leading-[var(--ft-type-title-medium-line)] text-[var(--ft-color-on-surface)]">
+              Add your photos
+            </p>
+            <p className="max-w-md text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+              Upload directly from this device, or import your existing
+              library from Google Photos or Amazon Photos.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-[var(--ft-space-2)]">
+            <Button variant="filled" render={<Link href="/app/updates?section=uploads" />}>
+              <Upload className="h-4 w-4" />
+              Upload photos
+            </Button>
+            <Button variant="outlined" render={<Link href="/app/imports" />}>
+              Import from Google or Amazon
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 px-4 py-4">
@@ -209,13 +254,13 @@ export default function HomePage() {
         <MemoryCard />
       </section>
 
-      {/* Quick-jump nav */}
+      {/* Discovery destinations without a top-level sidebar entry */}
       <section className="space-y-2">
         <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-          Jump to
+          Discover
         </h2>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {QUICK_JUMP.map((q) => (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+          {DISCOVER.map((q) => (
             <Link key={q.href} href={q.href}>
               <Card
                 variant="outlined"

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // In-app HLS video playback. Fetches the on-demand manifest from
@@ -10,7 +10,6 @@
 import "dart:async";
 
 import "package:flutter/material.dart";
-import "package:flutter/services.dart";
 import "package:video_player/video_player.dart";
 
 import "../api/fonto_client.dart";
@@ -33,15 +32,17 @@ class AssetVideoPlayer extends StatefulWidget {
 class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
   VideoPlayerController? _controller;
   Timer? _poll;
-  // Bounds the transcode wait so "Preparing video…" can't spin forever if the
-  // server never flips ready/failed. ~40 polls × 3s ≈ 2 min.
-  int _pollAttempts = 0;
-  static const int _maxPollAttempts = 40;
   bool _disposed = false;
   // null = still resolving; non-null = terminal error to show.
   String? _error;
   bool _transcoding = false;
   bool _showControls = true;
+  // Bound the transcode wait so a stuck job doesn't spin forever: 60 polls at
+  // 3s ≈ 3 min, after which we surface a "try again later" state with a manual
+  // Retry rather than polling indefinitely.
+  int _pollAttempts = 0;
+  static const int _maxPollAttempts = 60;
+  bool _canRetry = false;
   // Auto-hides the overlay controls a few seconds into playback.
   Timer? _hideTimer;
   // Tracks the last observed play state so we re-arm the auto-hide only on a
@@ -75,14 +76,16 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
   }
 
   Future<void> _pollOnce() async {
-    if (_disposed) return;
-    _pollAttempts++;
-    if (_pollAttempts >= _maxPollAttempts) {
+    // Give up after the cap: show a soft "still preparing" state + Retry.
+    if (_pollAttempts++ >= _maxPollAttempts) {
       _poll?.cancel();
-      setState(() {
-        _transcoding = false;
-        _error = "Still preparing — try again later.";
-      });
+      if (!_disposed) {
+        setState(() {
+          _transcoding = false;
+          _error = "Still preparing — try again later.";
+          _canRetry = true;
+        });
+      }
       return;
     }
     try {
@@ -101,18 +104,6 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
     } catch (_) {
       // Transient poll error — keep polling; a terminal failure flips state.
     }
-  }
-
-  /// Clears the terminal error/transcode state and re-runs resolution. Wired to
-  /// the Retry button so a failed load isn't a dead end.
-  void _retry() {
-    _poll?.cancel();
-    setState(() {
-      _error = null;
-      _transcoding = false;
-      _pollAttempts = 0;
-    });
-    _resolve();
   }
 
   Future<void> _startPlayback(String playlistUrl) async {
@@ -144,6 +135,17 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
       _transcoding = false;
       _showControls = true;
     });
+  }
+
+  void _retry() {
+    _poll?.cancel();
+    _pollAttempts = 0;
+    setState(() {
+      _error = null;
+      _canRetry = false;
+      _transcoding = false;
+    });
+    _resolve();
   }
 
   void _onControllerUpdate() {
@@ -180,7 +182,6 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
   void _togglePlay() {
     final c = _controller;
     if (c == null) return;
-    HapticFeedback.selectionClick();
     setState(() {
       if (c.value.isPlaying) {
         c.pause();
@@ -219,11 +220,20 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
                     color: Colors.white70,
                   ),
             ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: _retry,
-              child: const Text("Retry"),
-            ),
+            if (_canRetry) ...[
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: _retry,
+                icon: const Icon(Icons.refresh, color: Colors.white),
+                label: const Text(
+                  "Retry",
+                  style: TextStyle(color: Colors.white),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.white38),
+                ),
+              ),
+            ],
           ],
         ),
       );

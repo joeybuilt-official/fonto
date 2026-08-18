@@ -1,11 +1,13 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { signIn, signUp, signInSSO, ssoProviderId } from "@/lib/auth/client";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { browserSupportsWebAuthn } from "@simplewebauthn/browser";
+import { PasskeyLogin } from "@/components/auth/passkey-login";
 
 function LoginPageInner() {
   const router = useRouter();
@@ -25,10 +27,17 @@ function LoginPageInner() {
   const [isSignUp, setIsSignUp] = useState(!!invitation);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // Mirrors the check inside <PasskeyLogin/> so the "or" divider only renders
+  // when at least one alternative sign-in method will actually appear.
+  const [passkeySupported, setPasskeySupported] = useState(false);
 
   useEffect(() => {
     if (presetEmail) setEmail(presetEmail);
   }, [presetEmail]);
+
+  useEffect(() => {
+    setPasskeySupported(browserSupportsWebAuthn());
+  }, []);
 
   const safeCallback = (() => {
     // Only honour callback if it's a same-origin relative path. Prevents
@@ -38,6 +47,53 @@ function LoginPageInner() {
     if (callback.startsWith("//")) return null;
     return callback;
   })();
+
+  // Mobile PAT handoff (?mobile=1): EVERY successful sign-in — password,
+  // passkey, one-time link, SSO — must bounce through /mobile/auth-handoff so
+  // the native app gets its PAT deep-link instead of landing in the web UI.
+  const isMobileHandoff = searchParams.get("mobile") === "1";
+  const successTarget = isMobileHandoff
+    ? "/mobile/auth-handoff"
+    : (safeCallback ?? "/app/home");
+  // Route handlers aren't in the client route tree — router.push would 404;
+  // the handoff needs a real browser navigation so its redirect chain can
+  // reach the app-link deep link.
+  const go = () => {
+    if (isMobileHandoff) window.location.assign(successTarget);
+    else router.push(successTarget);
+  };
+
+  // One-time sign-in link consumption (?token=<hex>). The verify endpoint
+  // mints the session cookie itself and returns JSON — on success we just
+  // redirect like a password login. Ref-guarded: tokens are single-use, so a
+  // strict-mode double effect run must not fire the GET twice.
+  const linkToken = searchParams.get("token");
+  const linkConsumed = useRef(false);
+  useEffect(() => {
+    if (!linkToken || linkConsumed.current) return;
+    linkConsumed.current = true;
+    // Strip the single-use token from the URL so it never lands in
+    // browser history or a Referer header. Keep ?mobile=1 so a failed
+    // consume still leaves the PAT-handoff flow intact for a retry.
+    window.history.replaceState(
+      {},
+      "",
+      searchParams.get("mobile") === "1" ? "/login?mobile=1" : "/login"
+    );
+    fetch(`/api/auth/verify-link?token=${encodeURIComponent(linkToken)}`)
+      .then(async (res) => {
+        const data = (await res.json().catch(() => null)) as {
+          verified?: boolean;
+        } | null;
+        if (res.ok && data?.verified) {
+          go();
+        } else {
+          setError("Sign-in link invalid or expired");
+        }
+      })
+      .catch(() => setError("Sign-in link invalid or expired"));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- go is stable per render inputs
+  }, [linkToken]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,7 +114,7 @@ function LoginPageInner() {
           return;
         }
       }
-      router.push(safeCallback ?? "/app/home");
+      go();
     } catch (err) {
       // better-auth throws (rather than returning result.error) on transport
       // failures — notably a 429 rate-limit, whose body comes back as
@@ -124,6 +180,21 @@ function LoginPageInner() {
             className="w-full rounded border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
           />
 
+          {!isSignUp && (
+            <div className="text-right">
+              <Link
+                href={
+                  isMobileHandoff
+                    ? "/forgot-password?mobile=1"
+                    : "/forgot-password"
+                }
+                className="text-sm font-medium text-primary-text hover:underline"
+              >
+                Forgot password?
+              </Link>
+            </div>
+          )}
+
           {error && (
             <p role="alert" aria-live="polite" className="text-sm text-destructive">
               {error}
@@ -141,29 +212,33 @@ function LoginPageInner() {
         </form>
 
         {/* M14 / ADR 0056 — SSO, shown only when an IdP is configured. Mobile
-            (?mobile=1) routes the post-login redirect through the PAT handoff. */}
-        {ssoProviderId && (
+            (?mobile=1) routes the post-login redirect through the PAT handoff.
+            Jex — passkey sign-in shares the divider block. */}
+        {(ssoProviderId || passkeySupported) && (
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <span className="h-px flex-1 bg-border" />
               <span className="text-xs text-muted-foreground">or</span>
               <span className="h-px flex-1 bg-border" />
             </div>
-            <button
-              type="button"
-              aria-label="Sign in with SSO"
-              onClick={() =>
-                signInSSO(
-                  ssoProviderId,
-                  searchParams.get("mobile") === "1"
-                    ? "/mobile/auth-handoff"
-                    : (safeCallback ?? "/app/home")
-                )
-              }
-              className="w-full rounded border border-border bg-card px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary"
-            >
-              Sign in with SSO
-            </button>
+            <PasskeyLogin
+              onSuccess={go}
+            />
+            {ssoProviderId && (
+              <button
+                type="button"
+                aria-label="Sign in with SSO"
+                onClick={() =>
+                  signInSSO(
+                    ssoProviderId,
+                    successTarget
+                  )
+                }
+                className="w-full rounded border border-border bg-card px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                Sign in with SSO
+              </button>
+            )}
           </div>
         )}
 

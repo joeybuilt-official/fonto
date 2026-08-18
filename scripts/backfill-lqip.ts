@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // T2.4 (fonto-perf-audit 2026-06-15) — backfill 4x4 WebP LQIP data URLs onto

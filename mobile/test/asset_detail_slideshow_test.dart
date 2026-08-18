@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // M8 — slideshow control on the asset detail screen.
 import "dart:convert";
 

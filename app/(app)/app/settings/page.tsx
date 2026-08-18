@@ -1,9 +1,18 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useSession } from "@/lib/auth/client";
+import {
+  startRegistration,
+  type PublicKeyCredentialCreationOptionsJSON,
+} from "@simplewebauthn/browser";
+import {
+  useSession,
+  changePassword,
+  updateName,
+  changeEmail,
+} from "@/lib/auth/client";
 import Link from "next/link";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 import { ConfirmButton } from "@/components/confirm-button";
@@ -183,6 +192,158 @@ export default function SettingsPage() {
     }
   }
 
+  // Jex — passkey enrollment + one-time sign-in link (auth routes already live).
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [passkeyMsg, setPasskeyMsg] = useState<string | null>(null);
+  const [passkeyErr, setPasskeyErr] = useState<string | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [oneTimeLink, setOneTimeLink] = useState<string | null>(null);
+  const [linkErr, setLinkErr] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  async function handleAddPasskey() {
+    if (passkeyBusy) return;
+    setPasskeyBusy(true);
+    setPasskeyMsg(null);
+    setPasskeyErr(null);
+    try {
+      const startRes = await fetch("/api/auth/passkey/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "start" }),
+      });
+      if (startRes.status === 401) throw new Error("Session expired — sign in again to add a passkey.");
+      if (!startRes.ok) throw new Error(`HTTP ${startRes.status}`);
+      const optionsJSON =
+        (await startRes.json()) as PublicKeyCredentialCreationOptionsJSON;
+      const response = await startRegistration({ optionsJSON });
+      const finishRes = await fetch("/api/auth/passkey/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "finish", response }),
+      });
+      const data = (await finishRes.json().catch(() => null)) as {
+        verified?: boolean;
+        error?: string;
+      } | null;
+      if (!finishRes.ok || !data?.verified) {
+        throw new Error(data?.error ?? `HTTP ${finishRes.status}`);
+      }
+      setPasskeyMsg("Passkey added");
+    } catch (err) {
+      if (!(err instanceof Error && err.name === "NotAllowedError")) {
+        setPasskeyErr(
+          err instanceof Error && err.message ? err.message : "Failed to add passkey."
+        );
+      }
+    } finally {
+      setPasskeyBusy(false);
+    }
+  }
+
+  async function handleGenerateLink() {
+    if (linkBusy) return;
+    setLinkBusy(true);
+    setLinkErr(null);
+    setLinkCopied(false);
+    try {
+      const res = await fetch("/api/auth/passkey/one-time-link", { method: "POST" });
+      const data = (await res.json().catch(() => null)) as {
+        link?: string;
+        error?: string;
+      } | null;
+      if (!res.ok || !data?.link) {
+        throw new Error(data?.error ?? `HTTP ${res.status}`);
+      }
+      setOneTimeLink(window.location.origin + data.link);
+    } catch (err) {
+      setLinkErr(
+        err instanceof Error && err.message ? err.message : "Failed to generate link."
+      );
+    } finally {
+      setLinkBusy(false);
+    }
+  }
+
+  // M-daily-driver — account self-service: edit name/email + change password.
+  const fieldCls =
+    "w-full min-w-0 rounded border border-[var(--ft-color-outline-variant)] bg-transparent px-3 py-2 text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)] placeholder:text-[var(--ft-color-on-surface-variant)] focus:outline-none focus:ring-2 focus:ring-[var(--ft-color-primary)]";
+
+  const [name, setName] = useState("");
+  const [emailField, setEmailField] = useState("");
+  useEffect(() => {
+    setName(user?.name ?? "");
+    setEmailField(user?.email ?? "");
+  }, [user?.name, user?.email]);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileMsg, setProfileMsg] = useState<string | null>(null);
+  const [profileErr, setProfileErr] = useState<string | null>(null);
+
+  async function handleSaveProfile() {
+    if (profileBusy) return;
+    setProfileBusy(true);
+    setProfileMsg(null);
+    setProfileErr(null);
+    try {
+      const nextName = name.trim();
+      const nextEmail = emailField.trim();
+      if (nextName && nextName !== (user?.name ?? "")) {
+        const r = await updateName(nextName);
+        if (r.error) throw new Error(r.error.message ?? "Failed to update name");
+      }
+      if (
+        nextEmail &&
+        nextEmail.toLowerCase() !== (user?.email ?? "").toLowerCase()
+      ) {
+        const r = await changeEmail(nextEmail);
+        if (r.error)
+          throw new Error(r.error.message ?? "Failed to update email");
+      }
+      setProfileMsg("Profile updated");
+    } catch (err) {
+      setProfileErr(
+        err instanceof Error ? err.message : "Failed to update profile"
+      );
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwMsg, setPwMsg] = useState<string | null>(null);
+  const [pwErr, setPwErr] = useState<string | null>(null);
+
+  async function handleChangePassword() {
+    if (pwBusy) return;
+    setPwErr(null);
+    setPwMsg(null);
+    if (newPw !== confirmPw) {
+      setPwErr("New passwords don't match");
+      return;
+    }
+    if (newPw.length < 8) {
+      setPwErr("New password must be at least 8 characters");
+      return;
+    }
+    setPwBusy(true);
+    try {
+      const r = await changePassword(currentPw, newPw);
+      if (r.error)
+        throw new Error(r.error.message ?? "Failed to change password");
+      setPwMsg("Password changed");
+      setCurrentPw("");
+      setNewPw("");
+      setConfirmPw("");
+    } catch (err) {
+      setPwErr(err instanceof Error ? err.message : "Failed to change password");
+    } finally {
+      setPwBusy(false);
+    }
+  }
+
   async function handleRescanAll() {
     if (rescanBusy) return;
     setRescanBusy(true);
@@ -240,21 +401,125 @@ export default function SettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-[var(--ft-space-3)]">
-          <div>
-            <label className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase">
+          <div className="space-y-[var(--ft-space-1)]">
+            <label
+              htmlFor="account-name"
+              className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase"
+            >
               Name
             </label>
-            <p className="mt-[var(--ft-space-1)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
-              {user?.name ?? "—"}
-            </p>
+            <input
+              id="account-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Your name"
+              className={fieldCls}
+            />
           </div>
-          <div>
-            <label className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase">
+          <div className="space-y-[var(--ft-space-1)]">
+            <label
+              htmlFor="account-email"
+              className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase"
+            >
               Email
             </label>
-            <p className="mt-[var(--ft-space-1)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
-              {user?.email ?? "—"}
+            <input
+              id="account-email"
+              type="email"
+              value={emailField}
+              onChange={(e) => setEmailField(e.target.value)}
+              placeholder="you@example.com"
+              className={fieldCls}
+            />
+          </div>
+          <div className="flex items-center gap-[var(--ft-space-3)]">
+            <Button
+              variant="filled"
+              size="sm"
+              onClick={handleSaveProfile}
+              disabled={profileBusy}
+              aria-busy={profileBusy}
+            >
+              {profileBusy ? "Saving…" : "Save changes"}
+            </Button>
+            {profileMsg && (
+              <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-success-container)]">
+                {profileMsg}
+              </span>
+            )}
+          </div>
+          {profileErr && (
+            <p
+              role="alert"
+              className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]"
+            >
+              {profileErr}
             </p>
+          )}
+
+          <div className="pt-[var(--ft-space-3)] border-t border-[var(--ft-color-outline-variant)] space-y-[var(--ft-space-3)]">
+            <div>
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Change password
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Signs out other devices when you change it.
+              </p>
+            </div>
+            <input
+              type="password"
+              aria-label="Current password"
+              autoComplete="current-password"
+              value={currentPw}
+              onChange={(e) => setCurrentPw(e.target.value)}
+              placeholder="Current password"
+              className={fieldCls}
+            />
+            <input
+              type="password"
+              aria-label="New password"
+              autoComplete="new-password"
+              value={newPw}
+              onChange={(e) => setNewPw(e.target.value)}
+              placeholder="New password"
+              minLength={8}
+              className={fieldCls}
+            />
+            <input
+              type="password"
+              aria-label="Confirm new password"
+              autoComplete="new-password"
+              value={confirmPw}
+              onChange={(e) => setConfirmPw(e.target.value)}
+              placeholder="Confirm new password"
+              minLength={8}
+              className={fieldCls}
+            />
+            <div className="flex items-center gap-[var(--ft-space-3)]">
+              <Button
+                variant="outlined"
+                size="sm"
+                onClick={handleChangePassword}
+                disabled={pwBusy || !currentPw || !newPw || !confirmPw}
+                aria-busy={pwBusy}
+              >
+                {pwBusy ? "Updating…" : "Update password"}
+              </Button>
+              {pwMsg && (
+                <span className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-success-container)]">
+                  {pwMsg}
+                </span>
+              )}
+            </div>
+            {pwErr && (
+              <p
+                role="alert"
+                className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]"
+              >
+                {pwErr}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -714,6 +979,108 @@ export default function SettingsPage() {
             <Button variant="outlined" size="sm" render={<Link href="/app/settings/tokens" />}>
               Manage tokens
             </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card variant="outlined" className={tabClass("account")}>
+        <CardHeader>
+          <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
+            Passkeys
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-[var(--ft-space-3)]">
+          <div className="flex items-center justify-between gap-[var(--ft-space-3)]">
+            <div>
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                Add a passkey
+              </p>
+              <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                Sign in with your fingerprint, face, or device PIN — no password.
+              </p>
+            </div>
+            <Button
+              variant="outlined"
+              size="sm"
+              onClick={handleAddPasskey}
+              disabled={passkeyBusy}
+              aria-busy={passkeyBusy}
+            >
+              {passkeyBusy ? "Waiting…" : "Add passkey"}
+            </Button>
+          </div>
+          {passkeyMsg && (
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-success-container)]">
+              {passkeyMsg}
+            </p>
+          )}
+          {passkeyErr && (
+            <p role="alert" className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]">
+              {passkeyErr}
+            </p>
+          )}
+
+          <div className="pt-[var(--ft-space-3)] border-t border-[var(--ft-color-outline-variant)] space-y-[var(--ft-space-3)]">
+            <div className="flex items-center justify-between gap-[var(--ft-space-3)]">
+              <div>
+                <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface)]">
+                  One-time sign-in link
+                </p>
+                <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                  Sign in on another device without a password or passkey.
+                </p>
+              </div>
+              <Button
+                variant="outlined"
+                size="sm"
+                onClick={handleGenerateLink}
+                disabled={linkBusy}
+                aria-busy={linkBusy}
+              >
+                {linkBusy ? "Generating…" : "Generate link"}
+              </Button>
+            </div>
+            {oneTimeLink && (
+              <div className="space-y-[var(--ft-space-1)]">
+                <label
+                  htmlFor="one-time-link"
+                  className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] tracking-[var(--ft-type-label-small-tracking)] font-medium text-[var(--ft-color-on-surface-variant)] uppercase"
+                >
+                  Sign-in link
+                </label>
+                <div className="flex items-center gap-[var(--ft-space-2)]">
+                  <input
+                    id="one-time-link"
+                    type="text"
+                    readOnly
+                    value={oneTimeLink}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="w-full min-w-0 rounded border border-[var(--ft-color-outline-variant)] bg-transparent px-3 py-2 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--ft-color-primary)]"
+                  />
+                  <Button
+                    variant="outlined"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => {
+                      navigator.clipboard
+                        .writeText(oneTimeLink)
+                        .then(() => setLinkCopied(true))
+                        .catch(() => setLinkErr("Copy failed — select the link and copy manually."));
+                    }}
+                  >
+                    {linkCopied ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+                <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+                  Single-use and short-lived — open it on the other device right away.
+                </p>
+              </div>
+            )}
+            {linkErr && (
+              <p role="alert" className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]">
+                {linkErr}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

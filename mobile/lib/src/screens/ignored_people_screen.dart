@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Ignored review screen — the mobile mirror of the web
@@ -158,7 +158,7 @@ class _IgnoredPeopleScreenState extends State<IgnoredPeopleScreen> {
 
   Widget _buildBody() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const ListSkeleton();
     }
     if (_error != null) {
       return ListErrorState(onRetry: _load);

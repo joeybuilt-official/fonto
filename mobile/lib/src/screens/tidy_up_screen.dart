@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // M15.3 — "Tidy Up" reason-bucket review, native parity with the web
@@ -276,9 +276,9 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
     }
     if (_error != null) return ListErrorState(onRetry: _load);
     if (_loading) {
-      // First load has no scaffolding yet — a full-screen spinner is fine.
+      // First load has no scaffolding yet — a full-screen skeleton is fine.
       if (_data == null) {
-        return const Center(child: CircularProgressIndicator());
+        return const ListSkeleton(count: 4);
       }
       // Axis switch / refresh with data already loaded: keep the segmented
       // control (the thing the user just touched) mounted and show an inline
@@ -749,7 +749,11 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
       if (!mounted) return;
       setState(() => action == "confirm" ? _fixed++ : _kept++);
       final inverse = action == "confirm" ? "reject" : "confirm";
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      // Captured now, not inside the callback: a SnackBar is owned by the
+      // ScaffoldMessenger above the route, so it can outlive this State and
+      // `ScaffoldMessenger.of(context)` would then be reading a dead context.
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(SnackBar(
         content: Text(action == "confirm" ? "Date applied" : "Kept saved date"),
         duration: const Duration(seconds: 8),
         action: SnackBarAction(
@@ -757,7 +761,15 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
           onPressed: () async {
             try {
               await widget.client.confirmReviewItem(s.assetId, inverse);
-            } catch (_) {}
+            } catch (e) {
+              // The rollback below used to run unconditionally, so a failed
+              // undo restored the card and decremented the tally exactly as if
+              // it had landed — the UI asserting a write that never happened.
+              messenger.showSnackBar(
+                SnackBar(content: Text("Couldn't undo: $e")),
+              );
+              return;
+            }
             if (mounted) {
               setState(() {
                 _itemHidden.remove(s.assetId);
@@ -767,8 +779,14 @@ class _TidyUpScreenState extends State<TidyUpScreen> {
           },
         ),
       ));
-    } catch (_) {
-      if (mounted) setState(() => _itemHidden.remove(s.assetId));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _itemHidden.remove(s.assetId));
+      // Matches _apply twenty lines up, which already reports this same
+      // failure class; the card silently sliding back explained nothing.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't apply: $e")),
+      );
     } finally {
       if (mounted) setState(() => _itemBusy.remove(s.assetId));
     }

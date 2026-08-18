@@ -1,7 +1,8 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Phase 0.2 — periodic reaper for assets stuck in processing_state='processing'.
+// Phase 0.2 — periodic reaper for assets stuck in a non-terminal
+// processing_state ('captured' / 'classified' / 'extracted').
 //
 // Why this exists: BullMQ's own `attempts: 5` policy retries jobs whose
 // handlers throw, but it cannot recover from a worker that crashed (SIGKILL,
@@ -12,7 +13,8 @@
 // belt-and-braces fix.
 //
 // Algorithm:
-//   1. Scan fonto.assets WHERE processing_state='processing'
+//   1. Scan fonto.assets WHERE processing_state IN
+//        ('captured','classified','extracted')
 //        AND updated_at < NOW() - INTERVAL '<threshold> minutes'.
 //   2. For each row:
 //        - if processing_attempts < 5 → re-enqueue on assetProcessingQueue
@@ -30,7 +32,7 @@
 // next tick. The terminal-failure branch sets processing_state='failed', which
 // also drops the row out of the scan predicate.
 
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { assetProcessingQueue, thumbnailQueue } from "@/lib/queue/queues";
@@ -53,10 +55,26 @@ export function getStuckThresholdMinutes(): number {
   return n;
 }
 
+/**
+ * Bound on the thumbnail-backfill sweep so one tick can't fan tens of
+ * thousands of GenerateThumbnails jobs onto the queue at once. Rows not picked
+ * up this tick stay eligible (they still match the predicate) and drain over
+ * subsequent sweeps.
+ */
+export function getThumbnailBackfillBatch(): number {
+  const raw = process.env.REAPER_THUMBNAIL_BACKFILL_BATCH;
+  if (!raw) return 200;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return 200;
+  return n;
+}
+
 export interface ReapResult {
   candidates: number;
   reenqueued: number;
   exhausted: number;
+  /** Ready rows missing a thumbnail that had GenerateThumbnails re-enqueued. */
+  thumbnailBackfilled: number;
 }
 
 /**
@@ -85,7 +103,16 @@ export async function reapStuckAssets(): Promise<ReapResult> {
     .from(schema.assets)
     .where(
       and(
-        eq(schema.assets.processingState, "processing"),
+        // The pipeline never writes a literal 'processing' state — rows move
+        // captured -> classified -> extracted -> ready, or -> failed. A row
+        // sitting in any non-terminal state past the threshold is stuck (the
+        // worker died mid-job, or a failure reset it to 'captured'). Terminal
+        // states 'ready'/'failed' are excluded, so reaped rows drop out.
+        inArray(schema.assets.processingState, [
+          "captured",
+          "classified",
+          "extracted",
+        ]),
         lt(schema.assets.updatedAt, cutoff)
       )
     );
@@ -93,7 +120,11 @@ export async function reapStuckAssets(): Promise<ReapResult> {
   log.info({ event: "reaper.scan", candidates: stuck.length }, "reaper scan");
 
   if (stuck.length === 0) {
-    return { candidates: 0, reenqueued: 0, exhausted: 0 };
+    // No stuck rows, but ready-but-thumbnailless rows can still exist (a
+    // thumbnail job that never landed on a row the pipeline already marked
+    // 'ready'). Run that independent sweep before returning.
+    const thumbnailBackfilled = await backfillReadyThumbnails();
+    return { candidates: 0, reenqueued: 0, exhausted: 0, thumbnailBackfilled };
   }
 
   // Resolve workspace -> user mapping in a single batch query rather than
@@ -213,5 +244,76 @@ export async function reapStuckAssets(): Promise<ReapResult> {
     }
   }
 
-  return { candidates: stuck.length, reenqueued, exhausted };
+  const thumbnailBackfilled = await backfillReadyThumbnails();
+
+  return { candidates: stuck.length, reenqueued, exhausted, thumbnailBackfilled };
+}
+
+/**
+ * Phase 1.1 follow-up — bounded sweep for rows the pipeline already finished
+ * (processing_state='ready') that never got a thumbnail. The existing stuck
+ * sweep above only re-fans thumbnails for rows still in a NON-terminal state;
+ * a row that reached 'ready' with thumbnail_key IS NULL (e.g. the thumbnail
+ * job was dropped, or GenerateThumbnails failed silently) would otherwise never
+ * self-heal. This re-enqueues GenerateThumbnails for image/video/pdf rows whose
+ * thumbnail is missing and whose row has been settled longer than the same
+ * stuck threshold. Bounded by getThumbnailBackfillBatch(); leftovers drain on
+ * later ticks. Independent of the stuck-asset logic above.
+ */
+async function backfillReadyThumbnails(): Promise<number> {
+  const thresholdMinutes = getStuckThresholdMinutes();
+  const log = logger.child({ component: "reaper", thresholdMinutes });
+  const cutoff = sql`now() - (${thresholdMinutes}::int * interval '1 minute')`;
+  const batch = getThumbnailBackfillBatch();
+
+  const rows = await db
+    .select({
+      id: schema.assets.id,
+      workspaceId: schema.assets.workspaceId,
+    })
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.processingState, "ready"),
+        isNull(schema.assets.thumbnailKey),
+        lt(schema.assets.updatedAt, cutoff),
+        or(
+          like(schema.assets.mimeType, "image/%"),
+          like(schema.assets.mimeType, "video/%"),
+          eq(schema.assets.mimeType, "application/pdf")
+        )!
+      )
+    )
+    .limit(batch);
+
+  log.info(
+    { event: "reaper.thumbnail_backfill_scan", candidates: rows.length },
+    "reaper thumbnail-backfill scan"
+  );
+
+  let backfilled = 0;
+  for (const row of rows) {
+    try {
+      await thumbnailQueue().add(JobNames.GenerateThumbnails, {
+        assetId: row.id,
+        workspaceId: row.workspaceId,
+      });
+      log.info(
+        { event: "reaper.thumbnail_backfill", assetId: row.id },
+        "ready asset missing thumbnail — re-enqueued GenerateThumbnails"
+      );
+      backfilled += 1;
+    } catch (err) {
+      log.warn(
+        {
+          event: "reaper.thumbnail_backfill_failed",
+          assetId: row.id,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "thumbnail backfill re-enqueue failed"
+      );
+    }
+  }
+
+  return backfilled;
 }

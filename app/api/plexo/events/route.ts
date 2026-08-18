@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Inbound event handler — Plexo pushes events to connected apps via this endpoint.
 // Stub handlers for cross-app event subscriptions.
 export const dynamic = "force-dynamic";

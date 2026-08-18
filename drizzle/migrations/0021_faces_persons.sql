@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 5.1 — Face detection + ArcFace embedding + DBSCAN clustering.
 --
 -- This migration adds two new tables to `fonto`:

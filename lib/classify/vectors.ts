@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Phase 4.6 — pre-computed text embeddings for the zero-shot taxonomy.
@@ -18,38 +18,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { allPrompts, TAXONOMY_PROMPT_COUNT } from "./taxonomy";
-
-// Phase 4.6 dynamic import shape. `embedText` returns the full
-// `EmbedResult` object — NOT a bare `number[]`. An earlier revision
-// stubbed it as `Promise<number[]>` which type-erased through the
-// dynamic import and silently caused every taxonomy "vector" cached
-// here to be the wrapping `{vector, modelId}` object instead of the
-// numeric array. That made `cosine()` over `entry.vec.length` (=
-// undefined → 0) return 0 for every score and the classifier fell
-// through to LLM on 100% of rows. Keep this shape tight so future
-// drift breaks the type-check rather than rotting silently.
-type EmbedText = (text: string) => Promise<{ vector: number[]; modelId: string }>;
-type PlexoVisionModule = {
-  embedText: EmbedText;
-  EMBEDDING_MODEL_ID: string;
-};
-
-async function loadPlexoVision(): Promise<PlexoVisionModule | null> {
-  try {
-    // Dynamic import so the worker boots even when 4.2 hasn't landed.
-    // The string-built specifier sidesteps TS's static resolution so the
-    // file type-checks pre-4.2; at runtime the import either resolves to
-    // the real module or throws and we return null.
-    const specifier = "@/lib/plexo-vision";
-    const mod = (await import(/* webpackIgnore: true */ specifier)) as Partial<PlexoVisionModule>;
-    if (typeof mod.embedText !== "function" || typeof mod.EMBEDDING_MODEL_ID !== "string") {
-      return null;
-    }
-    return { embedText: mod.embedText, EMBEDDING_MODEL_ID: mod.EMBEDDING_MODEL_ID };
-  } catch {
-    return null;
-  }
-}
+import { intelligence, CapabilityUnavailableError } from "@/lib/intelligence/client";
 
 export interface TaxonomyVector {
   /** `top:<key>` or `sub:<topKey>:<subKey>` */
@@ -110,46 +79,56 @@ export async function loadTaxonomyVectors(): Promise<TaxonomyCache | null> {
   if (inflight) return inflight;
 
   inflight = (async (): Promise<TaxonomyCache | null> => {
-    const vision = await loadPlexoVision();
     const cacheFile = defaultCachePath();
+    const prompts = allPrompts();
 
-    if (!vision) {
-      // 4.2 hasn't landed (or vision service is misconfigured). Try the
-      // disk cache anyway — better stale than nothing.
-      const probe = await fs.readFile(cacheFile, "utf8").catch(() => null);
-      if (probe) {
-        try {
-          const parsed = JSON.parse(probe) as TaxonomyCache;
-          console.warn(
-            "[fonto-classify] vision service unavailable; using stale on-disk cache (modelId=%s)",
-            parsed.modelId,
-          );
-          memoryCache = parsed;
-          return parsed;
-        } catch {
-          /* fall through */
+    // Probe with the first prompt: one call yields both the live modelId
+    // (which gates the disk cache) and the first vector. Capability
+    // unavailable → the same stale-disk-or-LLM path the pre-Jex code took
+    // when the vision module was missing/misconfigured.
+    let first: { vector: number[]; modelId: string };
+    try {
+      const r = await intelligence.embedText(prompts[0].prompt);
+      first = { vector: [...r.vector], modelId: r.modelId };
+    } catch (err) {
+      if (err instanceof CapabilityUnavailableError) {
+        // Try the disk cache anyway — better stale than nothing.
+        const probe = await fs.readFile(cacheFile, "utf8").catch(() => null);
+        if (probe) {
+          try {
+            const parsed = JSON.parse(probe) as TaxonomyCache;
+            console.warn(
+              "[fonto-classify] vision service unavailable; using stale on-disk cache (modelId=%s)",
+              parsed.modelId,
+            );
+            memoryCache = parsed;
+            return parsed;
+          } catch {
+            /* fall through */
+          }
         }
+        console.warn(
+          "[fonto-classify] vision service unavailable and no cache present — falling back to LLM classifier",
+        );
+        return null;
       }
-      console.warn(
-        "[fonto-classify] vision service unavailable and no cache present — falling back to LLM classifier",
-      );
+      console.warn("[fonto-classify] embedText failed for", prompts[0].id, err);
       return null;
     }
 
-    const disk = await readDiskCache(cacheFile, vision.EMBEDDING_MODEL_ID);
+    const disk = await readDiskCache(cacheFile, first.modelId);
     if (disk) {
       memoryCache = disk;
       return disk;
     }
 
-    // Cold start: embed every prompt. Destructure the numeric `vector`
-    // out of the `EmbedResult` — see the EmbedText type comment for why.
-    const prompts = allPrompts();
-    const vectors: TaxonomyVector[] = [];
-    for (const p of prompts) {
+    // Cold start: embed the remaining prompts (the probe already covered
+    // prompts[0]).
+    const vectors: TaxonomyVector[] = [{ id: prompts[0].id, vec: first.vector }];
+    for (const p of prompts.slice(1)) {
       try {
-        const { vector } = await vision.embedText(p.prompt);
-        vectors.push({ id: p.id, vec: vector });
+        const { vector } = await intelligence.embedText(p.prompt);
+        vectors.push({ id: p.id, vec: [...vector] });
       } catch (err) {
         console.warn("[fonto-classify] embedText failed for", p.id, err);
         return null;
@@ -157,7 +136,7 @@ export async function loadTaxonomyVectors(): Promise<TaxonomyCache | null> {
     }
 
     const fresh: TaxonomyCache = {
-      modelId: vision.EMBEDDING_MODEL_ID,
+      modelId: first.modelId,
       embeddedAt: new Date().toISOString(),
       vectors,
     };

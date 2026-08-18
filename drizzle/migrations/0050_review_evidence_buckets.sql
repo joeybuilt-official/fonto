@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Review-at-scale (M15.1 / ADR 0012) — reason-bucketing for the date review queue.
 --
 -- The reconciliation review queue can run to tens of thousands of items; users

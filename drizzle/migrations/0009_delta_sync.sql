@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 2.3: cursor-based delta sync.
 --
 -- Adds a monotonic `seq bigint` column to every syncable entity

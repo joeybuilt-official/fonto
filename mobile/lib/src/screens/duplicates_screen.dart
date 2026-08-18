@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // ADR 0010 — user-facing duplicates review (native parity with the web
@@ -146,7 +146,7 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
   }
 
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const ListSkeleton(count: 6);
     if (_error != null) return ListErrorState(onRetry: _load);
     if (_groups.isEmpty) {
       return const ListEmptyState(

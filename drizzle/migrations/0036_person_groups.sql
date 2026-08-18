@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Migration 0036 — person groups + members
 --
 -- Adds a many-to-many relationship between persons and group labels

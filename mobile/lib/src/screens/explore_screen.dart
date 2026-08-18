@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Explore tab. Three lazy sub-tabs — People / Places / Things —
@@ -16,7 +16,6 @@ import "package:latlong2/latlong.dart";
 
 import "../api/fonto_client.dart";
 import "../api/models.dart";
-import "../theme/tokens.dart";
 import "../widgets/list_states.dart";
 import "asset_detail_screen.dart";
 import "ignored_people_screen.dart";
@@ -65,13 +64,12 @@ Widget _stateScaffold({
   required VoidCallback onRetry,
   required Widget Function() builder,
   IconData emptyIcon = Icons.explore_outlined,
-  // When set, a grid surface renders a skeleton grid instead of a lone
-  // centered spinner while loading — reads smoother into the real grid.
-  Widget Function()? loadingBuilder,
+  Widget skeleton = const GridSkeleton(),
 }) {
   if (loading) {
-    return loadingBuilder?.call() ??
-        const Center(child: CircularProgressIndicator());
+    // Placeholders shaped like the content that's coming, not a spinner in
+    // blank space — parity with the web GridSkeleton/ListSkeleton pass.
+    return skeleton;
   }
   if (error != null) {
     return ListErrorState(onRetry: onRetry);
@@ -80,29 +78,6 @@ Widget _stateScaffold({
     return ListEmptyState(icon: emptyIcon, message: emptyText);
   }
   return builder();
-}
-
-/// Skeleton grid of neutral surface tiles — the loading placeholder for grid
-/// surfaces. Same surface scale + rounding as loaded tiles so the swap into
-/// real thumbnails is a fade, not a jump.
-Widget _skeletonGrid(BuildContext context, {int crossAxisCount = 3}) {
-  final color = Theme.of(context).colorScheme.surfaceContainerHighest;
-  return GridView.builder(
-    padding: const EdgeInsets.all(FontoSpace.s2),
-    physics: const NeverScrollableScrollPhysics(),
-    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: crossAxisCount,
-      crossAxisSpacing: FontoSpace.s2,
-      mainAxisSpacing: FontoSpace.s2,
-    ),
-    itemCount: crossAxisCount * 4,
-    itemBuilder: (_, __) => DecoratedBox(
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(FontoShape.small),
-      ),
-    ),
-  );
 }
 
 // --------------------------------------------------------------------------
@@ -260,7 +235,6 @@ class _PeopleTabState extends State<_PeopleTab> {
                 ? "No people in this group yet."
                 : "No people yet. Faces get grouped as your library grows.",
             onRetry: _load,
-            loadingBuilder: () => _skeletonGrid(context),
             builder: () => RefreshIndicator(
               onRefresh: _load,
               child: GridView.builder(
@@ -543,6 +517,9 @@ class _PlacesTabState extends State<_PlacesTab> {
       isEmpty: _places.isEmpty,
       emptyText: "No geo-tagged photos yet.",
       onRetry: _load,
+      // Places is the one Explore surface that resolves into a map + a list of
+      // rows, not a photo grid, so it opts out of the grid default.
+      skeleton: const ListSkeleton(count: 6),
       builder: () {
         final geo = _places.where((p) => p.hasCoords).toList();
         return Column(
@@ -731,7 +708,6 @@ class _PlaceAssetsScreenState extends State<_PlaceAssetsScreen> {
         isEmpty: _assets.isEmpty,
         emptyText: "No photos for this place.",
         onRetry: _load,
-        loadingBuilder: () => _skeletonGrid(context),
         builder: () => RefreshIndicator(
           onRefresh: _load,
           child: GridView.builder(
@@ -876,7 +852,6 @@ class _ThingsTabState extends State<_ThingsTab> {
       emptyText:
           "No labels yet. Objects and scenes show up here as your photos are processed.",
       onRetry: _load,
-      loadingBuilder: () => _skeletonGrid(context),
       builder: () => RefreshIndicator(
         onRefresh: _load,
         child: GridView.builder(
@@ -1046,7 +1021,6 @@ class _TagAssetsScreenState extends State<_TagAssetsScreen> {
         isEmpty: _assets.isEmpty,
         emptyText: "No assets for this label.",
         onRetry: _load,
-        loadingBuilder: () => _skeletonGrid(context),
         builder: () => RefreshIndicator(
           onRefresh: _load,
           child: GridView.builder(
@@ -1349,13 +1323,13 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
     });
     try {
       await widget.client.setPersonGroups(widget.person.id, next);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       // Revert the optimistic chip flip AND surface the failure — previously
       // the chip just snapped back with no explanation of why.
       setState(() => _personGroupIds = prev);
       messenger.showSnackBar(
-        const SnackBar(content: Text("Couldn't update groups")),
+        SnackBar(content: Text("Couldn't update groups: $e")),
       );
     } finally {
       if (mounted) setState(() => _savingGroups = false);
@@ -1490,7 +1464,6 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
         isEmpty: _assets.isEmpty,
         emptyText: "No photos found for this person.",
         onRetry: _load,
-        loadingBuilder: () => _skeletonGrid(context),
         builder: () => RefreshIndicator(
           onRefresh: _load,
           child: GridView.builder(

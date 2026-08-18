@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { RotateCcw, Trash2, X } from "lucide-react";
 import { ConfirmButton } from "@/components/confirm-button";
 import { type Asset } from "../_components/photo-card";
@@ -74,45 +74,85 @@ function TrashContent() {
     defaults: { sort: "oldest", viewMode: "list" },
   });
 
-  const [items, setItems] = useState<TrashedAsset[]>([]);
+  const [rawItems, setRawItems] = useState<TrashedAsset[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const buildQuery = useCallback(() => {
+    const sp = new URLSearchParams();
+    sp.set("lifecycle", "trashed");
+    sp.set("limit", "200");
+    if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
+    if (toolbar.filters.favorite) sp.set("favorite", "1");
+    return sp;
+  }, [toolbar.filters.mime, toolbar.filters.favorite]);
+
+  // First keyset page (created-DESC). The 200-row cap is a page, not the whole
+  // trash — load-more-on-scroll walks the rest via the cursor.
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
-      const sp = new URLSearchParams();
-      sp.set("lifecycle", "trashed");
-      if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
-      if (toolbar.filters.favorite) sp.set("favorite", "1");
+      setLoading(true);
       try {
-        const r = await fetch(`/api/v1/assets?${sp.toString()}`);
-        const d = (await r.json()) as { assets?: TrashedAsset[] };
-        let list = (d.assets ?? []) as TrashedAsset[];
-        if (toolbar.filters.sort === "oldest") {
-          list = [...list].sort(
-            (a, b) =>
-              new Date(a.deletedAt ?? a.createdAt).getTime() -
-              new Date(b.deletedAt ?? b.createdAt).getTime()
-          );
-        } else if (toolbar.filters.sort === "name") {
-          list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
-        } else {
-          list = [...list].sort(
-            (a, b) =>
-              new Date(b.deletedAt ?? b.createdAt).getTime() -
-              new Date(a.deletedAt ?? a.createdAt).getTime()
-          );
-        }
-        if (toolbar.filters.q) {
-          const needle = toolbar.filters.q.toLowerCase();
-          list = list.filter((a) => a.filename.toLowerCase().includes(needle));
-        }
-        setItems(list);
+        const r = await fetch(`/api/v1/assets?${buildQuery().toString()}`);
+        const d = (await r.json()) as { assets?: TrashedAsset[]; cursor?: string | null };
+        if (cancelled) return;
+        setRawItems(d.assets ?? []);
+        setCursor(d.cursor ?? null);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, [toolbar.filters.mime, toolbar.filters.favorite, toolbar.filters.sort, toolbar.filters.q]);
+    return () => {
+      cancelled = true;
+    };
+  }, [buildQuery]);
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const sp = buildQuery();
+      sp.set("cursor", cursor);
+      const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+      if (r.ok) {
+        const d = (await r.json()) as { assets?: TrashedAsset[]; cursor?: string | null };
+        setRawItems((prev) => [...prev, ...(d.assets ?? [])]);
+        setCursor(d.cursor ?? null);
+      }
+    } catch {
+      /* transient — sentinel retries on next scroll */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [cursor, loadingMore, buildQuery]);
+
+  // Client-side sort + text search over the loaded window.
+  const items = useMemo(() => {
+    let list = rawItems;
+    if (toolbar.filters.sort === "oldest") {
+      list = [...list].sort(
+        (a, b) =>
+          new Date(a.deletedAt ?? a.createdAt).getTime() -
+          new Date(b.deletedAt ?? b.createdAt).getTime()
+      );
+    } else if (toolbar.filters.sort === "name") {
+      list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
+    } else {
+      list = [...list].sort(
+        (a, b) =>
+          new Date(b.deletedAt ?? b.createdAt).getTime() -
+          new Date(a.deletedAt ?? a.createdAt).getTime()
+      );
+    }
+    if (toolbar.filters.q) {
+      const needle = toolbar.filters.q.toLowerCase();
+      list = list.filter((a) => a.filename.toLowerCase().includes(needle));
+    }
+    return list;
+  }, [rawItems, toolbar.filters.sort, toolbar.filters.q]);
 
   async function restoreOne(assetId: string): Promise<boolean> {
     try {
@@ -122,7 +162,7 @@ function TrashContent() {
         body: JSON.stringify({ restore: true }),
       });
       if (!r.ok) return false;
-      setItems((prev) => prev.filter((a) => a.id !== assetId));
+      setRawItems((prev) => prev.filter((a) => a.id !== assetId));
       return true;
     } catch {
       return false;
@@ -133,7 +173,7 @@ function TrashContent() {
     try {
       const r = await fetch(`/api/v1/assets/${assetId}`, { method: "DELETE" });
       if (!r.ok) return false;
-      setItems((prev) => prev.filter((a) => a.id !== assetId));
+      setRawItems((prev) => prev.filter((a) => a.id !== assetId));
       return true;
     } catch {
       return false;
@@ -195,6 +235,9 @@ function TrashContent() {
             assets={items}
             toolbar={toolbar}
             onAssetClick={(_id) => undefined}
+            onLoadMore={loadMore}
+            hasMore={cursor !== null}
+            loadingMore={loadingMore}
           />
         </div>
       )}

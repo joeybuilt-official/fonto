@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 3.3 — workspace invitations.
 --
 -- Email-keyed invitations that produce `workspace_memberships` rows on

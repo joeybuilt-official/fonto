@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
@@ -8,13 +8,42 @@ import { eq, and, desc, gte, isNull, isNotNull, lt, or, sql, SQL, like, ilike, i
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { httpRequestDurationSeconds } from "@/lib/metrics";
-import { createAssetRow, serializeAsset } from "@/lib/assets/createAssetRow";
+import { createAssetRow, serializeAsset, assetGridColumns } from "@/lib/assets/createAssetRow";
 import { isKind } from "@/lib/classify/kind";
 import { detectMime } from "@/lib/mime";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 import { parseScopeParam, scopeCond, isShootStage } from "@/lib/scope";
 import { exifFilterConditions } from "@/lib/assets/exifFilters";
+
+// Opaque keyset cursor: base64url(JSON({ s, b, i })) where
+//   s = sort axis ("created" | "captured")
+//   b = last row's sort-key ISO timestamp (createdAt, or COALESCE(capturedAt,
+//       createdAt) on the captured axis)
+//   i = last row's id (tie-break)
+// Self-contained: decoding a cursor restores the sort axis too, so a caller
+// can page purely by echoing `cursor` without re-sending `?sort=`. The
+// discrete ?createdBefore/?capturedBefore/?idBefore params remain accepted
+// for backward compatibility.
+type CursorPayload = { s: "created" | "captured"; b: string; i: string };
+function encodeCursor(p: CursorPayload): string {
+  return Buffer.from(JSON.stringify(p), "utf8").toString("base64url");
+}
+function decodeCursor(raw: string): CursorPayload | null {
+  try {
+    const p = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    if (
+      (p?.s === "created" || p?.s === "captured") &&
+      typeof p?.b === "string" &&
+      typeof p?.i === "string"
+    ) {
+      return p as CursorPayload;
+    }
+  } catch {
+    // fall through — malformed cursor is treated as "first page"
+  }
+  return null;
+}
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -161,10 +190,21 @@ export async function GET(request: NextRequest) {
   const q = qRaw == null ? "" : qRaw.trim();
   if (q !== "") {
     const pat = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    // OCR text is the heavy arm: a leading-wildcard ILIKE ('%q%') over each
+    // row's (potentially multi-KB) ocr_text forces a sequential scan of the
+    // whole workspace partition on every keystroke. Route that arm through the
+    // SAME tsvector path /api/v1/search uses — `to_tsvector('english',
+    // coalesce(ocr_text,'')) @@ plainto_tsquery(...)` — which is backed by the
+    // existing GIN index `assets_ocr_text_fts_idx` (migration 0002). This flips
+    // OCR matching from substring to token/stem semantics, matching the app's
+    // canonical search behaviour. filename + source stay substring-ILIKE (short
+    // columns; no tsvector/trgm index exists for them — see risks: a pg_trgm
+    // GIN index on lower(filename)/lower(source) is the real fix to make the
+    // whole OR fully index-driven).
     where.push(
       or(
         ilike(schema.assets.filename, pat),
-        ilike(schema.assets.ocrText, pat),
+        sql`to_tsvector('english', coalesce(${schema.assets.ocrText}, '')) @@ plainto_tsquery('english', ${q})`,
         ilike(schema.assets.source, pat)
       )!
     );
@@ -219,6 +259,14 @@ export async function GET(request: NextRequest) {
   if (placeParam != null && placeParam.trim() !== "") {
     where.push(eq(schema.assets.placeName, placeParam.trim()));
   }
+  // mime-prefix + classification chips. Pushed into SQL (mirrors the /buckets
+  // route) so keyset pagination is exact — a post-fetch JS filter dropped rows
+  // AFTER the page was cut, silently shrinking pages and desyncing the cursor.
+  //   ?mime=image/     → like(mime_type, 'image/%')  (starts-with)
+  //   ?subtype=<class> → classification = <class>
+  if (mimeFilter) where.push(like(schema.assets.mimeType, `${mimeFilter}%`));
+  if (subtypeFilter) where.push(eq(schema.assets.classification, subtypeFilter));
+
   // EXIF facet filters (camera/lens/iso/aperture/focal) — shared parser so the
   // library grid, smart collections and q-search stay in lockstep.
   where.push(...exifFilterConditions(searchParams));
@@ -247,17 +295,20 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // UX-3 — `?limit=N` row cap. The dashboard's "recent uploads" row used
-  // to pull the entire workspace then `.slice(0, 8)` client-side (audit
-  // bug §UX-4); now it can ask for exactly what it needs. Mime / subtype
-  // filtering is post-fetch so the cap is approximate when those are set,
-  // but for the "show 8 newest of everything" pattern it's exact.
+  // `?limit=N` row cap. ALWAYS bounded: an omitted/invalid limit defaults to
+  // DEFAULT_LIMIT (200) and any value is clamped to MAX_LIMIT (1000). Before
+  // this, an absent limit meant NO `.limit()` at all — GET /assets streamed
+  // the ENTIRE workspace (tens of thousands of rows) in one response. The
+  // query below always applies `.limit(limit)` now, and keyset pagination
+  // (cursor / *Before params) walks the rest of the library one page at a time.
+  const DEFAULT_LIMIT = 200;
+  const MAX_LIMIT = 1000;
   const limitRaw = searchParams.get("limit");
   const limitParsed = limitRaw == null ? NaN : Number.parseInt(limitRaw, 10);
   const limit =
-    Number.isInteger(limitParsed) && limitParsed > 0 && limitParsed <= 1000
-      ? limitParsed
-      : null;
+    Number.isInteger(limitParsed) && limitParsed > 0
+      ? Math.min(limitParsed, MAX_LIMIT)
+      : DEFAULT_LIMIT;
 
   // Phase 6.2 — keyset pagination for the mobile grid (and any other
   // client that wants stable "load more" semantics). Caller passes:
@@ -270,7 +321,16 @@ export async function GET(request: NextRequest) {
   // behaviour and the mobile grid). "captured" orders by when the photo was
   // actually taken (EXIF capture time, falling back to ingestion when absent)
   // — the Photos-style timeline. Backed by assets_workspace_captured_at_idx.
-  const sortAxis = searchParams.get("sort") === "captured" ? "captured" : "created";
+  // Opaque cursor (preferred) decodes to { s, b, i } and, when present,
+  // supplies the sort axis + keyset position. Absent → fall back to ?sort= and
+  // the discrete ?createdBefore/?capturedBefore/?idBefore params.
+  const cursorRaw = searchParams.get("cursor");
+  const decodedCursor = cursorRaw ? decodeCursor(cursorRaw) : null;
+  const sortAxis = decodedCursor
+    ? decodedCursor.s
+    : searchParams.get("sort") === "captured"
+      ? "captured"
+      : "created";
   const sortExpr =
     sortAxis === "captured"
       ? sql`COALESCE(${schema.assets.capturedAt}, ${schema.assets.createdAt})`
@@ -280,10 +340,10 @@ export async function GET(request: NextRequest) {
   //   created  → ?createdBefore=<iso>   captured → ?capturedBefore=<iso>
   // plus ?idBefore=<uuid> as the tie-break. Returns rows strictly older than
   // the cursor under the same ordering, so pages concatenate cleanly.
-  const idBeforeRaw = searchParams.get("idBefore");
-  const beforeRaw = searchParams.get(
-    sortAxis === "captured" ? "capturedBefore" : "createdBefore"
-  );
+  const idBeforeRaw = decodedCursor?.i ?? searchParams.get("idBefore");
+  const beforeRaw =
+    decodedCursor?.b ??
+    searchParams.get(sortAxis === "captured" ? "capturedBefore" : "createdBefore");
   // Keep the cursor as the original ISO string and cast to timestamptz in
   // SQL. postgres-js can't infer the bind type for a Date when the LHS is a
   // COALESCE expression (the `captured` sort path), so binding a string + an
@@ -308,61 +368,75 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // UX-3 / Phase 5.5 — surface the stack member count alongside each
-  // asset so PhotoCard can render a "Stack of N" badge without a per-tile
-  // round trip. Correlated subquery returns NULL for standalone assets
-  // (cheap: indexed by `assets_workspace_stack_idx`). The serialized
-  // shape carries it under `stackMemberCount`.
-  // NOTE: `${schema.assets.stackId}` renders as a BARE `"stack_id"` inside a
-  // raw sql fragment, so inside the aliased subquery (`assets a2`) it binds to
-  // a2 — making the correlation `a2.stack_id = a2.stack_id`, which counts EVERY
-  // stacked asset in the workspace instead of just this stack's members. The
-  // outer reference must be TABLE-QUALIFIED (`${schema.assets}.stack_id`) so it
-  // resolves to the outer row; the inner `a2` shadows the base name.
-  const stackMemberCountSql = sql<number | null>`(
-    CASE WHEN ${schema.assets.stackId} IS NULL THEN NULL
-    ELSE (SELECT COUNT(*)::int FROM ${schema.assets} a2
-          WHERE a2.stack_id = ${schema.assets}.stack_id)
-    END
-  )`.as("stack_member_count");
-
-  const query = db
+  // UX-3 / Phase 5.5 — surface the stack member count alongside each asset so
+  // PhotoCard can render a "Stack of N" badge without a per-tile round trip.
+  // Replaces the former per-row correlated `SELECT COUNT(*)` (which ran once
+  // per stacked row of the page) with ONE pre-aggregated pass over the
+  // workspace's stacks, LEFT JOINed by stack_id. Results are identical: the
+  // aggregate counts the FULL stack (independent of this page's filters /
+  // stack-collapse / keyset window), exactly as the old subquery did by
+  // ignoring the outer WHERE. Standalone assets (stack_id NULL) never match the
+  // join → stackMemberCount is NULL, same as the old CASE-WHEN-NULL. stack_ids
+  // are workspace-scoped, so filtering the aggregate by workspace changes no
+  // count while keeping it index-driven (assets_workspace_stack_idx).
+  const stackCounts = db
     .select({
-      asset: schema.assets,
-      stackMemberCount: stackMemberCountSql,
+      stackId: schema.assets.stackId,
+      memberCount: sql<number>`COUNT(*)::int`.as("member_count"),
     })
     .from(schema.assets)
+    .where(
+      and(
+        inArray(schema.assets.workspaceId, workspaceIds),
+        isNotNull(schema.assets.stackId)
+      )
+    )
+    .groupBy(schema.assets.stackId)
+    .as("stack_counts");
+
+  // LIST projection: every asset column except the heavy clip_vec / OCR /
+  // extracted-text payloads (see assetGridColumns). All mime/subtype/etc.
+  // filtering now lives in the SQL WHERE above, so the page returned is exact
+  // — no post-fetch trimming — and the keyset cursor stays consistent. The
+  // stackCounts LEFT JOIN is 1:1 (grouped by stack_id) so it never fans out the
+  // page or perturbs the ORDER BY / keyset.
+  const rows = await db
+    .select({
+      asset: assetGridColumns(),
+      stackMemberCount: stackCounts.memberCount,
+    })
+    .from(schema.assets)
+    .leftJoin(stackCounts, eq(stackCounts.stackId, schema.assets.stackId))
     .where(and(...where))
-    .orderBy(sql`${sortExpr} DESC`, desc(schema.assets.id));
-  const rows = limit != null ? await query.limit(limit) : await query;
+    .orderBy(sql`${sortExpr} DESC`, desc(schema.assets.id))
+    .limit(limit);
 
-  const filtered = rows
-    .filter((r) => !mimeFilter || r.asset.mimeType.startsWith(mimeFilter))
-    .filter((r) => !subtypeFilter || r.asset.classification === subtypeFilter);
-
-  // Cursor for the *next* page: derived from the last *pre-filter* row
-  // (post-filter mime/subtype is approximate per the existing comment;
-  // using `filtered` here would skip server-side rows the next page
-  // still needs to walk past). Null when the page is empty or unbounded.
+  // Cursor for the next page: derived from the last row of a FULL page. A
+  // short page (rows.length < limit) means we've reached the end → null
+  // cursor, no more pages. Emitted both as the opaque `cursor` string
+  // (preferred) and the legacy `nextCursor` object (web library page + mobile
+  // client parse this shape).
   const lastRow = rows[rows.length - 1];
   let nextCursor: Record<string, string> | null = null;
-  if (limit != null && lastRow && rows.length === limit) {
-    if (sortAxis === "captured") {
-      const c = lastRow.asset.capturedAt ?? lastRow.asset.createdAt;
-      nextCursor = { capturedBefore: c.toISOString(), idBefore: lastRow.asset.id };
-    } else {
-      nextCursor = {
-        createdBefore: lastRow.asset.createdAt.toISOString(),
-        idBefore: lastRow.asset.id,
-      };
-    }
+  let cursor: string | null = null;
+  if (lastRow && rows.length === limit) {
+    const b =
+      sortAxis === "captured"
+        ? (lastRow.asset.capturedAt ?? lastRow.asset.createdAt).toISOString()
+        : lastRow.asset.createdAt.toISOString();
+    cursor = encodeCursor({ s: sortAxis, b, i: lastRow.asset.id });
+    nextCursor =
+      sortAxis === "captured"
+        ? { capturedBefore: b, idBefore: lastRow.asset.id }
+        : { createdBefore: b, idBefore: lastRow.asset.id };
   }
 
   return NextResponse.json({
-    assets: filtered.map((r) => ({
+    assets: rows.map((r) => ({
       ...serializeAsset(r.asset),
       stackMemberCount: r.stackMemberCount,
     })),
+    cursor,
     nextCursor,
   });
 }

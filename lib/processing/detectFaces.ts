@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Phase 5.1 — face detection + ArcFace embedding for a single asset.
@@ -20,15 +20,19 @@
 // 1 - dot(a, b).
 //
 // Graceful degradation:
-//   - PLEXO_VISION_URL unset                  -> warn + no-op (no throw).
+//   - face-detection capability unconfigured  -> warn + no-op (no throw).
 //   - sidecar HTTP/network error              -> warn + no-op (no throw).
 //   - non-image MIME type                     -> warn + no-op.
 //   - asset row missing / R2 object missing   -> warn + no-op.
 //
-// Re-running for the same asset is NOT idempotent — every call inserts new
-// rows. Callers (the worker handler) are expected to only enqueue once per
-// asset; manual re-runs from a CLI should DELETE existing rows for the
-// asset first if a re-detection is desired.
+// Re-running for the same asset is idempotent: if any face_instances row
+// already exists for the asset, the run logs and skips before any download
+// or sidecar work. This protects against reprocess re-enqueues and BullMQ
+// retries (attempts: 3) double-inserting.
+// ponytail: deliberate ceiling — a detector-model upgrade cannot refresh old
+// assets through reprocess; that path is a future force flag or a one-off
+// maintenance script (see scripts/immich-recover-byteless.ts for the delete
+// pattern).
 
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
@@ -39,8 +43,7 @@ import {
 } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { generateFaceCropsForAsset } from "@/lib/processing/faceCrop";
-
-const DEFAULT_TIMEOUT_MS = 30_000;
+import { intelligence } from "@/lib/intelligence/client";
 
 interface DetectFaceResponseBody {
   faces?: Array<{
@@ -54,16 +57,6 @@ interface ParsedFace {
   bbox: { x: number; y: number; w: number; h: number };
   confidence: number;
   embedding: number[];
-}
-
-function serviceKey(): string {
-  return process.env.PLEXO_SERVICE_KEY ?? "";
-}
-
-function visionBase(): string | null {
-  const raw = process.env.PLEXO_VISION_URL;
-  if (!raw) return null;
-  return raw.replace(/\/+$/, "");
 }
 
 async function downloadFromR2(bucket: string, key: string): Promise<Buffer> {
@@ -125,9 +118,8 @@ function parseFaces(raw: DetectFaceResponseBody): ParsedFace[] {
 export async function detectFacesForAsset(assetId: string): Promise<void> {
   const log = logger.child({ component: "face-detect", assetId });
 
-  const base = visionBase();
-  if (!base) {
-    log.warn("PLEXO_VISION_URL unset — skipping face detection");
+  if (!intelligence.available("detectFaces")) {
+    log.warn("face detection capability unconfigured — skipping face detection");
     return;
   }
 
@@ -174,6 +166,16 @@ export async function detectFacesForAsset(assetId: string): Promise<void> {
     return;
   }
 
+  const [existing] = await db
+    .select({ id: schema.faceInstances.id })
+    .from(schema.faceInstances)
+    .where(eq(schema.faceInstances.assetId, assetId))
+    .limit(1);
+  if (existing) {
+    log.info("faces already detected — skipping");
+    return;
+  }
+
   // Prefer the 1080px preview — already decoded, web-safe. Fall back to the
   // original if the thumbnail pipeline hasn't generated it yet.
   const key =
@@ -203,38 +205,27 @@ export async function detectFacesForAsset(assetId: string): Promise<void> {
     }
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
-
   let body: DetectFaceResponseBody;
   try {
-    const res = await fetch(`${base}/v1/faces/detect`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json",
-        ...(serviceKey() ? { authorization: `Bearer ${serviceKey()}` } : {}),
-      },
-      body: JSON.stringify({ image: buffer.toString("base64") }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      log.warn(
-        { status: res.status, detail: detail.slice(0, 200) },
-        "plexo-vision /v1/faces/detect returned non-2xx — skipping"
-      );
-      return;
-    }
-    body = (await res.json()) as DetectFaceResponseBody;
+    const r = await intelligence.detectFaces(buffer.toString("base64"));
+    body = {
+      faces: r.faces.map((f) => ({
+        bbox: {
+          x: f.boundingBox.x,
+          y: f.boundingBox.y,
+          w: f.boundingBox.width,
+          h: f.boundingBox.height,
+        },
+        confidence: f.confidence,
+        embedding: f.embedding,
+      })),
+    };
   } catch (err) {
     log.warn(
       { err: err instanceof Error ? err.message : String(err) },
-      "plexo-vision /v1/faces/detect call failed — skipping"
+      "face detection unavailable — skipping"
     );
     return;
-  } finally {
-    clearTimeout(timer);
   }
 
   const faces = parseFaces(body);

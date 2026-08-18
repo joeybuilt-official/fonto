@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Asset processing pipeline (classification, description, OCR, tags,
@@ -14,29 +14,26 @@ import { db, schema } from "@/lib/db";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import {
-  plexoAvailable,
   plexoEnsureWorkspace,
   plexoClassifyAsset,
-  classifyTextCodeByMime,
   plexoDescribeImage,
   plexoDescribeDocument,
   plexoPublishEvent,
   plexoStoreMemory,
   plexoSuggestTags,
-  plexoVisionOcr,
+  type PlexoVisionOcrResult,
 } from "@/lib/plexo";
-import {
-  analyzeImageUnified,
-  unifiedAnalyzeEnabled,
-  type AnalyzeImageResult,
-} from "@/lib/plexo-analyze";
 import { assetProcessingDurationSeconds } from "@/lib/metrics";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { classifyAsset } from "@/lib/classify/classify";
-import { deriveKind } from "@/lib/classify/kind";
+import { deriveKind, classifyTextCodeByMime } from "@/lib/classify/kind";
 import { tryEnqueueFaceDetect } from "@/lib/assets/createAssetRow";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
-import { labelImageUrl, visionConfigured } from "@/lib/plexo-vision";
+import {
+  intelligence,
+  CapabilityUnavailableError,
+  type AnalyzeImageResult,
+} from "@/lib/intelligence/client";
 import { isJunkLabel } from "@/lib/processing/labelStoplist";
 import { cacheInvalidate } from "@/lib/cache/valkey";
 
@@ -141,7 +138,7 @@ async function processAssetInner(
   // (flag off OR non-image OR the unified call failed mid-flight).
   let unifiedResultTopLevel: AnalyzeImageResult | null = null;
 
-  if (plexoAvailable()) {
+  if (intelligence.available("complete")) {
     plexoWorkspaceId = await plexoEnsureWorkspace(userId, email);
 
     if (mimeType.startsWith("image/")) {
@@ -193,7 +190,7 @@ async function processAssetInner(
       // while making the result visible to the suggested-tags block at
       // the bottom of the pipeline.
       let unifiedResult: AnalyzeImageResult | null = null;
-      const useUnified = unifiedAnalyzeEnabled();
+      const useUnified = intelligence.analyzeConfigured();
 
       // CLIP-only classify pass (no LLM fallback when unified is on — the
       // unified call itself IS our LLM fallback, with vision context).
@@ -242,7 +239,7 @@ async function processAssetInner(
               assetStorageKey(imgRow.workspaceId, assetId, filename);
             const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
             const unifiedStartedAt = Date.now();
-            unifiedResult = await analyzeImageUnified({
+            unifiedResult = await intelligence.analyzeImage({
               workspaceId: plexoWorkspaceId,
               imageUrl: signedUrl,
               mimeType,
@@ -272,8 +269,12 @@ async function processAssetInner(
           // still drive it to 'ready' so the "Processing N items" counter drains.
           // Pure network failures (fetch failed / ECONNREFUSED / socket closed) do
           // NOT start with "plexo analyze-image HTTP" — rethrow those so BullMQ
-          // retries when Plexo is back up.
-          if (msg.startsWith("plexo analyze-image HTTP")) {
+          // retries when Plexo is back up. CapabilityUnavailableError means the
+          // unified path isn't enabled/configured — same as the flag-off case,
+          // so fall to the legacy chain rather than retrying.
+          if (err instanceof CapabilityUnavailableError) {
+            console.warn("[fonto] analyze-image capability unavailable — skipping unified for", assetId, msg);
+          } else if (msg.startsWith("plexo analyze-image HTTP")) {
             console.warn("[fonto] analyze-image response error — skipping unified for", assetId, msg);
           } else {
             console.warn("[fonto] unified analyze-image transport failed for", assetId, err);
@@ -327,7 +328,7 @@ async function processAssetInner(
         // Legacy chain — flag off OR unified call failed mid-flight.
         // Image-grounded signals BEFORE description so the caption can quote
         // real OCR text and reference the objects/scene the vision model saw.
-        if (visionConfigured()) {
+        if (intelligence.available("label")) {
           try {
             const [imgRow] = await db
               .select({
@@ -349,7 +350,12 @@ async function processAssetInner(
                 imgRow.previewKey ??
                 assetStorageKey(imgRow.workspaceId, assetId, filename);
               const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
-              preDescribeLabels = (await labelImageUrl(signedUrl)).labels;
+              const labelBase64 = Buffer.from(
+                await (await fetch(signedUrl)).arrayBuffer()
+              ).toString("base64");
+              preDescribeLabels = (await intelligence.label(labelBase64)).labels.map(
+                (l) => l.label
+              );
             }
           } catch (err) {
             console.warn("[fonto] pre-describe labels failed for", assetId, err);
@@ -877,9 +883,21 @@ export async function runOcrForAsset(
   // and is the only place that records the OCR sub-step (used both inline
   // by the worker and by the nightly backfill cron).
   const endTimer = assetProcessingDurationSeconds.startTimer();
-  let result: Awaited<ReturnType<typeof plexoVisionOcr>>;
+  let result: PlexoVisionOcrResult | null;
   try {
-    result = await plexoVisionOcr(plexoWorkspaceId, signedUrl);
+    const r = await intelligence.ocr({ imageUrl: signedUrl });
+    result = {
+      text: r.spans.map((s) => s.text).join("\n"),
+      model: r.modelId,
+      // Per-line boxes only exist on the PaddleOCR path; LLM/VLM spans
+      // carry no bbox and are excluded (preserves the pre-Jex ocr_boxes
+      // shape: [{text, bbox:[x,y,w,h], confidence}]).
+      lines: r.spans.flatMap((s) =>
+        s.bbox
+          ? [{ text: s.text, bbox: [...s.bbox] as [number, number, number, number], confidence: s.confidence }]
+          : []
+      ),
+    };
   } catch (err) {
     endTimer({ outcome: "failure" });
     console.warn("[fonto] OCR failed for asset", assetId, err);

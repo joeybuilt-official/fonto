@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Full-screen asset viewer. PageView between assets (left/right swipe),
@@ -6,7 +6,7 @@
 // favorite toggle, trash, native share. Preview-variant URLs fetched
 // lazily as the user scrolls — keeps the initial route push cheap.
 
-import "dart:async" show Timer, TimeoutException;
+import "dart:async" show Timer;
 import "dart:math" show min, max;
 import "dart:ui" as ui show instantiateImageCodec;
 
@@ -57,6 +57,12 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
   // Ids whose preview-url fetch failed; lets us render a retry affordance
   // instead of an infinite spinner.
   final Set<String> _previewFailed = {};
+  // Bottom thumbnail-nav strip — separate "thumb"-variant cache (smaller,
+  // cheaper than `_previews`) + its own scroll controller so the strip can
+  // keep the current asset centered as the user swipes the main PageView.
+  final Map<String, String> _stripThumbs = {};
+  final ScrollController _stripScroll = ScrollController();
+  static const double _stripItemExtent = 64;
   // Phase 6.12 — extracted text layer for text/code assets, fetched lazily
   // from the per-asset detail endpoint as the user scrolls onto one.
   final Map<String, String> _texts = {};
@@ -87,12 +93,15 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     _ensurePreviews(_index);
     _ensureText(_index);
     _ensureFaces(_index);
+    _ensureThumbs(_index);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _centerStrip(_index));
   }
 
   @override
   void dispose() {
     _slideTimer?.cancel();
     _page.dispose();
+    _stripScroll.dispose();
     super.dispose();
   }
 
@@ -182,6 +191,42 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     _ensurePreviews(i);
     _ensureText(i);
     _ensureFaces(i);
+    _ensureThumbs(i);
+    _centerStrip(i);
+  }
+
+  /// Prefetch "thumb"-variant URLs for a window of ±5 around `i` for the
+  /// bottom thumbnail-nav strip. Separate cache from `_previews`, which
+  /// holds larger preview-quality images for the main viewer.
+  Future<void> _ensureThumbs(int i) async {
+    final lo = (i - 5).clamp(0, _assets.length - 1);
+    final hi = (i + 5).clamp(0, _assets.length - 1);
+    final ids = <String>[];
+    for (var k = lo; k <= hi; k++) {
+      final id = _assets[k].id;
+      if (!_stripThumbs.containsKey(id)) ids.add(id);
+    }
+    if (ids.isEmpty) return;
+    try {
+      final batch = await widget.client.assetUrls(ids, variant: "thumb");
+      if (!mounted) return;
+      setState(() => _stripThumbs.addAll(batch));
+    } catch (_) {
+      // Best-effort — missing thumbs just render as placeholder tiles.
+    }
+  }
+
+  /// Scrolls the thumbnail strip so item `i` stays centered in its viewport.
+  void _centerStrip(int i) {
+    if (!_stripScroll.hasClients) return;
+    final target = (i * _stripItemExtent) -
+        (_stripScroll.position.viewportDimension / 2) +
+        (_stripItemExtent / 2);
+    _stripScroll.animateTo(
+      target.clamp(0, _stripScroll.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    );
   }
 
   /// Lazy-load the face list for asset `i`. Skips non-images and ids
@@ -243,17 +288,29 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       if (!mounted) return;
       setState(() => _assets[idx] = updated);
     } on ApiException catch (e) {
-      // A 4xx is a real server rejection — revert + surface it. Anything else
-      // is treated as a transient/offline failure and queued for replay.
-      if (e.status >= 400 && e.status < 500) {
+      // Queuing every 5xx told the user "Saved offline — will sync" for writes
+      // the server had considered and refused, and the replay then failed the
+      // same way. Only the gateway statuses — the shape a restarting container
+      // or a tunnel blip takes — are worth retrying, and they say so honestly.
+      if (e.status == 502 || e.status == 503 || e.status == 504) {
+        await _queueFavoriteOffline(
+          id,
+          next,
+          queuedMessage: "Server busy — saved and will retry.",
+        );
+      } else {
+        // A real rejection — revert the optimistic flip before surfacing it so
+        // the star doesn't stay lit for a write the server refused.
         if (mounted) setState(() => _assets[idx] = prev);
         _snack("Favorite failed: ${e.status} ${e.message}");
-      } else {
-        await _queueFavoriteOffline(id, next);
       }
     } catch (_) {
       // Network down — optimistic (already flipped) + queued replay on reconnect.
-      await _queueFavoriteOffline(id, next);
+      await _queueFavoriteOffline(
+        id,
+        next,
+        queuedMessage: "Saved offline — will sync when you're back online.",
+      );
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -261,7 +318,11 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
 
   /// Offline favorite: optimistically flip the local row and persist the edit
   /// to the pending-mutations queue, which replays on reconnect.
-  Future<void> _queueFavoriteOffline(String id, bool next) async {
+  Future<void> _queueFavoriteOffline(
+    String id,
+    bool next, {
+    required String queuedMessage,
+  }) async {
     var queued = false;
     try {
       final q = await PendingMutations.open();
@@ -279,7 +340,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       if (i >= 0) {
         setState(() => _assets[i] = _assets[i].copyWith(isFavorite: next));
       }
-      _snack("Saved offline — will sync when you're back online.");
+      _snack(queuedMessage);
     } else {
       _snack("Couldn't save — try again.");
     }
@@ -295,9 +356,8 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     } on ApiException catch (e) {
       _snack("Re-scan failed: ${e.status} ${e.message}");
     } catch (_) {
-      // SocketException / timeout while offline isn't an ApiException — it would
-      // otherwise escape as an unhandled async error with no user feedback.
-      _snack("Re-scan failed — check your connection.");
+      // Transport failures used to escape uncaught, leaving no feedback.
+      _snack("Re-scan failed — check your connection and try again.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -322,14 +382,20 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
         ],
       ),
     );
-    if (ok == true) {
+    // The dialog is an async gap; _trash immediately setStates and pops.
+    if (ok == true && mounted) {
       HapticFeedback.mediumImpact();
       await _trash();
     }
   }
 
   Future<void> _trash() async {
-    if (_acting) return;
+    if (_acting) {
+      // Confirming "Move to trash" and having nothing at all happen is worse
+      // than saying why.
+      _snack("Another action is still running — try again in a moment.");
+      return;
+    }
     setState(() => _acting = true);
     try {
       await widget.client.trashAsset(_cur.id);
@@ -340,10 +406,9 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       });
     } on ApiException catch (e) {
       _snack("Trash failed: ${e.status} ${e.message}");
-      if (mounted) setState(() => _acting = false);
     } catch (_) {
       // Network down / timeout — surface it and clear the wedged button.
-      if (mounted) _snack("Trash failed — check your connection and try again.");
+      _snack("Trash failed — check your connection and try again.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -364,7 +429,12 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       if (!mounted) return;
       // Refresh preview URL + drop the cached image so the next paint pulls
       // the rotated pixels. The face overlay is invalidated for the same id.
-      await CachedNetworkImage.evictFromCache(_previews[id] ?? "");
+      final cached = _previews[id];
+      if (cached != null && cached.isNotEmpty) {
+        await CachedNetworkImage.evictFromCache(cached);
+      }
+      // evictFromCache is an await — re-check before touching State again.
+      if (!mounted) return;
       setState(() {
         _previews.remove(id);
         _previewFailed.remove(id);
@@ -386,9 +456,8 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     } on ApiException catch (e) {
       _snack("Rotate failed: ${e.status} ${e.message}");
     } catch (_) {
-      // Offline / timeout isn't an ApiException — surface it instead of letting
-      // it escape silently once the button re-enables.
-      _snack("Rotate failed — check your connection.");
+      // Transport failures used to escape uncaught, leaving no feedback.
+      _snack("Rotate failed — check your connection and try again.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -403,6 +472,9 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     final a = _cur;
     if (!a.mimeType.startsWith("image/")) return;
     setState(() => _acting = true);
+    // Set only once the server has committed the crop; everything after the
+    // try/finally keys off it.
+    String? newId;
     try {
       // 1. Resolve original signed URL + pull bytes into memory. The cropper
       //    needs the source bytes; we don't persist them to disk.
@@ -461,11 +533,25 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
       if (nw <= 0 || nh <= 0) {
         throw ApiException(400, "Crop rect is empty");
       }
-      final newId = await widget.client.transformCrop(a.id, nx, ny, nw, nh);
+      newId = await widget.client.transformCrop(a.id, nx, ny, nw, nh);
+    } on ApiException catch (e) {
+      _snack("Crop failed: ${e.status} ${e.message}");
+    } catch (e) {
+      _snack("Crop failed: $e");
+    } finally {
+      // On the success path `_acting` deliberately stays set: the fetch +
+      // navigation below are still part of this action, and dropping the
+      // re-entrancy guard there would let a second action start mid-flight.
+      if (newId == null && mounted) setState(() => _acting = false);
+    }
 
-      if (!mounted) return;
-      _snack("Saved cropped copy");
-      // 4. Mirror the open-by-id navigation used elsewhere in the app.
+    // Steps 4+ live outside the try on purpose. The crop is already committed
+    // server-side by this point, so a failure to fetch the new row or to
+    // navigate must not report "Crop failed" for an operation that succeeded.
+    if (newId == null) return;
+    if (!mounted) return;
+    _snack("Saved cropped copy");
+    try {
       final fresh = await widget.client.getAsset(newId);
       if (!mounted) return;
       await Navigator.of(context).pushReplacement(
@@ -478,13 +564,11 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
           ),
         ),
       );
-    } on TimeoutException catch (_) {
-      _snack("Download timed out — check your connection and try again.");
-    } on ApiException catch (e) {
-      _snack("Crop failed: ${e.status} ${e.message}");
-    } catch (e) {
-      _snack("Crop failed: $e");
+    } catch (_) {
+      _snack("Cropped copy saved, but couldn't open it. Pull to refresh.");
     } finally {
+      // Release the guard the first block deliberately left set. Without this
+      // a failed getAsset would wedge every action on the screen.
       if (mounted) setState(() => _acting = false);
     }
   }
@@ -546,15 +630,19 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
     } on ApiException catch (e) {
       _snack("Share failed: ${e.status} ${e.message}");
     } catch (_) {
-      // Offline / timeout isn't an ApiException — surface it instead of a
-      // silent no-op after the button re-enables.
-      _snack("Share failed — check your connection.");
+      // Without this, an offline share threw past the ApiException clause and
+      // the user saw nothing at all — the button simply un-greyed.
+      _snack("Couldn't create a share link — check your connection.");
     } finally {
       if (mounted) setState(() => _acting = false);
     }
   }
 
+  /// Every action in this screen reports through here, and every one of them
+  /// calls it after an await — so the mounted guard belongs here rather than
+  /// at each of the eight call sites.
   void _snack(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
@@ -878,6 +966,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
           // intercepted. The overlay only paints when labels are on AND
           // we have faces + dims for the current image.
           if (_showFaceLabels) _buildFaceOverlay(),
+          if (_assets.length > 1) _buildThumbnailStrip(),
         ],
       ),
     );
@@ -885,6 +974,73 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
 
   static bool _isViewableImage(Asset a) =>
       a.mimeType.startsWith("image/");
+
+  /// Bottom thumbnail-nav strip: a scrollable row of neighboring-asset
+  /// thumbs, current one highlighted, tap-to-jump via `_page`. Kept centered
+  /// on `_index` by `_centerStrip`, called from `_onPageChanged`.
+  Widget _buildThumbnailStrip() {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          height: 72,
+          color: Colors.black54,
+          child: ListView.builder(
+            controller: _stripScroll,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _assets.length,
+            itemExtent: _stripItemExtent,
+            itemBuilder: (context, i) {
+              final a = _assets[i];
+              final url = _stripThumbs[a.id];
+              final current = i == _index;
+              return Center(
+                child: GestureDetector(
+                  onTap: () => _page.animateToPage(
+                    i,
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOut,
+                  ),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    width: current ? 56 : 44,
+                    height: current ? 56 : 44,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: current
+                          ? Border.all(color: Colors.white, width: 2)
+                          : null,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: url == null
+                          ? Container(color: Colors.white24)
+                          : CachedNetworkImage(
+                              imageUrl: url,
+                              fit: BoxFit.cover,
+                              memCacheWidth: 150,
+                              placeholder: (_, __) =>
+                                  Container(color: Colors.white24),
+                              errorWidget: (_, __, ___) => const Icon(
+                                Icons.broken_image,
+                                color: Colors.white54,
+                                size: 20,
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildFaceOverlay() {
     final a = _cur;

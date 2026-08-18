@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Phase 1 (faces/UX) — dedicated face-crop derivative key on face_instances.
 --
 -- A stored square face crop (sharp `.extract` of the bbox + ~30% padding,

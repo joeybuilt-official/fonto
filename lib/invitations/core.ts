@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Workspace invitations — token generation, lookup, lifecycle.
@@ -82,6 +82,30 @@ export async function findInvitationByToken(token: string) {
     .where(eq(schema.workspaceInvitations.token, token))
     .limit(1);
   return rows[0] ?? null;
+}
+
+/**
+ * Does a pending (not accepted, not revoked, not expired) invitation exist
+ * for this email address? Powers the invite-only signup gate (lib/auth.ts):
+ * a self-signup is only allowed when the address was actually invited. Email
+ * is normalized to match the canonical lowercased form stored on insert.
+ */
+export async function hasPendingInvitationForEmail(
+  email: string
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: schema.workspaceInvitations.id })
+    .from(schema.workspaceInvitations)
+    .where(
+      and(
+        eq(schema.workspaceInvitations.email, normalizeEmail(email)),
+        isNull(schema.workspaceInvitations.acceptedAt),
+        isNull(schema.workspaceInvitations.revokedAt),
+        gt(schema.workspaceInvitations.expiresAt, new Date())
+      )
+    )
+    .limit(1);
+  return rows.length > 0;
 }
 
 export async function findInvitationById(id: string) {

@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: AGPL-3.0-only
+-- SPDX-License-Identifier: MIT
 -- Migration 0039: partial unique index on assets(workspace_id, sha256) WHERE active.
 --
 -- Split out of 0038 (ADR 0001 C4). Closes the dedup race: two concurrent import
