@@ -57,8 +57,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ manifest, enqueued: false });
   }
 
-  const batchSize = typeof body.batchSize === "number" ? body.batchSize : undefined;
-  const maxRows = typeof body.maxRows === "number" ? body.maxRows : undefined;
+  // Clamp to sane ranges: a bare `typeof === "number"` lets -1, 0, Infinity, and
+  // NaN through into the worker payload. Non-finite/absent → undefined (use the
+  // job's own defaults).
+  const clampInt = (v: unknown, min: number, max: number): number | undefined =>
+    typeof v === "number" && Number.isFinite(v)
+      ? Math.max(min, Math.min(max, Math.trunc(v)))
+      : undefined;
+  const batchSize = clampInt(body.batchSize, 1, 5000);
+  const maxRows = clampInt(body.maxRows, 1, 10_000_000);
 
   // Key the job to this exact auto-commit set so a double-submit is a no-op
   // while one is in flight.

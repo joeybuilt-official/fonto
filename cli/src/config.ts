@@ -18,6 +18,10 @@ interface Schema {
 
 const store = new Conf<Schema>({
   projectName: "fonto-cli",
+  // The config file holds the PAT (a bearer token). Restrict it to the
+  // owner so other local users can't read the credential (conf defaults
+  // to 0o666, i.e. world/group-readable after umask).
+  configFileMode: 0o600,
   defaults: {
     baseUrl: "https://myfonto.com",
     pat: "",
@@ -30,14 +34,29 @@ export interface CliConfig {
 }
 
 export function getConfig(): CliConfig {
+  // Strip any trailing slash from the env override so we don't build
+  // `…//api/v1` double-slash paths later.
+  const envBase = process.env.FONTO_BASE_URL?.replace(/\/+$/, "");
   return {
-    baseUrl: process.env.FONTO_BASE_URL ?? store.get("baseUrl"),
+    baseUrl: envBase ?? store.get("baseUrl"),
     pat: process.env.FONTO_PAT ?? store.get("pat"),
   };
 }
 
 export function setBaseUrl(url: string): void {
-  store.set("baseUrl", url.replace(/\/+$/, ""));
+  const trimmed = url.trim();
+  // Prepend a scheme when the user gives a bare host (e.g. `myfonto.com`)
+  // so every later `fetch()` gets a parseable absolute URL.
+  const withScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(withScheme);
+  } catch {
+    throw new Error(`Invalid base URL: ${url}`);
+  }
+  store.set("baseUrl", parsed.href.replace(/\/+$/, ""));
 }
 
 export function setPat(pat: string): void {

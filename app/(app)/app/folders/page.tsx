@@ -39,6 +39,18 @@ import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
 import { FolderTree } from "../_components/folder-tree";
 import { ListErrorState } from "../_components/list-states";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  TextField,
+  TextFieldInput,
+  TextFieldLabel,
+} from "@/components/ui";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
 import { cn } from "@/lib/utils";
 
@@ -235,7 +247,12 @@ function FoldersContent() {
     assets: Asset[];
   }>({ loadedPrefix: null, listing: null, assets: [] });
   const [loadError, setLoadError] = useState(false);
-  const loading = state.loadedPrefix !== prefix && !loadError;
+  // In-flight flag independent of `prefix`. A toolbar filter/sort change
+  // refetches without changing `prefix`, so `loadedPrefix === prefix` stays
+  // true and wouldn't otherwise surface a spinner — the stale listing would
+  // render until the refetch resolved. `fetching` covers that gap.
+  const [fetching, setFetching] = useState(false);
+  const loading = fetching || (state.loadedPrefix !== prefix && !loadError);
   const listing = state.loadedPrefix === prefix ? state.listing : null;
   const assets = state.loadedPrefix === prefix ? state.assets : [];
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -245,12 +262,20 @@ function FoldersContent() {
   const [busyFolders, setBusyFolders] = useState<Set<string>>(new Set());
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // UX-2 — org ops now run through an in-app modal (FolderOpDialog) instead
+  // of native prompt/confirm/alert. `opDialog` holds the pending action; a
+  // null value means no dialog is open.
+  const [opDialog, setOpDialog] = useState<{
+    action: "rename" | "move" | "delete";
+    folder: FolderEntry;
+  } | null>(null);
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
     let cancelled = false;
     setLoadError(false);
+    setFetching(true);
 
     const folderUrl = prefix
       ? `/api/v1/folders?prefix=${encodeURIComponent(prefix)}`
@@ -302,6 +327,7 @@ function FoldersContent() {
           listing: folderData,
           assets: list,
         });
+        setFetching(false);
       })
       .catch(() => {
         if (cancelled) return;
@@ -311,6 +337,7 @@ function FoldersContent() {
           listing: { prefix, folders: [], assetsAtThisLevel: 0 },
           assets: [],
         });
+        setFetching(false);
       });
 
     return () => {
@@ -332,44 +359,16 @@ function FoldersContent() {
   // child folder either disappears (delete), renames in place, or moves
   // out of view. The current URL prefix stays the same — the parent
   // folder didn't move.
-  const runOp = useCallback(
+  // POST the org op and return an error string on failure (or null on
+  // success). The dialog surfaces the message inline; no native alert().
+  const performFolderOp = useCallback(
     async (
-      action: "rename" | "move" | "delete",
-      folder: FolderEntry
-    ) => {
-      let payload: Record<string, unknown> | null = null;
-      if (action === "rename") {
-        const next = window.prompt(
-          `Rename "${folder.name}" to:`,
-          folder.name
-        );
-        if (!next || next === folder.name) return;
-        payload = { op: "rename", path: folder.path, newName: next };
-      } else if (action === "move") {
-        const next = window.prompt(
-          `Move "${folder.path}" under (parent path, blank for root):`,
-          parentOf(folder.path)
-        );
-        if (next === null) return;
-        payload = { op: "move", path: folder.path, newParent: next };
-      } else {
-        const ok = window.confirm(
-          `Delete "${folder.name}" — move every asset under it to Trash?\n\n` +
-            "Choose Cancel to keep the assets but drop the folder tag."
-        );
-        const actionMode = ok ? "trash" : "orphan";
-        const confirmAgain = window.confirm(
-          actionMode === "trash"
-            ? `Trash everything in "${folder.name}"?`
-            : `Move every asset out of "${folder.name}" to the root?`
-        );
-        if (!confirmAgain) return;
-        payload = { op: "delete", path: folder.path, action: actionMode };
-      }
-
+      payload: Record<string, unknown>,
+      folderPath: string
+    ): Promise<string | null> => {
       setBusyFolders((prev) => {
         const next = new Set(prev);
-        next.add(folder.path);
+        next.add(folderPath);
         return next;
       });
       try {
@@ -380,14 +379,16 @@ function FoldersContent() {
         });
         if (!r.ok) {
           const body = (await r.json().catch(() => ({}))) as { error?: string };
-          window.alert(`Folder op failed: ${body.error ?? r.status}`);
-          return;
+          return `Folder op failed: ${body.error ?? r.status}`;
         }
         reload();
+        return null;
+      } catch {
+        return "Network error — check your connection and retry.";
       } finally {
         setBusyFolders((prev) => {
           const next = new Set(prev);
-          next.delete(folder.path);
+          next.delete(folderPath);
           return next;
         });
       }
@@ -479,7 +480,9 @@ function FoldersContent() {
                       folder={f}
                       busy={busyFolders.has(f.path)}
                       dropTarget={dropTarget === f.path}
-                      onAction={runOp}
+                      onAction={(action, folder) =>
+                        setOpDialog({ action, folder })
+                      }
                       onAssetDrop={handleAssetDrop}
                       onDragOverChange={setDropTarget}
                     />
@@ -535,8 +538,222 @@ function FoldersContent() {
           }
         />
       )}
+      {opDialog && (
+        <FolderOpDialog
+          op={opDialog}
+          onClose={() => setOpDialog(null)}
+          onSubmit={performFolderOp}
+        />
+      )}
       </div>
     </div>
+  );
+}
+
+// UX-2 — in-app modal for rename / move / delete, replacing the chained
+// native prompt/confirm/alert. Rename is validated (trimmed, non-empty, no
+// "/"), and delete offers three explicit, unambiguous choices so Cancel
+// always aborts (the old flow's Cancel silently selected the "orphan" path).
+function FolderOpDialog({
+  op,
+  onClose,
+  onSubmit,
+}: {
+  op: { action: "rename" | "move" | "delete"; folder: FolderEntry };
+  onClose: () => void;
+  onSubmit: (
+    payload: Record<string, unknown>,
+    folderPath: string
+  ) => Promise<string | null>;
+}) {
+  const { action, folder } = op;
+  const [name, setName] = useState(action === "rename" ? folder.name : "");
+  const [parent, setParent] = useState(
+    action === "move" ? parentOf(folder.path) : ""
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmedName = name.trim();
+  const renameValid =
+    trimmedName.length > 0 &&
+    !trimmedName.includes("/") &&
+    trimmedName !== folder.name;
+
+  async function submit(payload: Record<string, unknown>) {
+    setSubmitting(true);
+    setError(null);
+    const err = await onSubmit(payload, folder.path);
+    setSubmitting(false);
+    if (err) setError(err);
+    else onClose();
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => {
+        if (!o && !submitting) onClose();
+      }}
+    >
+      <DialogContent className="max-w-md">
+        {action === "rename" && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Rename folder</DialogTitle>
+              <DialogDescription>
+                Rename “{folder.name}”. Names can’t be empty or contain “/”.
+              </DialogDescription>
+            </DialogHeader>
+            <TextField variant="outlined">
+              <TextFieldLabel>New name</TextFieldLabel>
+              <TextFieldInput
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={folder.name}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && renameValid && !submitting) {
+                    void submit({
+                      op: "rename",
+                      path: folder.path,
+                      newName: trimmedName,
+                    });
+                  }
+                }}
+              />
+            </TextField>
+            {error && (
+              <p className="text-[length:var(--ft-type-body-small-size)] text-[var(--ft-color-error)]">
+                {error}
+              </p>
+            )}
+            <DialogFooter>
+              <Button
+                variant="text"
+                size="sm"
+                onClick={onClose}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="filled"
+                size="sm"
+                disabled={!renameValid || submitting}
+                onClick={() =>
+                  submit({
+                    op: "rename",
+                    path: folder.path,
+                    newName: trimmedName,
+                  })
+                }
+              >
+                {submitting ? "Renaming…" : "Rename"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+
+        {action === "move" && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Move folder</DialogTitle>
+              <DialogDescription>
+                Move “{folder.path}” under a new parent path. Leave blank to
+                move it to the root.
+              </DialogDescription>
+            </DialogHeader>
+            <TextField variant="outlined">
+              <TextFieldLabel>Parent path</TextFieldLabel>
+              <TextFieldInput
+                value={parent}
+                onChange={(e) => setParent(e.target.value)}
+                placeholder="/ (root)"
+                autoFocus
+              />
+            </TextField>
+            {error && (
+              <p className="text-[length:var(--ft-type-body-small-size)] text-[var(--ft-color-error)]">
+                {error}
+              </p>
+            )}
+            <DialogFooter>
+              <Button
+                variant="text"
+                size="sm"
+                onClick={onClose}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="filled"
+                size="sm"
+                disabled={submitting}
+                onClick={() =>
+                  submit({
+                    op: "move",
+                    path: folder.path,
+                    newParent: parent.trim(),
+                  })
+                }
+              >
+                {submitting ? "Moving…" : "Move"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+
+        {action === "delete" && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Delete “{folder.name}”?</DialogTitle>
+              <DialogDescription>
+                Choose what happens to the assets inside this folder. This can’t
+                be undone from here.
+              </DialogDescription>
+            </DialogHeader>
+            {error && (
+              <p className="text-[length:var(--ft-type-body-small-size)] text-[var(--ft-color-error)]">
+                {error}
+              </p>
+            )}
+            <DialogFooter className="flex-col items-stretch gap-[var(--ft-space-2)] sm:flex-row sm:justify-end">
+              <Button
+                variant="text"
+                size="sm"
+                onClick={onClose}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="outlined"
+                size="sm"
+                disabled={submitting}
+                onClick={() =>
+                  submit({ op: "delete", path: folder.path, action: "orphan" })
+                }
+              >
+                Keep assets, remove folder
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={submitting}
+                onClick={() =>
+                  submit({ op: "delete", path: folder.path, action: "trash" })
+                }
+              >
+                <Trash2 className="size-3.5" />
+                {submitting ? "Trashing…" : "Trash assets"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

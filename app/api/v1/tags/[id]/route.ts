@@ -16,6 +16,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { nextSeq } from "@/lib/db/seq";
 import { cacheInvalidate } from "@/lib/cache/valkey";
 import { childPath, pathDepth, TAG_DEPTH_LIMIT } from "@/lib/tags/tree";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 
 export async function PATCH(
   request: NextRequest,
@@ -39,11 +40,13 @@ export async function PATCH(
     .limit(1);
   if (!tag) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  const body = (await request.json()) as {
+  const parsed = await parseJson<{
     name?: string;
     color?: string;
     parentId?: string | null;
-  };
+  }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
 
   const fields: { name?: string; color?: string } = {};
   if (typeof body.name === "string" && body.name.trim()) fields.name = body.name.trim().toLowerCase();

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/lib/auth/client";
 import Link from "next/link";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
+import { ConfirmButton } from "@/components/confirm-button";
 import { cn } from "@/lib/utils";
 import {
   Button,
@@ -62,6 +63,7 @@ export default function SettingsPage() {
   const { data: session } = useSession();
   const user = session?.user;
   const [storage, setStorage] = useState<StorageInfo | null>(null);
+  const [storageError, setStorageError] = useState(false);
   const [rescanScope, setRescanScope] = useState<"all" | "images" | "failed">("all");
   const [rescanBusy, setRescanBusy] = useState(false);
   const [rescanMsg, setRescanMsg] = useState<string | null>(null);
@@ -70,6 +72,7 @@ export default function SettingsPage() {
   const [policyMsg, setPolicyMsg] = useState<string | null>(null);
   const [googleStatus, setGoogleStatus] = useState<IntegrationStatus | null>(null);
   const [googleBusy, setGoogleBusy] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
   // ADR 0008 Phase 5 — saved default-scope preference for browsable surfaces.
   // Only takes effect when no `?scope=` is in the URL (the chip strip wins).
   const [scopeDefault, setScopeDefaultState] = useState<ScopeDefault>("PERSONAL");
@@ -94,12 +97,27 @@ export default function SettingsPage() {
       .catch(() => null);
   }, []);
 
-  useEffect(() => {
-    fetch("/api/v1/workspace")
-      .then((r) => r.json())
-      .then((d) => setStorage(d.storage ?? null))
-      .catch(() => null);
+  const loadStorage = useCallback(async () => {
+    setStorageError(false);
+    try {
+      const res = await fetch("/api/v1/workspace");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = (await res.json()) as { storage?: StorageInfo | null };
+      // A workspace response without a `storage` key is a failure, not
+      // "loading" — surface it so the card doesn't hang forever.
+      if (!d.storage) {
+        setStorageError(true);
+        return;
+      }
+      setStorage(d.storage);
+    } catch {
+      setStorageError(true);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadStorage();
+  }, [loadStorage]);
 
   const refreshGoogleStatus = useCallback(() => {
     fetch("/api/v1/integrations")
@@ -119,13 +137,19 @@ export default function SettingsPage() {
   async function handleGoogleDisconnect() {
     if (googleBusy) return;
     setGoogleBusy(true);
+    setGoogleError(null);
     try {
-      await fetch("/api/v1/integrations/google/revoke", { method: "POST" });
+      const res = await fetch("/api/v1/integrations/google/revoke", {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      refreshGoogleStatus();
     } catch {
-      // Ignore — re-fetch reflects the real state below.
+      // Keep the "Connected" chip and tell the user it failed — don't
+      // silently refetch as if the disconnect worked.
+      setGoogleError("Couldn't disconnect Google. Please try again.");
     } finally {
       setGoogleBusy(false);
-      refreshGoogleStatus();
     }
   }
 
@@ -242,7 +266,16 @@ export default function SettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {storage ? (
+          {storageError ? (
+            <div className="space-y-[var(--ft-space-2)]">
+              <p className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
+                Couldn&apos;t load storage info.
+              </p>
+              <Button variant="outlined" size="sm" onClick={() => void loadStorage()}>
+                Retry
+              </Button>
+            </div>
+          ) : storage ? (
             <div className="space-y-[var(--ft-space-3)]">
               <div className="flex items-center justify-between">
                 <span className="text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-surface-variant)]">
@@ -271,14 +304,27 @@ export default function SettingsPage() {
                   {/* Progress bar — no MD3 ProgressIndicator primitive in the
                       barrel yet; tokenised colours but keeps existing div
                       shape until a primitive lands (flagged in report). */}
-                  <div className="h-2 w-full rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-high)] overflow-hidden">
+                  <div
+                    className="h-2 w-full rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-high)] overflow-hidden"
+                    role="progressbar"
+                    aria-label="Storage used"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(
+                      Math.min(100, (storage.usageBytes / storage.quotaBytes) * 100)
+                    )}
+                  >
                     <div
                       className={cn(
                         "h-full rounded-[var(--ft-shape-full)] transition-all",
                         storage.usageBytes / storage.quotaBytes >= 0.9
                           ? "bg-[var(--ft-color-error)]"
                           : storage.usageBytes / storage.quotaBytes >= 0.75
-                          ? "bg-yellow-500"
+                          ? // No --ft-color-warning token in globals.css yet
+                            // (outside this file's edit scope); reference the
+                            // token with an amber fallback so it themes once
+                            // the token lands. See deferred note.
+                            "bg-[var(--ft-color-warning,#F59E0B)]"
                           : "bg-[var(--ft-color-primary)]"
                       )}
                       style={{ width: `${Math.min(100, (storage.usageBytes / storage.quotaBytes) * 100).toFixed(1)}%` }}
@@ -334,7 +380,23 @@ export default function SettingsPage() {
                           {storage.mirror.mirrored} / {storage.mirror.eligible} originals
                         </span>
                       </div>
-                      <div className="h-2 w-full rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-high)] overflow-hidden">
+                      <div
+                        className="h-2 w-full rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-high)] overflow-hidden"
+                        role="progressbar"
+                        aria-label="Mirror coverage"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={
+                          storage.mirror.eligible > 0
+                            ? Math.round(
+                                Math.min(
+                                  100,
+                                  (storage.mirror.mirrored / storage.mirror.eligible) * 100
+                                )
+                              )
+                            : 0
+                        }
+                      >
                         <div
                           className="h-full rounded-[var(--ft-shape-full)] bg-[var(--ft-color-primary)] transition-all"
                           style={{
@@ -417,14 +479,15 @@ export default function SettingsPage() {
                   >
                     Connected
                   </Chip>
-                  <Button
-                    variant="outlined"
-                    size="sm"
-                    onClick={handleGoogleDisconnect}
+                  <ConfirmButton
+                    onConfirm={handleGoogleDisconnect}
+                    destructive={false}
                     disabled={googleBusy}
+                    confirmLabel="Confirm disconnect"
+                    className="h-7 border border-[var(--ft-color-outline)] px-2.5 text-[0.8rem] font-medium text-[var(--ft-color-on-surface)]"
                   >
                     {googleBusy ? "Disconnecting…" : "Disconnect"}
-                  </Button>
+                  </ConfirmButton>
                 </>
               ) : (
                 <Button
@@ -437,6 +500,12 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+
+          {googleError && (
+            <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]">
+              {googleError}
+            </p>
+          )}
 
           {googleStatus === "active" && (
             <Link
@@ -505,14 +574,34 @@ export default function SettingsPage() {
                   <SelectItem value="failed">Failed / unprocessed</SelectItem>
                 </SelectContent>
               </Select>
-              <Button
-                variant="outlined"
-                size="sm"
-                onClick={handleRescanAll}
-                disabled={rescanBusy}
-              >
-                {rescanBusy ? "Queuing…" : "Re-scan"}
-              </Button>
+              {rescanScope === "all" ? (
+                // 'all' queues every asset through the vision engine — gate it
+                // behind a confirm that shows how many jobs will be created.
+                <ConfirmButton
+                  onConfirm={handleRescanAll}
+                  destructive={false}
+                  disabled={rescanBusy}
+                  confirmLabel={
+                    storage
+                      ? `Queue ${storage.assetCount} asset${
+                          storage.assetCount === 1 ? "" : "s"
+                        }?`
+                      : "Queue all assets?"
+                  }
+                  className="h-7 border border-[var(--ft-color-outline)] px-2.5 text-[0.8rem] font-medium text-[var(--ft-color-on-surface)]"
+                >
+                  {rescanBusy ? "Queuing…" : "Re-scan"}
+                </ConfirmButton>
+              ) : (
+                <Button
+                  variant="outlined"
+                  size="sm"
+                  onClick={handleRescanAll}
+                  disabled={rescanBusy}
+                >
+                  {rescanBusy ? "Queuing…" : "Re-scan"}
+                </Button>
+              )}
             </div>
           </div>
           {rescanMsg && (
@@ -662,7 +751,10 @@ export default function SettingsPage() {
             <Button
               variant="outlined"
               size="sm"
-              render={<a href="/api/v1/assets/export/zip?scope=workspace" />}
+              render={
+                // eslint-disable-next-line @next/next/no-html-link-for-pages -- API download route, not a page; next/link would break the file download
+                <a href="/api/v1/assets/export/zip?scope=workspace" />
+              }
             >
               Export .zip
             </Button>

@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Bell,
   Camera,
@@ -13,6 +13,7 @@ import {
   FolderOpen,
   Home,
   Library,
+  Loader2,
   LogOut,
   Search,
   Settings,
@@ -20,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { useReviewQueueCount } from "@/components/review-queue-count";
 import { signOut } from "@/lib/auth/client";
 import type { User } from "@/lib/auth/types";
 import type { RecentAlbum } from "@/lib/sidebar/recent-albums";
@@ -68,7 +70,7 @@ const navItems = [
 
 // MD3 label-large typography for primary nav rows.
 const navItemBase =
-  "flex items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium tracking-[var(--ft-type-label-large-tracking)] transition-colors outline-none";
+  "flex items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] px-[var(--ft-space-3)] py-[var(--ft-space-2)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium tracking-[var(--ft-type-label-large-tracking)] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--ft-color-primary)]/40";
 
 // Inactive: on-surface-variant on transparent + 8 % hover overlay.
 // Active: secondary-container pill + on-secondary-container content.
@@ -90,25 +92,25 @@ export function AppSidebar({
   const router = useRouter();
 
   // Intelligence Core (Phase 6) — owner-only "Review" entry. The count endpoint
-  // 403s for non-owners, so a null result hides the link entirely. Cheap (no
-  // SSIM); the badge headline is the actionable date-decision queue.
-  const [reviewCount, setReviewCount] = useState<number | null>(null);
-  useEffect(() => {
-    let alive = true;
-    fetch("/api/admin/review-queue/count", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (alive && d?.ok) setReviewCount(typeof d.total === "number" ? d.total : 0);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
+  // 403s for non-owners, so a null result hides the link entirely. Sourced from
+  // the shared provider (single deduped fetch) instead of fetching here.
+  const { count: reviewCount } = useReviewQueueCount();
 
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState(false);
   async function handleSignOut() {
-    await signOut();
-    router.push("/login");
+    if (signingOut) return; // guard against a double-tap firing signOut twice
+    setSigningOut(true);
+    setSignOutError(false);
+    try {
+      await signOut();
+      router.push("/login");
+      // leave `signingOut` true through the navigation so the control stays
+      // disabled until the page unmounts
+    } catch {
+      setSignOutError(true);
+      setSigningOut(false);
+    }
   }
 
   return (
@@ -175,7 +177,7 @@ export function AppSidebar({
                           aria-current={albumActive ? "page" : undefined}
                           title={album.name}
                           className={cn(
-                            "block truncate rounded-[var(--ft-shape-full)] px-[var(--ft-space-2)] py-[var(--ft-space-1)] text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium tracking-[var(--ft-type-label-medium-tracking)] transition-colors outline-none",
+                            "block truncate rounded-[var(--ft-shape-full)] px-[var(--ft-space-2)] py-[var(--ft-space-1)] text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium tracking-[var(--ft-type-label-medium-tracking)] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--ft-color-primary)]/40",
                             albumActive ? navItemActive : navItemInactive,
                           )}
                         >
@@ -227,13 +229,24 @@ export function AppSidebar({
           </span>
           <button
             onClick={handleSignOut}
-            className="shrink-0 rounded-[var(--ft-shape-full)] p-1.5 text-[var(--ft-color-on-surface-variant)] transition-colors hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
+            disabled={signingOut}
+            aria-busy={signingOut}
+            className="shrink-0 rounded-[var(--ft-shape-full)] p-1.5 text-[var(--ft-color-on-surface-variant)] transition-colors hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)] focus-visible:ring-2 focus-visible:ring-[var(--ft-color-primary)]/40 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
             title="Sign out"
             aria-label="Sign out"
           >
-            <LogOut className="h-3.5 w-3.5" />
+            {signingOut ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <LogOut className="h-3.5 w-3.5" />
+            )}
           </button>
         </div>
+        {signOutError && (
+          <p role="alert" className="text-xs text-[var(--ft-color-error)]">
+            Sign-out failed. Try again.
+          </p>
+        )}
       </div>
     </aside>
   );

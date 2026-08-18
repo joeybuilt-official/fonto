@@ -10,6 +10,8 @@ import { AppMobileBottomBar } from "@/components/app-mobile-bottom-bar";
 import { AppMobileAvatarMenu } from "@/components/app-mobile-avatar-menu";
 import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 import { ReviewNudge } from "@/components/review-nudge";
+import { ReviewQueueCountProvider } from "@/components/review-queue-count";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { UiV2ChangelogDialog } from "@/app/(app)/app/_components/ui-v2-changelog-dialog";
 import type { User } from "@/lib/auth/types";
 import type { RecentAlbum } from "@/lib/sidebar/recent-albums";
@@ -30,28 +32,31 @@ export function AppShell({
 }) {
   const [open, setOpen] = useState(false);
   return (
+    <ReviewQueueCountProvider>
     <div className="flex h-dvh overflow-hidden bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface)]">
       {/* Desktop sidebar - hidden on mobile */}
       <div className="hidden md:flex">
         <AppSidebar user={user} recentAlbums={recentAlbums} />
       </div>
 
-      {/* Mobile overlay */}
-      {open && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-[var(--ft-color-scrim)]/50 md:hidden"
-            onClick={() => setOpen(false)}
+      {/* Mobile nav drawer — the base-ui Sheet primitive supplies the dialog
+          focus-trap, Escape-to-close, body scroll-lock, and focus restoration
+          to the hamburger that the hand-rolled overlay lacked. */}
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent
+          side="left"
+          id="app-mobile-nav"
+          aria-label="Navigation"
+          className="w-56 max-w-[14rem] gap-0 rounded-none border-0 bg-transparent p-0 shadow-none md:hidden"
+        >
+          <SheetTitle className="sr-only">Navigation</SheetTitle>
+          <AppSidebar
+            user={user}
+            recentAlbums={recentAlbums}
+            onClose={() => setOpen(false)}
           />
-          <div className="fixed inset-y-0 left-0 z-50 md:hidden">
-            <AppSidebar
-              user={user}
-              recentAlbums={recentAlbums}
-              onClose={() => setOpen(false)}
-            />
-          </div>
-        </>
-      )}
+        </SheetContent>
+      </Sheet>
 
       {/* Content area */}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -61,8 +66,10 @@ export function AppShell({
         <header className="flex h-14 shrink-0 items-center gap-[var(--ft-space-3)] border-b border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-low)] px-[var(--ft-space-4)] md:hidden">
           <button
             onClick={() => setOpen(true)}
-            className="-ml-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] p-[var(--ft-space-2)] text-[var(--ft-color-on-surface-variant)] transition-colors hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
             aria-label="Open navigation"
+            aria-expanded={open}
+            aria-controls="app-mobile-nav"
+            className="-ml-[var(--ft-space-2)] flex min-h-11 min-w-11 items-center justify-center rounded-[var(--ft-shape-full)] p-[var(--ft-space-2)] text-[var(--ft-color-on-surface-variant)] transition-colors hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)] focus-visible:ring-2 focus-visible:ring-[var(--ft-color-primary)]/40 focus-visible:outline-none"
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -90,5 +97,6 @@ export function AppShell({
       {/* Intelligence Core (Phase 6) — owner-only load-time review nudge. */}
       <ReviewNudge />
     </div>
+    </ReviewQueueCountProvider>
   );
 }

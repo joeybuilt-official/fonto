@@ -3,6 +3,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ConfirmButton } from "@/components/confirm-button";
 import {
   Button,
   Card,
@@ -135,7 +136,6 @@ export default function WebhooksSettingsPage() {
   };
 
   const onDelete = async (endpoint: WebhookEndpoint) => {
-    if (!confirm(`Delete webhook ${endpoint.url}?`)) return;
     const res = await fetch(`/api/v1/webhooks/${endpoint.id}`, { method: "DELETE" });
     if (!res.ok) {
       setError(`Delete failed: HTTP ${res.status}`);
@@ -177,14 +177,14 @@ export default function WebhooksSettingsPage() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">Webhooks</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1 className="text-2xl font-semibold text-[var(--ft-color-on-surface)]">Webhooks</h1>
+        <p className="text-sm text-[var(--ft-color-on-surface-variant)] mt-1">
           Receive HTTPS callbacks when assets, tags, and collections change in your workspace.
         </p>
       </div>
 
       {error && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="rounded-md border border-[var(--ft-color-error)]/40 bg-[var(--ft-color-error)]/10 px-3 py-2 text-sm text-[var(--ft-color-error)]">
           {error}
         </div>
       )}
@@ -192,10 +192,10 @@ export default function WebhooksSettingsPage() {
       {revealedSecret && (
         <div className="rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm space-y-2">
           <p className="font-medium">Signing secret — shown once</p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-[var(--ft-color-on-surface-variant)]">
             Save this somewhere safe. Fonto will never reveal it again.
           </p>
-          <code className="block break-all rounded bg-background border border-border px-2 py-1 font-mono text-xs">
+          <code className="block break-all rounded bg-[var(--ft-color-surface-container-low)] border border-[var(--ft-color-outline-variant)] px-2 py-1 font-mono text-xs">
             {revealedSecret.secret}
           </code>
           <button
@@ -208,7 +208,7 @@ export default function WebhooksSettingsPage() {
       )}
 
       <Card variant="outlined" className="p-0">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--ft-color-outline-variant)]">
           <h2 className="text-sm font-semibold">Endpoints</h2>
           <Button
             variant="outlined"
@@ -220,7 +220,7 @@ export default function WebhooksSettingsPage() {
         </div>
 
         {showCreate && (
-          <div className="px-4 py-4 border-b border-border space-y-3 bg-muted/30">
+          <div className="px-4 py-4 border-b border-[var(--ft-color-outline-variant)] space-y-3 bg-[var(--ft-color-surface-container-high)]/40">
             <TextField name="webhook-url">
               <TextFieldLabel className="uppercase">URL</TextFieldLabel>
               <TextFieldInput
@@ -239,7 +239,7 @@ export default function WebhooksSettingsPage() {
               />
             </TextField>
             <div>
-              <label className="block text-xs font-medium text-muted-foreground uppercase mb-1">
+              <label className="block text-xs font-medium text-[var(--ft-color-on-surface-variant)] uppercase mb-1">
                 Events
               </label>
               <div className="grid grid-cols-2 gap-1">
@@ -269,33 +269,36 @@ export default function WebhooksSettingsPage() {
         )}
 
         {loading ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p>
+          <p className="px-4 py-6 text-sm text-[var(--ft-color-on-surface-variant)]">Loading…</p>
         ) : endpoints.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground">No webhook endpoints yet.</p>
+          <p className="px-4 py-6 text-sm text-[var(--ft-color-on-surface-variant)]">No webhook endpoints yet.</p>
         ) : (
-          <ul className="divide-y divide-border">
+          <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
             {endpoints.map((endpoint) => {
               const isExpanded = expanded === endpoint.id;
               const enabled = endpoint.disabledAt === null;
               const list = deliveries[endpoint.id];
               return (
                 <li key={endpoint.id} className="px-4 py-3 space-y-2">
-                  <div className="flex items-center justify-between gap-3">
+                  {/* At 390px the URL + four action buttons overflow a single
+                      row, so stack the actions under the URL on mobile and go
+                      inline again at sm+. */}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="font-mono text-sm truncate">{endpoint.url}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-[var(--ft-color-on-surface-variant)]">
                         {endpoint.enabledEvents.length} event(s) ·{" "}
                         <span className={enabled ? "text-[var(--ft-color-success,oklch(0.6_0.13_160))]" : "text-amber-600"}>
                           {enabled ? "enabled" : "disabled"}
                         </span>
                       </p>
                       {endpoint.description && (
-                        <p className="text-xs text-muted-foreground mt-0.5">
+                        <p className="text-xs text-[var(--ft-color-on-surface-variant)] mt-0.5">
                           {endpoint.description}
                         </p>
                       )}
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1">
                       <Button
                         variant="text"
                         size="xs"
@@ -317,37 +320,38 @@ export default function WebhooksSettingsPage() {
                       >
                         {isExpanded ? "Hide" : "Deliveries"}
                       </Button>
-                      <Button
-                        variant="destructive"
-                        size="xs"
-                        onClick={() => void onDelete(endpoint)}
+                      <ConfirmButton
+                        onConfirm={() => void onDelete(endpoint)}
+                        confirmLabel="Confirm delete"
+                        className="h-6 px-2 text-xs"
                       >
                         Delete
-                      </Button>
+                      </ConfirmButton>
                     </div>
                   </div>
 
                   {isExpanded && (
-                    <div className="rounded border border-border bg-muted/20 overflow-x-auto">
+                    <div className="rounded border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-high)]/30 overflow-x-auto">
                       {list ? (
                         list.length === 0 ? (
-                          <p className="px-3 py-2 text-xs text-muted-foreground">
+                          <p className="px-3 py-2 text-xs text-[var(--ft-color-on-surface-variant)]">
                             No deliveries yet.
                           </p>
                         ) : (
                           <table className="w-full text-xs">
-                            <thead className="text-muted-foreground">
+                            <thead className="text-[var(--ft-color-on-surface-variant)]">
                               <tr>
                                 <th className="text-left px-2 py-1">Event</th>
                                 <th className="text-left px-2 py-1">State</th>
                                 <th className="text-left px-2 py-1">Status</th>
                                 <th className="text-left px-2 py-1">Attempt</th>
                                 <th className="text-left px-2 py-1">Last attempt</th>
+                                <th className="text-left px-2 py-1">Response</th>
                               </tr>
                             </thead>
                             <tbody>
                               {list.map((d) => (
-                                <tr key={d.id} className="border-t border-border">
+                                <tr key={d.id} className="border-t border-[var(--ft-color-outline-variant)]">
                                   <td className="px-2 py-1 font-mono">{d.eventType}</td>
                                   <td className="px-2 py-1">{d.state}</td>
                                   <td className="px-2 py-1">{d.lastResponseStatus ?? "—"}</td>
@@ -357,13 +361,30 @@ export default function WebhooksSettingsPage() {
                                       ? new Date(d.lastAttemptAt).toLocaleString()
                                       : "—"}
                                   </td>
+                                  <td className="px-2 py-1">
+                                    {d.lastResponseBody ? (
+                                      // Native <details> is keyboard-accessible;
+                                      // surfaces the response body that used to be
+                                      // fetched but never rendered.
+                                      <details>
+                                        <summary className="cursor-pointer text-[var(--ft-color-primary-text)]">
+                                          view
+                                        </summary>
+                                        <pre className="mt-1 max-w-[40ch] whitespace-pre-wrap break-all font-mono text-[10px] text-[var(--ft-color-on-surface-variant)]">
+                                          {d.lastResponseBody}
+                                        </pre>
+                                      </details>
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
                         )
                       ) : (
-                        <p className="px-3 py-2 text-xs text-muted-foreground">Loading…</p>
+                        <p className="px-3 py-2 text-xs text-[var(--ft-color-on-surface-variant)]">Loading…</p>
                       )}
                     </div>
                   )}

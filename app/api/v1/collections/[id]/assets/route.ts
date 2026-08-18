@@ -16,6 +16,7 @@ import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { parseScopeParam, scopeCond, type ScopeFilter } from "@/lib/scope";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 
 const loadCollectionAssets = (
   collectionId: string,
@@ -45,7 +46,15 @@ const loadCollectionAssets = (
         .select({ asset: schema.assets })
         .from(schema.collectionAssets)
         .innerJoin(schema.assets, eq(schema.collectionAssets.assetId, schema.assets.id))
-        .where(and(eq(schema.collectionAssets.collectionId, collectionId), __sc));
+        .where(
+          and(
+            eq(schema.collectionAssets.collectionId, collectionId),
+            // Defense-in-depth: never surface an asset outside the caller's
+            // workspaces even if a foreign link row somehow exists.
+            inArray(schema.assets.workspaceId, workspaceIds),
+            __sc,
+          ),
+        );
 
       return { assets: rows.map((r) => r.asset) };
     },
@@ -92,7 +101,9 @@ export async function POST(
   if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
   const workspaceIds = workspaces.map((w) => w.id);
 
-  const body = (await request.json()) as { assetId: string };
+  const parsed = await parseJson<{ assetId?: string }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
   if (!body.assetId) return NextResponse.json({ error: "assetId required" }, { status: 400 });
 
   const [collection] = await db
@@ -111,6 +122,22 @@ export async function POST(
   // Phase 3.1 — editor required to mutate collection contents.
   const gate = await requireWorkspaceAccessOrResponse(user.id, collection.workspaceId, "editor");
   if (!gate.ok) return gate.response;
+
+  // IDOR guard: the asset being linked must belong to one of the caller's
+  // workspaces. Without this a member could smuggle a foreign tenant's asset
+  // UUID into their own collection and then read its serialized row (GET) or
+  // download its original bytes (zip export).
+  const [asset] = await db
+    .select({ id: schema.assets.id })
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.id, body.assetId),
+        inArray(schema.assets.workspaceId, workspaceIds),
+      ),
+    )
+    .limit(1);
+  if (!asset) return NextResponse.json({ error: "Asset not found" }, { status: 404 });
 
   const [link] = await db
     .insert(schema.collectionAssets)

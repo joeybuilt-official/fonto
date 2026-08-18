@@ -119,46 +119,51 @@ function TypeRail({
   onSelect: (subtype: string | null) => void;
 }) {
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  // Below md the rail collapses to a horizontal, scrollable chip row so the
+  // 3-pane shell doesn't overflow a phone viewport; md+ keeps the vertical
+  // aside.
   return (
-    <aside className="w-44 shrink-0 border-r border-[var(--ft-color-outline-variant)] px-2 py-3">
-      <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
+    <aside className="shrink-0 border-b border-[var(--ft-color-outline-variant)] px-2 py-2 md:w-44 md:border-b-0 md:border-r md:py-3">
+      <p className="hidden px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ft-color-on-surface-variant)] md:block">
         Type
       </p>
-      <button
-        onClick={() => onSelect(null)}
-        className={cn(
-          "flex w-full items-center justify-between rounded-[var(--ft-shape-small)] px-2 py-1.5 text-left text-sm transition-colors",
-          selected === null
-            ? "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
-            : "text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)]"
-        )}
-      >
-        <span>All</span>
-        <span className="text-xs tabular-nums text-[var(--ft-color-on-surface-variant)]">
-          {total}
-        </span>
-      </button>
-      {DOC_SUBTYPES.map((s) => {
-        const count = counts[s] ?? 0;
-        const active = selected === s;
-        return (
-          <button
-            key={s}
-            onClick={() => onSelect(s)}
-            className={cn(
-              "flex w-full items-center justify-between rounded-[var(--ft-shape-small)] px-2 py-1.5 text-left text-sm transition-colors",
-              active
-                ? "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
-                : `${SUBTYPE_COLORS[s]} hover:bg-[var(--ft-color-surface-container)]`
-            )}
-          >
-            <span>{SUBTYPE_LABELS[s]}</span>
-            <span className="text-xs tabular-nums text-[var(--ft-color-on-surface-variant)]">
-              {count}
-            </span>
-          </button>
-        );
-      })}
+      <div className="flex gap-1 overflow-x-auto pb-1 md:flex-col md:gap-0.5 md:overflow-x-visible md:pb-0">
+        <button
+          onClick={() => onSelect(null)}
+          className={cn(
+            "flex shrink-0 items-center gap-1.5 rounded-[var(--ft-shape-small)] px-2 py-1.5 text-left text-sm transition-colors md:w-full md:justify-between",
+            selected === null
+              ? "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+              : "text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)]"
+          )}
+        >
+          <span>All</span>
+          <span className="text-xs tabular-nums text-[var(--ft-color-on-surface-variant)]">
+            {total}
+          </span>
+        </button>
+        {DOC_SUBTYPES.map((s) => {
+          const count = counts[s] ?? 0;
+          const active = selected === s;
+          return (
+            <button
+              key={s}
+              onClick={() => onSelect(s)}
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 rounded-[var(--ft-shape-small)] px-2 py-1.5 text-left text-sm transition-colors md:w-full md:justify-between",
+                active
+                  ? "bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+                  : `${SUBTYPE_COLORS[s]} hover:bg-[var(--ft-color-surface-container)]`
+              )}
+            >
+              <span>{SUBTYPE_LABELS[s]}</span>
+              <span className="text-xs tabular-nums text-[var(--ft-color-on-surface-variant)]">
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </aside>
   );
 }
@@ -347,15 +352,17 @@ function DocumentsContent() {
       setLoading(true);
       setError(false);
       try {
-        const sp = new URLSearchParams();
-        if (subtype) sp.set("subtype", subtype);
-        const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+        // Server-side doc-mime filter (route.ts `?type=doc`) so we fetch only
+        // documents instead of serializing the entire workspace (photos,
+        // videos, everything) and filtering client-side. The subtype rail is
+        // applied client-side below so its counts reflect the full doc set
+        // rather than collapsing to the picked type.
+        const r = await fetch(`/api/v1/assets?type=doc`);
         if (!r.ok) throw new Error(`assets ${r.status}`);
         const d = (await r.json()) as { assets?: Asset[] };
         const list = (d.assets ?? []).filter((a) =>
-          // Audit bug §UX-4 — even when a subtype filter is set we
-          // re-check the mime so an image misclassified as "receipt"
-          // can't leak into the documents list.
+          // Audit bug §UX-4 — belt-and-braces: re-check the mime so an image
+          // misclassified as "receipt" can't leak into the documents list.
           isDocMime(a.mimeType)
         );
         setDocs(list);
@@ -365,7 +372,7 @@ function DocumentsContent() {
         setLoading(false);
       }
     })();
-  }, [subtype, refreshKey]);
+  }, [refreshKey]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -380,6 +387,9 @@ function DocumentsContent() {
 
   const visible = useMemo(() => {
     let list = docs;
+    // Subtype narrowing happens here (not at fetch time) so the type-rail
+    // counts above stay computed over the full doc set.
+    if (subtype) list = list.filter((d) => d.classification === subtype);
     if (toolbar.filters.q) {
       const needle = toolbar.filters.q.toLowerCase();
       list = list.filter(
@@ -407,12 +417,38 @@ function DocumentsContent() {
       );
     }
     return list;
-  }, [docs, toolbar.filters.q, toolbar.filters.sort]);
+  }, [docs, subtype, toolbar.filters.q, toolbar.filters.sort]);
 
-  const selectedDoc = useMemo<Asset | null>(() => {
-    if (!selectedId) return null;
-    return docs.find((d) => d.id === selectedId) ?? null;
-  }, [docs, selectedId]);
+  // The selected doc usually lives in the loaded set. When it doesn't — a
+  // deep-linked `?selected=<id>` that isn't a doc-mime, or a row not in this
+  // fetch — resolve it directly by id so the preview still renders instead of
+  // falling back to the empty "Select a document" state.
+  const inList = useMemo<Asset | null>(
+    () => (selectedId ? docs.find((d) => d.id === selectedId) ?? null : null),
+    [docs, selectedId]
+  );
+  const [fetchedDoc, setFetchedDoc] = useState<Asset | null>(null);
+  useEffect(() => {
+    if (!selectedId || inList) {
+      setFetchedDoc(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch(`/api/v1/assets/${selectedId}`);
+        if (!r.ok) return;
+        const d = (await r.json()) as { asset?: Asset };
+        if (!cancelled && d.asset) setFetchedDoc(d.asset);
+      } catch {
+        // ignore — preview shows its own "could not load" fallback
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, inList]);
+  const selectedDoc = inList ?? fetchedDoc;
 
   const setSelected = useCallback(
     (id: string | null) => {
@@ -438,10 +474,18 @@ function DocumentsContent() {
         showSelect={false}
       />
 
-      <div className="flex flex-1 min-h-0">
+      {/* Below md: single column — the list and the preview swap on select
+          (see the visibility toggles) instead of three fixed side-by-side
+          panes, which would overflow a phone viewport. */}
+      <div className="flex flex-1 min-h-0 flex-col overflow-hidden md:flex-row">
         <TypeRail counts={counts} selected={subtype} onSelect={setSubtype} />
 
-        <section className="flex w-96 max-w-md shrink-0 flex-col border-r border-[var(--ft-color-outline-variant)]">
+        <section
+          className={cn(
+            "w-full min-h-0 flex-1 flex-col border-r border-[var(--ft-color-outline-variant)] md:w-96 md:max-w-md md:flex-none md:shrink-0",
+            selectedId ? "hidden md:flex" : "flex"
+          )}
+        >
           <div className="flex-1 overflow-auto px-2 py-2">
             {error ? (
               <ListErrorState
@@ -476,7 +520,14 @@ function DocumentsContent() {
           </div>
         </section>
 
-        <PreviewPane doc={selectedDoc} onClose={() => setSelected(null)} />
+        <div
+          className={cn(
+            "min-h-0 min-w-0 flex-1",
+            selectedId ? "flex" : "hidden md:flex"
+          )}
+        >
+          <PreviewPane doc={selectedDoc} onClose={() => setSelected(null)} />
+        </div>
       </div>
     </div>
   );

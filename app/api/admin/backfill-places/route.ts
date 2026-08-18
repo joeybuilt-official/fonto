@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, isNull, isNotNull, inArray } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { assertWorkspaceAccess } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { nearestPlace, formatPlaceName } from "@/lib/geocoder";
 
@@ -35,11 +36,25 @@ export async function POST(request: NextRequest) {
   };
 
   const allWorkspaceIds = workspaces.map((w) => w.id);
-  const targetWorkspaceIds =
+  const candidateWorkspaceIds =
     typeof body.workspaceId === "string" &&
     allWorkspaceIds.includes(body.workspaceId)
       ? [body.workspaceId]
       : allWorkspaceIds;
+
+  // Role gate: reverse-geocoding overwrites place_name across a workspace's
+  // active assets, so require editor+ on each target. getUserWorkspaces returns
+  // every workspace the user has ANY role on (viewer/commenter included) —
+  // without this filter a read-only member could trigger mass writes.
+  const access = await Promise.all(
+    candidateWorkspaceIds.map(async (wsId) => ({
+      wsId,
+      ok: (await assertWorkspaceAccess(user.id, wsId, "editor")).ok,
+    }))
+  );
+  const targetWorkspaceIds = access.filter((a) => a.ok).map((a) => a.wsId);
+  if (targetWorkspaceIds.length === 0)
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const batch = Math.max(
     1,
@@ -55,10 +70,20 @@ export async function POST(request: NextRequest) {
   };
 
   const start = Date.now();
+  // Hard wall-clock budget: geocode + per-row UPDATE runs synchronously in the
+  // request, so cap total time to stay well under proxy/runtime timeouts. The
+  // WHERE (place_name IS NULL) is self-advancing — updated rows drop out — so a
+  // client just re-POSTs to resume where this left off. `resumable` signals that.
+  const MAX_WALL_MS = 25_000;
+  let timedOut = false;
 
   // Drain in pages — the dataset is in memory after first lookup so each
   // batch is bound by DB write throughput, not geocoder latency.
   for (let page = 0; page < 200; page++) {
+    if (Date.now() - start > MAX_WALL_MS) {
+      timedOut = true;
+      break;
+    }
     const rows = await db
       .select({
         id: schema.assets.id,
@@ -81,6 +106,10 @@ export async function POST(request: NextRequest) {
     stats.batches++;
 
     for (const r of rows) {
+      if (Date.now() - start > MAX_WALL_MS) {
+        timedOut = true;
+        break;
+      }
       stats.scanned++;
       if (r.latitude == null || r.longitude == null) continue;
       try {
@@ -104,11 +133,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (timedOut) break;
     if (rows.length < batch) break;
   }
 
   return NextResponse.json({
     ...stats,
     durationMs: Date.now() - start,
+    done: !timedOut,
+    resumable: timedOut,
   });
 }

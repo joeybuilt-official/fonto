@@ -28,6 +28,7 @@ function PlaceDetailContent({ name }: { name: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset load state on filter change before refetch
     setLoading(true);
     setError(null);
     const url = new URL("/api/v1/assets", window.location.origin);

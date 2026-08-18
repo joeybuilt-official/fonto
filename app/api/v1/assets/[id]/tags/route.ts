@@ -4,10 +4,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { jsonSafe } from "@/lib/assets/createAssetRow";
 import { cacheInvalidate } from "@/lib/cache/valkey";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 
 export async function GET(
   _request: NextRequest,
@@ -16,6 +18,25 @@ export async function GET(
   const { id: assetId } = await params;
   const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const workspaces = await getUserWorkspaces(user.id);
+  if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
+  const workspaceIds = workspaces.map((w) => w.id);
+
+  // Scope the asset to the caller's workspaces before reading its tags —
+  // otherwise any authenticated user who learns an asset UUID could read
+  // another tenant's tag labels. 404 (not 403) so existence isn't leaked.
+  const [asset] = await db
+    .select({ id: schema.assets.id })
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.id, assetId),
+        inArray(schema.assets.workspaceId, workspaceIds),
+      ),
+    )
+    .limit(1);
+  if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const rows = await db
     .select({ tag: schema.tags })
@@ -53,8 +74,30 @@ export async function POST(
 
   if (!asset) return NextResponse.json({ error: "Asset not found" }, { status: 404 });
 
-  const body = (await request.json()) as { tagId: string };
+  // Class-E write: tagging is a mutation — require editor on the asset's
+  // workspace (matches tags/collections/shares POST). Viewers/commenters 403.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, asset.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
+
+  const parsed = await parseJson<{ tagId?: string }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
   if (!body.tagId) return NextResponse.json({ error: "tagId required" }, { status: 400 });
+
+  // Validate the tag is co-tenant with the asset before linking — otherwise a
+  // caller could attach a foreign-workspace tag, polluting that tenant's tag
+  // top-counts and sample-asset ids.
+  const [tag] = await db
+    .select({ id: schema.tags.id })
+    .from(schema.tags)
+    .where(
+      and(
+        eq(schema.tags.id, body.tagId),
+        eq(schema.tags.workspaceId, asset.workspaceId),
+      ),
+    )
+    .limit(1);
+  if (!tag) return NextResponse.json({ error: "Tag not found" }, { status: 404 });
 
   const [link] = await db
     .insert(schema.assetTags)
@@ -88,7 +131,10 @@ export async function DELETE(
   const tagId = searchParams.get("tagId");
   if (!tagId) return NextResponse.json({ error: "tagId required" }, { status: 400 });
 
-  // Look up the asset's workspace for the cache-tag invalidate below.
+  // Ownership gate BEFORE the delete: the asset must be in the caller's
+  // workspaces or the unlink is an IDOR — otherwise any authenticated user
+  // could delete asset_tags rows on any tenant's assets by supplying
+  // arbitrary ids. 404 (not 403) so existence isn't leaked to non-members.
   const [asset] = await db
     .select({ workspaceId: schema.assets.workspaceId })
     .from(schema.assets)
@@ -99,6 +145,11 @@ export async function DELETE(
       )
     )
     .limit(1);
+  if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Class-E write: removing a tag is a mutation — editor or higher.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, asset.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   await db
     .delete(schema.assetTags)
@@ -110,12 +161,10 @@ export async function DELETE(
     );
 
   // T1.3' — link change affects tags/top counts.
-  if (asset) {
-    revalidateTag(`ws:${asset.workspaceId}:tags`, "max");
-    revalidateTag(`ws:${asset.workspaceId}:assets`, "max");
-    void cacheInvalidate(`ws:${asset.workspaceId}:tags`);
-    void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
-  }
+  revalidateTag(`ws:${asset.workspaceId}:tags`, "max");
+  revalidateTag(`ws:${asset.workspaceId}:assets`, "max");
+  void cacheInvalidate(`ws:${asset.workspaceId}:tags`);
+  void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
 
   return NextResponse.json({ removed: true });
 }

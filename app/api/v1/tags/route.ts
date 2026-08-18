@@ -14,6 +14,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 import { and, eq, inArray } from "drizzle-orm";
 import { childPath, pathDepth, TAG_DEPTH_LIMIT } from "@/lib/tags/tree";
 import { emitWebhook } from "@/lib/webhooks/emit";
@@ -70,7 +71,9 @@ export async function POST(request: NextRequest) {
   const gate = await requireWorkspaceAccessOrResponse(user.id, workspaceId, "editor");
   if (!gate.ok) return gate.response;
 
-  const body = (await request.json()) as { name: string; color?: string; parentId?: string | null };
+  const parsed = await parseJson<{ name?: string; color?: string; parentId?: string | null }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
   if (!body.name?.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
 
   // M10 / ADR 0013 — optional parent. Validate it's in this workspace and the

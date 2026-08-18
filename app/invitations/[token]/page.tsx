@@ -8,10 +8,18 @@
 // when the user is signed in; if it returns 401 + signupRequired, the
 // client bounces to /login with `?callback=` set to this page so the
 // post-signup redirect lands back here.
+import { cache } from "react";
 import Link from "next/link";
-import { headers } from "next/headers";
+import { eq, sql } from "drizzle-orm";
+import { db, schema } from "@/lib/db";
+import {
+  classifyInvitation,
+  findInvitationByToken,
+} from "@/lib/invitations/core";
 import { Clock, Ban, CheckCircle2 } from "lucide-react";
 import { AcceptButton } from "./accept-button";
+
+export const dynamic = "force-dynamic";
 
 interface InvitationView {
   workspace: { name: string };
@@ -26,29 +34,54 @@ interface InvitationView {
   expiresAt: string;
 }
 
-async function loadInvitation(token: string): Promise<InvitationView | null> {
-  // Server-side fetch — resolve the base URL from the incoming request so
-  // dev (http://localhost:3500) and prod work without extra env wiring.
-  const h = await headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host");
-  const proto =
-    h.get("x-forwarded-proto") ??
-    (host?.startsWith("localhost") ? "http" : "https");
-  const base = host
-    ? `${proto}://${host}`
-    : (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3500");
+// Resolve the invitation directly from the DB — never over an HTTP hop.
+// Deriving a fetch base from request headers (x-forwarded-host/host) is
+// attacker-controllable (host-header injection → SSRF + on-domain phishing);
+// calling the same lib helpers the API route uses removes both the injection
+// surface and the self-fetch waterfall. cache() dedupes within the request.
+const loadInvitation = cache(
+  async (token: string): Promise<InvitationView | null> => {
+    const inv = await findInvitationByToken(token);
+    if (!inv) return null;
 
-  try {
-    const res = await fetch(
-      `${base}/api/v1/workspace/invitations/${encodeURIComponent(token)}`,
-      { cache: "no-store" }
-    );
-    if (!res.ok) return null;
-    return (await res.json()) as InvitationView;
-  } catch {
-    return null;
+    const state = classifyInvitation(inv);
+
+    const [workspace] = await db
+      .select({ name: schema.workspaces.name })
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, inv.workspaceId))
+      .limit(1);
+
+    // Inviter identity lives in Better Auth's `auth` schema — best-effort,
+    // parameterized cross-schema read (same as the API route).
+    let inviterEmail: string | null = null;
+    let inviterName: string | null = null;
+    try {
+      const rows = (await db.execute(
+        sql`SELECT email, name FROM auth."user" WHERE id = ${inv.invitedBy} LIMIT 1`
+      )) as unknown as Array<{ email: string | null; name: string | null }>;
+      if (rows && rows[0]) {
+        inviterEmail = rows[0].email ?? null;
+        inviterName = rows[0].name ?? null;
+      }
+    } catch {
+      // Non-fatal — render without the inviter's name.
+    }
+
+    return {
+      workspace: { name: workspace?.name ?? "a workspace" },
+      inviterEmail,
+      inviterName,
+      role: inv.role as "editor" | "viewer",
+      email: inv.email,
+      state,
+      expired: state === "expired",
+      used: state === "accepted",
+      revoked: state === "revoked",
+      expiresAt: inv.expiresAt.toISOString(),
+    };
   }
-}
+);
 
 function formatExpiry(iso: string): string {
   const d = new Date(iso);

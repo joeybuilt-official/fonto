@@ -124,7 +124,15 @@ async function resolveShareAssets(slug: string): Promise<ExportAsset[] | null> {
       .select(ASSET_COLS)
       .from(schema.collectionAssets)
       .innerJoin(schema.assets, eq(schema.assets.id, schema.collectionAssets.assetId))
-      .where(and(eq(schema.collectionAssets.collectionId, link.targetId), ACTIVE_ONLY))
+      .where(
+        and(
+          eq(schema.collectionAssets.collectionId, link.targetId),
+          // Defense-in-depth: a shared collection can only export assets that
+          // belong to the share link's own workspace.
+          eq(schema.assets.workspaceId, link.workspaceId),
+          ACTIVE_ONLY,
+        ),
+      )
       .limit(MAX_ENTRIES + 1);
   }
   // 'asset' (and legacy default) — a single shared asset.
@@ -158,7 +166,16 @@ async function resolveMemberAssets(
       .select(ASSET_COLS)
       .from(schema.collectionAssets)
       .innerJoin(schema.assets, eq(schema.assets.id, schema.collectionAssets.assetId))
-      .where(and(eq(schema.collectionAssets.collectionId, params.collectionId), ACTIVE_ONLY))
+      .where(
+        and(
+          eq(schema.collectionAssets.collectionId, params.collectionId),
+          // Defense-in-depth: only export assets that live in the caller's own
+          // workspaces — a foreign asset smuggled into the link table must
+          // never be pulled out via a collection export.
+          inArray(schema.assets.workspaceId, wsIds),
+          ACTIVE_ONLY,
+        ),
+      )
       .limit(MAX_ENTRIES + 1);
   }
   if (!params.ids.length) return "badreq";

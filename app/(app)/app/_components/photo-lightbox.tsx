@@ -161,6 +161,14 @@ function MetadataPanel({
   const [overrideBusy, setOverrideBusy] = useState(false);
   const tagInputRef = useRef<HTMLInputElement>(null);
   const colRef = useRef<HTMLDivElement>(null);
+  // Rescan schedules a setTimeout→setState; closing the info panel before it
+  // fires would update state on an unmounted MetadataPanel. Clear on unmount.
+  const rescanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (rescanTimerRef.current) clearTimeout(rescanTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     setOverride(asset.storagePolicyOverride ?? "");
@@ -209,7 +217,7 @@ function MetadataPanel({
       const res = await fetch(`/api/v1/assets/${asset.id}/reprocess`, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setRescanState("done");
-      setTimeout(() => setRescanState("idle"), 4000);
+      rescanTimerRef.current = setTimeout(() => setRescanState("idle"), 4000);
     } catch {
       setRescanState("idle");
     }
@@ -219,8 +227,9 @@ function MetadataPanel({
     if (e.key !== "Enter") return;
     const name = tagInput.trim();
     if (!name) return;
-    // Check if existing tag matches
-    const existing = allTags.find((t) => t.name === name.toLowerCase());
+    // Check if existing tag matches (case-insensitive on both sides so an
+    // existing "Beach" isn't duplicated when the user types "beach").
+    const existing = allTags.find((t) => t.name.toLowerCase() === name.toLowerCase());
     if (existing) {
       onAddTag(existing.id);
     } else {
@@ -618,14 +627,74 @@ export function PhotoLightbox({
   const [cropSaving, setCropSaving] = useState(false);
   const cropImgRef = useRef<HTMLImageElement>(null);
 
-  const pushToast = useCallback((kind: "success" | "error", message: string) => {
-    const id = Date.now() + Math.random();
-    setToasts((prev) => [...prev, { id, kind, message }]);
-    const ttl = kind === "error" ? 5000 : 3000;
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, ttl);
+  // Cleanup-safe timers — pushToast + the share "copied" resets schedule a
+  // setTimeout→setState; closing the lightbox before they fire would update
+  // state on an unmounted component. Track the ids and clear them on unmount.
+  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const scheduleTimeout = useCallback((fn: () => void, ms: number) => {
+    const id = setTimeout(() => {
+      timersRef.current.delete(id);
+      fn();
+    }, ms);
+    timersRef.current.add(id);
+    return id;
   }, []);
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      for (const id of timers) clearTimeout(id);
+      timers.clear();
+    };
+  }, []);
+
+  // Accessibility — the fullscreen overlay is a modal dialog. Focus the close
+  // button on mount, restore focus to the trigger on unmount, and trap Tab
+  // within the overlay while it's open (see handleOverlayKeyDown below).
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Main <img> load-failure state. A presigned URL can resolve but the image
+  // itself still fail (expired S3 presign, network blip); onError re-requests
+  // a fresh URL once, then shows an explicit "couldn't load" fallback.
+  const [imgError, setImgError] = useState(false);
+  const imgRetriedRef = useRef(false);
+
+  // Touch gestures — one-finger swipe navigates (when not zoomed); pinch and
+  // double-tap zoom the displayed image (CSS transform); one-finger pan moves
+  // it around while zoomed. gestureRef holds per-gesture bookkeeping.
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const gestureRef = useRef<{
+    mode: "none" | "swipe" | "pan" | "pinch";
+    startX: number;
+    startY: number;
+    startPanX: number;
+    startPanY: number;
+    startDist: number;
+    startZoom: number;
+    lastTap: number;
+  }>({
+    mode: "none",
+    startX: 0,
+    startY: 0,
+    startPanX: 0,
+    startPanY: 0,
+    startDist: 0,
+    startZoom: 1,
+    lastTap: 0,
+  });
+
+  const pushToast = useCallback(
+    (kind: "success" | "error", message: string) => {
+      const id = Date.now() + Math.random();
+      setToasts((prev) => [...prev, { id, kind, message }]);
+      const ttl = kind === "error" ? 5000 : 3000;
+      scheduleTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, ttl);
+    },
+    [scheduleTimeout]
+  );
 
   // Phase 2 (faces/UX) — name-tag overlay. Mirrors the Flutter `_showNames`
   // pattern: fetch the asset's faces, render name chips positioned over each
@@ -717,12 +786,24 @@ export function PhotoLightbox({
   }, [showMotion, motionUrl, displayedAssetId]);
 
   // Drop the cached clip URL when the visible asset changes (stack nav etc.).
+  // Also reset any pinch/pan zoom so a new asset opens at 1x.
   useEffect(() => {
     setMotionUrl(null);
     setMotionActive(false);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
   }, [displayedAssetId]);
 
   useEffect(() => {
+    setImgError(false);
+    imgRetriedRef.current = false;
+    // P3 — text/code assets render via <TextViewer> and never read `url`, so
+    // skip the presigned-URL request for them. Images + video (poster) fetch.
+    if (isTextLike(asset.mimeType)) {
+      setUrl(null);
+      setUrlLoading(false);
+      return;
+    }
     setUrl(null);
     setUrlLoading(true);
     // Phase 1.1 — lightbox renders the 1080px preview variant. Falls back to
@@ -732,7 +813,7 @@ export function PhotoLightbox({
       .then((d) => setUrl(d.url ?? null))
       .catch(() => setUrl(null))
       .finally(() => setUrlLoading(false));
-  }, [displayedAssetId]);
+  }, [displayedAssetId, asset.mimeType]);
 
   // Phase 6.12 — fetch the text layer for text/code assets.
   useEffect(() => {
@@ -780,6 +861,16 @@ export function PhotoLightbox({
     }
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Accessibility — move focus into the dialog on open (the close button) and
+  // restore it to whatever was focused before (the grid trigger) on close.
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    closeButtonRef.current?.focus();
+    return () => {
+      previouslyFocused?.focus?.();
+    };
   }, []);
 
   // Recompute when the info / comments panels toggle (they shrink the image
@@ -1073,7 +1164,7 @@ export function PhotoLightbox({
       try {
         await navigator.clipboard.writeText(shareUrl);
         setShareCopied(true);
-        setTimeout(() => setShareCopied(false), 2000);
+        scheduleTimeout(() => setShareCopied(false), 2000);
       } catch {
         /* clipboard unavailable */
       }
@@ -1089,7 +1180,7 @@ export function PhotoLightbox({
         try {
           await navigator.clipboard.writeText(fullUrl);
           setShareCopied(true);
-          setTimeout(() => setShareCopied(false), 2000);
+          scheduleTimeout(() => setShareCopied(false), 2000);
         } catch {
           /* clipboard unavailable */
         }
@@ -1294,12 +1385,149 @@ export function PhotoLightbox({
 
   const hasNamedFace = faces.some((f) => f.personName);
 
+  // Main <img> onError — retry once with a fresh presigned URL (the previous
+  // one may have expired), then surface an explicit "couldn't load" fallback.
+  const handleImgError = useCallback(async () => {
+    if (imgRetriedRef.current) {
+      setImgError(true);
+      return;
+    }
+    imgRetriedRef.current = true;
+    try {
+      const r = await fetch(`/api/v1/assets/${displayedAssetId}/url?variant=preview`);
+      const d = (await r.json()) as { url?: string };
+      if (d.url) {
+        setUrl(d.url);
+        setCacheBust((n) => n + 1);
+      } else {
+        setImgError(true);
+      }
+    } catch {
+      setImgError(true);
+    }
+  }, [displayedAssetId]);
+
+  // Retry from the "couldn't load" fallback — reset the guard and re-request.
+  const retryImage = useCallback(() => {
+    imgRetriedRef.current = false;
+    setImgError(false);
+    setUrlLoading(true);
+    fetch(`/api/v1/assets/${displayedAssetId}/url?variant=preview`)
+      .then((r) => r.json())
+      .then((d) => setUrl(d.url ?? null))
+      .catch(() => setUrl(null))
+      .finally(() => setUrlLoading(false));
+  }, [displayedAssetId]);
+
+  // Touch gestures on the image area. Distance between two active touches,
+  // used to derive the pinch scale.
+  const touchDist = (t: React.TouchList) =>
+    Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+  function onImageTouchStart(e: React.TouchEvent) {
+    const g = gestureRef.current;
+    if (e.touches.length === 2) {
+      g.mode = "pinch";
+      g.startDist = touchDist(e.touches);
+      g.startZoom = zoom;
+    } else if (e.touches.length === 1) {
+      g.mode = zoom > 1 ? "pan" : "swipe";
+      g.startX = e.touches[0].clientX;
+      g.startY = e.touches[0].clientY;
+      g.startPanX = pan.x;
+      g.startPanY = pan.y;
+    }
+  }
+
+  function onImageTouchMove(e: React.TouchEvent) {
+    const g = gestureRef.current;
+    if (g.mode === "pinch" && e.touches.length === 2 && g.startDist > 0) {
+      const next = Math.min(4, Math.max(1, g.startZoom * (touchDist(e.touches) / g.startDist)));
+      setZoom(next);
+      if (next === 1) setPan({ x: 0, y: 0 });
+    } else if (g.mode === "pan" && e.touches.length === 1) {
+      setPan({
+        x: g.startPanX + (e.touches[0].clientX - g.startX),
+        y: g.startPanY + (e.touches[0].clientY - g.startY),
+      });
+    }
+  }
+
+  function onImageTouchEnd(e: React.TouchEvent) {
+    const g = gestureRef.current;
+    if (g.mode === "swipe") {
+      const t = e.changedTouches[0];
+      const dx = t.clientX - g.startX;
+      const dy = t.clientY - g.startY;
+      // Horizontal swipe past the threshold → prev/next.
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+        if (dx > 0 && hasPrev) onPrev();
+        else if (dx < 0 && hasNext) onNext();
+        g.mode = "none";
+        return;
+      }
+      // Double-tap (finger barely moved, twice in quick succession) toggles zoom.
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+        const now = Date.now();
+        if (now - g.lastTap < 300) {
+          const next = zoom > 1 ? 1 : 2.5;
+          setZoom(next);
+          if (next === 1) setPan({ x: 0, y: 0 });
+          g.lastTap = 0;
+        } else {
+          g.lastTap = now;
+        }
+      }
+    }
+    g.mode = "none";
+  }
+
+  // Accessibility — trap Tab within the overlay so keyboard/SR users can't
+  // wander into the grid behind it. Skipped while a nested Radix dialog (crop
+  // / share management) owns focus in its own portal.
+  function handleOverlayKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "Tab") return;
+    if (cropOpen || shareDialogOpen) return;
+    const root = overlayRef.current;
+    if (!root) return;
+    const focusable = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((el) => el.offsetParent !== null);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement as HTMLElement | null;
+    if (e.shiftKey) {
+      if (active === first || !root.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/95">
-      {/* Top bar */}
-      <div className="flex h-12 items-center justify-between gap-4 px-4 shrink-0 border-b border-white/10">
+    <div
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={asset.filename}
+      tabIndex={-1}
+      onKeyDown={handleOverlayKeyDown}
+      className="fixed inset-0 z-50 flex flex-col bg-black/95"
+    >
+      {/* Top bar — overflow-x-auto so the full control cluster stays reachable
+          on narrow (≤430px) viewports instead of clipping. */}
+      <div className="flex h-12 items-center justify-between gap-4 px-4 shrink-0 border-b border-white/10 overflow-x-auto">
         <button
+          ref={closeButtonRef}
           onClick={onClose}
+          aria-label="Close"
+          title="Close"
           className="rounded-full p-1.5 text-white/70 hover:text-white hover:bg-white/10 transition-colors shrink-0"
         >
           <X className="h-5 w-5" />
@@ -1463,6 +1691,8 @@ export function PhotoLightbox({
           {hasPrev && (
             <button
               onClick={onPrev}
+              aria-label="Previous photo"
+              title="Previous photo"
               className="absolute left-4 z-10 rounded-full p-2 bg-white/10 text-white hover:bg-white/20 transition-colors"
             >
               <ChevronLeft className="h-5 w-5" />
@@ -1471,6 +1701,8 @@ export function PhotoLightbox({
           {hasNext && (
             <button
               onClick={onNext}
+              aria-label="Next photo"
+              title="Next photo"
               className="absolute right-4 z-10 rounded-full p-2 bg-white/10 text-white hover:bg-white/20 transition-colors"
             >
               <ChevronRight className="h-5 w-5" />
@@ -1494,14 +1726,19 @@ export function PhotoLightbox({
             />
           ) : urlLoading ? (
             <Loader2 className="h-10 w-10 animate-spin text-white/40" />
-          ) : url ? (
+          ) : url && !imgError ? (
             // Phase 2 (faces/UX) — the image is wrapped so name-tag chips can
             // be absolutely positioned over each detected face. Tapping the
             // image toggles the chips (mirrors the Flutter `_showNames`).
+            // Touch: swipe to navigate, pinch / double-tap to zoom, drag to pan.
             <div
               className="relative flex max-h-full max-w-full items-center justify-center p-8"
+              style={{ touchAction: "none" }}
               onMouseEnter={showMotion ? () => void startMotion() : undefined}
               onMouseLeave={showMotion ? stopMotion : undefined}
+              onTouchStart={onImageTouchStart}
+              onTouchMove={onImageTouchMove}
+              onTouchEnd={onImageTouchEnd}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -1513,12 +1750,17 @@ export function PhotoLightbox({
                 src={cacheBust > 0 ? `${url}${url.includes("?") ? "&" : "?"}v=${cacheBust}` : url}
                 alt={asset.description ?? asset.filename}
                 className={`max-h-full max-w-full object-contain ${
-                  faces.length > 0 ? "cursor-pointer" : ""
+                  faces.length > 0 || zoom > 1 ? "cursor-pointer" : ""
                 }`}
+                style={{
+                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                }}
                 onLoad={() => setImgRectTick((t) => t + 1)}
+                onError={() => void handleImgError()}
                 onClick={() => {
                   if (faces.length > 0) setShowNames((v) => !v);
                 }}
+                draggable={false}
               />
               {/* M12 / ADR 0014 — motion clip overlay. Plays muted + looped
                   over the still while hovered (desktop) or toggled (touch). */}
@@ -1609,8 +1851,22 @@ export function PhotoLightbox({
               )}
             </div>
           ) : (
-            <div className="flex h-48 w-48 items-center justify-center rounded-xl bg-white/5">
-              <Tag className="h-16 w-16 text-white/20" />
+            <div className="flex flex-col items-center gap-3">
+              <div className="flex h-48 w-48 items-center justify-center rounded-xl bg-white/5">
+                <Tag className="h-16 w-16 text-white/20" />
+              </div>
+              {imgError && (
+                <div className="flex flex-col items-center gap-2">
+                  <p className="text-sm text-white/50">Couldn&apos;t load this image</p>
+                  <button
+                    type="button"
+                    onClick={retryImage}
+                    className="rounded-full bg-white/10 px-3 py-1 text-xs text-white hover:bg-white/20 transition-colors"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1671,7 +1927,14 @@ export function PhotoLightbox({
             shareState={{ url: shareUrl, copied: shareCopied, loading: shareLoading }}
             onRevokeShare={handleRevokeShare}
             onOpenShareDialog={() => setShareDialogOpen(true)}
-            onOpenSimilar={(id) => setViewMemberId(id === asset.id ? null : id)}
+            // P1 — a CLIP neighbour is a DIFFERENT asset, not a stack member.
+            // Swapping it into viewMemberId would leave every action handler
+            // (favorite/rate/rotate/crop/download/trash) bound to the original
+            // asset.id while showing the neighbour — so Heart favorites the
+            // hidden original and Crop takes the region from the neighbour but
+            // writes it onto the original. Navigate to its own lightbox instead
+            // (same ?lb=<id> deep-link the crop-save + "Derived" jump use).
+            onOpenSimilar={(id) => router.push(`/app/library?lb=${id}`)}
           />
         )}
         {showComments && (

@@ -108,10 +108,15 @@ function AssetThumbnail({ asset }: { asset: Asset }) {
 function ToastContainer({ toasts }: { toasts: Toast[] }) {
   if (toasts.length === 0) return null;
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none">
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"
+    >
       {toasts.map((toast) => (
         <div
           key={toast.id}
+          role={toast.type === "error" ? "alert" : "status"}
           className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm shadow-lg pointer-events-auto transition-all ${
             toast.type === "success"
               ? "border-green-500/30 bg-card text-foreground"
@@ -150,7 +155,6 @@ export function UploadsSection() {
   const [loading, setLoading] = useState(true);
   const [dragOver, setDragOver] = useState(false);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
-  const [subtypeFilter] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [duplicatePrompts, setDuplicatePrompts] = useState<DuplicatePrompt[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -163,19 +167,10 @@ export function UploadsSection() {
     }, 3000);
   }
 
-  async function fetchAssets() {
-    try {
-      const url = subtypeFilter ? `/api/v1/assets?subtype=${subtypeFilter}` : "/api/v1/assets";
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = (await res.json()) as { assets: Asset[] };
-        setAssets(data.assets ?? []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
-
+  // Only the 8 most-recent uploads are needed on mount. The old mount effect
+  // also pulled the entire (unbounded) workspace asset list into `assets`,
+  // whose value is discarded — a large wasted request. `?limit=8` is the sole
+  // fetch, and it also clears the initial loading state.
   async function fetchRecentUploads() {
     try {
       const res = await fetch("/api/v1/assets?limit=8");
@@ -185,11 +180,12 @@ export function UploadsSection() {
       }
     } catch {
       // ignore
+    } finally {
+      setLoading(false);
     }
   }
 
-  useEffect(() => { void fetchAssets(); }, [subtypeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchRecentUploads(); }, []);
+  useEffect(() => { void fetchRecentUploads(); }, []);
 
   useEffect(() => {
     async function onPaste(e: ClipboardEvent) {
@@ -237,11 +233,30 @@ export function UploadsSection() {
       // the row for the UI; dedup banners stay a small-file nicety.
       if (file.size >= LARGE_FILE_BYTES) {
         const { assetId } = await uploadTus(file, { metadata: { source } });
+        // tus bytes have landed and the asset row exists. Mark the item done
+        // now — the follow-up metadata GET is best-effort (the row may still
+        // be materializing) and must not flip a successful upload to 'error'.
+        setUploadItems((prev) =>
+          prev.map((i) => (i.id === itemId ? { ...i, state: "done", assetId } : i))
+        );
         const ares = await fetch(`/api/v1/assets/${assetId}`);
         if (ares.ok) {
           const aj = (await ares.json()) as { asset: Asset };
-          data = { asset: aj.asset };
+          return aj.asset;
         }
+        // Metadata not ready yet — surface a minimal row so the upload still
+        // counts as a success and appears in Recent Uploads; AssetThumbnail
+        // resolves the real thumbnail lazily on its own fetch.
+        return {
+          id: assetId,
+          filename: file.name,
+          mimeType: file.type || "application/octet-stream",
+          sizeBytes: file.size,
+          syncState: "synced",
+          processingState: "pending",
+          classification: null,
+          createdAt: new Date().toISOString(),
+        };
       } else if (directUploadEnabled()) {
         const res = await uploadDirect(file, { source });
         data = res as unknown as UploadData;
@@ -325,11 +340,20 @@ export function UploadsSection() {
 
       {/* Upload zone */}
       <div
+        role="button"
+        tabIndex={0}
+        aria-label="Upload files. Click, drop files here, or paste (Ctrl+V)."
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
         onClick={() => fileInputRef.current?.click()}
-        className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 transition-colors ${
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            fileInputRef.current?.click();
+          }
+        }}
+        className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
           dragOver
             ? "border-primary bg-primary/5"
             : "border-border hover:border-primary/50 hover:bg-muted/40"
@@ -458,7 +482,11 @@ function DuplicatePromptStack({
   showToast: (message: string, type?: "success" | "error") => void;
 }) {
   return (
-    <div className="fixed inset-x-0 bottom-24 z-40 flex flex-col items-center gap-2 px-4 pointer-events-none">
+    <div
+      role="alert"
+      aria-live="assertive"
+      className="fixed inset-x-0 bottom-24 z-40 flex flex-col items-center gap-2 px-4 pointer-events-none"
+    >
       {prompts.map((p, idx) => (
         <DuplicatePromptCard
           key={p.newAsset.id}

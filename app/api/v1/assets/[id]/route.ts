@@ -16,6 +16,7 @@ import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 import { cacheInvalidate } from "@/lib/cache/valkey";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 
 const LIFECYCLE_EVENTS: Record<string, string> = {
   archivable: "ext.fonto.asset.archivable",
@@ -62,7 +63,7 @@ export async function PATCH(
   if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
   const workspaceIds = workspaces.map((w) => w.id);
 
-  const body = (await request.json()) as {
+  const parsed = await parseJson<{
     lifecycleState?: string;
     trash?: boolean;
     restore?: boolean;
@@ -78,7 +79,9 @@ export async function PATCH(
     // ADR 0008 — per-asset SHOOT stage (RAW|SELECTS|DELIVERED|REJECTS). `null`
     // clears the stage (still scope='SHOOT' but no bucket).
     shootStage?: string | null;
-  };
+  }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
 
   const updates: Record<string, unknown> = {};
   let emitEvent: string | null = null;

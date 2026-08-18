@@ -11,7 +11,7 @@
 //
 // Run: cd /workspace/fonto && npx vitest run lib/processing/__tests__/processAsset.unified.test.ts
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import {
   analyzeImageUnified,
   unifiedAnalyzeEnabled,
@@ -80,7 +80,7 @@ describe("unifiedAnalyzeEnabled", () => {
 describe("analyzeImageUnified", () => {
   const ORIG_URL = process.env.PLEXO_URL;
   const ORIG_KEY = process.env.PLEXO_SERVICE_KEY;
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let fetchSpy: MockInstance<typeof fetch>;
 
   beforeEach(() => {
     process.env.PLEXO_URL = "http://plexo:7000";

@@ -6,7 +6,7 @@
 // "Not found" for everyone else so the UI never leaks admin surface.
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
@@ -45,41 +45,86 @@ function fmtBytes(n: number): string {
   return `${v.toFixed(1)} ${u[i]}`;
 }
 
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as T;
+}
+
 export default function AdminConsolePage() {
-  const [state, setState] = useState<"loading" | "denied" | "ready">("loading");
+  const [state, setState] = useState<"loading" | "denied" | "error" | "ready">(
+    "loading"
+  );
   const [stats, setStats] = useState<Stats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [workspaces, setWorkspaces] = useState<AdminWorkspace[]>([]);
 
-  useEffect(() => {
-    (async () => {
-      const me = await fetch("/api/v1/admin/me").then((r) => r.json()).catch(() => null);
-      if (!me?.isInstanceAdmin) {
-        setState("denied");
-        return;
-      }
+  const load = useCallback(async () => {
+    // Note: the "loading" reset lives in the retry handler, not here — a
+    // synchronous setState at the top of an effect-invoked fn trips
+    // react-hooks/set-state-in-effect. The first statement must be async.
+    const me = await fetch("/api/v1/admin/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    if (!me?.isInstanceAdmin) {
+      setState("denied");
+      return;
+    }
+    try {
       const [s, u, w] = await Promise.all([
-        fetch("/api/v1/admin/server-stats").then((r) => r.json()),
-        fetch("/api/v1/admin/users").then((r) => r.json()),
-        fetch("/api/v1/admin/workspaces").then((r) => r.json()),
+        fetchJson<Stats>("/api/v1/admin/server-stats"),
+        fetchJson<{ users?: AdminUser[] }>("/api/v1/admin/users"),
+        fetchJson<{ workspaces?: AdminWorkspace[] }>("/api/v1/admin/workspaces"),
       ]);
       setStats(s);
       setUsers(u.users ?? []);
       setWorkspaces(w.workspaces ?? []);
       setState("ready");
-    })();
+    } catch {
+      setState("error");
+    }
   }, []);
 
-  async function saveQuota(id: string, gb: string) {
-    const quotaBytes = gb.trim() === "" ? null : Math.round(Number(gb) * 1024 * 1024 * 1024);
-    const res = await fetch(`/api/v1/admin/workspaces/${id}/quota`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ quotaBytes }),
-    });
-    if (res.ok) {
-      setWorkspaces((ws) => ws.map((w) => (w.id === id ? { ...w, quotaBytes } : w)));
+  useEffect(() => {
+    // Inline async IIFE (not a direct `void load()`): the first statement is
+    // an await, so no setState runs synchronously in the effect body.
+    void (async () => {
+      await load();
+    })();
+  }, [load]);
+
+  // Returns an error message to display on the row, or null on success.
+  async function saveQuota(id: string, gb: string): Promise<string | null> {
+    const trimmed = gb.trim();
+    let quotaBytes: number | null;
+    if (trimmed === "") {
+      // Blank = no quota (unlimited) — the intentional way to clear a cap.
+      quotaBytes = null;
+    } else {
+      const n = Number(trimmed);
+      if (!isFinite(n) || n < 0) {
+        // Guard: NaN would serialize to null and silently set "unlimited".
+        return "Enter a non-negative number of GB, or leave blank for unlimited.";
+      }
+      quotaBytes = Math.round(n * 1024 * 1024 * 1024);
     }
+    try {
+      const res = await fetch(`/api/v1/admin/workspaces/${id}/quota`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quotaBytes }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        return body?.error ?? `Save failed (HTTP ${res.status}).`;
+      }
+    } catch {
+      return "Save failed — network error.";
+    }
+    setWorkspaces((ws) => ws.map((w) => (w.id === id ? { ...w, quotaBytes } : w)));
+    return null;
   }
 
   if (state === "loading") {
@@ -87,6 +132,25 @@ export default function AdminConsolePage() {
   }
   if (state === "denied") {
     return <div className="p-6 text-[var(--ft-color-on-surface-variant)]">Not found.</div>;
+  }
+  if (state === "error") {
+    return (
+      <div className="mx-auto flex max-w-4xl flex-col items-start gap-3 p-6">
+        <p className="text-[var(--ft-color-on-surface-variant)]">
+          Couldn&apos;t load the admin console.
+        </p>
+        <Button
+          variant="outlined"
+          size="sm"
+          onClick={() => {
+            setState("loading");
+            void load();
+          }}
+        >
+          Retry
+        </Button>
+      </div>
+    );
   }
 
   return (
@@ -169,35 +233,58 @@ function WorkspaceRow({
   fmtBytes,
 }: {
   ws: AdminWorkspace;
-  onSave: (id: string, gb: string) => void;
+  onSave: (id: string, gb: string) => Promise<string | null>;
   fmtBytes: (n: number) => string;
 }) {
   const [gb, setGb] = useState(
     ws.quotaBytes == null ? "" : (ws.quotaBytes / 1024 / 1024 / 1024).toFixed(1)
   );
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function handleSave() {
+    setSaving(true);
+    setErr(await onSave(ws.id, gb));
+    setSaving(false);
+  }
+
   return (
-    <div className="flex items-center justify-between gap-3 py-2 text-sm">
-      <div className="min-w-0">
-        <div className="truncate text-[var(--ft-color-on-surface)]">{ws.name}</div>
-        <div className="truncate text-[var(--ft-color-on-surface-variant)]">
-          {ws.ownerEmail ?? "—"} · {fmtBytes(ws.usageBytes)} used
-          {ws.quotaBytes != null && ` / ${fmtBytes(ws.quotaBytes)}`}
+    <div className="flex flex-col gap-1 py-2 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-[var(--ft-color-on-surface)]">{ws.name}</div>
+          <div className="truncate text-[var(--ft-color-on-surface-variant)]">
+            {ws.ownerEmail ?? "—"} · {fmtBytes(ws.usageBytes)} used
+            {ws.quotaBytes != null && ` / ${fmtBytes(ws.quotaBytes)}`}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <input
+            value={gb}
+            onChange={(e) => {
+              setGb(e.target.value);
+              if (err) setErr(null);
+            }}
+            placeholder="∞"
+            inputMode="decimal"
+            aria-label={`Quota in GB for ${ws.name}`}
+            aria-invalid={err != null}
+            className="w-20 rounded border border-[var(--ft-color-outline)] bg-transparent px-2 py-1 text-right text-[var(--ft-color-on-surface)]"
+          />
+          <span className="text-[var(--ft-color-on-surface-variant)]">GB</span>
+          <Button
+            variant="outlined"
+            size="sm"
+            onClick={() => void handleSave()}
+            disabled={saving}
+          >
+            {saving ? "Saving…" : "Save"}
+          </Button>
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <input
-          value={gb}
-          onChange={(e) => setGb(e.target.value)}
-          placeholder="∞"
-          inputMode="decimal"
-          aria-label={`Quota in GB for ${ws.name}`}
-          className="w-20 rounded border border-[var(--ft-color-outline)] bg-transparent px-2 py-1 text-right text-[var(--ft-color-on-surface)]"
-        />
-        <span className="text-[var(--ft-color-on-surface-variant)]">GB</span>
-        <Button variant="outlined" size="sm" onClick={() => onSave(ws.id, gb)}>
-          Save
-        </Button>
-      </div>
+      {err && (
+        <p className="text-right text-xs text-[var(--ft-color-error)]">{err}</p>
+      )}
     </div>
   );
 }

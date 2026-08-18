@@ -46,6 +46,17 @@ import { LibraryFilesView } from "../_components/library-files-view";
 
 const SURFACE_LS_KEY = "fonto:library:surface";
 
+// Flat-grid (search / date-range / name·rating·largest sort) page size. The
+// path is cursor-paged from here rather than fetching every matching row.
+const FLAT_PAGE_SIZE = 200;
+
+// The app shell scrolls its <main>, not the window. Lightbox scroll save +
+// restore must target that element (window.scrollY/scrollTo are inert here).
+function getLibraryScroller(): HTMLElement | null {
+  if (typeof document === "undefined") return null;
+  return document.querySelector("main");
+}
+
 interface LifecycleOption {
   value: Lifecycle;
   label: string;
@@ -139,6 +150,22 @@ function LibraryContent() {
   const [bucketsLoading, setBucketsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [directAsset, setDirectAsset] = useState<Asset | null>(null);
+  // `refreshKey` bumps remount/refetch after a mutation. Declared up here so
+  // both the inbox-count effect and the batch handlers below can key on it.
+  const [refreshKey, setRefreshKey] = useState(0);
+  // Flat-grid pagination (P1 audit): the flat path is windowed + cursor-paged
+  // instead of pulling every matching row in one unbounded response.
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const flatCursorRef = useRef<Record<string, string> | null>(null);
+  const flatRawRef = useRef<Asset[]>([]);
+  // Bumped on every first-page (re)load so an in-flight loadMore from a prior
+  // filter set can't commit its page onto the fresh accumulation.
+  const flatGenRef = useRef(0);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // Batch-action failure surface (kept inline — there is no snackbar provider
+  // mounted in this tree). Selection is preserved when a batch partially fails.
+  const [batchError, setBatchError] = useState<string | null>(null);
   const savedScrollRef = useRef(0);
   const prevLbIndexRef = useRef<number | null>(null);
 
@@ -216,7 +243,9 @@ function LibraryContent() {
     return () => {
       alive = false;
     };
-  }, [splitOn, surface]);
+    // The endpoint doesn't vary with `surface` — refetch only on mount and
+    // after a mutation (refreshKey), not on every Photos↔Files toggle.
+  }, [splitOn, refreshKey]);
 
   const setSurface = useCallback(
     (s: LibrarySurface) => {
@@ -399,7 +428,6 @@ function LibraryContent() {
   // mutation so trashed tiles disappear (the per-month cache can't self-evict).
   const [collections, setCollections] = useState<{ id: string; name: string }[]>([]);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
   useEffect(() => {
     fetch("/api/v1/collections")
       .then((r) => r.json() as Promise<{ collections?: { id: string; name: string }[] }>)
@@ -409,15 +437,25 @@ function LibraryContent() {
 
   const handleBatchAddToCollection = useCallback(
     async (collectionId: string) => {
-      await Promise.all(
-        Array.from(toolbar.selectedIds).map((assetId) =>
+      const ids = Array.from(toolbar.selectedIds);
+      setBatchError(null);
+      // Per-request ok-check; a network reject resolves to `false` so it can't
+      // escape as an unhandled rejection and skip the failure branch.
+      const oks = await Promise.all(
+        ids.map((assetId) =>
           fetch(`/api/v1/collections/${collectionId}/assets`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ assetId }),
           })
+            .then((r) => r.ok)
+            .catch(() => false)
         )
       );
+      if (oks.some((ok) => !ok)) {
+        setBatchError("Some items couldn't be added to the collection. Try again.");
+        return; // keep the selection so the user can retry
+      }
       setShowCollectionModal(false);
       toolbar.clearSelection();
       toolbar.setSelectMode(false);
@@ -432,19 +470,36 @@ function LibraryContent() {
 
   const handleBatchTrash = useCallback(async () => {
     const ids = Array.from(toolbar.selectedIds);
-    await Promise.all(
+    setBatchError(null);
+    const oks = await Promise.all(
       ids.map((assetId) =>
         fetch(`/api/v1/assets/${assetId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ trash: true }),
         })
+          .then((r) => r.ok)
+          .catch(() => false)
       )
     );
+    if (oks.some((ok) => !ok)) {
+      setBatchError("Some items couldn't be moved to trash. Try again.");
+      // Refetch so the grid reflects whatever partially succeeded, but keep
+      // the selection so the user can retry the rest.
+      setRefreshKey((k) => k + 1);
+      return;
+    }
     toolbar.clearSelection();
     toolbar.setSelectMode(false);
     setRefreshKey((k) => k + 1);
   }, [toolbar]);
+
+  // Per-card quick-action trash succeeded → drop the tile optimistically from
+  // the flat grid's loaded set (the timeline path owns its own cache).
+  const handleCardTrashed = useCallback((assetId: string) => {
+    flatRawRef.current = flatRawRef.current.filter((a) => a.id !== assetId);
+    setAssets((prev) => prev.filter((a) => a.id !== assetId));
+  }, []);
 
   // Lightbox is URL-based so back button restores chip state.
   // Opening pushes ?lb=<id>; closing calls router.back().
@@ -481,92 +536,42 @@ function LibraryContent() {
     };
   }, [timelineMode, baseParams, refreshKey]);
 
-  // Flat-grid fallback fetch — only runs when search / date-range force the
-  // non-timeline surface. Loads the whole filtered set + filters client-side.
-  useEffect(() => {
-    if (timelineMode) return;
-    // The Files surface owns its own fetch (LibraryFilesView). The flat grid
-    // here serves the legacy view, the Inbox surface, and the search/date-range
-    // fallback for Photos.
-    if (splitOn && surface === "files") return;
-    void (async () => {
-      setLoading(true);
-      setLoadError(false);
-      const sp = new URLSearchParams();
-      sp.set("lifecycle", toolbar.filters.lifecycle);
-      if (splitOn && surface === "unsorted") {
-        sp.set("unclassified", "1");
-      } else if (splitOn) {
-        if (splitKind) sp.set("kind", splitKind);
-      } else {
-        const lensKind = toolbar.filters.kind ?? "moment";
-        if (lensKind !== "all") sp.set("kind", lensKind);
-      }
-      if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
-      if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
-      if (toolbar.filters.favorite) sp.set("favorite", "1");
-      if (toolbar.filters.ratingMin != null) {
-        sp.set("ratingMin", String(toolbar.filters.ratingMin));
-      }
-      if (toolbar.filters.directoryPath != null) {
-        sp.set("directoryPath", toolbar.filters.directoryPath);
-      }
-      if (toolbar.filters.directoryPathPrefix != null) {
-        sp.set("directoryPathPrefix", toolbar.filters.directoryPathPrefix);
-      }
-      try {
-        const r = await fetch(`/api/v1/assets?${sp.toString()}`);
-        if (!r.ok) throw new Error(`assets ${r.status}`);
-        const d = (await r.json()) as { assets?: Asset[] };
-        let list = (d.assets ?? []) as Asset[];
-
-        // Date range is client-side until the list endpoint supports it.
-        if (toolbar.filters.from) {
-          const from = new Date(toolbar.filters.from).getTime();
-          list = list.filter(
-            (a) => new Date(a.capturedAt ?? a.createdAt).getTime() >= from
-          );
-        }
-        if (toolbar.filters.to) {
-          const to = new Date(toolbar.filters.to).getTime();
-          list = list.filter(
-            (a) => new Date(a.capturedAt ?? a.createdAt).getTime() <= to
-          );
-        }
-
-        if (toolbar.filters.sort === "oldest") {
-          list = [...list].sort(
-            (a, b) =>
-              new Date(a.capturedAt ?? a.createdAt).getTime() -
-              new Date(b.capturedAt ?? b.createdAt).getTime()
-          );
-        } else if (toolbar.filters.sort === "name") {
-          list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
-        } else if (toolbar.filters.sort === "rating") {
-          list = [...list].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
-        } else if (toolbar.filters.sort === "largest") {
-          list = [...list].sort((a, b) => b.sizeBytes - a.sizeBytes);
-        }
-
-        if (toolbar.filters.q) {
-          const needle = toolbar.filters.q.toLowerCase();
-          list = list.filter(
-            (a) =>
-              a.filename.toLowerCase().includes(needle) ||
-              (a.description?.toLowerCase().includes(needle) ?? false)
-          );
-        }
-
-        setAssets(list);
-      } catch {
-        setAssets([]);
-        setLoadError(true);
-      } finally {
-        setLoading(false);
-      }
-    })();
+  // Server-side query for one flat-grid page. Mirrors baseParams (incl.
+  // group_id + place, which the fallback previously dropped) and adds the
+  // capture-date sort + row cap the cursor pagination keys on.
+  const flatParams = useCallback(() => {
+    const sp = new URLSearchParams();
+    sp.set("lifecycle", toolbar.filters.lifecycle);
+    if (splitOn && surface === "unsorted") {
+      sp.set("unclassified", "1");
+    } else if (splitOn) {
+      if (splitKind) sp.set("kind", splitKind);
+    } else {
+      const lensKind = toolbar.filters.kind ?? "moment";
+      if (lensKind !== "all") sp.set("kind", lensKind);
+    }
+    if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
+    if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
+    if (toolbar.filters.favorite) sp.set("favorite", "1");
+    if (toolbar.filters.ratingMin != null) {
+      sp.set("ratingMin", String(toolbar.filters.ratingMin));
+    }
+    if (toolbar.filters.directoryPath != null) {
+      sp.set("directoryPath", toolbar.filters.directoryPath);
+    }
+    if (toolbar.filters.directoryPathPrefix != null) {
+      sp.set("directoryPathPrefix", toolbar.filters.directoryPathPrefix);
+    }
+    if (toolbar.filters.groupId) {
+      sp.set("group_id", toolbar.filters.groupId);
+    }
+    if (placeFilter) {
+      sp.set("place", placeFilter);
+    }
+    sp.set("sort", "captured");
+    sp.set("limit", String(FLAT_PAGE_SIZE));
+    return sp;
   }, [
-    timelineMode,
     splitOn,
     surface,
     splitKind,
@@ -578,15 +583,168 @@ function LibraryContent() {
     toolbar.filters.ratingMin,
     toolbar.filters.directoryPath,
     toolbar.filters.directoryPathPrefix,
-    toolbar.filters.from,
-    toolbar.filters.to,
-    toolbar.filters.sort,
-    toolbar.filters.q,
+    toolbar.filters.groupId,
+    placeFilter,
+  ]);
+
+  // Client-side transforms the list endpoint can't express (date-range bounds,
+  // name/rating/largest sort, free-text). Applied over the loaded-so-far set.
+  const applyClientTransforms = useCallback(
+    (rows: Asset[]): Asset[] => {
+      let list = rows;
+      if (toolbar.filters.from) {
+        const from = new Date(toolbar.filters.from).getTime();
+        list = list.filter(
+          (a) => new Date(a.capturedAt ?? a.createdAt).getTime() >= from
+        );
+      }
+      if (toolbar.filters.to) {
+        const to = new Date(toolbar.filters.to).getTime();
+        list = list.filter(
+          (a) => new Date(a.capturedAt ?? a.createdAt).getTime() <= to
+        );
+      }
+      if (toolbar.filters.sort === "oldest") {
+        list = [...list].sort(
+          (a, b) =>
+            new Date(a.capturedAt ?? a.createdAt).getTime() -
+            new Date(b.capturedAt ?? b.createdAt).getTime()
+        );
+      } else if (toolbar.filters.sort === "name") {
+        list = [...list].sort((a, b) => a.filename.localeCompare(b.filename));
+      } else if (toolbar.filters.sort === "rating") {
+        list = [...list].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+      } else if (toolbar.filters.sort === "largest") {
+        list = [...list].sort((a, b) => b.sizeBytes - a.sizeBytes);
+      }
+      if (toolbar.filters.q) {
+        const needle = toolbar.filters.q.toLowerCase();
+        list = list.filter(
+          (a) =>
+            a.filename.toLowerCase().includes(needle) ||
+            (a.description?.toLowerCase().includes(needle) ?? false)
+        );
+      }
+      return list;
+    },
+    [
+      toolbar.filters.from,
+      toolbar.filters.to,
+      toolbar.filters.sort,
+      toolbar.filters.q,
+    ]
+  );
+
+  // Flat-grid first-page fetch — runs when search / date-range / a client-side
+  // sort forces the non-timeline surface. Bounded by FLAT_PAGE_SIZE + guarded
+  // against stale-response races; further pages load on scroll via loadMore.
+  useEffect(() => {
+    if (timelineMode) return;
+    // The Files surface owns its own fetch (LibraryFilesView). The flat grid
+    // here serves the legacy view, the Inbox surface, and the search/date-range
+    // fallback for Photos.
+    if (splitOn && surface === "files") return;
+    let cancelled = false;
+    flatGenRef.current += 1;
+    setLoading(true);
+    setLoadError(false);
+    flatCursorRef.current = null;
+    flatRawRef.current = [];
+    setHasMore(false);
+    setLoadingMore(false);
+    void (async () => {
+      try {
+        const r = await fetch(`/api/v1/assets?${flatParams().toString()}`);
+        if (!r.ok) throw new Error(`assets ${r.status}`);
+        const d = (await r.json()) as {
+          assets?: Asset[];
+          nextCursor?: Record<string, string> | null;
+        };
+        if (cancelled) return;
+        flatRawRef.current = (d.assets ?? []) as Asset[];
+        flatCursorRef.current = d.nextCursor ?? null;
+        setHasMore(!!d.nextCursor);
+        setAssets(applyClientTransforms(flatRawRef.current));
+      } catch {
+        if (cancelled) return;
+        flatRawRef.current = [];
+        setAssets([]);
+        setLoadError(true);
+        setHasMore(false);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    timelineMode,
+    splitOn,
+    surface,
+    flatParams,
+    applyClientTransforms,
     refreshKey,
   ]);
 
+  // Fetch the next flat-grid page using the cursor the list route returns and
+  // append it to the loaded set (re-running the client transforms over the
+  // whole accumulation so an active sort stays consistent across pages).
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return;
+    const cursor = flatCursorRef.current;
+    if (!cursor) return;
+    const gen = flatGenRef.current;
+    setLoadingMore(true);
+    try {
+      const sp = flatParams();
+      for (const [k, v] of Object.entries(cursor)) sp.set(k, v);
+      const r = await fetch(`/api/v1/assets?${sp.toString()}`);
+      if (!r.ok) throw new Error(`assets ${r.status}`);
+      const d = (await r.json()) as {
+        assets?: Asset[];
+        nextCursor?: Record<string, string> | null;
+      };
+      // A first-page reload (filter change) happened while we were in flight —
+      // drop this now-stale page rather than appending it to fresh data.
+      if (gen !== flatGenRef.current) return;
+      flatRawRef.current = [
+        ...flatRawRef.current,
+        ...((d.assets ?? []) as Asset[]),
+      ];
+      flatCursorRef.current = d.nextCursor ?? null;
+      setHasMore(!!d.nextCursor);
+      setAssets(applyClientTransforms(flatRawRef.current));
+    } catch {
+      if (gen === flatGenRef.current) setHasMore(false);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, flatParams, applyClientTransforms]);
+
+  // Auto-load the next page when the sentinel below the grid nears the viewport.
+  useEffect(() => {
+    if (timelineMode) return;
+    if (splitOn && surface === "files") return;
+    if (!hasMore) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) void loadMore();
+      },
+      { rootMargin: "600px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [timelineMode, splitOn, surface, hasMore, loadMore]);
+
   const openLightbox = useCallback((id: string, _index: number) => {
-    savedScrollRef.current = window.scrollY;
+    // The app shell scrolls its <main>, not the window, so window.scrollY is
+    // always ~0 here — capture the real scroller so restore lands the user
+    // back where they were (esp. deep in a large virtualised grid).
+    const scroller = getLibraryScroller();
+    savedScrollRef.current = scroller ? scroller.scrollTop : window.scrollY;
     const sp = new URLSearchParams(searchParams.toString());
     sp.set("lb", id);
     router.push(`${pathname}?${sp.toString()}`, { scroll: false });
@@ -611,7 +769,9 @@ function LibraryContent() {
     if (prevLbIndexRef.current !== null && lightboxIndex === null) {
       const saved = savedScrollRef.current;
       requestAnimationFrame(() => {
-        window.scrollTo({ top: saved, behavior: "instant" });
+        const scroller = getLibraryScroller();
+        if (scroller) scroller.scrollTop = saved;
+        else window.scrollTo({ top: saved, behavior: "instant" });
       });
     }
     prevLbIndexRef.current = lightboxIndex;
@@ -745,7 +905,17 @@ function LibraryContent() {
             toolbar={toolbar}
             viewMode="grid"
             onAssetClick={openLightbox}
+            onTrashed={handleCardTrashed}
           />
+          {hasMore && (
+            <div
+              ref={sentinelRef}
+              className="flex items-center justify-center gap-[var(--ft-space-2)] py-6 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]"
+            >
+              {loadingMore && <Loader2 className="h-4 w-4 animate-spin" />}
+              {loadingMore ? "Loading more…" : ""}
+            </div>
+          )}
         </div>
       )}
 
@@ -775,10 +945,12 @@ function LibraryContent() {
 
       <BatchActionBar
         count={toolbar.selectedIds.size}
+        error={batchError}
         onAddToCollection={() => setShowCollectionModal(true)}
         onDownload={handleBatchDownload}
         onTrash={handleBatchTrash}
         onClear={() => {
+          setBatchError(null);
           toolbar.clearSelection();
           toolbar.setSelectMode(false);
         }}
@@ -796,12 +968,14 @@ function LibraryContent() {
 
 function BatchActionBar({
   count,
+  error,
   onAddToCollection,
   onDownload,
   onTrash,
   onClear,
 }: {
   count: number;
+  error?: string | null;
   onAddToCollection: () => void;
   onDownload: () => void;
   onTrash: () => void;
@@ -809,7 +983,16 @@ function BatchActionBar({
 }) {
   if (count === 0) return null;
   return (
-    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-large)] bg-[var(--ft-color-surface-container-high)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] shadow-[var(--ft-elev-3)] backdrop-blur">
+    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex flex-col items-stretch gap-[var(--ft-space-2)]">
+      {error && (
+        <div
+          role="alert"
+          className="rounded-[var(--ft-shape-small)] bg-[var(--ft-color-error-container)] px-[var(--ft-space-4)] py-[var(--ft-space-2)] text-center text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] text-[var(--ft-color-on-error-container)] shadow-[var(--ft-elev-2)]"
+        >
+          {error}
+        </div>
+      )}
+      <div className="flex items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-large)] bg-[var(--ft-color-surface-container-high)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] shadow-[var(--ft-elev-3)] backdrop-blur">
       <span className="mr-2 text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium text-[var(--ft-color-on-surface)]">
         {count} selected
       </span>
@@ -841,6 +1024,7 @@ function BatchActionBar({
       >
         <X className="h-4 w-4" />
       </button>
+      </div>
     </div>
   );
 }
@@ -977,6 +1161,7 @@ function FolderChip({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show folder spinner when picker opens before fetch
     setFolderLoading(true);
     fetch("/api/v1/folders/tree")
       .then((r) => r.json() as Promise<{ paths: FolderEntry[]; rootAssetCount: number }>)
@@ -1134,7 +1319,7 @@ function LensSelector({
   return (
     <div
       className="flex items-center gap-1 overflow-x-auto pb-0.5"
-      role="tablist"
+      role="group"
       aria-label="Library lens"
     >
       {LENSES.map((lens) => {
@@ -1143,8 +1328,8 @@ function LensSelector({
         return (
           <button
             key={lens.value}
-            role="tab"
-            aria-selected={isActive}
+            type="button"
+            aria-pressed={isActive}
             onClick={() => onChange(lens.value)}
             className={`inline-flex h-8 shrink-0 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
               isActive

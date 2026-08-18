@@ -18,6 +18,14 @@ function isServiceKeyRequest(req: NextRequest): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
+// Guarded limit parse: a present-but-non-numeric ?limit (e.g. ?limit=abc) makes
+// parseInt return NaN, and .limit(NaN) produces an invalid Postgres LIMIT → 500.
+// The string fallback only covers the ABSENT case, so coerce explicitly.
+function parseLimit(raw: string | null, fallback: number, max: number): number {
+  const n = Number.parseInt(raw ?? "", 10)
+  return Math.min(Number.isFinite(n) && n > 0 ? n : fallback, max)
+}
+
 async function resolveWorkspaceId(userId: string): Promise<string | null> {
   const [ws] = await db
     .select({ id: schema.workspaces.id })
@@ -67,7 +75,7 @@ export async function GET(request: NextRequest) {
     const subtype = searchParams.get("subtype")
     const collectionId = searchParams.get("collectionId")
     const tagId = searchParams.get("tagId")
-    const limit = Math.min(parseInt(searchParams.get("limit") ?? "30", 10), 100)
+    const limit = parseLimit(searchParams.get("limit"), 30, 100)
 
     const assetSelect = {
       id: schema.assets.id,
@@ -126,7 +134,7 @@ export async function GET(request: NextRequest) {
   if (entity === "asset_search") {
     const q = searchParams.get("q")?.trim()
     if (!q) return NextResponse.json({ error: "q required" }, { status: 400 })
-    const limit = Math.min(parseInt(searchParams.get("limit") ?? "20", 10), 50)
+    const limit = parseLimit(searchParams.get("limit"), 20, 50)
     const pattern = `%${q}%`
 
     const assets = await db.select({
@@ -321,6 +329,20 @@ export async function POST(request: NextRequest) {
     const workspaceId = await resolveWorkspaceId(v.data.userId)
     if (!workspaceId) return NextResponse.json({ error: "No Fonto workspace for user" }, { status: 404 })
 
+    // Scope-check both ids against the resolved workspace before linking — the
+    // per-userId scoping alone doesn't prove the asset/tag belong here, so
+    // without this a caller could create cross-workspace tag links.
+    const [assetRow] = await db.select({ id: schema.assets.id })
+      .from(schema.assets)
+      .where(and(eq(schema.assets.id, v.data.assetId), eq(schema.assets.workspaceId, workspaceId)))
+      .limit(1)
+    if (!assetRow) return NextResponse.json({ error: "Asset not found" }, { status: 404 })
+    const [tagRow] = await db.select({ id: schema.tags.id })
+      .from(schema.tags)
+      .where(and(eq(schema.tags.id, v.data.tagId), eq(schema.tags.workspaceId, workspaceId)))
+      .limit(1)
+    if (!tagRow) return NextResponse.json({ error: "Tag not found" }, { status: 404 })
+
     if (action === "tag") {
       const [existing] = await db.select({ id: schema.assetTags.id })
         .from(schema.assetTags)
@@ -343,6 +365,20 @@ export async function POST(request: NextRequest) {
 
     const workspaceId = await resolveWorkspaceId(v.data.userId)
     if (!workspaceId) return NextResponse.json({ error: "No Fonto workspace for user" }, { status: 404 })
+
+    // Scope-check both ids against the resolved workspace before linking — the
+    // per-userId scoping alone doesn't prove the collection/asset belong here,
+    // so without this a caller could create cross-workspace collection links.
+    const [collectionRow] = await db.select({ id: schema.collections.id })
+      .from(schema.collections)
+      .where(and(eq(schema.collections.id, v.data.collectionId), eq(schema.collections.workspaceId, workspaceId), isNull(schema.collections.deletedAt)))
+      .limit(1)
+    if (!collectionRow) return NextResponse.json({ error: "Collection not found" }, { status: 404 })
+    const [assetRow] = await db.select({ id: schema.assets.id })
+      .from(schema.assets)
+      .where(and(eq(schema.assets.id, v.data.assetId), eq(schema.assets.workspaceId, workspaceId)))
+      .limit(1)
+    if (!assetRow) return NextResponse.json({ error: "Asset not found" }, { status: 404 })
 
     if (action === "add_asset") {
       const [existing] = await db.select({ id: schema.collectionAssets.id })

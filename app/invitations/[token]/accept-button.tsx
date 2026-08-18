@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth/client";
 
@@ -25,10 +25,15 @@ export function AcceptButton({ token, expectedEmail }: AcceptButtonProps) {
   const { data: session, isPending } = useSession();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Once a matching session appears (typically after a signup round-trip via
+  // the login callback) we finish the accept automatically instead of asking
+  // the user to click "Accept" a second time.
+  const [autoFinishing, setAutoFinishing] = useState(false);
+  const firedRef = useRef(false);
 
   const loginHref = `/login?callback=${encodeURIComponent(`/invitations/${token}`)}&invitation=${encodeURIComponent(token)}&email=${encodeURIComponent(expectedEmail)}`;
 
-  async function handleAccept() {
+  const handleAccept = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
@@ -54,6 +59,31 @@ export function AcceptButton({ token, expectedEmail }: AcceptButtonProps) {
     } finally {
       setBusy(false);
     }
+  }, [token, loginHref, router]);
+
+  // Auto-accept once the session resolves to the invited address. Guarded by
+  // firedRef so it runs a single time regardless of re-renders.
+  const currentEmailForAuto = session?.user?.email?.toLowerCase().trim();
+  useEffect(() => {
+    if (isPending || firedRef.current) return;
+    if (session?.user && currentEmailForAuto === expectedEmail) {
+      firedRef.current = true;
+      setAutoFinishing(true);
+      void handleAccept();
+    }
+  }, [isPending, session, currentEmailForAuto, expectedEmail, handleAccept]);
+
+  if (autoFinishing) {
+    return (
+      <button
+        type="button"
+        disabled
+        aria-busy="true"
+        className="w-full rounded bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+      >
+        Finishing your invite…
+      </button>
+    );
   }
 
   if (isPending) {
@@ -116,7 +146,15 @@ export function AcceptButton({ token, expectedEmail }: AcceptButtonProps) {
       >
         {busy ? "Joining…" : "Accept invitation"}
       </button>
-      {error && <p className="text-center text-xs text-destructive">{error}</p>}
+      {error && (
+        <p
+          role="alert"
+          aria-live="polite"
+          className="text-center text-xs text-destructive"
+        >
+          {error}
+        </p>
+      )}
     </div>
   );
 }

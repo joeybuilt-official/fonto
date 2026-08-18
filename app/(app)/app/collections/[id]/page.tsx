@@ -223,6 +223,7 @@ export default function CollectionDetailPage({
   const [showAddModal, setShowAddModal] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset load state on collectionId change before refetch
     setLoading(true);
     setError(false);
     Promise.all([

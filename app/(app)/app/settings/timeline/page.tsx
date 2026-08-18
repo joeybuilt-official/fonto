@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { ConfirmButton } from "@/components/confirm-button";
 import {
   Button,
   Card,
@@ -223,7 +224,6 @@ export default function TimelineFactsPage() {
   };
 
   const onDelete = async (fact: Fact) => {
-    if (!confirm(`Delete "${fact.label}"? This can't be undone.`)) return;
     try {
       const r = await fetch(`/api/v1/temporal-facts/${fact.id}`, {
         method: "DELETE",
@@ -469,15 +469,13 @@ export default function TimelineFactsPage() {
                             >
                               Edit
                             </Button>
-                            <Button
-                              type="button"
-                              variant="outlined"
-                              size="sm"
-                              onClick={() => onDelete(fact)}
-                              className="border-[var(--ft-color-error)]/40 text-[var(--ft-color-error)] hover:bg-[var(--ft-color-error)]/10"
+                            <ConfirmButton
+                              onConfirm={() => onDelete(fact)}
+                              confirmLabel="Confirm delete"
+                              className="h-7 border border-[var(--ft-color-error)]/40 px-2.5 text-[0.8rem] font-medium"
                             >
                               Delete
-                            </Button>
+                            </ConfirmButton>
                           </div>
                         </li>
                       );

@@ -11,6 +11,7 @@
 // bullmq/ioredis.
 
 import { NextResponse, type NextRequest } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { register } from "@/lib/metrics";
 
 export const runtime = "nodejs";
@@ -29,7 +30,16 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const auth = request.headers.get("authorization") ?? "";
   const presented = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
-  if (!presented || presented !== expected) {
+  // Constant-time compare: `!==` early-exits and leaks token length + a
+  // per-character timing signal. Length-check first (timingSafeEqual throws on
+  // unequal-length Buffers), then compare.
+  const presentedBuf = Buffer.from(presented);
+  const expectedBuf = Buffer.from(expected);
+  if (
+    !presented ||
+    presentedBuf.length !== expectedBuf.length ||
+    !timingSafeEqual(presentedBuf, expectedBuf)
+  ) {
     return new NextResponse("unauthorized", { status: 401 });
   }
 

@@ -4,22 +4,48 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 
-type PlexoEvent = {
-  eventType: string;
-  payload: Record<string, unknown>;
-  workspaceId?: string;
-};
+// Same service-key trust boundary as /api/plexo/data — this is an inbound write
+// surface (log injection now, real side effects once the stubs land), so it must
+// not be anonymous. Constant-time compare over equal-length Buffers.
+function isServiceKeyRequest(req: NextRequest): boolean {
+  const svcKey = process.env.PLEXO_SERVICE_KEY;
+  const rawToken = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!svcKey || !rawToken) return false;
+  const a = Buffer.from(rawToken);
+  const b = Buffer.from(svcKey);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+const plexoEventSchema = z.object({
+  eventType: z.string().min(1),
+  payload: z.record(z.string(), z.unknown()).default({}),
+  workspaceId: z.string().optional(),
+});
 
 export async function POST(request: NextRequest) {
-  let body: PlexoEvent;
+  if (!isServiceKeyRequest(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let raw: unknown;
   try {
-    body = (await request.json()) as PlexoEvent;
+    raw = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { eventType, payload } = body;
+  const parsed = plexoEventSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+  const { eventType, payload } = parsed.data;
 
   switch (eventType) {
     case "ext.plexo.task.resolved":

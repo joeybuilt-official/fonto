@@ -8,6 +8,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 
 export async function GET(
   _req: NextRequest,
@@ -53,7 +54,9 @@ export async function PATCH(
   const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
   if (!gate.ok) return gate.response;
 
-  const body = await request.json() as { name?: string; query?: Record<string, unknown> };
+  const parsed = await parseJson<{ name?: string; query?: Record<string, unknown> }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = String(body.name).trim();
   if (body.query !== undefined) updates.query = body.query;

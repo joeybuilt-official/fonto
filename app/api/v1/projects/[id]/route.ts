@@ -10,6 +10,7 @@ import { db, schema } from "@/lib/db";
 import { eq, and, inArray, desc, isNull } from "drizzle-orm";
 import { cacheInvalidate } from "@/lib/cache/valkey";
 import { nextSeq } from "@/lib/db/seq";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 
 export async function GET(
   _req: NextRequest,
@@ -81,7 +82,9 @@ export async function PATCH(
   const gate = await requireWorkspaceAccessOrResponse(user.id, existing.workspaceId, "editor");
   if (!gate.ok) return gate.response;
 
-  const body = await request.json() as { name?: string; description?: string; color?: string };
+  const parsed = await parseJson<{ name?: string; description?: string; color?: string }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
   // Delta-sync: bump seq so the edit surfaces on /sync/projects.
   const seq = await nextSeq(existing.workspaceId, "project");
   const updates: Record<string, unknown> = { updatedAt: new Date(), seq };

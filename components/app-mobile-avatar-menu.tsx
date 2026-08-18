@@ -28,7 +28,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { LogOut, Settings, User as UserIcon, Home } from "lucide-react";
+import { Loader2, LogOut, Settings, User as UserIcon, Home } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -54,15 +54,26 @@ const menuItemBase =
 
 export function AppMobileAvatarMenu({ user }: { user: User }) {
   const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState(false);
   const router = useRouter();
   // `user.email` is optional on the auth type — coerce to a stable
   // fallback so the label / initials never blank out.
   const email = user.email ?? "account";
 
   async function handleSignOut() {
-    setOpen(false);
-    await signOut();
-    router.push("/login");
+    if (signingOut) return; // guard against a double-tap firing signOut twice
+    setSigningOut(true);
+    setSignOutError(false);
+    try {
+      await signOut();
+      router.push("/login");
+      // keep the menu open + control disabled through the navigation; the tree
+      // unmounts on success
+    } catch {
+      setSignOutError(true);
+      setSigningOut(false);
+    }
   }
 
   return (
@@ -73,7 +84,7 @@ export function AppMobileAvatarMenu({ user }: { user: User }) {
             type="button"
             aria-haspopup="menu"
             aria-label={`Account menu for ${email}`}
-            className="flex h-9 w-9 items-center justify-center rounded-[var(--ft-shape-full)] bg-[var(--ft-color-secondary-container)] text-xs font-semibold text-[var(--ft-color-on-secondary-container)] transition-colors hover:brightness-95"
+            className="flex h-11 w-11 items-center justify-center rounded-[var(--ft-shape-full)] bg-[var(--ft-color-secondary-container)] text-xs font-semibold text-[var(--ft-color-on-secondary-container)] transition-colors hover:brightness-95"
           >
             {initialsFor(email)}
           </button>
@@ -123,14 +134,28 @@ export function AppMobileAvatarMenu({ user }: { user: User }) {
             role="menuitem"
             type="button"
             onClick={handleSignOut}
+            disabled={signingOut}
+            aria-busy={signingOut}
             className={cn(
               menuItemBase,
-              "text-[var(--ft-color-error)] hover:bg-[color-mix(in_srgb,var(--ft-color-error)_8%,transparent)] focus-visible:bg-[color-mix(in_srgb,var(--ft-color-error)_10%,transparent)]",
+              "text-[var(--ft-color-error)] hover:bg-[color-mix(in_srgb,var(--ft-color-error)_8%,transparent)] focus-visible:bg-[color-mix(in_srgb,var(--ft-color-error)_10%,transparent)] disabled:pointer-events-none disabled:opacity-50",
             )}
           >
-            <LogOut className="h-4 w-4" />
+            {signingOut ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <LogOut className="h-4 w-4" />
+            )}
             Sign out
           </button>
+          {signOutError && (
+            <p
+              role="alert"
+              className="px-[var(--ft-space-4)] pb-[var(--ft-space-2)] text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]"
+            >
+              Sign-out failed. Try again.
+            </p>
+          )}
         </div>
       </PopoverContent>
     </Popover>

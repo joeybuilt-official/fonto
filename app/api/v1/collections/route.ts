@@ -17,6 +17,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { nextSeq } from "@/lib/db/seq";
 import { cacheInvalidate, getCacheLayer } from "@/lib/cache/valkey";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 
 const COLLECTIONS_CACHE_TTL_SEC = 300;
 
@@ -73,7 +74,9 @@ export async function POST(request: NextRequest) {
   const gate = await requireWorkspaceAccessOrResponse(user.id, workspaces[0].id, "editor");
   if (!gate.ok) return gate.response;
 
-  const body = await request.json();
+  const parsed = await parseJson<{ name?: string; description?: string }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
   const name = String(body.name ?? "").trim();
   if (!name) return NextResponse.json({ error: "Name is required" }, { status: 400 });
 

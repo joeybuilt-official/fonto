@@ -41,15 +41,28 @@ export async function request<T>(
     );
   }
   const url = `${cfg.baseUrl}${path}`;
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${cfg.pat}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...(init.headers ?? {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      // Abort hung / slow-loris servers instead of spinning forever.
+      signal: AbortSignal.timeout(30_000),
+      headers: {
+        Authorization: `Bearer ${cfg.pat}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(init.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.name === "TimeoutError" || err.name === "AbortError")
+    ) {
+      throw new Error(`Request timed out after 30s (${url}).`);
+    }
+    throw err;
+  }
   const text = await res.text();
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
@@ -61,8 +74,18 @@ export async function request<T>(
     }
     throw new ApiError(res.status, text, message);
   }
-  if (text.length === 0) return undefined as T;
-  return JSON.parse(text) as T;
+  // Every v1 endpoint returns a JSON body; an empty 200 (auth-proxy quirk,
+  // 204-ish) would otherwise crash callers that destructure the result.
+  if (text.length === 0) {
+    throw new ApiError(res.status, text, "Server returned an empty response body");
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    // e.g. an SSO/auth proxy returning HTTP 200 with an HTML login page.
+    const contentType = res.headers.get("content-type") ?? "unknown content-type";
+    throw new ApiError(res.status, text, `Expected JSON but got ${contentType}`);
+  }
 }
 
 export async function listAssets(opts: {

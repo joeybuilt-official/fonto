@@ -51,6 +51,7 @@ function CropThumb({
 }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale crop when cropUrl changes before refetch
     setSrc(null);
     if (!cropUrl) return;
     let cancelled = false;

@@ -123,6 +123,20 @@ export async function POST(request: NextRequest) {
       continue;
     }
     try {
+      // Ownership gate: the variant group MUST belong to the owner's workspace.
+      // commitConsolidation acts purely by groupId and reversibly trashes every
+      // member, so without this a caller could pass a groupId from another
+      // workspace (cross-tenant data mutation). Return not-found so we don't
+      // leak cross-workspace group existence.
+      const [group] = await db
+        .select({ workspaceId: schema.variantGroups.workspaceId })
+        .from(schema.variantGroups)
+        .where(eq(schema.variantGroups.id, item.groupId))
+        .limit(1);
+      if (!group || group.workspaceId !== workspace.id) {
+        variantResults.push({ groupId: item.groupId, ok: false, trashed: 0, reason: "not-found" });
+        continue;
+      }
       const res = await commitConsolidation(item.groupId, { requireAutoCommit: true });
       variantResults.push({
         groupId: item.groupId,

@@ -11,39 +11,27 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ClipboardCheck, X } from "lucide-react";
+import { useReviewQueueCount } from "@/components/review-queue-count";
 
 const SESSION_KEY = "fonto-review-nudge-dismissed";
 
 export function ReviewNudge(): React.ReactElement | null {
-  const [count, setCount] = useState(0);
+  // Shared source (deduped) — no independent fetch here anymore.
+  const { count } = useReviewQueueCount();
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      try {
-        if (sessionStorage.getItem(SESSION_KEY)) return;
-      } catch {
-        /* sessionStorage unavailable — fall through and just show */
-      }
+    if (count === null || count <= 0) return;
+    try {
+      if (sessionStorage.getItem(SESSION_KEY)) return;
+    } catch {
+      /* sessionStorage unavailable — fall through and just show */
     }
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    fetch("/api/admin/review-queue/count", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!alive || !d?.ok || !d.total) return;
-        setCount(d.total);
-        setShow(true);
-        timer = setTimeout(() => {
-          if (alive) setShow(false);
-        }, 12000);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reveal nudge once the queue count loads
+    setShow(true);
+    const timer = setTimeout(() => setShow(false), 12000);
+    return () => clearTimeout(timer);
+  }, [count]);
 
   function dismiss() {
     setShow(false);
@@ -54,12 +42,15 @@ export function ReviewNudge(): React.ReactElement | null {
     }
   }
 
-  if (!show) return null;
+  if (!show || count === null) return null;
 
   return (
     <div
       role="status"
-      className="fixed bottom-[var(--ft-space-4)] left-1/2 z-[60] flex w-[min(560px,calc(100vw-2*var(--ft-space-4)))] -translate-x-1/2 items-center gap-[var(--ft-space-4)] rounded-[var(--ft-shape-small)] bg-[var(--ft-color-inverse-surface)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-inverse-surface)] shadow-[var(--ft-elev-3)]"
+      // Raised above the mobile bottom nav (min-h-20 ≈ 80px + home-indicator
+      // inset) so it never covers the primary tabs; on md+ the bottom bar is
+      // gone, so it sits at the standard spacing.
+      className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom)+var(--ft-space-2))] left-1/2 z-[60] flex w-[min(560px,calc(100vw-2*var(--ft-space-4)))] -translate-x-1/2 items-center gap-[var(--ft-space-4)] rounded-[var(--ft-shape-small)] bg-[var(--ft-color-inverse-surface)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-inverse-surface)] shadow-[var(--ft-elev-3)] md:bottom-[var(--ft-space-4)]"
     >
       <ClipboardCheck className="h-5 w-5 shrink-0" />
       <span className="flex-1">

@@ -13,6 +13,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 import { inArray } from "drizzle-orm";
 import { cacheInvalidate, getCacheLayer } from "@/lib/cache/valkey";
 
@@ -75,7 +76,9 @@ export async function POST(request: NextRequest) {
   const gate = await requireWorkspaceAccessOrResponse(user.id, workspaces[0].id, "editor");
   if (!gate.ok) return gate.response;
 
-  const body = await request.json() as { name?: string; query?: Record<string, unknown> };
+  const parsed = await parseJson<{ name?: string; query?: Record<string, unknown> }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
   const name = String(body.name ?? "").trim();
   if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
 

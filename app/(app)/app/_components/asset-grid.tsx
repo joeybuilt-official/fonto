@@ -52,6 +52,52 @@ const VIRT_THRESHOLD_GRID = 500;
 const VIRT_THRESHOLD_LIST = 200;
 const BATCH_URL_CHUNK = 250;
 
+/** Nearest scrollable ancestor — the app shell scrolls its `<main>`, not the
+ *  window, so both grid paths must virtualise against that shared scroller
+ *  instead of a bespoke inner box. */
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const oy = getComputedStyle(node).overflowY;
+    if (oy === "auto" || oy === "scroll" || oy === "overlay") return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/** Resolves the shared scroll container + the grid's offset within it. The
+ *  virtualizer keys on both: getScrollElement drives windowing, scrollMargin
+ *  shifts the absolute row offsets past whatever sits above the grid (toolbar,
+ *  chip strip). Re-measured on resize — the chip strip height changes with
+ *  viewport width, especially where it wraps on mobile — so the offset never
+ *  goes stale the way the old hard-coded 160px did. */
+function useScrollContext(ref: React.RefObject<HTMLDivElement | null>): {
+  scrollEl: HTMLElement | null;
+  scrollMargin: number;
+} {
+  const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const parent = findScrollParent(el);
+    setScrollEl(parent);
+    const measure = () => {
+      const node = ref.current;
+      if (!node || !parent) return;
+      setScrollMargin(
+        node.getBoundingClientRect().top -
+          parent.getBoundingClientRect().top +
+          parent.scrollTop
+      );
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [ref]);
+  return { scrollEl, scrollMargin };
+}
+
 interface AssetGridProps {
   assets: Asset[];
   toolbar: ToolbarStateAPI;
@@ -62,6 +108,9 @@ interface AssetGridProps {
   onAssetClick?: (assetId: string, index: number) => void;
   onAddToCollection?: (assetId: string) => void;
   onRemove?: (assetId: string) => void;
+  /** Fired when a tile's per-card quick action moves it to trash. Lets the
+   *  parent drop the tile optimistically (grid + list paths). */
+  onTrashed?: (assetId: string) => void;
   /** Class hook for the outer container. */
   className?: string;
   /** When empty, render this instead of the empty grid. */
@@ -76,6 +125,7 @@ export function AssetGrid({
   onAssetClick,
   onAddToCollection,
   onRemove,
+  onTrashed,
   className,
   emptyState,
 }: AssetGridProps) {
@@ -179,6 +229,7 @@ export function AssetGrid({
           onSelect={handleSelect}
           onAddToCollection={onAddToCollection}
           onRemove={onRemove}
+          onTrashed={onTrashed}
         />
       ) : (
         <div
@@ -197,6 +248,7 @@ export function AssetGrid({
               onClick={() => onAssetClick?.(a.id, i)}
               onAddToCollection={onAddToCollection}
               onRemove={onRemove}
+              onTrashed={onTrashed}
             />
           ))}
         </div>
@@ -248,6 +300,31 @@ function useBatchThumbUrls(ids: string[]): BatchThumbUrls {
   const knownRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    // Evict entries no longer in the current id set so the maps + knownRef
+    // don't grow unbounded across a long filtering/browsing session over a
+    // large library (each id also holds a 6-variant URL object).
+    const idSet = new Set(ids);
+    let pruned = false;
+    for (const id of knownRef.current) {
+      if (!idSet.has(id)) {
+        knownRef.current.delete(id);
+        pruned = true;
+      }
+    }
+    if (pruned) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prune cached URL maps when the id set shrinks
+      setThumbUrls((prev) => {
+        const next: Record<string, string | null> = {};
+        for (const id of ids) if (id in prev) next[id] = prev[id];
+        return next;
+      });
+      setResponsiveUrls((prev) => {
+        const next: Record<string, Record<string, string>> = {};
+        for (const id of ids) if (id in prev) next[id] = prev[id];
+        return next;
+      });
+    }
+
     if (ids.length === 0) return;
     const missing = ids.filter((id) => !knownRef.current.has(id));
     if (missing.length === 0) return;
@@ -380,6 +457,7 @@ interface VirtualGridProps {
   onSelect: (assetId: string, e?: React.MouseEvent) => void;
   onAddToCollection?: (assetId: string) => void;
   onRemove?: (assetId: string) => void;
+  onTrashed?: (assetId: string) => void;
 }
 
 function VirtualGrid({
@@ -392,25 +470,26 @@ function VirtualGrid({
   onSelect,
   onAddToCollection,
   onRemove,
+  onTrashed,
 }: VirtualGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const rowCount = Math.ceil(assets.length / cols);
 
-  // Square tiles. Row height ≈ container width / cols. We don't have that
-  // measurement here, so we estimate from a typical breakpoint; the
-  // virtualizer is forgiving — it re-measures on resize via measureElement.
+  // Virtualise against the shared page scroller (the app shell's <main>), not
+  // a bespoke inner fixed-height box. One scroll position means the scroll
+  // model no longer flips between the direct and virtualised render paths (no
+  // h-[calc(100vh-160px)] magic offset) and lightbox scroll restore lines up.
+  const { scrollEl, scrollMargin } = useScrollContext(parentRef);
   const rowVirt = useVirtualizer({
     count: rowCount,
-    getScrollElement: () => parentRef.current,
+    getScrollElement: () => scrollEl,
     estimateSize: () => 220,
     overscan: 4,
+    scrollMargin,
   });
 
   return (
-    <div
-      ref={parentRef}
-      className="h-[calc(100vh-160px)] overflow-auto"
-    >
+    <div ref={parentRef} className="relative">
       <div
         style={{
           height: rowVirt.getTotalSize(),
@@ -431,7 +510,7 @@ function VirtualGrid({
                 top: 0,
                 left: 0,
                 width: "100%",
-                transform: `translateY(${vRow.start}px)`,
+                transform: `translateY(${vRow.start - scrollMargin}px)`,
               }}
             >
               <div
@@ -452,6 +531,7 @@ function VirtualGrid({
                     onClick={() => onAssetClick?.(a.id, start + i)}
                     onAddToCollection={onAddToCollection}
                     onRemove={onRemove}
+                    onTrashed={onTrashed}
                   />
                 ))}
               </div>
@@ -485,18 +565,18 @@ function VirtualList({
   // height that's still ~280 px of pre-rendered DOM beyond the viewport edge
   // (well past the safe pre-render budget for arrow-key scroll) while halving
   // the offscreen DOM cost on low-end mobile rendering 10k+ asset feeds.
+  // Shared page scroller (see VirtualGrid) — one scroll position, no inner box.
+  const { scrollEl, scrollMargin } = useScrollContext(parentRef);
   const rowVirt = useVirtualizer({
     count: assets.length,
-    getScrollElement: () => parentRef.current,
+    getScrollElement: () => scrollEl,
     estimateSize: () => 56,
     overscan: 5,
+    scrollMargin,
   });
 
   return (
-    <div
-      ref={parentRef}
-      className="h-[calc(100vh-160px)] overflow-auto"
-    >
+    <div ref={parentRef} className="relative">
       <div
         style={{
           height: rowVirt.getTotalSize(),
@@ -515,7 +595,7 @@ function VirtualList({
                   top: 0,
                   left: 0,
                   width: "100%",
-                  transform: `translateY(${vRow.start}px)`,
+                  transform: `translateY(${vRow.start - scrollMargin}px)`,
                 }}
               >
                 <ul className="divide-y divide-[var(--ft-color-outline-variant)]">

@@ -11,8 +11,8 @@ export function PlexoConnectionStatus() {
   const [status, setStatus] = useState<Status>("loading");
 
   useEffect(() => {
-    fetch("/api/health/plexo")
-      .then((r) => r.json())
+    fetch("/api/health/plexo", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { connected: false }))
       .then((d: { connected?: boolean }) => setStatus(d.connected ? "connected" : "disconnected"))
       .catch(() => setStatus("disconnected"));
   }, []);

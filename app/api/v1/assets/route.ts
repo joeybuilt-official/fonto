@@ -23,7 +23,11 @@ export async function GET(request: NextRequest) {
   const workspaces = await getUserWorkspaces(user.id);
   if (!workspaces.length) return NextResponse.json({ assets: [] });
 
-  const workspaceId = workspaces[0].id;
+  // Span every workspace the caller belongs to (shared + secondary), matching
+  // /api/v1/search, /assets/[id], /assets/urls and /assets/export. Filtering
+  // to workspaces[0] hid shared-workspace assets from the primary grid while
+  // they still appeared in search and detail.
+  const workspaceIds = workspaces.map((w) => w.id);
   const { searchParams } = request.nextUrl;
   const mimeFilter = searchParams.get("mime");
   const subtypeFilter = searchParams.get("subtype");
@@ -69,7 +73,7 @@ export async function GET(request: NextRequest) {
     directoryPathPrefixRaw == null ? null : directoryPathPrefixRaw.trim();
 
   const where: SQL[] = [
-    eq(schema.assets.workspaceId, workspaceId),
+    inArray(schema.assets.workspaceId, workspaceIds),
     eq(schema.assets.lifecycleState, lifecycleFilter),
     // M12 / ADR 0014 — absorbed Apple Live Photo MOVs are hidden; their still
     // carries the clip. One tile = one moment.

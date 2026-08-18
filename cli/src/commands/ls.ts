@@ -7,6 +7,7 @@
 
 import chalk from "chalk";
 import Table from "cli-table3";
+import ora from "ora";
 import { listAssets, type Asset, ApiError } from "../api.js";
 
 export interface LsOpts {
@@ -24,13 +25,24 @@ function fmtBytes(b: number): string {
 }
 
 export async function ls(opts: LsOpts): Promise<void> {
-  const limit = opts.limit ? Math.max(1, Number.parseInt(opts.limit, 10)) : undefined;
+  let limit: number | undefined;
+  if (opts.limit !== undefined) {
+    const n = Number.parseInt(opts.limit, 10);
+    if (Number.isNaN(n)) {
+      console.error(chalk.red(`✗ invalid --limit: ${opts.limit}`));
+      process.exitCode = 2;
+      return;
+    }
+    limit = Math.max(1, n);
+  }
+  const spin = opts.json ? null : ora("Loading assets…").start();
   try {
     const { assets } = await listAssets({
       mime: opts.mime,
       limit,
       favorite: opts.favorite,
     });
+    spin?.stop();
     if (opts.json) {
       console.log(JSON.stringify(assets, null, 2));
       return;
@@ -57,6 +69,7 @@ export async function ls(opts: LsOpts): Promise<void> {
     console.log(table.toString());
     console.log(chalk.dim(`${assets.length} asset${assets.length === 1 ? "" : "s"}`));
   } catch (err) {
+    spin?.stop();
     if (err instanceof ApiError) {
       console.error(chalk.red(`✗ ${err.status} ${err.message}`));
     } else {

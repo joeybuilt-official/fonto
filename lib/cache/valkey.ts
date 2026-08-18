@@ -20,9 +20,9 @@
 //
 // Tradeoffs documented inline at the stampede-lock loop.
 
-import type IORedis from "ioredis";
+import IORedis from "ioredis";
 import { randomUUID } from "crypto";
-import { getRedisConnection } from "@/lib/queue/connection";
+import { getRedisUrl } from "@/lib/queue/connection";
 import {
   cacheEvictionsTotal,
   cacheHitsTotal,
@@ -60,9 +60,36 @@ export interface CacheLayer<T> {
   ): Promise<T>;
 }
 
+// DEDICATED cache-tier connection — deliberately NOT the shared BullMQ
+// connection (lib/queue/connection.ts). BullMQ requires
+// `maxRetriesPerRequest: null` and relies on ioredis's default
+// `enableOfflineQueue: true`, which means during a mid-session Valkey outage
+// commands are QUEUED offline and the awaited get/set/eval never rejects — so
+// the fail-open try/catch in every helper below never runs and the request
+// HANGS until reconnect (turning a cache-tier blip into stalled search / tags
+// / persons requests). This connection sets `enableOfflineQueue: false` +
+// `commandTimeout` so a command REJECTS fast when Valkey is unreachable,
+// letting the fail-open catch degrade to direct compute as the module policy
+// promises.
+const CACHE_COMMAND_TIMEOUT_MS = 250;
+let _cacheRedis: IORedis | null = null;
+
 function safeRedis(): IORedis | null {
+  if (_cacheRedis) return _cacheRedis;
   try {
-    return getRedisConnection();
+    const conn = new IORedis(getRedisUrl(), {
+      enableOfflineQueue: false,
+      enableReadyCheck: false,
+      maxRetriesPerRequest: 1,
+      commandTimeout: CACHE_COMMAND_TIMEOUT_MS,
+      lazyConnect: false,
+    });
+    // A cache-tier connection must never crash the process on a transient
+    // Valkey error (unhandled 'error' events are fatal in Node) — every
+    // command is already guarded by a fail-open try/catch, so swallow here.
+    conn.on("error", () => {});
+    _cacheRedis = conn;
+    return _cacheRedis;
   } catch {
     return null;
   }
@@ -174,10 +201,14 @@ class ValkeyCacheLayer<T> implements CacheLayer<T> {
     const wsLbl = wsLabel(workspaceId);
     const redis = safeRedis();
 
-    // No Valkey at all? Skip straight to compute. Don't count this as a miss
+    // No Valkey, or the connection isn't currently ready (mid-outage /
+    // reconnecting / still connecting at cold start)? Skip straight to compute
+    // so we never enter the stampede-lock wait against a dead socket — with
+    // enableOfflineQueue:false the SETNX would reject and we'd otherwise poll
+    // the full STAMPEDE_MAX_WAIT_MS before falling back. Not counted as a miss
     // — the metric is about cache effectiveness, not Valkey health (covered
     // separately by the prom-client default process metrics).
-    if (!redis) return compute();
+    if (!redis || redis.status !== "ready") return compute();
 
     // Fast path — cache hit.
     const cached = await safeGetJSON<T>(redis, key);

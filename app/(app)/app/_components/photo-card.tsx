@@ -2,9 +2,32 @@
 // Copyright (C) 2026 Joeybuilt LLC
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useSyncExternalStore } from "react";
 import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play, Share2, CircleDot } from "lucide-react";
 import { Card } from "@/components/ui/card";
+
+// Shared coarse-pointer signal. One cached MediaQueryList feeds every tile so
+// a large grid doesn't register thousands of listeners. Drives the always-on
+// quick-actions affordance on touch devices (hover never fires there).
+let coarseMql: MediaQueryList | null = null;
+function coarseMedia(): MediaQueryList | null {
+  if (typeof window === "undefined" || !window.matchMedia) return null;
+  if (!coarseMql) coarseMql = window.matchMedia("(pointer: coarse)");
+  return coarseMql;
+}
+function subscribeCoarse(cb: () => void): () => void {
+  const mql = coarseMedia();
+  if (!mql) return () => {};
+  mql.addEventListener("change", cb);
+  return () => mql.removeEventListener("change", cb);
+}
+function useCoarsePointer(): boolean {
+  return useSyncExternalStore(
+    subscribeCoarse,
+    () => coarseMedia()?.matches ?? false,
+    () => false
+  );
+}
 
 export interface Asset {
   id: string;
@@ -95,11 +118,15 @@ interface QuickActionsProps {
   asset: Asset;
   onAddToCollection?: (assetId: string) => void;
   onRemove?: (assetId: string) => void;
+  /** Fired after a successful move-to-trash so the parent can drop the tile
+   *  from its list without a full reload. */
+  onTrashed?: (assetId: string) => void;
   showRemove?: boolean;
 }
 
-function QuickActionsMenu({ asset, onAddToCollection, onRemove, showRemove }: QuickActionsProps) {
+function QuickActionsMenu({ asset, onAddToCollection, onRemove, onTrashed, showRemove }: QuickActionsProps) {
   const [open, setOpen] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -111,29 +138,40 @@ function QuickActionsMenu({ asset, onAddToCollection, onRemove, showRemove }: Qu
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  function handleDownload(e: React.MouseEvent) {
+  async function handleDownload(e: React.MouseEvent) {
     e.stopPropagation();
-    fetch(`/api/v1/assets/${asset.id}/url`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.url) {
-          const a = document.createElement("a");
-          a.href = d.url;
-          a.download = asset.filename;
-          a.click();
-        }
-      });
-    setOpen(false);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/v1/assets/${asset.id}/url`);
+      if (!r.ok) throw new Error(`url ${r.status}`);
+      const d = (await r.json()) as { url?: string };
+      if (d.url) {
+        const a = document.createElement("a");
+        a.href = d.url;
+        a.download = asset.filename;
+        a.click();
+      }
+      setOpen(false);
+    } catch {
+      setErr("Couldn't download.");
+    }
   }
 
-  function handleTrash(e: React.MouseEvent) {
+  async function handleTrash(e: React.MouseEvent) {
     e.stopPropagation();
-    fetch(`/api/v1/assets/${asset.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ trash: true }),
-    });
-    setOpen(false);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/v1/assets/${asset.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trash: true }),
+      });
+      if (!r.ok) throw new Error(`trash ${r.status}`);
+      setOpen(false);
+      onTrashed?.(asset.id);
+    } catch {
+      setErr("Couldn't move to trash.");
+    }
   }
 
   return (
@@ -147,6 +185,11 @@ function QuickActionsMenu({ asset, onAddToCollection, onRemove, showRemove }: Qu
       </button>
       {open && (
         <div className="absolute bottom-7 right-0 z-20 min-w-36 rounded-[var(--ft-shape-extra-small)] bg-[var(--ft-color-surface-container)] shadow-[var(--ft-elev-2)] py-[var(--ft-space-2)]">
+          {err && (
+            <p className="px-[var(--ft-space-3)] py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-error)]">
+              {err}
+            </p>
+          )}
           {onAddToCollection && (
             <button
               onClick={(e) => { e.stopPropagation(); onAddToCollection(asset.id); setOpen(false); }}
@@ -195,6 +238,9 @@ export interface PhotoCardProps {
   showQuickActions?: boolean;
   onRemove?: (assetId: string) => void;
   onAddToCollection?: (assetId: string) => void;
+  /** Fired after the per-tile quick action moves this asset to trash, so the
+   *  parent grid can drop it optimistically instead of waiting for a reload. */
+  onTrashed?: (assetId: string) => void;
   onClick?: () => void;
   /** UX-3 — pre-resolved thumb URL from the batch URL endpoint. When set the
    *  card skips its per-tile /api/v1/assets/:id/url fetch entirely. AssetGrid
@@ -217,6 +263,7 @@ export function PhotoCard({
   showQuickActions = true,
   onRemove,
   onAddToCollection,
+  onTrashed,
   onClick,
   thumbUrl,
   responsiveUrls,
@@ -236,6 +283,7 @@ export function PhotoCard({
     thumbUrl !== undefined ? false : asset.mimeType.startsWith("image/")
   );
   const [hovered, setHovered] = useState(false);
+  const coarsePointer = useCoarsePointer();
 
   // Only pulse for states the worker is *actively* moving through. "captured"
   // is the initial post-upload state — if it stays there it means the worker
@@ -272,6 +320,18 @@ export function PhotoCard({
     }
   }
 
+  // WCAG 2.1.1 — the tile is the primary browse control, so it must be
+  // focusable and operable by keyboard. Enter/Space mirror a click.
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      if (selectMode && onSelect) onSelect();
+      else onClick?.();
+    }
+  }
+
+  const activationLabel = asset.description ?? asset.filename;
+
   return (
     // ADR 0009 phase 2 (group D) — outer chrome now resolves through the
     // MD3 <Card variant="filled"> primitive (surface-container-highest +
@@ -279,7 +339,12 @@ export function PhotoCard({
     // are unchanged per migration rule 1.
     <Card
       variant="filled"
+      role="button"
+      tabIndex={0}
+      aria-label={selectMode ? `Select ${activationLabel}` : `Open ${activationLabel}`}
+      aria-pressed={selectMode ? selected : undefined}
       onClick={handleClick}
+      onKeyDown={handleKeyDown}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       // UX-2 — drag handle for the /folders drop target. Carries the
@@ -469,10 +534,12 @@ export function PhotoCard({
         </div>
       )}
 
-      {/* Top-right: checkbox */}
+      {/* Top-right: checkbox. The 20px dot keeps its visual position (top/right
+          1.5) but the clickable wrapper is a 44×44 target (WCAG 2.5.5) that
+          extends down-left into the tile so it's tappable on touch. */}
       {(selectMode || hovered || selected) && (
         <div
-          className="absolute top-1.5 right-1.5 z-10"
+          className="absolute top-0 right-0 z-10 flex h-11 w-11 items-start justify-end p-1.5"
           onClick={(e) => { e.stopPropagation(); onSelect?.(e); }}
         >
           <div
@@ -487,13 +554,16 @@ export function PhotoCard({
         </div>
       )}
 
-      {/* Bottom: quick actions */}
-      {showQuickActions && hovered && !selectMode && (
+      {/* Bottom: quick actions. Hover reveals them on fine-pointer devices;
+          on coarse (touch) pointers hover never fires, so keep them mounted
+          there — otherwise the per-tile actions are unreachable on mobile. */}
+      {showQuickActions && (hovered || coarsePointer) && !selectMode && (
         <div className="absolute bottom-1.5 right-1.5 z-10">
           <QuickActionsMenu
             asset={asset}
             onAddToCollection={onAddToCollection}
             onRemove={onRemove}
+            onTrashed={onTrashed}
             showRemove={!!onRemove}
           />
         </div>

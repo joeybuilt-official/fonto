@@ -21,7 +21,7 @@ const modes: { value: Theme; Icon: typeof Sun; label: string }[] = [
 ];
 
 export function ThemeToggle({ className = "" }: { className?: string }) {
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, mounted } = useTheme();
 
   return (
     <div
@@ -31,7 +31,10 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
       )}
     >
       {modes.map(({ value, Icon, label }) => {
-        const active = theme === value;
+        // Until mounted, render no active pill so SSR and the first client
+        // render agree (server can't read localStorage). Post-mount the real
+        // selection lights up.
+        const active = mounted && theme === value;
         return (
           <Button
             key={value}

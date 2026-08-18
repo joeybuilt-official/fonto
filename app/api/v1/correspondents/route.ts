@@ -11,6 +11,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray } from "drizzle-orm";
+import { parseJson } from "@/app/api/v1/_lib/parseJson";
 
 const loadCorrespondents = (workspaceIds: string[]) => {
   const key = [...workspaceIds].sort().join(",");
@@ -53,7 +54,9 @@ export async function POST(request: NextRequest) {
   const gate = await requireWorkspaceAccessOrResponse(user.id, workspaces[0].id, "editor");
   if (!gate.ok) return gate.response;
 
-  const body = await request.json() as { name?: string; matchPattern?: string };
+  const parsed = await parseJson<{ name?: string; matchPattern?: string }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
   const name = String(body.name ?? "").trim();
   if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
 
@@ -78,7 +81,9 @@ export async function DELETE(request: NextRequest) {
   if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 400 });
   const workspaceIds = workspaces.map((w) => w.id);
 
-  const body = await request.json() as { id: string };
+  const parsed = await parseJson<{ id?: string }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
   if (!body.id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
   // Phase 3.1 — editor required to delete a correspondent. Resolve its

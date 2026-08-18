@@ -9,6 +9,7 @@
 
 import chalk from "chalk";
 import Table from "cli-table3";
+import ora from "ora";
 import { search as apiSearch, type Asset, ApiError } from "../api.js";
 
 export async function search(query: string, opts: { json?: boolean }): Promise<void> {
@@ -17,8 +18,10 @@ export async function search(query: string, opts: { json?: boolean }): Promise<v
     process.exitCode = 2;
     return;
   }
+  const spin = opts.json ? null : ora(`Searching "${query}"…`).start();
   try {
     const { assets } = await apiSearch(query);
+    spin?.stop();
     if (opts.json) {
       console.log(JSON.stringify(assets, null, 2));
       return;
@@ -45,6 +48,7 @@ export async function search(query: string, opts: { json?: boolean }): Promise<v
       chalk.dim(`${assets.length} match${assets.length === 1 ? "" : "es"}`)
     );
   } catch (err) {
+    spin?.stop();
     if (err instanceof ApiError) {
       console.error(chalk.red(`✗ ${err.status} ${err.message}`));
     } else {

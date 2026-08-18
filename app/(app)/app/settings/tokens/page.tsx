@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { ConfirmButton } from "@/components/confirm-button";
 import {
   Button,
   Card,
@@ -114,9 +115,6 @@ export default function TokensPage() {
   };
 
   const onRevoke = async (id: string) => {
-    if (!confirm("Revoke this token? Any client using it will lose access immediately.")) {
-      return;
-    }
     try {
       const r = await fetch(`/api/v1/tokens/${id}`, { method: "DELETE" });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -331,15 +329,13 @@ export default function TokensPage() {
                       <span>expires: {formatDate(t.expiresAt)}</span>
                     </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outlined"
-                    size="sm"
-                    onClick={() => onRevoke(t.id)}
-                    className="border-[var(--ft-color-error)]/40 text-[var(--ft-color-error)] hover:bg-[var(--ft-color-error)]/10"
+                  <ConfirmButton
+                    onConfirm={() => onRevoke(t.id)}
+                    confirmLabel="Confirm revoke"
+                    className="h-7 shrink-0 border border-[var(--ft-color-error)]/40 px-2.5 text-[0.8rem] font-medium"
                   >
                     Revoke
-                  </Button>
+                  </ConfirmButton>
                 </li>
               ))}
             </ul>

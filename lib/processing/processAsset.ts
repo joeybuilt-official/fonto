@@ -38,6 +38,7 @@ import { tryEnqueueFaceDetect } from "@/lib/assets/createAssetRow";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
 import { labelImageUrl, visionConfigured } from "@/lib/plexo-vision";
 import { isJunkLabel } from "@/lib/processing/labelStoplist";
+import { cacheInvalidate } from "@/lib/cache/valkey";
 
 const DOCUMENT_CLASSIFICATIONS = new Set([
   "document",
@@ -554,6 +555,29 @@ async function processAssetInner(
     .set({ processingState: "ready" })
     .where(eq(schema.assets.id, assetId));
 
+  // T2.1 / T1.3' — the pipeline has now written classification, description,
+  // kind, sub-classification, OCR text and (via enqueued jobs) thumbnails +
+  // clip_vec, every one of which changes cached search / list / people
+  // results. Evict the workspace's asset-tagged cache entries so a search
+  // inside the 300s TTL window (app/api/v1/search) doesn't miss this freshly-
+  // processed asset or serialize it with a null thumbnail. Mirrors the
+  // reprocess route (app/api/v1/assets/[id]/reprocess). Fire-and-forget: a
+  // Valkey blip must never fail the job.
+  const [readyWsRow] = await db
+    .select({ workspaceId: schema.assets.workspaceId })
+    .from(schema.assets)
+    .where(eq(schema.assets.id, assetId))
+    .limit(1);
+  if (readyWsRow) {
+    void cacheInvalidate(`ws:${readyWsRow.workspaceId}:assets`);
+    // People-grid instance counts come off photo face-flows, which this
+    // pipeline enqueues only for photos — evict the persons cache too so the
+    // grid doesn't render stale instance counts once faces land.
+    if (classification === "photo" && mimeType.startsWith("image/")) {
+      void cacheInvalidate(`ws:${readyWsRow.workspaceId}:persons`);
+    }
+  }
+
   // Face detection — only for real photographs. Screenshots, documents,
   // receipts, memes/art (classification != "photo") and non-images don't
   // carry faces worth clustering; running detection on them flooded the
@@ -904,6 +928,11 @@ export async function runOcrForAsset(
     .where(eq(schema.assets.id, assetId));
 
   if (hadText) {
+    // T2.1 — freshly-extracted OCR text changes search results. Inline uploads
+    // already invalidate at the end of processAsset; this covers the standalone
+    // nightly backfill cron that calls runOcrForAsset() directly. Fire-and-
+    // forget so a Valkey blip never fails the OCR pass.
+    void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
     void plexoPublishEvent("ext.fonto.asset.ocr_extracted", {
       assetId,
       filename: asset.filename,

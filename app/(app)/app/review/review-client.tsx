@@ -10,7 +10,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Check,
@@ -241,10 +241,45 @@ export function TidyUpClient(): React.ReactElement {
   const [hiddenDates, setHiddenDates] = useState<Set<string>>(new Set());
   const [hiddenGroups, setHiddenGroups] = useState<Set<string>>(new Set());
 
-  const showToast = useCallback((msg: string, undo?: () => void) => {
-    setToast({ msg, undo });
-    window.setTimeout(() => setToast(null), undo ? 8000 : 4000);
+  // Toast auto-dismiss timer, kept in a ref so a second toast clears the first
+  // one's pending timer (no overlap, no clearing the newer toast early) and so
+  // nothing fires setToast after unmount. It also lets us pause the countdown
+  // while the toast is hovered/focused (WCAG 2.2.1 Timing Adjustable).
+  const toastTimer = useRef<number | null>(null);
+  const toastDuration = useRef(4000);
+  const clearToastTimer = useCallback(() => {
+    if (toastTimer.current !== null) {
+      window.clearTimeout(toastTimer.current);
+      toastTimer.current = null;
+    }
   }, []);
+  const scheduleToastDismiss = useCallback(
+    (ms: number) => {
+      clearToastTimer();
+      toastTimer.current = window.setTimeout(() => setToast(null), ms);
+    },
+    [clearToastTimer]
+  );
+  const showToast = useCallback(
+    (msg: string, undo?: () => void) => {
+      const ms = undo ? 8000 : 4000;
+      toastDuration.current = ms;
+      setToast({ msg, undo });
+      scheduleToastDismiss(ms);
+    },
+    [scheduleToastDismiss]
+  );
+  useEffect(() => () => clearToastTimer(), [clearToastTimer]);
+
+  // Latest axis / data snapshots, read inside load() WITHOUT making load()
+  // depend on them — a dep would recreate load and re-fire its mount effect on
+  // every axis switch (changeAxis already owns the single buckets refetch), and
+  // reading `data` lets a failed background refetch surface via a toast instead
+  // of blowing away an already-populated queue.
+  const axisRef = useRef(axis);
+  axisRef.current = axis;
+  const dataRef = useRef(data);
+  dataRef.current = data;
 
   // Merge a fresh batch of thumbnail URLs in for the given asset ids.
   const fetchThumbs = useCallback(async (ids: string[]) => {
@@ -302,7 +337,11 @@ export function TidyUpClient(): React.ReactElement {
     try {
       const res = await fetch("/api/admin/review-queue", { cache: "no-store" });
       if (!res.ok) {
-        setError("We couldn't load your suggestions just now. Try again?");
+        // A failed BACKGROUND refetch must not wipe an already-populated queue:
+        // surface it via the toast and keep the UI + scroll position. Only the
+        // first load (no data yet) falls back to the full-screen error card.
+        if (dataRef.current) showToast("We couldn't refresh just now — please retry.");
+        else setError("We couldn't load your suggestions just now. Try again?");
         return;
       }
       const json = (await res.json()) as QueueResponse;
@@ -312,11 +351,14 @@ export function TidyUpClient(): React.ReactElement {
       setHiddenBuckets(new Set());
 
       // M15.2 / M15.4 — the date lane is reason-bucketed along the active axis.
-      await loadBuckets(axis);
+      // Axis is read from a ref so load() stays stable across axis switches
+      // (changeAxis owns the per-axis buckets refetch).
+      await loadBuckets(axisRef.current);
     } catch {
-      setError("We couldn't reach the server. Check your connection and retry.");
+      if (dataRef.current) showToast("We couldn't reach the server — please retry.");
+      else setError("We couldn't reach the server. Check your connection and retry.");
     }
-  }, [loadBuckets, axis]);
+  }, [loadBuckets, showToast]);
 
   // Fetch one page of variant manifests. `reset` starts from offset 0 and
   // replaces the list (used on first open / after an action refetch); otherwise
@@ -440,6 +482,14 @@ export function TidyUpClient(): React.ReactElement {
           0
         );
         if (varTrash > 0) setSessionStats((s) => ({ ...s, trashed: s.trashed + varTrash }));
+        // The queue refetch below clears hiddenGroups but never refetches the
+        // variant manifests (load() doesn't call loadVariantBatch), so a
+        // committed group would otherwise pop back out of variantGroupsState.
+        // Drop the actioned groups from that list so the cards and counts agree.
+        if (optimistic.groups?.length) {
+          const done = new Set(optimistic.groups);
+          setVariantGroupsState((prev) => prev.filter((g) => !done.has(g.groupId)));
+        }
         showToast(successMsg({ dateOk, varTrash }));
         await load();
       } catch {
@@ -462,15 +512,31 @@ export function TidyUpClient(): React.ReactElement {
           ? { ...s, fixed: Math.max(0, s.fixed - b.count) }
           : { ...s, kept: Math.max(0, s.kept - b.count) }
       );
+      // Re-add the tally we just rolled back — used when the undo didn't land.
+      const restoreStats = () =>
+        setSessionStats((s) =>
+          action === "confirm"
+            ? { ...s, fixed: s.fixed + b.count }
+            : { ...s, kept: s.kept + b.count }
+        );
       try {
-        await fetch("/api/admin/review-queue/undo-bucket", {
+        const res = await fetch("/api/admin/review-queue/undo-bucket", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ bucketKey: b.bucketKey }),
         });
+        // fetch only rejects on a network error, not a 4xx/5xx — without this
+        // check a server-side undo failure would still report "Undone" while
+        // sessionStats stayed decremented (silent consistency drift).
+        if (!res.ok) {
+          restoreStats();
+          showToast("We couldn't undo just now — please retry.");
+          return;
+        }
         showToast("Undone.");
         await load();
       } catch {
+        restoreStats();
         showToast("We couldn't undo just now — please retry.");
       } finally {
         setBusy(false);
@@ -633,6 +699,7 @@ export function TidyUpClient(): React.ReactElement {
           {section === "date" && (
             <BucketsSection
               buckets={visibleBuckets}
+              loading={buckets === null}
               axis={axis}
               onAxisChange={changeAxis}
               urls={urls}
@@ -679,6 +746,10 @@ export function TidyUpClient(): React.ReactElement {
       {toast && (
         <div
           role="status"
+          onMouseEnter={clearToastTimer}
+          onMouseLeave={() => scheduleToastDismiss(toastDuration.current)}
+          onFocus={clearToastTimer}
+          onBlur={() => scheduleToastDismiss(toastDuration.current)}
           className="fixed bottom-[calc(var(--ft-space-4)+env(safe-area-inset-bottom)+72px)] left-1/2 z-[60] flex w-[min(560px,calc(100vw-2*var(--ft-space-4)))] -translate-x-1/2 items-center gap-[var(--ft-space-3)] rounded-[var(--ft-shape-small)] bg-[var(--ft-color-inverse-surface)] px-[var(--ft-space-4)] py-[var(--ft-space-3)] text-[length:var(--ft-type-body-medium-size)] leading-[var(--ft-type-body-medium-line)] text-[var(--ft-color-on-inverse-surface)] shadow-[var(--ft-elev-3)] sm:bottom-[var(--ft-space-6)]"
         >
           <Check className="h-5 w-5 shrink-0 text-[var(--ft-color-inverse-primary)]" />
@@ -798,7 +869,7 @@ function SectionCount({ n }: { n: number }) {
   if (n <= 0) return null;
   return (
     <span className="ml-[var(--ft-space-1)] inline-flex h-5 min-w-5 items-center justify-center rounded-[var(--ft-shape-full)] bg-[color-mix(in_srgb,currentColor_18%,transparent)] px-1.5 text-[length:var(--ft-type-label-small-size)] font-semibold">
-      {n}
+      {n > 99 ? "99+" : n}
     </span>
   );
 }
@@ -844,6 +915,7 @@ const AXIS_TABS: { id: BucketAxis; label: string }[] = [
 
 function BucketsSection({
   buckets,
+  loading,
   axis,
   onAxisChange,
   urls,
@@ -854,6 +926,7 @@ function BucketsSection({
   onReviewItem,
 }: {
   buckets: DateBucket[];
+  loading: boolean;
   axis: BucketAxis;
   onAxisChange: (axis: BucketAxis) => void;
   urls: Record<string, string>;
@@ -883,7 +956,7 @@ function BucketsSection({
               aria-selected={active}
               disabled={busy}
               onClick={() => onAxisChange(t.id)}
-              className={`rounded-[var(--ft-shape-full)] px-[var(--ft-space-3)] py-[var(--ft-space-1)] text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium transition-colors ${
+              className={`inline-flex min-h-6 items-center justify-center rounded-[var(--ft-shape-full)] px-[var(--ft-space-3)] py-[var(--ft-space-1)] text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium transition-colors [@media(pointer:coarse)]:min-h-11 ${
                 active
                   ? "bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface)] shadow-sm"
                   : "text-[var(--ft-color-on-surface-variant)] hover:text-[var(--ft-color-on-surface)]"
@@ -898,11 +971,21 @@ function BucketsSection({
       {sorting && (
         <Card variant="filled">
           <CardContent className="flex flex-col gap-[var(--ft-space-2)]">
-            <p className="text-[length:var(--ft-type-title-small-size)] leading-[var(--ft-type-title-small-line)] font-medium text-[var(--ft-color-on-surface)]">
+            <p
+              aria-live="polite"
+              className="text-[length:var(--ft-type-title-small-size)] leading-[var(--ft-type-title-small-line)] font-medium text-[var(--ft-color-on-surface)]"
+            >
               Sorting your library… {progress!.sorted.toLocaleString()} of{" "}
               {progress!.total.toLocaleString()} photos
             </p>
-            <div className="h-1.5 overflow-hidden rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-highest)]">
+            <div
+              role="progressbar"
+              aria-label="Sorting progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round((progress!.sorted / progress!.total) * 100)}
+              className="h-1.5 overflow-hidden rounded-[var(--ft-shape-full)] bg-[var(--ft-color-surface-container-highest)]"
+            >
               <div
                 className="h-full rounded-[var(--ft-shape-full)] bg-[var(--ft-color-primary)]"
                 style={{ width: `${Math.round((progress!.sorted / progress!.total) * 100)}%` }}
@@ -917,13 +1000,20 @@ function BucketsSection({
       )}
 
       {buckets.length === 0 ? (
-        <SectionEmpty
-          text={
-            sorting
-              ? "Nothing to check yet — come back as more photos finish sorting."
-              : "No dates to double-check right now."
-          }
-        />
+        loading ? (
+          // Axis switch / first load: buckets are null (in flight), not [].
+          // Show a skeleton rather than flashing "nothing to review" on a queue
+          // that is actually full.
+          <BucketSkeleton />
+        ) : (
+          <SectionEmpty
+            text={
+              sorting
+                ? "Nothing to check yet — come back as more photos finish sorting."
+                : "No dates to double-check right now."
+            }
+          />
+        )
       ) : (
         buckets.map((b) => (
           <BucketCard
@@ -1041,7 +1131,7 @@ function BucketCard({
           <button
             type="button"
             onClick={() => setShowWhy((v) => !v)}
-            className="inline-flex items-center gap-1 text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium text-[var(--ft-color-primary-text)] hover:underline"
+            className="inline-flex min-h-6 items-center gap-1 text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium text-[var(--ft-color-primary-text)] hover:underline [@media(pointer:coarse)]:min-h-11"
           >
             Why these?
             <ChevronDown
@@ -1073,7 +1163,7 @@ function BucketCard({
           <button
             type="button"
             onClick={() => setReviewing((v) => !v)}
-            className="text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium text-[var(--ft-color-primary-text)] underline-offset-2 hover:underline"
+            className="inline-flex min-h-6 items-center text-[length:var(--ft-type-label-medium-size)] leading-[var(--ft-type-label-medium-line)] font-medium text-[var(--ft-color-primary-text)] underline-offset-2 hover:underline [@media(pointer:coarse)]:min-h-11"
           >
             {reviewing ? "Hide" : "Review one by one"}
           </button>
@@ -1250,6 +1340,29 @@ function VariantsSection({
           Show more look-alikes
         </Button>
       )}
+    </div>
+  );
+}
+
+function BucketSkeleton() {
+  return (
+    <div className="space-y-[var(--ft-space-3)]">
+      {[0, 1].map((i) => (
+        <div
+          key={i}
+          className="rounded-[var(--ft-shape-medium)] border border-[var(--ft-color-outline-variant)] p-[var(--ft-space-4)]"
+        >
+          <div className="mb-[var(--ft-space-3)] h-5 w-2/3 animate-pulse rounded-[var(--ft-shape-small)] bg-[var(--ft-color-surface-container-highest)]" />
+          <div className="flex gap-[var(--ft-space-2)]">
+            {[0, 1, 2, 3].map((j) => (
+              <div
+                key={j}
+                className="h-14 w-14 shrink-0 animate-pulse rounded-[var(--ft-shape-medium)] bg-[var(--ft-color-surface-container-highest)]"
+              />
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

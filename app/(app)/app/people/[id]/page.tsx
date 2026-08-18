@@ -15,6 +15,29 @@ import { use, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Loader2, Check, EyeOff, Users, X, XCircle } from "lucide-react";
+import { Dialog } from "@base-ui/react/dialog";
+
+// Gate a fan-out of PATCHes so a large multi-select doesn't open hundreds of
+// simultaneous connections (net::ERR_INSUFFICIENT_RESOURCES). Runs at most
+// `limit` requests at once and preserves input order in the results.
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker())
+  );
+  return results;
+}
 
 interface Person {
   id: string;
@@ -117,6 +140,7 @@ function FaceCropBox({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale crop when face changes before refetch
     setCropUrl(null);
     setCropFailed(false);
     if (!face.faceCropUrl) return;
@@ -312,25 +336,34 @@ export default function PersonDetailPage({
       setPersonGroupIds(next);
       setSavingGroups(true);
       try {
-        await fetch(`/api/v1/persons/${person.id}/groups`, {
+        const res = await fetch(`/api/v1/persons/${person.id}/groups`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ groupIds: next }),
         });
+        if (!res.ok) {
+          setPersonGroupIds(personGroupIds); // revert — non-OK resolves normally
+          showToast("Couldn't update groups.", "error");
+        }
       } catch {
         setPersonGroupIds(personGroupIds); // revert on error
+        showToast("Couldn't update groups.", "error");
       } finally {
         setSavingGroups(false);
       }
     },
-    [person, personGroupIds]
+    [person, personGroupIds, showToast]
   );
 
   const saveName = useCallback(async () => {
     if (!person) return;
+    const trimmed = name.trim();
+    // Skip the PATCH when nothing changed — onBlur fires on every focus-out
+    // (including the blur triggered by clicking "Remove name"), which would
+    // otherwise race an unchanged rename against the removal.
+    if (trimmed === (person.name ?? "")) return;
     setSavingName(true);
     try {
-      const trimmed = name.trim();
       const res = await fetch(`/api/v1/persons/${person.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -345,26 +378,27 @@ export default function PersonDetailPage({
         // the pre-rename "Unnamed" label until a hard reload.
         router.refresh();
       } else {
-        // Non-OK was silently swallowed before — names "didn't save" with
-        // no signal. Surface the error so the user can act on it (re-auth,
-        // refresh, file a bug, etc).
+        // Non-OK is surfaced as a toast (not setError) so a transient failure
+        // doesn't collapse the whole detail page to a bare error view.
         const body = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(
-          `Rename failed (${res.status}): ${body?.error ?? "unknown error"}`
+        showToast(
+          `Rename failed (${res.status}): ${body?.error ?? "unknown error"}`,
+          "error"
         );
         setName(person.name ?? "");
       }
     } catch (err) {
-      setError(
-        `Rename failed: ${err instanceof Error ? err.message : String(err)}`
+      showToast(
+        `Rename failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error"
       );
       setName(person.name ?? "");
     } finally {
       setSavingName(false);
     }
-  }, [person, name, router]);
+  }, [person, name, router, showToast]);
 
   // Phase 2 (faces/UX) — explicit Remove-name control. The PATCH route clears
   // the name on null, so we send `name: null` and optimistically reflect the
@@ -387,18 +421,20 @@ export default function PersonDetailPage({
         const body = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(
-          `Remove-name failed (${res.status}): ${body?.error ?? "unknown error"}`
+        showToast(
+          `Remove-name failed (${res.status}): ${body?.error ?? "unknown error"}`,
+          "error"
         );
       }
     } catch (err) {
-      setError(
-        `Remove-name failed: ${err instanceof Error ? err.message : String(err)}`
+      showToast(
+        `Remove-name failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error"
       );
     } finally {
       setSavingName(false);
     }
-  }, [person, router]);
+  }, [person, router, showToast]);
 
   // Intelligence Core — save birth/death partial dates. Sends the raw strings
   // (or null to clear); the server splits them into date + precision columns.
@@ -423,18 +459,20 @@ export default function PersonDetailPage({
         const body = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(
-          `Save dates failed (${res.status}): ${body?.error ?? "unknown error"}`
+        showToast(
+          `Save dates failed (${res.status}): ${body?.error ?? "unknown error"}`,
+          "error"
         );
       }
     } catch (err) {
-      setError(
-        `Save dates failed: ${err instanceof Error ? err.message : String(err)}`
+      showToast(
+        `Save dates failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error"
       );
     } finally {
       setSavingLife(false);
     }
-  }, [person, birth, death]);
+  }, [person, birth, death, showToast]);
 
   // #9 — ignore the whole person (junk cluster). Server cascades to its
   // faces. On success, navigate back to the grid (the tile is now hidden).
@@ -454,18 +492,20 @@ export default function PersonDetailPage({
         const body = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(
-          `Ignore failed (${res.status}): ${body?.error ?? "unknown error"}`
+        showToast(
+          `Ignore failed (${res.status}): ${body?.error ?? "unknown error"}`,
+          "error"
         );
       }
     } catch (err) {
-      setError(
-        `Ignore failed: ${err instanceof Error ? err.message : String(err)}`
+      showToast(
+        `Ignore failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error"
       );
     } finally {
       setActing(false);
     }
-  }, [person, router]);
+  }, [person, router, showToast]);
 
   const toggleSelect = useCallback((faceId: string) => {
     setSelected((prev) => {
@@ -480,21 +520,23 @@ export default function PersonDetailPage({
     if (selected.size === 0) return;
     setActing(true);
     try {
-      const results = await Promise.all(
-        Array.from(selected).map((fid) =>
+      const results = await mapWithConcurrency(
+        Array.from(selected),
+        6,
+        (fid) =>
           fetch(`/api/v1/faces/${fid}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ hidden: true }),
           })
-        )
       );
-      if (results.some((r) => !r.ok)) {
-        showToast("Couldn't hide some faces. Try again.", "error");
-        return;
-      }
+      // Reconcile regardless of partial failure — some faces are already
+      // hidden server-side, so reload so the grid reflects what changed.
       setSelected(new Set());
       await load();
+      if (results.some((r) => !r.ok)) {
+        showToast("Couldn't hide some faces. Try again.", "error");
+      }
     } catch {
       showToast("Couldn't hide faces. Check your connection.", "error");
     } finally {
@@ -506,21 +548,23 @@ export default function PersonDetailPage({
     if (selected.size === 0) return;
     setActing(true);
     try {
-      const results = await Promise.all(
-        Array.from(selected).map((fid) =>
+      const results = await mapWithConcurrency(
+        Array.from(selected),
+        6,
+        (fid) =>
           fetch(`/api/v1/faces/${fid}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ person_id: null }),
           })
-        )
       );
-      if (results.some((r) => !r.ok)) {
-        showToast("Couldn't detach some faces. Try again.", "error");
-        return;
-      }
+      // Reconcile regardless of partial failure — some faces are already
+      // detached server-side, so reload so the grid reflects what changed.
       setSelected(new Set());
       await load();
+      if (results.some((r) => !r.ok)) {
+        showToast("Couldn't detach some faces. Try again.", "error");
+      }
     } catch {
       showToast("Couldn't detach faces. Check your connection.", "error");
     } finally {
@@ -530,6 +574,7 @@ export default function PersonDetailPage({
 
   const splitSelected = useCallback(async () => {
     if (!person || selected.size === 0) return;
+    const count = selected.size;
     setActing(true);
     try {
       const res = await fetch(`/api/v1/persons/${person.id}/split`, {
@@ -540,11 +585,27 @@ export default function PersonDetailPage({
       if (res.ok) {
         setSelected(new Set());
         await load();
+        showToast(
+          `Split ${count} ${count === 1 ? "face" : "faces"} into a new person.`,
+          "success"
+        );
+      } else {
+        // A non-OK split (409/500) previously produced no feedback and left
+        // the selection intact, so the user retried blindly.
+        const body = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        showToast(
+          `Couldn't split faces${body?.error ? `: ${body.error}` : ". Try again."}`,
+          "error"
+        );
       }
+    } catch {
+      showToast("Couldn't split faces. Check your connection.", "error");
     } finally {
       setActing(false);
     }
-  }, [person, selected, load]);
+  }, [person, selected, load, showToast]);
 
   const openMerge = useCallback(async () => {
     setShowMerge(true);
@@ -864,20 +925,19 @@ export default function PersonDetailPage({
         </div>
       )}
 
-      {showMerge && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-lg border border-border bg-background p-4 shadow-lg">
+      {/* base-ui Dialog — provides focus trap, Escape-to-close and
+          backdrop-dismiss (parity with ManageGroupsDialog on the grid). */}
+      <Dialog.Root open={showMerge} onOpenChange={setShowMerge}>
+        <Dialog.Portal>
+          <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/50" />
+          <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-4 shadow-lg outline-none">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-foreground">
+              <Dialog.Title className="text-sm font-semibold text-foreground">
                 Merge {headline} into…
-              </h2>
-              <button
-                type="button"
-                onClick={() => setShowMerge(false)}
-                className="text-sm text-muted-foreground hover:text-foreground"
-              >
+              </Dialog.Title>
+              <Dialog.Close className="text-sm text-muted-foreground hover:text-foreground">
                 Cancel
-              </button>
+              </Dialog.Close>
             </div>
             <input
               type="text"
@@ -989,9 +1049,9 @@ export default function PersonDetailPage({
                 );
               })()}
             </div>
-          </div>
-        </div>
-      )}
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* #8 — floating propagation toasts (success/error). Mirrors the
           uploads-section ToastContainer styling. */}

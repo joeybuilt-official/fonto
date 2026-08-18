@@ -38,7 +38,7 @@ function AdminsOnly(): React.ReactElement {
   return (
     <main className="p-8 max-w-3xl mx-auto">
       <h1 className="text-2xl font-semibold mb-4">Admins only</h1>
-      <p className="text-sm text-muted-foreground">
+      <p className="text-sm text-[var(--ft-color-on-surface-variant)]">
         The audit log is restricted to the workspace owner.
       </p>
     </main>
@@ -94,20 +94,20 @@ export default async function AuditLogPage({
   return (
     <main className="p-8 max-w-6xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">Audit log</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1 className="text-2xl font-semibold text-[var(--ft-color-on-surface)]">Audit log</h1>
+        <p className="text-sm text-[var(--ft-color-on-surface-variant)] mt-1">
           The 200 most recent mutating actions in this workspace. Rows older
           than the retention window are removed automatically by a daily
           sweep (default 90 days; see <code className="font-mono">AUDIT_RETENTION_DAYS</code>).
         </p>
-        <p className="text-xs text-muted-foreground mt-1">
+        <p className="text-xs text-[var(--ft-color-on-surface-variant)] mt-1">
           IPs are stored as a truncated subnet (/24 IPv4, /48 IPv6) — never
           the full client IP.
         </p>
       </div>
 
       <form className="flex items-center gap-2" action="/app/settings/audit">
-        <label htmlFor="action" className="text-xs font-medium text-muted-foreground uppercase">
+        <label htmlFor="action" className="text-xs font-medium text-[var(--ft-color-on-surface-variant)] uppercase">
           Action
         </label>
         <select
@@ -137,12 +137,12 @@ export default async function AuditLogPage({
 
       <Card variant="outlined" className="overflow-x-auto p-0">
         {rows.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground">
+          <p className="px-4 py-6 text-sm text-[var(--ft-color-on-surface-variant)]">
             No audit events yet.
           </p>
         ) : (
           <table className="w-full text-xs">
-            <thead className="text-muted-foreground bg-muted/50">
+            <thead className="text-[var(--ft-color-on-surface-variant)] bg-[var(--ft-color-surface-container-high)]/50">
               <tr>
                 <th className="text-left px-3 py-2">When</th>
                 <th className="text-left px-3 py-2">Actor</th>
@@ -155,7 +155,7 @@ export default async function AuditLogPage({
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-t border-border align-top">
+                <tr key={r.id} className="border-t border-[var(--ft-color-outline-variant)] align-top">
                   <td className="px-3 py-2 font-mono whitespace-nowrap">
                     {r.createdAt.toISOString()}
                   </td>

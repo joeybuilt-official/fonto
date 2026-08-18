@@ -19,6 +19,7 @@
 //      - collection: JSON-ish gallery of contained assets w/ thumbnail URLs.
 //      - set:        currently same shape as collection.
 
+import { cache } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -133,21 +134,92 @@ async function presignThumb(workspaceId: string, assetId: string): Promise<strin
   }
 }
 
-export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
-  const { token } = await params;
+/** Size-limited preview derivative (not the original). Used for the inline
+ *  render when the share link does NOT allow downloads, so the full-res
+ *  original URL is never handed to the viewer. */
+async function presignPreview(workspaceId: string, assetId: string): Promise<string | null> {
+  const bucket = process.env.R2_BUCKET;
+  if (!bucket) return null;
+  const key = assetDerivativeKey(workspaceId, assetId, "preview");
+  try {
+    return await storage().presignGet(key, { expiresIn: 3600 });
+  } catch {
+    return null;
+  }
+}
+
+// ─── Shared request-scoped loaders ──────────────────────────────────────────
+// Both generateMetadata and the page component resolve the same share link and
+// its target. cache() dedupes the DB work (and the rate-limit side effect) so
+// each runs exactly once per request instead of twice.
+
+/** Constant bucket for requests with no resolvable client IP. Ensures such
+ *  requests are still throttled collectively rather than skipping the limiter
+ *  (the old `if (ipHash)` guard was fail-open → password brute-force vector). */
+const NO_IP_RATE_BUCKET = "__share_no_ip__";
+
+type ShareLinkRow = typeof schema.shareLinks.$inferSelect;
+
+type ShareResolution =
+  | { kind: "rate_limited"; resetSeconds: number }
+  | { kind: "not_found" }
+  | { kind: "ok"; link: ShareLinkRow; ipHash: string | null };
+
+/** Rate-limit + link lookup + validity, shared by generateMetadata and the
+ *  page. Rate-limiting lives here so the metadata path can't bypass it. */
+const resolveShare = cache(async (token: string): Promise<ShareResolution> => {
+  const ip = await clientIpFromHeaders();
+  const ipHash = ip ? hashIp(ip) : null;
+  const rl = await checkShareLinkRateLimit(ipHash ?? NO_IP_RATE_BUCKET);
+  if (!rl.allowed) {
+    return { kind: "rate_limited", resetSeconds: rl.resetSeconds };
+  }
+
   const [link] = await db
     .select()
     .from(schema.shareLinks)
     .where(or(eq(schema.shareLinks.slug, token), eq(schema.shareLinks.token, token)))
     .limit(1);
-  if (!link || link.revoked || link.revokedAt) return { title: "Fonto — Shared" };
+
+  // Revoked / expired / burned-out → treat as not found (don't leak existence).
+  if (!link) return { kind: "not_found" };
+  if (link.revoked || link.revokedAt) return { kind: "not_found" };
+  if (link.expiresAt && link.expiresAt.getTime() <= Date.now()) {
+    return { kind: "not_found" };
+  }
+  if (link.maxViews !== null && link.viewCount >= link.maxViews) {
+    return { kind: "not_found" };
+  }
+
+  return { kind: "ok", link, ipHash };
+});
+
+const loadAsset = cache(async (assetId: string) => {
+  const [asset] = await db
+    .select()
+    .from(schema.assets)
+    .where(eq(schema.assets.id, assetId))
+    .limit(1);
+  return asset ?? null;
+});
+
+const loadCollection = cache(async (collectionId: string) => {
+  const [collection] = await db
+    .select()
+    .from(schema.collections)
+    .where(eq(schema.collections.id, collectionId))
+    .limit(1);
+  return collection ?? null;
+});
+
+export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
+  const { token } = await params;
+  const resolved = await resolveShare(token);
+  if (resolved.kind !== "ok") return { title: "Fonto — Shared" };
+  const { link } = resolved;
 
   if (link.targetType === "asset") {
-    const [asset] = await db
-      .select()
-      .from(schema.assets)
-      .where(eq(schema.assets.id, link.targetId))
-      .limit(1);
+    const asset = await loadAsset(link.targetId);
     if (!asset) return { title: "Fonto — Shared" };
     const thumbUrl = await presignThumb(asset.workspaceId, asset.id);
     const desc = asset.description ?? "Shared via Fonto";
@@ -170,11 +242,7 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
   }
 
   if (link.targetType === "collection") {
-    const [collection] = await db
-      .select()
-      .from(schema.collections)
-      .where(eq(schema.collections.id, link.targetId))
-      .limit(1);
+    const collection = await loadCollection(link.targetId);
     if (!collection) return { title: "Fonto — Shared Collection" };
     const desc = collection.description ?? "A collection shared via Fonto";
     return {
@@ -240,36 +308,22 @@ export default async function SharePage({ params }: SharePageProps) {
   const jar = await cookies();
   const submittedPassword = jar.get(sharePwCookie(token))?.value ?? null;
 
-  const ip = await clientIpFromHeaders();
-  const ipHash = ip ? hashIp(ip) : null;
   const h = await headers();
   const userAgent = h.get("user-agent");
   const referer = h.get("referer");
 
-  // Rate-limit BEFORE DB.
-  if (ipHash) {
-    const rl = await checkShareLinkRateLimit(ipHash);
-    if (!rl.allowed) {
-      return <RateLimitedPage resetSeconds={rl.resetSeconds} />;
-    }
+  // Rate-limit + lookup + validity run in the shared cached resolver so the
+  // metadata path can't bypass the limiter and the DB work isn't repeated.
+  const resolved = await resolveShare(token);
+  if (resolved.kind === "rate_limited") {
+    return <RateLimitedPage resetSeconds={resolved.resetSeconds} />;
   }
-
-  const [link] = await db
-    .select()
-    .from(schema.shareLinks)
-    .where(or(eq(schema.shareLinks.slug, token), eq(schema.shareLinks.token, token)))
-    .limit(1);
-
-  if (!link) notFound();
-
-  // Revoked or expired → 404 (don't leak existence).
-  if (link.revoked || link.revokedAt) notFound();
-  if (link.expiresAt && link.expiresAt.getTime() <= Date.now()) notFound();
-  if (link.maxViews !== null && link.viewCount >= link.maxViews) {
-    // 410 Gone equivalent — surfaced as notFound() to keep the public surface
-    // small (don't leak distinction between "no link" and "burned out link").
+  if (resolved.kind === "not_found") {
+    // 410-Gone / revoked / expired all surface as notFound() to keep the
+    // public surface small (don't leak "no link" vs "burned-out link").
     notFound();
   }
+  const { link, ipHash } = resolved;
 
   // Authenticated users with an asset target land directly in the app lightbox.
   if (link.targetType === "asset") {
@@ -315,11 +369,7 @@ export default async function SharePage({ params }: SharePageProps) {
 
   // ─── Asset target ───────────────────────────────────────────────────────
   if (link.targetType === "asset") {
-    const [asset] = await db
-      .select()
-      .from(schema.assets)
-      .where(eq(schema.assets.id, link.targetId))
-      .limit(1);
+    const asset = await loadAsset(link.targetId);
     if (
       !asset ||
       asset.lifecycleState === "trashed" ||
@@ -327,10 +377,32 @@ export default async function SharePage({ params }: SharePageProps) {
     ) {
       notFound();
     }
-    const url = await presignAssetUrl(asset);
-    if (!url) notFound();
     const isImage = asset.mimeType.startsWith("image/");
     const isPdf = asset.mimeType === "application/pdf";
+
+    // SECURITY: only ever presign the ORIGINAL when the link allows downloads.
+    // Otherwise the allowDownload toggle is cosmetic — the full-res original
+    // URL would sit in the <img>/<iframe> src for any viewer to copy or
+    // right-click-save. When downloads are off we serve a size-limited preview
+    // derivative (images) and expose no direct original URL at all.
+    const originalUrl = link.allowDownload ? await presignAssetUrl(asset) : null;
+    const previewUrl = link.allowDownload
+      ? originalUrl
+      : isImage
+        ? await presignPreview(asset.workspaceId, asset.id)
+        : null;
+
+    // Download enabled but the original couldn't be signed (bucket misconfig)
+    // → 404, preserving prior behaviour.
+    if (link.allowDownload && !originalUrl) notFound();
+
+    // Reserve layout space from stored intrinsic dimensions so the public
+    // render doesn't reflow / flash blank while the image loads.
+    const previewAspect =
+      asset.widthPx && asset.heightPx && asset.widthPx > 0 && asset.heightPx > 0
+        ? `${asset.widthPx} / ${asset.heightPx}`
+        : "4 / 3";
+
     return (
       <div className="min-h-screen bg-background">
         <header className="border-b border-border">
@@ -338,9 +410,9 @@ export default async function SharePage({ params }: SharePageProps) {
             <Link href="/" className="font-heading text-sm font-semibold tracking-tight">
               <span className="text-primary">_</span>fonto
             </Link>
-            {link.allowDownload && (
+            {link.allowDownload && originalUrl && (
               <a
-                href={url}
+                href={originalUrl}
                 download={asset.filename}
                 className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-foreground transition-colors"
               >
@@ -352,21 +424,34 @@ export default async function SharePage({ params }: SharePageProps) {
 
         <main className="mx-auto max-w-5xl space-y-4 px-6 py-8">
           <div className="overflow-hidden rounded-xl border border-border bg-card">
-            {isImage ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={url}
-                alt={asset.description ?? asset.filename}
-                className="w-full object-contain max-h-[80vh]"
-              />
-            ) : isPdf ? (
-              <iframe src={url} className="w-full h-[80vh]" title={asset.filename} />
+            {isImage && previewUrl ? (
+              <div
+                className="relative w-full bg-muted/30"
+                style={{ aspectRatio: previewAspect, maxHeight: "80vh" }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={previewUrl}
+                  alt={asset.description ?? asset.filename}
+                  {...(asset.widthPx && asset.heightPx
+                    ? { width: asset.widthPx, height: asset.heightPx }
+                    : {})}
+                  className="h-full w-full object-contain"
+                />
+              </div>
+            ) : isPdf && originalUrl ? (
+              <iframe src={originalUrl} className="w-full h-[80vh]" title={asset.filename} />
             ) : (
-              <div className="flex aspect-video items-center justify-center bg-muted/30">
+              <div className="flex aspect-video flex-col items-center justify-center gap-2 bg-muted/30">
                 {asset.mimeType.startsWith("text/") ? (
                   <FileText className="h-16 w-16 text-muted-foreground" />
                 ) : (
                   <FileIcon className="h-16 w-16 text-muted-foreground" />
+                )}
+                {!link.allowDownload && (
+                  <p className="px-6 text-center text-xs text-muted-foreground">
+                    Preview unavailable — downloads are disabled for this share.
+                  </p>
                 )}
               </div>
             )}
@@ -400,11 +485,7 @@ export default async function SharePage({ params }: SharePageProps) {
 
   // ─── Collection / Set target ────────────────────────────────────────────
   if (link.targetType === "collection") {
-    const [collection] = await db
-      .select()
-      .from(schema.collections)
-      .where(eq(schema.collections.id, link.targetId))
-      .limit(1);
+    const collection = await loadCollection(link.targetId);
     if (!collection) notFound();
 
     const rows = await db

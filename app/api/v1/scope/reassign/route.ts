@@ -26,8 +26,8 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
-import { and, eq, inArray, like, type SQL } from "drizzle-orm";
-import { nextSeq } from "@/lib/db/seq";
+import { and, eq, inArray, like, sql, type SQL } from "drizzle-orm";
+import { pgArray } from "@/lib/db/sql-helpers";
 import { isScope, type Scope } from "@/lib/scope";
 import { cacheInvalidate } from "@/lib/cache/valkey";
 
@@ -102,40 +102,85 @@ export async function POST(request: NextRequest) {
 
   const targetShootId = to === "SHOOT" ? shootId : null;
   const batchId = randomUUID();
-  let reassigned = 0;
 
-  for (const a of rows) {
-    const scopeChanged = a.scope !== to;
-    const shootChanged = (a.shootId ?? null) !== targetShootId;
-    if (!scopeChanged && !shootChanged) continue; // no-op — don't log
+  // Only rows whose scope or shoot membership actually changes are rewritten
+  // (and logged). Filtering up front keeps no-ops out of the batch.
+  const changed = rows.filter(
+    (a) => a.scope !== to || (a.shootId ?? null) !== targetShootId,
+  );
 
-    const seq = await nextSeq(workspaceId, "asset");
-    await db
-      .update(schema.assets)
-      .set({ scope: to, shootId: targetShootId, seq, updatedAt: new Date() })
-      .where(eq(schema.assets.id, a.id));
+  if (changed.length > 0) {
+    // Batch the writes instead of one nextSeq + UPDATE + INSERT round-trip per
+    // row — a directoryPathPrefix/source selector can match thousands of
+    // assets, and the old per-row loop turned one request into thousands of
+    // serial DB round-trips (risking gateway timeouts). Each reassigned asset
+    // still needs a DISTINCT seq: the delta-sync feed (/sync/assets) pages by
+    // `seq > cursor`, so rows sharing a seq value would be dropped mid-page.
+    // We block-allocate N contiguous seqs in one atomic statement, then chunk
+    // the UPDATE (per-row seq via unnest) and the reassignment-log INSERT, all
+    // inside one transaction.
+    const N = changed.length;
+    await db.transaction(async (tx) => {
+      // Block-allocate N per-workspace asset seqs (mirrors lib/db/seq.ts
+      // nextSeq, incrementing by N in a single atomic upsert). The allocated
+      // block is [firstSeq .. maxSeq].
+      const seqRows = (await tx.execute(sql`
+        INSERT INTO fonto.workspace_seq (workspace_id, asset_seq)
+        VALUES (${workspaceId}, ${N})
+        ON CONFLICT (workspace_id) DO UPDATE
+          SET asset_seq = fonto.workspace_seq.asset_seq + ${N}
+        RETURNING asset_seq AS seq
+      `)) as unknown as Array<{ seq: string | number | bigint }>;
+      const maxSeqRaw = seqRows[0]?.seq;
+      if (maxSeqRaw == null) {
+        throw new Error(
+          `scope/reassign: seq allocation returned no row for workspace=${workspaceId}`,
+        );
+      }
+      const maxSeq = typeof maxSeqRaw === "bigint" ? maxSeqRaw : BigInt(maxSeqRaw);
+      const firstSeq = maxSeq - BigInt(N) + 1n;
 
-    await db
-      .insert(schema.scopeReassignments)
-      .values({
-        workspaceId,
-        assetId: a.id,
-        batchId,
-        fromScope: a.scope,
-        toScope: to,
-        fromShootId: a.shootId ?? null,
-        toShootId: targetShootId,
-        actor: user.id,
-      })
-      .onConflictDoNothing();
-    reassigned += 1;
-  }
+      const CHUNK = 1000;
+      for (let i = 0; i < changed.length; i += CHUNK) {
+        const slice = changed.slice(i, i + CHUNK);
+        const ids = slice.map((a) => a.id);
+        const seqs = slice.map((_, j) => (firstSeq + BigInt(i + j)).toString());
 
-  if (reassigned > 0) {
+        // One UPDATE per chunk: scope/shoot are constant across the batch;
+        // the distinct per-row seq is joined in via unnest(ids, seqs).
+        await tx.execute(sql`
+          UPDATE fonto.assets AS a
+          SET scope = ${to},
+              shoot_id = ${targetShootId}::uuid,
+              updated_at = now(),
+              seq = v.seq
+          FROM unnest(${pgArray(ids)}::uuid[], ${pgArray(seqs)}::bigint[]) AS v(id, seq)
+          WHERE a.id = v.id AND a.workspace_id = ${workspaceId}
+        `);
+
+        // One multi-row INSERT per chunk for the reversible reassignment log.
+        await tx
+          .insert(schema.scopeReassignments)
+          .values(
+            slice.map((a) => ({
+              workspaceId,
+              assetId: a.id,
+              batchId,
+              fromScope: a.scope,
+              toScope: to,
+              fromShootId: a.shootId ?? null,
+              toShootId: targetShootId,
+              actor: user.id,
+            })),
+          )
+          .onConflictDoNothing();
+      }
+    });
+
     // T1.3' — evict every aggregate cache that embeds asset rows/counts.
     revalidateTag(`ws:${workspaceId}:assets`, "max");
     void cacheInvalidate(`ws:${workspaceId}:assets`);
   }
 
-  return NextResponse.json({ batchId, reassigned, scanned: rows.length });
+  return NextResponse.json({ batchId, reassigned: changed.length, scanned: rows.length });
 }

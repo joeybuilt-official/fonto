@@ -66,6 +66,8 @@ export default function MembersSettingsPage() {
   );
   const [members, setMembers] = useState<MemberSummary[] | null>(null);
   const [membersUnavailable, setMembersUnavailable] = useState(false);
+  const [membersError, setMembersError] = useState(false);
+  const [invitationsError, setInvitationsError] = useState(false);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"editor" | "viewer">("viewer");
   const [creating, setCreating] = useState(false);
@@ -73,16 +75,24 @@ export default function MembersSettingsPage() {
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const reloadInvitations = useCallback(async () => {
-    const res = await fetch("/api/v1/workspace/invitations");
-    if (!res.ok) {
-      setInvitations([]);
-      return;
+    setInvitationsError(false);
+    try {
+      const res = await fetch("/api/v1/workspace/invitations");
+      if (!res.ok) {
+        // A 401/500 is NOT an empty workspace — surface it instead of
+        // rendering the "No pending invitations." empty state.
+        setInvitationsError(true);
+        return;
+      }
+      const body = (await res.json()) as { invitations: InvitationSummary[] };
+      setInvitations(body.invitations);
+    } catch {
+      setInvitationsError(true);
     }
-    const body = (await res.json()) as { invitations: InvitationSummary[] };
-    setInvitations(body.invitations);
   }, []);
 
   const reloadMembers = useCallback(async () => {
+    setMembersError(false);
     try {
       const res = await fetch("/api/v1/workspace/members");
       if (res.status === 404) {
@@ -91,13 +101,14 @@ export default function MembersSettingsPage() {
         return;
       }
       if (!res.ok) {
-        setMembers([]);
+        // Distinguish a real failure from a genuinely empty member list.
+        setMembersError(true);
         return;
       }
       const body = (await res.json()) as { members: MemberSummary[] };
       setMembers(body.members ?? []);
     } catch {
-      setMembersUnavailable(true);
+      setMembersError(true);
     }
   }, []);
 
@@ -174,14 +185,14 @@ export default function MembersSettingsPage() {
       <div className="flex items-center gap-2">
         <Link
           href="/app/settings"
-          className="text-xs text-muted-foreground hover:underline"
+          className="text-xs text-[var(--ft-color-on-surface-variant)] hover:underline"
         >
           ← Settings
         </Link>
       </div>
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">Members</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1 className="text-2xl font-semibold text-[var(--ft-color-on-surface)]">Members</h1>
+        <p className="text-sm text-[var(--ft-color-on-surface-variant)] mt-1">
           Invite people to your workspace and manage their access.
         </p>
       </div>
@@ -193,33 +204,46 @@ export default function MembersSettingsPage() {
         </CardHeader>
         <CardContent className="p-0">
         {membersUnavailable ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-[var(--ft-color-on-surface-variant)]">
             The members endpoint is not yet available in this build. The
             workspace owner is always a member by definition; invited users
             will appear here once they accept.
           </p>
+        ) : membersError ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-[var(--ft-color-error)]">
+              Couldn&apos;t load members.
+            </p>
+            <Button
+              variant="outlined"
+              size="sm"
+              onClick={() => void reloadMembers()}
+            >
+              Retry
+            </Button>
+          </div>
         ) : members === null ? (
-          <p className="text-sm text-muted-foreground">Loading members…</p>
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">Loading members…</p>
         ) : members.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">
             Just you. Invite someone below to collaborate.
           </p>
         ) : (
-          <ul className="divide-y divide-border">
+          <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
             {members.map((m) => (
               <li
                 key={m.userId}
                 className="flex items-center justify-between py-2"
               >
                 <div>
-                  <p className="text-sm text-foreground">
+                  <p className="text-sm text-[var(--ft-color-on-surface)]">
                     {m.name ?? m.email ?? m.userId}
                   </p>
                   {m.email && m.name && (
-                    <p className="text-xs text-muted-foreground">{m.email}</p>
+                    <p className="text-xs text-[var(--ft-color-on-surface-variant)]">{m.email}</p>
                   )}
                 </div>
-                <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                <span className="text-xs uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
                   {m.role}
                 </span>
               </li>
@@ -266,8 +290,8 @@ export default function MembersSettingsPage() {
               {creating ? "Sending…" : "Send invite"}
             </Button>
           </div>
-          {error && <p className="text-xs text-destructive">{error}</p>}
-          <p className="text-xs text-muted-foreground">
+          {error && <p className="text-xs text-[var(--ft-color-error)]">{error}</p>}
+          <p className="text-xs text-[var(--ft-color-on-surface-variant)]">
             Invitations expire in 7 days. Email delivery is not configured —
             copy the link from the table below and share it manually.
           </p>
@@ -280,24 +304,37 @@ export default function MembersSettingsPage() {
           <CardTitle className="text-sm font-semibold">Pending invitations</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-        {invitations === null ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+        {invitationsError ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-[var(--ft-color-error)]">
+              Couldn&apos;t load invitations.
+            </p>
+            <Button
+              variant="outlined"
+              size="sm"
+              onClick={() => void reloadInvitations()}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : invitations === null ? (
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">Loading…</p>
         ) : invitations.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-[var(--ft-color-on-surface-variant)]">
             No pending invitations.
           </p>
         ) : (
-          <ul className="divide-y divide-border">
+          <ul className="divide-y divide-[var(--ft-color-outline-variant)]">
             {invitations.map((inv) => (
               <li
                 key={inv.id}
                 className="flex items-center justify-between py-3"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-foreground">
+                  <p className="truncate text-sm text-[var(--ft-color-on-surface)]">
                     {inv.email}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-[var(--ft-color-on-surface-variant)]">
                     {inv.role} · expires {formatDate(inv.expiresAt)}
                   </p>
                 </div>
@@ -313,7 +350,7 @@ export default function MembersSettingsPage() {
                   <ConfirmButton
                     onConfirm={() => handleRevoke(inv.id)}
                     confirmLabel="Confirm revoke"
-                    className="rounded-md border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/5"
+                    className="rounded-md border border-[var(--ft-color-error)]/40 px-3 py-1.5 text-xs font-medium text-[var(--ft-color-error)] hover:bg-[var(--ft-color-error)]/5"
                   >
                     Revoke
                   </ConfirmButton>

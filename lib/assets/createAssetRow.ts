@@ -15,13 +15,12 @@
 //   asset its own way (the legacy route attaches `possibleDuplicate`, etc.).
 
 import { createHash } from "crypto";
-import { eq, and, isNotNull } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { plexoPublishEvent } from "@/lib/plexo";
 import {
   computePHash,
   extractPalette,
-  hammingDistance,
   phashToDb,
   phashFromDb,
   type PaletteColor,
@@ -211,58 +210,55 @@ async function findPHashNearDuplicate(
   mimeType: string;
   distance: number;
 } | null> {
-  const candidates = await db
-    .select({
-      id: schema.assets.id,
-      filename: schema.assets.filename,
-      mimeType: schema.assets.mimeType,
-      capturedAt: schema.assets.capturedAt,
-      createdAt: schema.assets.createdAt,
-      phash: schema.assets.phash,
-    })
-    .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.workspaceId, workspaceId),
-        eq(schema.assets.lifecycleState, "active"),
-        // ADR 0008 — keep near-dup hints within the incoming asset's scope so
-        // a PERSONAL upload never matches a SHOOT photo (and vice-versa).
-        eq(schema.assets.scope, scope),
-        isNotNull(schema.assets.phash)
-      )
-    );
-
-  let best: {
+  // Perf (audit lib-data-caching-perf): compute the Hamming distance IN
+  // Postgres and let the DB return at most one row, instead of loading every
+  // pHash-bearing asset in the workspace into Node and scanning them in JS
+  // (O(library) heap + CPU on every upload; an O(n^2) storm during a bulk
+  // import). The stored `phash` is the SIGNED two's-complement of the unsigned
+  // 64-bit value (phashToDb); XOR-and-popcount is bit-identical regardless of
+  // that sign convention, so we compare against phashToDb(newPHash) directly.
+  //   bit_count((phash # <new>)::bit(64))  == Hamming distance   (Postgres 14+)
+  // ORDER BY the computed distance so we still return the CLOSEST match (the
+  // sort only touches the handful of rows that already pass the threshold).
+  const newPhashDb = phashToDb(newPHash).toString();
+  const excludeClause = excludeAssetId ? sql`and id <> ${excludeAssetId}` : sql``;
+  const rows = (await db.execute(sql`
+    select
+      id,
+      filename,
+      mime_type as "mimeType",
+      captured_at as "capturedAt",
+      created_at as "createdAt",
+      bit_count((phash # ${newPhashDb}::int8)::bit(64)) as distance
+    from fonto.assets
+    where workspace_id = ${workspaceId}
+      and lifecycle_state = 'active'
+      -- ADR 0008 — keep near-dup hints within the incoming asset's scope so a
+      -- PERSONAL upload never matches a SHOOT photo (and vice-versa).
+      and scope = ${scope}
+      and phash is not null
+      ${excludeClause}
+      and bit_count((phash # ${newPhashDb}::int8)::bit(64)) <= ${PHASH_DUPLICATE_THRESHOLD}
+    order by distance asc
+    limit 1
+  `)) as unknown as Array<{
     id: string;
     filename: string;
-    capturedAt: Date | null;
-    createdAt: Date;
     mimeType: string;
-    distance: number;
-  } | null = null;
-  for (const row of candidates) {
-    if (row.phash == null) continue;
-    if (excludeAssetId && row.id === excludeAssetId) continue;
-    const d = hammingDistance(phashFromDb(BigInt(row.phash)), newPHash);
-    if (d <= PHASH_DUPLICATE_THRESHOLD && (!best || d < best.distance)) {
-      best = {
-        id: row.id,
-        filename: row.filename,
-        mimeType: row.mimeType,
-        capturedAt: row.capturedAt,
-        createdAt: row.createdAt,
-        distance: d,
-      };
-    }
-  }
-  if (!best) return null;
+    capturedAt: Date | string | null;
+    createdAt: Date | string;
+    distance: number | string;
+  }>;
+
+  const row = rows[0];
+  if (!row) return null;
   return {
-    id: best.id,
-    filename: best.filename,
-    mimeType: best.mimeType,
-    capturedAt: best.capturedAt ? best.capturedAt.toISOString() : null,
-    createdAt: best.createdAt.toISOString(),
-    distance: best.distance,
+    id: row.id,
+    filename: row.filename,
+    mimeType: row.mimeType,
+    capturedAt: row.capturedAt ? new Date(row.capturedAt).toISOString() : null,
+    createdAt: new Date(row.createdAt).toISOString(),
+    distance: Number(row.distance),
   };
 }
 
@@ -707,7 +703,11 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
   // image assets and only when pHash didn't already produce a hit. If the
   // inline embed takes longer than CLIP_DEDUP_INLINE_TIMEOUT_MS we hand
   // off to the BullMQ worker so the upload response isn't blocked.
-  if (mimeType.startsWith("image/") && possibleDuplicate == null) {
+  if (
+    process.env.FONTO_IMPORT_SKIP_INLINE_CLIP !== "1" &&
+    mimeType.startsWith("image/") &&
+    possibleDuplicate == null
+  ) {
     const inlineBudget = clipDedupInlineTimeoutMs();
     const clipResult = await embedImageWithBudget(buffer, mimeType, inlineBudget);
     if (clipResult === "timeout") {

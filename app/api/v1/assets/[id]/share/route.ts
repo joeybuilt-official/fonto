@@ -9,6 +9,7 @@ import { revalidateTag } from "next/cache";
 import { randomBytes } from "crypto";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { eq, and, inArray, gt, desc, or, isNull } from "drizzle-orm";
 import { bumpAssetSeq } from "@/lib/db/seq";
@@ -79,6 +80,12 @@ export async function POST(
     .limit(1);
 
   if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Parity with /api/v1/shares POST — minting a public, downloadable share
+  // link is a class-E write; require editor. Without this a viewer-role member
+  // could create a public share URL for any asset they can merely read.
+  const gate = await requireWorkspaceAccessOrResponse(user.id, asset.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
 
   let ttlHours = DEFAULT_TTL_HOURS;
   try {
@@ -159,6 +166,20 @@ export async function DELETE(
   if (!workspaces.length) return NextResponse.json({ error: "No workspace" }, { status: 404 });
   const workspaceIds = workspaces.map((w) => w.id);
 
+  // Resolve the asset + gate editor BEFORE revoking — revoking a public share
+  // is a class-E write, so a viewer must not be able to do it.
+  const [asset] = await db
+    .select({ workspaceId: schema.assets.workspaceId })
+    .from(schema.assets)
+    .where(
+      and(eq(schema.assets.id, id), inArray(schema.assets.workspaceId, workspaceIds))
+    )
+    .limit(1);
+  if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const gate = await requireWorkspaceAccessOrResponse(user.id, asset.workspaceId, "editor");
+  if (!gate.ok) return gate.response;
+
   await db
     .update(schema.shareLinks)
     .set({ revoked: true, revokedAt: new Date() })
@@ -172,33 +193,22 @@ export async function DELETE(
     );
 
   // Phase 2.3 — revocation changes externally-visible state; bump seq so
-  // syncing clients pick up the change. Find the asset's workspace from
-  // the user's owned set (revocation only happens for workspaces they
-  // own).
-  const [asset] = await db
-    .select({ workspaceId: schema.assets.workspaceId })
-    .from(schema.assets)
-    .where(
-      and(eq(schema.assets.id, id), inArray(schema.assets.workspaceId, workspaceIds))
-    )
-    .limit(1);
-  if (asset) await bumpAssetSeq(asset.workspaceId, id);
+  // syncing clients pick up the change.
+  await bumpAssetSeq(asset.workspaceId, id);
 
-  if (asset) {
-    void recordAuditEvent({
-      workspaceId: asset.workspaceId,
-      userId: user.id,
-      action: AuditAction.ShareRevoke,
-      targetType: "asset",
-      targetId: id,
-      metadata: { legacyRoute: true, scope: "all-for-asset" },
-      request,
-    });
+  void recordAuditEvent({
+    workspaceId: asset.workspaceId,
+    userId: user.id,
+    action: AuditAction.ShareRevoke,
+    targetType: "asset",
+    targetId: id,
+    metadata: { legacyRoute: true, scope: "all-for-asset" },
+    request,
+  });
 
-    // T1.3' — revocation flips serialized share state on the asset.
-    revalidateTag(`ws:${asset.workspaceId}:assets`, "max");
-    void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
-  }
+  // T1.3' — revocation flips serialized share state on the asset.
+  revalidateTag(`ws:${asset.workspaceId}:assets`, "max");
+  void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
 
   return NextResponse.json({ revoked: true });
 }

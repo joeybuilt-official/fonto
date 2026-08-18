@@ -78,7 +78,9 @@ export async function GET(
     const motionUrl = await storage().presignGet(motionKey, { expiresIn: 3600 });
     return NextResponse.json(
       { url: motionUrl, expiresIn: 3600, variant: "motion" },
-      { headers: { "Cache-Control": "public, max-age=3600" } }
+      // `private` (not `public`): the body carries a per-caller presigned URL;
+      // a shared proxy/CDN must not cache and replay it to another user.
+      { headers: { "Cache-Control": "private, max-age=3600" } }
     );
   }
 
@@ -139,7 +141,10 @@ export async function GET(
   // safe. Originals stay no-store to preserve current behavior.
   const headers: Record<string, string> = {};
   if (servedVariant !== "original") {
-    headers["Cache-Control"] = "public, max-age=3600";
+    // `private` (not `public`): the JSON body wraps a per-caller presigned R2
+    // URL — a shared proxy/CDN must not cache and replay it to another user.
+    // Matches the batch route (/api/v1/assets/urls).
+    headers["Cache-Control"] = "private, max-age=3600";
   }
 
   return NextResponse.json(

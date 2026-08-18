@@ -37,6 +37,7 @@ import {
 } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
+import { assertWorkspaceAccess } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
 import { thumbnailQueue } from "@/lib/queue/queues";
 import { JobNames } from "@/lib/queue/jobs";
@@ -56,11 +57,25 @@ export async function POST(request: NextRequest) {
   };
 
   const allWorkspaceIds = workspaces.map((w) => w.id);
-  const targetWorkspaceIds =
+  const candidateWorkspaceIds =
     typeof body.workspaceId === "string" &&
     allWorkspaceIds.includes(body.workspaceId)
       ? [body.workspaceId]
       : allWorkspaceIds;
+
+  // Role gate: re-deriving thumbnails floods the queue with mass re-derive jobs
+  // that overwrite R2 keys, so require editor+ on each target. getUserWorkspaces
+  // returns every workspace the user has ANY role on (viewer/commenter
+  // included) — without this filter a read-only member could trigger the flood.
+  const access = await Promise.all(
+    candidateWorkspaceIds.map(async (wsId) => ({
+      wsId,
+      ok: (await assertWorkspaceAccess(user.id, wsId, "editor")).ok,
+    }))
+  );
+  const targetWorkspaceIds = access.filter((a) => a.ok).map((a) => a.wsId);
+  if (targetWorkspaceIds.length === 0)
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const batch = Math.max(
     1,

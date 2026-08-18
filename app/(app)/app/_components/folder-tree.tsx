@@ -147,6 +147,7 @@ export function FolderTree({
   useEffect(() => {
     const ancestors = ancestorPaths(currentPath);
     if (ancestors.length === 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- additively expand ancestors when currentPath changes
     setExpanded((prev) => {
       const next = new Set(prev);
       for (const a of ancestors) next.add(a);
@@ -157,6 +158,7 @@ export function FolderTree({
 
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset load state on reload before refetch
     setLoading(true);
     setError(null);
     fetch("/api/v1/folders/tree")

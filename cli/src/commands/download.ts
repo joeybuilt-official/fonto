@@ -25,6 +25,8 @@ export async function download(id: string, opts: DownloadOpts): Promise<void> {
   const variant = opts.variant ?? "original";
   const spin = ora(`Resolving ${id.slice(0, 8)}…`).start();
 
+  let dest: string | undefined;
+  let opened = false;
   try {
     const meta = await request<{ asset: Asset }>(`/api/v1/assets/${id}`);
     const batch = await request<{
@@ -41,7 +43,10 @@ export async function download(id: string, opts: DownloadOpts): Promise<void> {
       return;
     }
 
-    const dest = opts.out ?? meta.asset.filename;
+    // `meta.asset.filename` is server-controlled; strip any path components
+    // so a hostile filename (e.g. `../../.ssh/authorized_keys`) can't write
+    // outside the cwd. `--out` is caller-supplied and kept verbatim.
+    dest = opts.out ?? path.basename(meta.asset.filename);
     spin.text = `Downloading → ${dest}`;
 
     // Presigned R2 URL — fetched without our Bearer header (R2 rejects it).
@@ -56,6 +61,7 @@ export async function download(id: string, opts: DownloadOpts): Promise<void> {
     }
     await fs.promises.mkdir(path.dirname(path.resolve(dest)), { recursive: true });
     const file = fs.createWriteStream(dest);
+    opened = true;
     // Response.body is a web ReadableStream — bridge it to a Node Readable
     // so the pipeline picks the node:stream overload (avoids the
     // ambiguous-overload TS error on the web-pipeline form).
@@ -68,6 +74,11 @@ export async function download(id: string, opts: DownloadOpts): Promise<void> {
     );
   } catch (err) {
     spin.fail();
+    // A mid-transfer failure leaves a truncated file on disk; remove it so a
+    // later read can't mistake the partial for a complete download.
+    if (opened && dest) {
+      await fs.promises.unlink(dest).catch(() => {});
+    }
     if (err instanceof ApiError) {
       console.error(chalk.red(`✗ ${err.status} ${err.message}`));
     } else {

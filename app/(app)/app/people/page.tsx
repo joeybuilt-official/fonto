@@ -43,6 +43,13 @@ const PRESET_COLORS = [
   "#4f86c6", "#60c05c", "#e09b3d", "#c06060", "#9b6fc0", "#4ab8b8",
 ];
 
+// Grid toast: a message plus an optional single action (e.g. Undo). Auto-
+// dismissed by an effect so banners never persist across interactions.
+interface GridToast {
+  message: string;
+  action?: { label: string; run: () => void };
+}
+
 function ManageGroupsDialog({
   groups,
   onRefresh,
@@ -271,6 +278,7 @@ function FaceCrop({ entry }: { entry: PersonGridEntry }) {
   // Resolve the signed face-crop URL (the API returns a relative API path
   // that itself redirects to / returns a signed object URL).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale crop when entry changes before refetch
     setCropUrl(null);
     setCropFailed(false);
     if (!entry.coverFaceCropUrl) return;
@@ -315,6 +323,13 @@ function FaceCrop({ entry }: { entry: PersonGridEntry }) {
         alt={entry.name ?? "Unnamed person"}
         loading="lazy"
         decoding="async"
+        onError={() => {
+          // Signed URL expired / 403'd after resolving — drop it and fall
+          // through to the preview + placeholder instead of the browser's
+          // broken-image glyph.
+          setCropFailed(true);
+          setCropUrl(null);
+        }}
         className="aspect-square w-full rounded-full bg-muted/30 object-cover"
       />
     );
@@ -377,9 +392,25 @@ function PeopleContent() {
   const [loading, setLoading] = useState(true);
   const [clustering, setClustering] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<GridToast | null>(null);
   // Tiles currently mid-ignore — disabled + dimmed until the PATCH resolves.
   const [ignoring, setIgnoring] = useState<Set<string>>(new Set());
+
+  // Toast helper mirrors the detail page: set a banner, optionally with a
+  // single action (e.g. Undo), and auto-dismiss it so it never lingers.
+  const showToast = useCallback(
+    (message: string, action?: GridToast["action"]) => {
+      setToast({ message, action });
+    },
+    []
+  );
+  useEffect(() => {
+    if (!toast) return;
+    // Give action toasts (Undo) a longer window to react to.
+    const ms = toast.action ? 8000 : 4000;
+    const timer = setTimeout(() => setToast(null), ms);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -433,28 +464,69 @@ function PeopleContent() {
       const res = await fetch("/api/v1/faces/cluster", { method: "POST" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setToast(`Clustering failed: ${body.error ?? res.status}`);
+        showToast(`Clustering failed: ${body.error ?? res.status}`);
         return;
       }
       const data = (await res.json()) as {
         stats: { created: number; updated: number; noise: number };
       };
-      setToast(
+      showToast(
         `Clustered — ${data.stats.created} new, ${data.stats.updated} updated, ${data.stats.noise} noise.`
       );
       await load();
     } catch {
-      setToast("Network error during clustering.");
+      showToast("Network error during clustering.");
     } finally {
       setClustering(false);
     }
-  }, [load]);
+  }, [load, showToast]);
+
+  // Re-insert a person at (approximately) their original index, using a
+  // functional update so concurrent list changes aren't clobbered by a stale
+  // captured snapshot. No-op if they're already present.
+  const reinsertPerson = useCallback(
+    (person: PersonGridEntry, index: number) => {
+      setPersons((prev) => {
+        if (prev.some((p) => p.id === person.id)) return prev;
+        const next = [...prev];
+        next.splice(Math.min(Math.max(index, 0), next.length), 0, person);
+        return next;
+      });
+    },
+    []
+  );
+
+  // Undo an ignore: optimistically restore the tile, then un-hide server-side.
+  const undoIgnore = useCallback(
+    async (person: PersonGridEntry, index: number) => {
+      setToast(null);
+      reinsertPerson(person, index);
+      try {
+        const res = await fetch(`/api/v1/persons/${person.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hidden: false }),
+        });
+        if (!res.ok) {
+          setPersons((prev) => prev.filter((p) => p.id !== person.id));
+          showToast(`Couldn't restore person (${res.status}).`);
+        }
+      } catch {
+        setPersons((prev) => prev.filter((p) => p.id !== person.id));
+        showToast("Network error restoring person.");
+      }
+    },
+    [reinsertPerson, showToast]
+  );
 
   // #9 — ignore a person (junk cluster). Server cascades to its faces.
-  // Optimistically drop the tile; restore + surface an error on failure.
+  // Optimistically drop the tile; restore only the failed person on error
+  // (functional update, so a concurrent removal isn't undone), and offer Undo
+  // on success since ignore is a destructive, one-tap action.
   const ignorePerson = useCallback(async (personId: string) => {
+    const index = persons.findIndex((p) => p.id === personId);
+    const removed = index >= 0 ? persons[index] : null;
     setIgnoring((prev) => new Set(prev).add(personId));
-    const snapshot = persons;
     setPersons((prev) => prev.filter((p) => p.id !== personId));
     try {
       const res = await fetch(`/api/v1/persons/${personId}`, {
@@ -463,12 +535,17 @@ function PeopleContent() {
         body: JSON.stringify({ hidden: true }),
       });
       if (!res.ok) {
-        setPersons(snapshot);
-        setToast(`Couldn't ignore person (${res.status}).`);
+        if (removed) reinsertPerson(removed, index);
+        showToast(`Couldn't ignore person (${res.status}).`);
+      } else if (removed) {
+        showToast(`Ignored ${removed.name ?? "person"}.`, {
+          label: "Undo",
+          run: () => void undoIgnore(removed, index),
+        });
       }
     } catch {
-      setPersons(snapshot);
-      setToast("Network error ignoring person.");
+      if (removed) reinsertPerson(removed, index);
+      showToast("Network error ignoring person.");
     } finally {
       setIgnoring((prev) => {
         const next = new Set(prev);
@@ -476,10 +553,20 @@ function PeopleContent() {
         return next;
       });
     }
-  }, [persons]);
+  }, [persons, reinsertPerson, undoIgnore, showToast]);
 
   // Groups that have at least one visible person — used to suppress empty chips.
   const activeGroupIds = useMemo(() => new Set(persons.flatMap((p) => p.groupIds)), [persons]);
+
+  // Dead-end guard: the chip strip (incl. the "All" reset) only renders while
+  // some group still has members. If the active group's last member is removed
+  // (e.g. ignored), the strip vanishes while activeGroupId stays set, leaving
+  // the grid stranded on an unclearable "No matches". Reset to "All" then.
+  useEffect(() => {
+    if (activeGroupId && !activeGroupIds.has(activeGroupId)) {
+      setActiveGroupId(null);
+    }
+  }, [activeGroupId, activeGroupIds]);
 
   const visible = useMemo(() => {
     let list = persons;
@@ -572,8 +659,17 @@ function PeopleContent() {
         </div>
 
         {toast && (
-          <div className="rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container)] px-3 py-2 text-sm text-[var(--ft-color-on-surface)]">
-            {toast}
+          <div className="flex items-center justify-between gap-3 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container)] px-3 py-2 text-sm text-[var(--ft-color-on-surface)]">
+            <span>{toast.message}</span>
+            {toast.action && (
+              <button
+                type="button"
+                onClick={() => toast.action?.run()}
+                className="shrink-0 text-sm font-medium text-[var(--ft-color-primary-text)] hover:underline"
+              >
+                {toast.action.label}
+              </button>
+            )}
           </div>
         )}
 
@@ -618,11 +714,16 @@ function PeopleContent() {
               </Link>
               {/* #9 — hover overlay to ignore (hide) a junk cluster. Sits
                   outside the Link so the click doesn't navigate. */}
+              {/* Reveal on hover/focus only. Hidden entirely on touch/coarse
+                  pointers (no hover) — otherwise it stays invisible but
+                  hit-testable over the card's top-right corner, so a tap there
+                  silently ignores the person instead of opening them. Touch
+                  users ignore from the detail page. */}
               <button
                 type="button"
                 onClick={() => void ignorePerson(p.id)}
                 disabled={ignoring.has(p.id)}
-                className="absolute right-1 top-1 inline-flex items-center gap-1 rounded-[var(--ft-shape-full)] bg-[var(--ft-color-inverse-surface)]/80 px-2 py-1 text-[11px] font-medium text-[var(--ft-color-on-inverse-surface)] opacity-0 transition-opacity hover:bg-[var(--ft-color-inverse-surface)] focus:opacity-100 group-hover:opacity-100 disabled:opacity-60"
+                className="absolute right-1 top-1 hidden items-center gap-1 rounded-[var(--ft-shape-full)] bg-[var(--ft-color-inverse-surface)]/80 px-2 py-1 text-[11px] font-medium text-[var(--ft-color-on-inverse-surface)] opacity-0 transition-opacity hover:bg-[var(--ft-color-inverse-surface)] focus:opacity-100 group-hover:opacity-100 disabled:opacity-60 [@media(hover:hover)]:inline-flex"
                 title="Ignore this person"
                 aria-label={`Ignore ${p.name ?? "this person"}`}
               >
