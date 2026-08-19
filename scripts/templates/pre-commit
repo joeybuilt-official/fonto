@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+# Starter local pre-commit gate. Copy to .git/hooks/pre-commit (chmod +x), or wire it via husky /
+# lefthook / pre-commit. Replace each <CMD> with the command from CLAUDE.md → Key Commands.
+#
+# HONEST NOTE: a client-side hook is convenience, not enforcement — any agent can bypass it with
+# `git commit --no-verify`, and a non-Claude agent may not run it at all. The binding plane is
+# required CI (scripts/templates/ci-verify.yml). This hook just catches problems a few seconds
+# earlier for the people who keep it installed.
+set -eu
+
+echo "pre-commit: typecheck…"; pnpm typecheck
+echo "pre-commit: lint…";      pnpm lint
+echo "pre-commit: test…";      pnpm conformance
+
+# Architecture boundaries (delete if no boundary linter is wired yet — MODULE:arch dropped).
+echo "pre-commit: architecture boundaries…"; pnpm arch
+
+# Keep the tool-native agent mirrors in sync with AGENTS.md (fails if a mirror drifted).
+if [ -f scripts/sync-agents.sh ]; then
+  echo "pre-commit: agent mirrors…"; sh scripts/sync-agents.sh --check
+fi
+
+echo "pre-commit: OK"
