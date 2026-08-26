@@ -18,6 +18,7 @@ import ReactCrop, {
 } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import type { Asset } from "./photo-card";
+import { DocPreview } from "./doc-preview";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -60,6 +61,13 @@ function isTextLike(mimeType: string): boolean {
 }
 function isCodeLike(mimeType: string): boolean {
   return mimeType !== "text/plain" && mimeType.startsWith("text/");
+}
+// Documents (PDF + office/binary application types) that are neither image,
+// video, nor plain text. Without this branch a PDF falls through to the image
+// path and renders as a broken <img> — the reason /app/documents existed. Text
+// docs are already covered by isTextLike/TextViewer.
+function isDocLike(mimeType: string): boolean {
+  return mimeType === "application/pdf" || mimeType.startsWith("application/");
 }
 
 function formatDate(d: string | null): string {
@@ -1766,6 +1774,16 @@ export function PhotoLightbox({
               durationSec={asset.durationSeconds ?? null}
               posterUrl={url}
             />
+          ) : isDocLike(asset.mimeType) ? (
+            <div className="flex h-full max-h-full w-full items-center justify-center p-4 md:p-8">
+              <DocPreview
+                key={displayedAssetId}
+                assetId={displayedAssetId}
+                filename={asset.filename}
+                mimeType={asset.mimeType}
+                text={asset.ocrText}
+              />
+            </div>
           ) : urlLoading ? (
             <Loader2 className="h-10 w-10 animate-spin text-white/40" />
           ) : url && !imgError ? (
