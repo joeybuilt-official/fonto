@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Photos/Files split — surface segmented control + Inbox banner + scoped lens
+// Camera/Files split — surface segmented control + Inbox banner + scoped lens
 // chips. Rendered only when the `librarySurfaceSplit` flag is ON; replaces the
-// flat KIND lens row. See plans/photos-vs-files-split/plan.md.
+// flat KIND lens row. The "Camera" surface is the moment+video union (its label
+// used to be "Photos", which misread as excluding video). See
+// plans/photos-vs-files-split/plan.md.
 
 "use client";
 
 import {
-  Images,
+  Camera,
   Files as FilesIcon,
   FileQuestion,
   Image as ImageIcon,
@@ -166,8 +168,8 @@ export function LibrarySurfaceControl({
           onClick={() => onSurface("photos")}
           className={segBtn(surface === "photos")}
         >
-          <Images className="h-4 w-4" />
-          Photos
+          <Camera className="h-4 w-4" />
+          Camera
         </button>
         <button
           role="tab"

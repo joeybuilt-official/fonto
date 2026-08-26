@@ -2013,7 +2013,7 @@ class _SurfaceSelector extends StatelessWidget {
             padding: const EdgeInsets.all(3),
             child: Row(
               children: [
-                _seg(theme, "photos", "Photos", Icons.photo_library_outlined),
+                _seg(theme, "photos", "Camera", Icons.camera_alt),
                 _seg(theme, "files", "Files", Icons.folder_outlined),
               ],
             ),
