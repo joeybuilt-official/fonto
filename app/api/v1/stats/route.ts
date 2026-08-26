@@ -25,6 +25,7 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { and, eq, sql } from "drizzle-orm";
+import { pgArray } from "@/lib/db/sql-helpers";
 
 export async function GET() {
   const user = await getAuthUser();
@@ -85,6 +86,56 @@ export async function GET() {
       )
     );
 
+  // M1 (P2a) — discovery badges. Best-effort; on failure we still return core stats.
+  let pendingPeople = 0;
+  let memoriesToday = 0;
+  try {
+    const [pendingRow] = await db
+      .select({ c: sql<number>`COUNT(*)::int` })
+      .from(schema.persons)
+      .where(
+        and(
+          eq(schema.persons.workspaceId, workspaceId),
+          eq(schema.persons.hidden, false),
+          sql`${schema.persons.name} IS NULL`
+        )
+      );
+    pendingPeople = pendingRow?.c ?? 0;
+  } catch {
+    // persons table may not have rows yet — ignore
+  }
+  try {
+    const now = new Date();
+    const month = now.getUTCMonth() + 1;
+    const day = now.getUTCDate();
+    const window = 3;
+    const mm = String(month).padStart(2, "0");
+    const mmddList: string[] = [];
+    for (let d = day - window; d <= day + window; d++) {
+      if (d < 1 || d > 31) continue;
+      mmddList.push(`${mm}-${String(d).padStart(2, "0")}`);
+    }
+    if (mmddList.length) {
+      const [memRow] = await db
+        .select({ c: sql<number>`COUNT(*)::int` })
+        .from(schema.assets)
+        .where(
+          sql`
+            ${schema.assets.workspaceId} = ${workspaceId}
+            AND ${schema.assets.lifecycleState} = 'active'
+            AND ${schema.assets.scope} = 'PERSONAL'
+            AND ${schema.assets.capturedAt} IS NOT NULL
+            AND fonto.captured_mmdd_utc(${schema.assets.capturedAt}) = ANY(${pgArray(mmddList)}::text[])
+            AND EXTRACT(YEAR FROM ${schema.assets.capturedAt} AT TIME ZONE 'UTC')
+                < EXTRACT(YEAR FROM (CURRENT_DATE AT TIME ZONE 'UTC'))
+          `
+        );
+      memoriesToday = memRow?.c ?? 0;
+    }
+  } catch {
+    // functional index may not exist on fresh DB — ignore
+  }
+
   return NextResponse.json({
     total: row?.total ?? 0,
     images: row?.images ?? 0,
@@ -94,5 +145,7 @@ export async function GET() {
     favorites: row?.favorites ?? 0,
     thisMonth: row?.thisMonth ?? 0,
     processing: row?.processing ?? 0,
+    pendingPeople,
+    memoriesToday,
   });
 }

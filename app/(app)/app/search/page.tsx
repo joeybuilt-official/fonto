@@ -206,10 +206,11 @@ function SearchContent() {
     setLoading(true);
     setError(false);
     try {
-      // Phase 4.2 — kick off the CLIP search in parallel for "natural"
-      // queries. Skipping when other structured filters are active keeps
-      // the semantic block out of pure-filter views like "tag=foo".
-      if (q && looksSemantic(q) && !tid && !cl && !col && !hasExif) {
+      // M1 (W3) — CLIP is behind the explicit Semantic toggle; the old
+      // heuristic `looksSemantic(q)` auto-fired a second list at ~900ms that
+      // fought the text results. Keep the helper for a future "suggest
+      // turning semantic on" hint, but don't fetch until the user opts in.
+      if (q && semantic && !tid && !cl && !col && !hasExif) {
         const clipParams = new URLSearchParams({ q, limit: "24" });
         fetch(`/api/v1/search/clip?${clipParams.toString()}`)
           .then((r) => (r.ok ? r.json() : null))
@@ -291,29 +292,36 @@ function SearchContent() {
 
       <div className="px-4 space-y-4">
         {!smartCollectionId && (
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Search-specific toggles. These three have no analogue on
-                other pages so they live next to the toolbar instead of
-                inside FilterPopover. */}
-            <Button
-              variant={ocrOnly ? "filled" : "outlined"}
-              size="sm"
-              onClick={() => setOcrOnly((v) => !v)}
-              title="Search OCR text only — matches words extracted from image content"
-            >
-              <ScanText className="h-3.5 w-3.5" />
-              OCR only
-            </Button>
-            <Button
-              variant={semantic ? "filled" : "outlined"}
-              size="sm"
-              onClick={() => setSemantic((v) => !v)}
-              title="Semantic search via Plexo AI"
-              className={cn(semantic && "bg-[var(--ft-color-tertiary)] text-[var(--ft-color-on-tertiary)] hover:brightness-95")}
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              Semantic
-            </Button>
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Search-specific toggles. These three have no analogue on
+                  other pages so they live next to the toolbar instead of
+                  inside FilterPopover. */}
+              <Button
+                variant={ocrOnly ? "filled" : "outlined"}
+                size="sm"
+                onClick={() => setOcrOnly((v) => !v)}
+                title="Search OCR text only — matches words extracted from image content"
+              >
+                <ScanText className="h-3.5 w-3.5" />
+                OCR only
+              </Button>
+              <Button
+                variant={semantic ? "filled" : "outlined"}
+                size="sm"
+                onClick={() => setSemantic((v) => !v)}
+                title="Semantic search via vision embeddings"
+                className={cn(semantic && "bg-[var(--ft-color-tertiary)] text-[var(--ft-color-on-tertiary)] hover:brightness-95")}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Semantic
+              </Button>
+            </div>
+            <p className="text-[11px] leading-3 text-[var(--ft-color-on-surface-variant)]">
+              {ocrOnly ? "Searching text extracted from images (OCR)." : null}
+              {ocrOnly && semantic ? " · " : null}
+              {semantic ? "Visually similar results (CLIP) on." : ocrOnly ? null : "Tip: toggle Semantic for visual search or OCR only for text in images."}
+            </p>
           </div>
         )}
 

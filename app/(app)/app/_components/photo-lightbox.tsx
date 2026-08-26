@@ -89,6 +89,13 @@ interface Collection {
   name: string;
 }
 
+// M1 — module-level SWR for workspace-invariant metadata (tags + collections).
+// Avoids re-fetching on every lightbox open/arrow nav (5-min TTL).
+const tagCollectionCache: {
+  tags: Map<string, { tags: TagItem[]; at: number }>;
+  cols: Map<string, { cols: Collection[]; at: number }>;
+} = { tags: new Map(), cols: new Map() };
+
 interface MetadataPanelProps {
   asset: Asset;
   tags: TagItem[];
@@ -907,25 +914,43 @@ export function PhotoLightbox({
   // LCP per advance). asset.workspaceId is optional in the type but always
   // present in practice for owned assets; we still key the effect on the
   // value so cross-workspace shared assets refetch correctly.
+  // M1 — add a module-level SWR so opening a second lightbox in the same
+  // session hits memory instead of the network.
   const workspaceId = asset.workspaceId ?? null;
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/v1/tags")
-      .then((r) => (r.ok ? r.json() : { tags: [] }))
-      .then((d) => {
-        if (!cancelled) setAllTags(d.tags ?? []);
-      })
-      .catch(() => {
-        if (!cancelled) setAllTags([]);
-      });
-    fetch("/api/v1/collections")
-      .then((r) => r.json())
-      .then((d) => {
-        if (!cancelled) setCollections(d.collections ?? []);
-      })
-      .catch(() => {
-        if (!cancelled) setCollections([]);
-      });
+    const cachedTags = workspaceId ? tagCollectionCache.tags.get(workspaceId) : undefined;
+    const cachedCols = workspaceId ? tagCollectionCache.cols.get(workspaceId) : undefined;
+    const now = Date.now();
+    const ttlMs = 5 * 60 * 1000;
+    if (cachedTags && now - cachedTags.at < ttlMs) {
+      setAllTags(cachedTags.tags);
+    } else {
+      fetch("/api/v1/tags")
+        .then((r) => (r.ok ? r.json() : { tags: [] }))
+        .then((d) => {
+          const tags = d.tags ?? [];
+          if (!cancelled) setAllTags(tags);
+          if (workspaceId) tagCollectionCache.tags.set(workspaceId, { tags, at: now });
+        })
+        .catch(() => {
+          if (!cancelled) setAllTags([]);
+        });
+    }
+    if (cachedCols && now - cachedCols.at < ttlMs) {
+      setCollections(cachedCols.cols);
+    } else {
+      fetch("/api/v1/collections")
+        .then((r) => r.json())
+        .then((d) => {
+          const cols = d.collections ?? [];
+          if (!cancelled) setCollections(cols);
+          if (workspaceId) tagCollectionCache.cols.set(workspaceId, { cols, at: now });
+        })
+        .catch(() => {
+          if (!cancelled) setCollections([]);
+        });
+    }
     return () => {
       cancelled = true;
     };

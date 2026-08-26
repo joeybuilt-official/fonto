@@ -47,6 +47,9 @@ interface Stats {
   other: number;
   favorites: number;
   thisMonth: number;
+  processing?: number;
+  pendingPeople?: number;
+  memoriesToday?: number;
 }
 
 // Discovery destinations that are NOT already a primary sidebar entry —
@@ -260,22 +263,35 @@ export default function HomePage() {
           Discover
         </h2>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-          {DISCOVER.map((q) => (
-            <Link key={q.href} href={q.href}>
-              <Card
-                variant="outlined"
-                className="flex flex-row items-center gap-3 px-3 py-2.5 transition-colors hover:bg-[var(--ft-color-surface-container-low)]"
-              >
-                <q.icon className="h-4 w-4 shrink-0 text-[var(--ft-color-on-surface-variant)]" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-[var(--ft-color-on-surface)]">{q.label}</p>
-                  <p className="truncate text-[11px] text-[var(--ft-color-on-surface-variant)]">
-                    {q.hint}
-                  </p>
-                </div>
-              </Card>
-            </Link>
-          ))}
+          {DISCOVER.map((q) => {
+            const badge =
+              q.label === "Memories" && (stats?.memoriesToday ?? 0) > 0
+                ? `${stats!.memoriesToday} today`
+                : q.label === "People" && (stats?.pendingPeople ?? 0) > 0
+                  ? `${stats!.pendingPeople} to review`
+                  : null;
+            return (
+              <Link key={q.href} href={q.href}>
+                <Card
+                  variant="outlined"
+                  className="flex flex-row items-center gap-3 px-3 py-2.5 transition-colors hover:bg-[var(--ft-color-surface-container-low)]"
+                >
+                  <q.icon className="h-4 w-4 shrink-0 text-[var(--ft-color-on-surface-variant)]" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-[var(--ft-color-on-surface)]">{q.label}</p>
+                    <p className="truncate text-[11px] text-[var(--ft-color-on-surface-variant)]">
+                      {badge ?? q.hint}
+                    </p>
+                  </div>
+                  {badge && (
+                    <span className="shrink-0 rounded-full bg-[var(--ft-color-primary-container)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--ft-color-on-primary-container)]">
+                      {q.label === "Memories" ? stats!.memoriesToday : stats!.pendingPeople}
+                    </span>
+                  )}
+                </Card>
+              </Link>
+            );
+          })}
         </div>
       </section>
     </div>
