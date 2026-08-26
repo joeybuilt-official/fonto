@@ -39,7 +39,7 @@ export function renderDigestLines(input: RenderInput): DigestActivityLine[] {
         const filename = assetId ? input.assetFilename.get(assetId) ?? "an asset" : "an asset";
         lines.push({
           text: `${actor} commented on "${filename}": ${excerpt}`,
-          link: assetId ? `${input.webBaseUrl}/app/photos?asset=${assetId}` : undefined,
+          link: assetId ? `${input.webBaseUrl}/app/library?lb=${assetId}` : undefined,
           occurredAt: ev.createdAt,
         });
         break;
@@ -49,7 +49,7 @@ export function renderDigestLines(input: RenderInput): DigestActivityLine[] {
         const filename = assetId ? input.assetFilename.get(assetId) ?? "an asset" : "an asset";
         lines.push({
           text: `${actor} deleted a comment on "${filename}"`,
-          link: assetId ? `${input.webBaseUrl}/app/photos?asset=${assetId}` : undefined,
+          link: assetId ? `${input.webBaseUrl}/app/library?lb=${assetId}` : undefined,
           occurredAt: ev.createdAt,
         });
         break;
@@ -59,7 +59,7 @@ export function renderDigestLines(input: RenderInput): DigestActivityLine[] {
         const filename = assetId ? input.assetFilename.get(assetId) ?? "a new asset" : "a new asset";
         lines.push({
           text: `${actor} uploaded "${filename}"`,
-          link: assetId ? `${input.webBaseUrl}/app/photos?asset=${assetId}` : undefined,
+          link: assetId ? `${input.webBaseUrl}/app/library?lb=${assetId}` : undefined,
           occurredAt: ev.createdAt,
         });
         break;
@@ -69,7 +69,7 @@ export function renderDigestLines(input: RenderInput): DigestActivityLine[] {
         const filename = assetId ? input.assetFilename.get(assetId) ?? "an asset" : "an asset";
         lines.push({
           text: `${actor} shared "${filename}" with the workspace`,
-          link: assetId ? `${input.webBaseUrl}/app/photos?asset=${assetId}` : undefined,
+          link: assetId ? `${input.webBaseUrl}/app/library?lb=${assetId}` : undefined,
           occurredAt: ev.createdAt,
         });
         break;
