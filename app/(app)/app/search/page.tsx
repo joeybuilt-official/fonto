@@ -27,9 +27,11 @@ import { DocumentViewer } from "@/components/document-viewer";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
+import { AssetGrid } from "../_components/asset-grid";
 import { ListErrorState } from "../_components/list-states";
 import { ListSkeleton } from "../_components/grid-skeleton";
 import { useToolbarState } from "@/lib/hooks/use-toolbar-state";
+import type { Asset as GridAsset } from "../_components/photo-card";
 
 // Phase 4.2 — heuristic for "fire a CLIP search alongside the text search".
 // Queries with >3 words usually describe a scene rather than name a file,
@@ -351,13 +353,18 @@ function SearchContent() {
             No assets found.
           </p>
         ) : results ? (
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <p className="text-xs text-muted-foreground">
-              {results.length} result{results.length !== 1 ? "s" : ""}
+              {results.length} result{results.length !== 1 ? "s" : ""} — grid mirrors Library (Immich: search is filtered timeline)
             </p>
-            {results.map((asset) => (
-              <ResultRow key={asset.id} asset={asset} onOpen={() => openAsset(asset)} />
-            ))}
+            <AssetGrid
+              assets={results as unknown as GridAsset[]}
+              toolbar={toolbar}
+              onAssetClick={(id) => {
+                const a = results.find((r) => r.id === id);
+                if (a) openAsset(a);
+              }}
+            />
           </div>
         ) : null}
 
