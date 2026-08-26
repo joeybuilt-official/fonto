@@ -24,7 +24,7 @@
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download, Smartphone, LayoutGrid, Users, Palette, Upload } from "lucide-react";
+import { Loader2, Trash2, FolderTree, Image as ImageIcon, FileText, Film, Archive, Heart, Star, X, CalendarDays, Tag as TagIcon, FolderPlus, Download, Smartphone, LayoutGrid, Users, Palette, Upload, Pencil, FolderInput } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { type Asset } from "../_components/photo-card";
 import { PhotoLightbox } from "../_components/photo-lightbox";
@@ -51,6 +51,7 @@ import {
   type LibrarySurface,
 } from "../_components/library-surface-control";
 import { LibraryFilesView } from "../_components/library-files-view";
+import { FolderOpDialog, type FolderOpAction } from "../_components/folder-op-dialog";
 import { GridSkeleton } from "../_components/grid-skeleton";
 import { ListErrorState } from "../_components/list-states";
 
@@ -872,7 +873,7 @@ function LibraryContent() {
             strip is Photos-only under the split (Files has its own search). */}
         {photosActive && (
           <div className="hidden md:block">
-            <LibraryChipStrip toolbar={toolbar} />
+            <LibraryChipStrip toolbar={toolbar} onCorpusChanged={() => setRefreshKey((k) => k + 1)} />
           </div>
         )}
         {isTrash && (
@@ -1195,16 +1196,32 @@ function FolderBreadcrumb({
   );
 }
 
+// Last path segment — the folder's display name for the op dialog.
+function folderName(path: string): string {
+  return path.split("/").filter(Boolean).pop() ?? path;
+}
+
 function FolderChip({
   activePath,
   onChange,
+  onChanged,
 }: {
   activePath: string | null;
   onChange: (path: string | null) => void;
+  // Fired after a folder op (rename/move/delete) or an asset drop mutates the
+  // corpus, so the parent can refetch the grid/timeline.
+  onChanged?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [folders, setFolders] = useState<FolderEntry[]>([]);
   const [folderLoading, setFolderLoading] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+  const [opDialog, setOpDialog] = useState<{
+    action: FolderOpAction;
+    folder: { name: string; path: string };
+  } | null>(null);
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null);
+  const toast = useSnackbar();
   const active = activePath != null;
 
   useEffect(() => {
@@ -1224,73 +1241,177 @@ function FolderChip({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, reloadTick]);
+
+  // Folder rename/move/delete → POST /api/v1/folders/operation (folders are
+  // directory_path prefixes; the server bulk-updates matching assets). Returns
+  // an error string for the dialog, or null on success.
+  const performFolderOp = useCallback(
+    async (payload: Record<string, unknown>): Promise<string | null> => {
+      try {
+        const r = await fetch("/api/v1/folders/operation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+          const body = (await r.json().catch(() => ({}))) as { error?: string };
+          return `Folder op failed: ${body.error ?? r.status}`;
+        }
+        setReloadTick((t) => t + 1);
+        onChanged?.();
+        return null;
+      } catch {
+        return "Network error — check your connection and retry.";
+      }
+    },
+    [onChanged]
+  );
+
+  // Drag-drop asset → folder: PATCH the asset's directoryPath. NOTE this only
+  // fires while the popover is open (it is the drop surface); the reliable path
+  // for a closed picker is to open a folder then move via the op dialog.
+  const handleAssetDrop = useCallback(
+    async (folderPath: string, assetId: string) => {
+      try {
+        const r = await fetch(`/api/v1/assets/${assetId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ directoryPath: folderPath }),
+        });
+        if (!r.ok) {
+          const body = (await r.json().catch(() => ({}))) as { error?: string };
+          toast.add({ title: "Move failed", description: String(body.error ?? r.status), priority: "high" });
+          return;
+        }
+        setReloadTick((t) => t + 1);
+        onChanged?.();
+      } catch {
+        toast.add({ title: "Move failed", description: "Network error.", priority: "high" });
+      }
+    },
+    [toast, onChanged]
+  );
 
   return (
-    <Popover open={open} onOpenChange={(v: boolean) => setOpen(v)}>
-      <PopoverTrigger
-        className={`inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
-          active
-            ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
-            : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
-        }`}
-      >
-        <FolderTree className="h-3 w-3" />
-        {active ? activePath : "Folder"}
-        {active && (
-          <X
-            className="h-3 w-3"
-            onClick={(e) => {
-              e.stopPropagation();
-              onChange(null);
-            }}
-          />
-        )}
-      </PopoverTrigger>
-      <PopoverContent className="w-72 max-h-64 overflow-y-auto" align="start" sideOffset={6}>
-        <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
-          Folder
-        </p>
-        {folderLoading ? (
-          <div className="flex items-center gap-[var(--ft-space-2)] py-2 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Loading…
-          </div>
-        ) : (
-          <div className="mt-1 flex flex-col gap-0.5">
-            <button
-              onClick={() => {
+    <>
+      <Popover open={open} onOpenChange={(v: boolean) => setOpen(v)}>
+        <PopoverTrigger
+          className={`inline-flex h-8 items-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] border bg-clip-padding px-[var(--ft-space-3)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium whitespace-nowrap transition-colors ${
+            active
+              ? "border-transparent bg-[var(--ft-color-secondary-container)] text-[var(--ft-color-on-secondary-container)]"
+              : "border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)]"
+          }`}
+        >
+          <FolderTree className="h-3 w-3" />
+          {active ? activePath : "Folder"}
+          {active && (
+            <X
+              className="h-3 w-3"
+              onClick={(e) => {
+                e.stopPropagation();
                 onChange(null);
-                setOpen(false);
               }}
-              className={`rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1 text-left text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] transition-colors ${
-                activePath === null
-                  ? "bg-[var(--ft-color-secondary-container)] font-medium text-[var(--ft-color-on-secondary-container)]"
-                  : "text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
-              }`}
-            >
-              All folders
-            </button>
-            {folders.map((f) => (
+            />
+          )}
+        </PopoverTrigger>
+        <PopoverContent className="w-80 max-h-72 overflow-y-auto" align="start" sideOffset={6}>
+          <p className="text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] font-medium uppercase tracking-wide text-[var(--ft-color-on-surface-variant)]">
+            Folder
+          </p>
+          {folderLoading ? (
+            <div className="flex items-center gap-[var(--ft-space-2)] py-2 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Loading…
+            </div>
+          ) : (
+            <div className="mt-1 flex flex-col gap-0.5">
               <button
-                key={f.path}
                 onClick={() => {
-                  onChange(f.path);
+                  onChange(null);
                   setOpen(false);
                 }}
                 className={`rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1 text-left text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] transition-colors ${
-                  activePath === f.path
+                  activePath === null
                     ? "bg-[var(--ft-color-secondary-container)] font-medium text-[var(--ft-color-on-secondary-container)]"
                     : "text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
                 }`}
               >
-                {f.path}
+                All folders
               </button>
-            ))}
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
+              {folders.map((f) => {
+                const isDropTarget = dragOverPath === f.path;
+                return (
+                  <div
+                    key={f.path}
+                    className={`group flex items-center gap-1 rounded-[var(--ft-shape-extra-small)] transition-colors ${
+                      isDropTarget ? "ring-1 ring-[var(--ft-color-primary)] bg-[color-mix(in_srgb,var(--ft-color-primary)_10%,transparent)]" : ""
+                    }`}
+                    onDragOver={(e) => {
+                      // Only accept an asset drag; keep the popover's drop surface live.
+                      if (e.dataTransfer.types.includes("application/x-fonto-asset")) {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                        if (dragOverPath !== f.path) setDragOverPath(f.path);
+                      }
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverPath === f.path) setDragOverPath(null);
+                    }}
+                    onDrop={(e) => {
+                      const assetId = e.dataTransfer.getData("application/x-fonto-asset");
+                      setDragOverPath(null);
+                      if (assetId) {
+                        e.preventDefault();
+                        void handleAssetDrop(f.path, assetId);
+                      }
+                    }}
+                  >
+                    <button
+                      onClick={() => {
+                        onChange(f.path);
+                        setOpen(false);
+                      }}
+                      className={`min-w-0 flex-1 truncate rounded-[var(--ft-shape-extra-small)] px-[var(--ft-space-2)] py-1 text-left text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] transition-colors ${
+                        activePath === f.path
+                          ? "bg-[var(--ft-color-secondary-container)] font-medium text-[var(--ft-color-on-secondary-container)]"
+                          : "text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
+                      }`}
+                    >
+                      {f.path}
+                    </button>
+                    <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                      {([
+                        { action: "rename" as const, Icon: Pencil, label: "Rename folder" },
+                        { action: "move" as const, Icon: FolderInput, label: "Move folder" },
+                        { action: "delete" as const, Icon: Trash2, label: "Delete folder" },
+                      ]).map(({ action, Icon, label }) => (
+                        <button
+                          key={action}
+                          aria-label={label}
+                          title={label}
+                          onClick={() => setOpDialog({ action, folder: { name: folderName(f.path), path: f.path } })}
+                          className="rounded-[var(--ft-shape-extra-small)] p-1 text-[var(--ft-color-on-surface-variant)] hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </PopoverContent>
+      </Popover>
+      {opDialog && (
+        <FolderOpDialog
+          op={opDialog}
+          onClose={() => setOpDialog(null)}
+          onSubmit={(payload) => performFolderOp(payload)}
+        />
+      )}
+    </>
   );
 }
 
@@ -1600,8 +1721,10 @@ function LibraryActivePills({
 
 function LibraryChipStrip({
   toolbar,
+  onCorpusChanged,
 }: {
   toolbar: ReturnType<typeof useToolbarState>;
+  onCorpusChanged?: () => void;
 }) {
   const { filters, setFilters } = toolbar;
 
@@ -1698,6 +1821,7 @@ function LibraryChipStrip({
         onChange={(path) =>
           setFilters({ directoryPathPrefix: path, directoryPath: null })
         }
+        onChanged={onCorpusChanged}
       />
 
       {/* Date-range chip — opens date popover. */}
