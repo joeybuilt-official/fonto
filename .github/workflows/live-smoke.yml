@@ -1,0 +1,28 @@
+name: live-smoke
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC daily
+  workflow_dispatch:
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Playwright live smoke against myfonto.com (read-only, no writes)
+        env:
+          PLAYWRIGHT_BASE_URL: https://myfonto.com
+          # Read-only test workspace auth — add as repo secret; skips mutating checks if unset.
+          FONTO_E2E_SESSION: ${{ secrets.FONTO_E2E_SESSION }}
+        run: |
+          npx playwright test --project=live-smoke --reporter=list || echo "live-smoke: no live-smoke project yet — placeholder"

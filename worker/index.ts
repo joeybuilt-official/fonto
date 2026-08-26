@@ -1278,9 +1278,9 @@ function startVideoHlsTranscodeWorker(): Worker<VideoHlsTranscodeJob> {
 
         // Sprite needs duration; prefer the persisted value, fall back
         // to a re-probe if 8a hasn't populated it (legacy rows).
-        let durationSec = asset.durationSeconds ?? null;
-        let srcW = asset.videoWidth ?? null;
-        let srcH = asset.videoHeight ?? null;
+        const durationSec = asset.durationSeconds ?? null;
+        const srcW = asset.videoWidth ?? null;
+        const srcH = asset.videoHeight ?? null;
         if (durationSec == null || srcW == null || srcH == null) {
           log.info("video metadata missing — re-probing source for sprite");
           // We don't have a local copy; quick re-probe via R2 presigned

@@ -38,7 +38,8 @@
     "test:variants": "tsx scripts/test-variants.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "conformance": "node scripts/conformance-guard.mjs"
+    "conformance": "node scripts/conformance-guard.mjs",
+    "verify": "pnpm typecheck && pnpm lint && pnpm arch && pnpm conformance"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.1",
@@ -115,6 +116,7 @@
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

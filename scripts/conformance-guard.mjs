@@ -19,9 +19,11 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // ── Forbidden provider/AI packages (exact names or scope/prefix globs) ───────
+// NOTE: @anthropic-ai/sdk is intentionally ALLOWED in Fonto as the embedded
+// Completion tier floor (lib/intelligence/adapters/anthropic.ts via
+// FONTO_LLM_KEY) with federated Plexo as preferred. See ADR-002 + lib/intelligence/registry.ts.
 const FORBIDDEN_PKGS = [
   "openai",
-  "@anthropic-ai/sdk",
   "anthropic",
   "ai", // Vercel AI SDK
   "@ai-sdk/*",
