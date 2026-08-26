@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Gitignored local git worktrees (`.claude/worktrees/*`) hold other
+    // branches' checkouts — never lint those stale copies as if they were
+    // this tree's source. They are absent on a clean clone / CI.
+    ".claude/**",
   ]),
 ]);
 
