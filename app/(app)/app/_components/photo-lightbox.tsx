@@ -468,6 +468,7 @@ function MetadataPanel({
             <button
               onClick={handleRescan}
               disabled={rescanState === "loading"}
+              aria-describedby="rescan-desc"
               className="flex w-full items-center gap-2 rounded-[var(--ft-shape-small)] border border-[var(--ft-color-outline)] bg-[var(--ft-color-surface)] px-3 py-1.5 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface)] hover:bg-[var(--ft-color-surface-container)] transition-colors disabled:opacity-50"
             >
               {rescanState === "loading" ? (
@@ -479,6 +480,9 @@ function MetadataPanel({
               )}
               {rescanState === "done" ? "Re-scan queued" : "Re-scan (AI)"}
             </button>
+            <p id="rescan-desc" className="-mt-1 px-1 text-[length:var(--ft-type-label-small-size)] leading-[var(--ft-type-label-small-line)] text-[var(--ft-color-on-surface-variant)]">
+              Re-runs AI recognition on this photo; queued means it is processing in the background.
+            </p>
             {/* Share */}
             <button
               onClick={onShare}

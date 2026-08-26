@@ -684,7 +684,8 @@ function PeopleContent() {
             <div key={p.id} className="group relative space-y-2">
               <Link
                 href={`/app/people/${p.id}`}
-                className={`block space-y-2 transition-opacity ${
+                {...(ignoring.has(p.id) ? { "aria-disabled": true, tabIndex: -1 } : {})}
+                className={`block space-y-2 rounded-md transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                   ignoring.has(p.id) ? "pointer-events-none opacity-40" : ""
                 }`}
               >
