@@ -818,7 +818,7 @@ function AttentionSummary({
   if (unsorted > 0)
     cards.push({
       key: "unsorted",
-      href: "/app/library?surface=unsorted",
+      href: "/app/library?kind=unclassified",
       label: "Unsorted",
       hint: "Waiting to be sorted into Photos or Files",
       n: unsorted,

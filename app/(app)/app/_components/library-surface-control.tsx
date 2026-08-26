@@ -66,6 +66,38 @@ export function lensesForSurface(surface: LibrarySurface): LensOption[] {
   return surface === "files" ? FILE_LENSES : PHOTO_LENSES;
 }
 
+// Inbox has no real KIND — it is the "no kind yet" holding area, addressed by
+// `?unclassified=1`. This sentinel carries that state through the single `?kind=`
+// param (M2 lens reconciliation: `surface`/`lens` collapsed into `?kind=`).
+export const INBOX_KIND = "unclassified";
+
+// WRITE direction: a (surface, lens) selection → the `?kind=` value to put in
+// the URL. Inbox maps to the sentinel; Photos/Files map through computeKindParam
+// (which is never null for those surfaces).
+export function kindForSelection(surface: LibrarySurface, lens: string): string {
+  if (surface === "unsorted") return INBOX_KIND;
+  return computeKindParam(surface, lens) ?? "moment,video";
+}
+
+// READ direction: the inverse of kindForSelection. Derive which (surface, lens)
+// the control should show purely from the `?kind=` value, so no separate
+// `?surface=`/`?lens=` params (or a localStorage hop) are needed. A missing kind
+// defaults to Photos · All; a comma-union resolves to that surface's "all" lens.
+export function deriveSplitState(kind: string | null): {
+  surface: LibrarySurface;
+  lens: string;
+} {
+  if (kind === INBOX_KIND) return { surface: "unsorted", lens: "all" };
+  if (!kind) return { surface: "photos", lens: "all" };
+  const kinds = kind.split(",");
+  const isFiles = kinds.some(
+    (k) => k === "screenshot" || k === "graphics" || k === "document"
+  );
+  const surface: LibrarySurface = isFiles ? "files" : "photos";
+  const lens = kinds.length === 1 ? kinds[0] : "all";
+  return { surface, lens };
+}
+
 function segBtn(active: boolean): string {
   return `inline-flex h-9 flex-1 items-center justify-center gap-[var(--ft-space-2)] rounded-[var(--ft-shape-full)] px-[var(--ft-space-4)] text-[length:var(--ft-type-label-large-size)] leading-[var(--ft-type-label-large-line)] font-medium transition-colors ${
     active
