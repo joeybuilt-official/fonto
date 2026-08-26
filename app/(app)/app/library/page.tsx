@@ -848,6 +848,18 @@ function LibraryContent() {
           />
         )}
         <LibraryActivePills toolbar={toolbar} />
+        {(() => {
+          const activeFolder = toolbar.filters.directoryPath ?? toolbar.filters.directoryPathPrefix ?? null;
+          if (!activeFolder) return null;
+          return (
+            <FolderBreadcrumb
+              activePath={activeFolder}
+              onChange={(path) =>
+                toolbar.setFilters({ directoryPath: null, directoryPathPrefix: path })
+              }
+            />
+          );
+        })()}
         {/* Mobile uses the toolbar's Filter popover (lifecycle/mime/type/etc. all live there).
             Desktop keeps the inline chip strip for one-tap toggles. The chip
             strip is Photos-only under the split (Files has its own search). */}
@@ -1138,6 +1150,42 @@ function DateRangeChip({
 interface FolderEntry {
   path: string;
   assetCount: number;
+}
+
+function FolderBreadcrumb({
+  activePath,
+  onChange,
+}: {
+  activePath: string | null;
+  onChange: (path: string | null) => void;
+}) {
+  if (!activePath) return null;
+  const parts = activePath.split("/").filter(Boolean);
+  return (
+    <nav aria-label="Folder breadcrumb" className="flex items-center gap-1 overflow-x-auto text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
+      <button
+        onClick={() => onChange(null)}
+        className="shrink-0 rounded px-1 py-0.5 hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"
+      >
+        /
+      </button>
+      {parts.map((part, i) => {
+        const target = `/${parts.slice(0, i + 1).join("/")}`;
+        const isLast = i === parts.length - 1;
+        return (
+          <span key={target} className="flex items-center gap-1 shrink-0">
+            <span className="text-[var(--ft-color-outline)]">›</span>
+            <button
+              onClick={() => onChange(target)}
+              className={`rounded px-1 py-0.5 ${isLast ? "font-medium text-[var(--ft-color-on-surface)]" : "hover:bg-[color-mix(in_srgb,var(--ft-color-on-surface)_8%,transparent)] hover:text-[var(--ft-color-on-surface)]"}`}
+            >
+              {part}
+            </button>
+          </span>
+        );
+      })}
+    </nav>
+  );
 }
 
 function FolderChip({
