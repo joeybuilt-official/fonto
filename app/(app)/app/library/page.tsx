@@ -31,7 +31,11 @@ import { PhotoLightbox } from "../_components/photo-lightbox";
 import { AssetPageToolbar } from "../_components/asset-page-toolbar";
 import { AssetGrid } from "../_components/asset-grid";
 import { VirtualizedTimeline, type TimelineMonth } from "../_components/virtualized-timeline";
-import { useToolbarState, type Lifecycle } from "@/lib/hooks/use-toolbar-state";
+import {
+  useToolbarState,
+  type Lifecycle,
+  type SortKey,
+} from "@/lib/hooks/use-toolbar-state";
 import { useSnackbar } from "@/components/ui/snackbar";
 import { downloadAssetsZip } from "@/lib/download-zip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -57,6 +61,73 @@ const FLAT_PAGE_SIZE = 200;
 
 // Bulk endpoints cap at 1000 ids/request — chunk larger selections.
 const BULK_CHUNK = 1000;
+
+// Single source of truth for the `/api/v1/assets` (and `/assets/buckets`) query
+// params. The buckets fetch, the per-month timeline windows, and the flat-grid
+// pages all derive their filter params here so they can never drift on how a
+// filter maps to a query key. `flat` adds the sort/date-range/free-text/limit
+// (and the Inbox `unclassified` surface) that only the flat-grid + search path
+// needs; the base shape (buckets + month windows) sets sort/window/limit itself.
+function buildAssetListParams(input: {
+  lifecycle: Lifecycle;
+  kind: string | null;
+  mime: string | null;
+  subtype: string | null; // FilterState.type → `subtype` param
+  favorite: boolean;
+  ratingMin: number | null;
+  directoryPath: string | null;
+  directoryPathPrefix: string | null;
+  groupId: string | null;
+  placeFilter: string | null;
+  splitOn: boolean;
+  splitKind: string | null;
+  flat: boolean;
+  // flat-only — omitted by the base (buckets/month) callers.
+  surface?: LibrarySurface;
+  sort?: SortKey;
+  from?: string | null;
+  to?: string | null;
+  q?: string;
+}): URLSearchParams {
+  const sp = new URLSearchParams();
+  sp.set("lifecycle", input.lifecycle);
+  if (input.flat && input.splitOn && input.surface === "unsorted") {
+    sp.set("unclassified", "1");
+  } else if (input.splitOn) {
+    // Photos surface: "all" → moment,video; single lens → that kind.
+    if (input.splitKind) sp.set("kind", input.splitKind);
+  } else {
+    // Task 20 — lens. Missing ?kind= => default "Moments"; "all" clears it.
+    const lensKind = input.kind ?? "moment";
+    if (lensKind !== "all") sp.set("kind", lensKind);
+  }
+  if (input.mime) sp.set("mime", input.mime);
+  if (input.subtype) sp.set("subtype", input.subtype);
+  if (input.favorite) sp.set("favorite", "1");
+  if (input.ratingMin != null) sp.set("ratingMin", String(input.ratingMin));
+  if (input.directoryPath != null) sp.set("directoryPath", input.directoryPath);
+  if (input.directoryPathPrefix != null) {
+    sp.set("directoryPathPrefix", input.directoryPathPrefix);
+  }
+  if (input.groupId) sp.set("group_id", input.groupId);
+  if (input.placeFilter) sp.set("place", input.placeFilter);
+  if (!input.flat) return sp;
+  // Flat-grid + search extras. Sort/date-range/free-text resolve server-side so
+  // name/rating/largest and the date window are globally correct across the
+  // whole result set. "newest"/"oldest" both use the captured axis (DESC);
+  // "oldest" is a display-only reversal (applyClientTransforms) since the list
+  // route exposes no ascending date axis.
+  const sortAxis =
+    input.sort === "name" || input.sort === "rating" || input.sort === "largest"
+      ? input.sort
+      : "captured";
+  sp.set("sort", sortAxis);
+  if (input.from) sp.set("dateFrom", input.from);
+  if (input.to) sp.set("dateTo", input.to);
+  if (input.q) sp.set("q", input.q);
+  sp.set("limit", String(FLAT_PAGE_SIZE));
+  return sp;
+}
 
 // The app shell scrolls its <main>, not the window. Lightbox scroll save +
 // restore must target that element (window.scrollY/scrollTo are inert here).
@@ -157,7 +228,12 @@ function LibraryContent() {
   const [loading, setLoading] = useState(true);
   const [buckets, setBuckets] = useState<TimelineMonth[]>([]);
   const [bucketsLoading, setBucketsLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  // Timeline (buckets) and flat-grid errors are tracked separately so a failed
+  // buckets fetch can never surface as — or tear down — the flat grid's state
+  // (the two paths are mutually exclusive by `timelineMode`, but they shared one
+  // error flag before, which flashed a stale error across a mode switch).
+  const [bucketsError, setBucketsError] = useState(false);
+  const [flatError, setFlatError] = useState(false);
   const [directAsset, setDirectAsset] = useState<Asset | null>(null);
   // `refreshKey` bumps remount/refetch after a mutation. Declared up here so
   // both the inbox-count effect and the batch handlers below can key on it.
@@ -293,50 +369,38 @@ function LibraryContent() {
   // Server-side filter params shared by the buckets fetch and per-month
   // windowed fetch. Its identity changes whenever a filter changes, which is
   // exactly the signal VirtualizedTimeline uses to drop its per-month cache.
-  const baseParams = useCallback(() => {
-    const sp = new URLSearchParams();
-    sp.set("lifecycle", toolbar.filters.lifecycle);
-    if (splitOn) {
-      // Photos surface: "all" → moment,video; single lens → that kind.
-      if (splitKind) sp.set("kind", splitKind);
-    } else {
-      // Task 20 — lens. Missing ?kind= => default "Moments"; "all" clears it.
-      const lensKind = toolbar.filters.kind ?? "moment";
-      if (lensKind !== "all") sp.set("kind", lensKind);
-    }
-    if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
-    if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
-    if (toolbar.filters.favorite) sp.set("favorite", "1");
-    if (toolbar.filters.ratingMin != null) {
-      sp.set("ratingMin", String(toolbar.filters.ratingMin));
-    }
-    if (toolbar.filters.directoryPath != null) {
-      sp.set("directoryPath", toolbar.filters.directoryPath);
-    }
-    if (toolbar.filters.directoryPathPrefix != null) {
-      sp.set("directoryPathPrefix", toolbar.filters.directoryPathPrefix);
-    }
-    if (toolbar.filters.groupId) {
-      sp.set("group_id", toolbar.filters.groupId);
-    }
-    if (placeFilter) {
-      sp.set("place", placeFilter);
-    }
-    return sp;
-  }, [
-    splitOn,
-    splitKind,
-    toolbar.filters.lifecycle,
-    toolbar.filters.kind,
-    toolbar.filters.mime,
-    toolbar.filters.type,
-    toolbar.filters.favorite,
-    toolbar.filters.ratingMin,
-    toolbar.filters.directoryPath,
-    toolbar.filters.directoryPathPrefix,
-    toolbar.filters.groupId,
-    placeFilter,
-  ]);
+  const baseParams = useCallback(
+    () =>
+      buildAssetListParams({
+        lifecycle: toolbar.filters.lifecycle,
+        kind: toolbar.filters.kind,
+        mime: toolbar.filters.mime,
+        subtype: toolbar.filters.type,
+        favorite: toolbar.filters.favorite,
+        ratingMin: toolbar.filters.ratingMin,
+        directoryPath: toolbar.filters.directoryPath,
+        directoryPathPrefix: toolbar.filters.directoryPathPrefix,
+        groupId: toolbar.filters.groupId,
+        placeFilter,
+        splitOn,
+        splitKind,
+        flat: false,
+      }),
+    [
+      splitOn,
+      splitKind,
+      toolbar.filters.lifecycle,
+      toolbar.filters.kind,
+      toolbar.filters.mime,
+      toolbar.filters.type,
+      toolbar.filters.favorite,
+      toolbar.filters.ratingMin,
+      toolbar.filters.directoryPath,
+      toolbar.filters.directoryPathPrefix,
+      toolbar.filters.groupId,
+      placeFilter,
+    ]
+  );
 
   // Load exactly one month's assets (captured-date order). Pages within the
   // [firstOfThisMonth, firstOfNextMonth) window until the boundary is crossed
@@ -544,7 +608,7 @@ function LibraryContent() {
     if (!timelineMode) return;
     let cancelled = false;
     setBucketsLoading(true);
-    setLoadError(false);
+    setBucketsError(false);
     fetch(`/api/v1/assets/buckets?${baseParams().toString()}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`buckets ${r.status}`);
@@ -556,7 +620,7 @@ function LibraryContent() {
       .catch(() => {
         if (!cancelled) {
           setBuckets([]);
-          setLoadError(true);
+          setBucketsError(true);
         }
       })
       .finally(() => {
@@ -570,71 +634,48 @@ function LibraryContent() {
   // Server-side query for one flat-grid page. Mirrors baseParams (incl.
   // group_id + place, which the fallback previously dropped) and adds the
   // capture-date sort + row cap the cursor pagination keys on.
-  const flatParams = useCallback(() => {
-    const sp = new URLSearchParams();
-    sp.set("lifecycle", toolbar.filters.lifecycle);
-    if (splitOn && surface === "unsorted") {
-      sp.set("unclassified", "1");
-    } else if (splitOn) {
-      if (splitKind) sp.set("kind", splitKind);
-    } else {
-      const lensKind = toolbar.filters.kind ?? "moment";
-      if (lensKind !== "all") sp.set("kind", lensKind);
-    }
-    if (toolbar.filters.mime) sp.set("mime", toolbar.filters.mime);
-    if (toolbar.filters.type) sp.set("subtype", toolbar.filters.type);
-    if (toolbar.filters.favorite) sp.set("favorite", "1");
-    if (toolbar.filters.ratingMin != null) {
-      sp.set("ratingMin", String(toolbar.filters.ratingMin));
-    }
-    if (toolbar.filters.directoryPath != null) {
-      sp.set("directoryPath", toolbar.filters.directoryPath);
-    }
-    if (toolbar.filters.directoryPathPrefix != null) {
-      sp.set("directoryPathPrefix", toolbar.filters.directoryPathPrefix);
-    }
-    if (toolbar.filters.groupId) {
-      sp.set("group_id", toolbar.filters.groupId);
-    }
-    if (placeFilter) {
-      sp.set("place", placeFilter);
-    }
-    // Sort/date-range/free-text now resolve server-side so name/rating/largest
-    // and the date window are globally correct across the whole result set —
-    // not just a re-sort over the loaded pages. "newest"/"oldest" both use the
-    // captured axis (DESC); "oldest" is a display-only reversal (§applyClient-
-    // Transforms) since the list route exposes no ascending date axis.
-    const sortAxis =
-      toolbar.filters.sort === "name" ||
-      toolbar.filters.sort === "rating" ||
-      toolbar.filters.sort === "largest"
-        ? toolbar.filters.sort
-        : "captured";
-    sp.set("sort", sortAxis);
-    if (toolbar.filters.from) sp.set("dateFrom", toolbar.filters.from);
-    if (toolbar.filters.to) sp.set("dateTo", toolbar.filters.to);
-    if (toolbar.filters.q) sp.set("q", toolbar.filters.q);
-    sp.set("limit", String(FLAT_PAGE_SIZE));
-    return sp;
-  }, [
-    splitOn,
-    surface,
-    splitKind,
-    toolbar.filters.lifecycle,
-    toolbar.filters.kind,
-    toolbar.filters.mime,
-    toolbar.filters.type,
-    toolbar.filters.favorite,
-    toolbar.filters.ratingMin,
-    toolbar.filters.directoryPath,
-    toolbar.filters.directoryPathPrefix,
-    toolbar.filters.groupId,
-    placeFilter,
-    toolbar.filters.sort,
-    toolbar.filters.from,
-    toolbar.filters.to,
-    toolbar.filters.q,
-  ]);
+  const flatParams = useCallback(
+    () =>
+      buildAssetListParams({
+        lifecycle: toolbar.filters.lifecycle,
+        kind: toolbar.filters.kind,
+        mime: toolbar.filters.mime,
+        subtype: toolbar.filters.type,
+        favorite: toolbar.filters.favorite,
+        ratingMin: toolbar.filters.ratingMin,
+        directoryPath: toolbar.filters.directoryPath,
+        directoryPathPrefix: toolbar.filters.directoryPathPrefix,
+        groupId: toolbar.filters.groupId,
+        placeFilter,
+        splitOn,
+        splitKind,
+        flat: true,
+        surface,
+        sort: toolbar.filters.sort,
+        from: toolbar.filters.from,
+        to: toolbar.filters.to,
+        q: toolbar.filters.q,
+      }),
+    [
+      splitOn,
+      surface,
+      splitKind,
+      toolbar.filters.lifecycle,
+      toolbar.filters.kind,
+      toolbar.filters.mime,
+      toolbar.filters.type,
+      toolbar.filters.favorite,
+      toolbar.filters.ratingMin,
+      toolbar.filters.directoryPath,
+      toolbar.filters.directoryPathPrefix,
+      toolbar.filters.groupId,
+      placeFilter,
+      toolbar.filters.sort,
+      toolbar.filters.from,
+      toolbar.filters.to,
+      toolbar.filters.q,
+    ]
+  );
 
   // The list route now handles sort/date/free-text; the only transform left is
   // "oldest", a display reversal of the captured-DESC pages (no server-side
@@ -657,7 +698,7 @@ function LibraryContent() {
     let cancelled = false;
     flatGenRef.current += 1;
     setLoading(true);
-    setLoadError(false);
+    setFlatError(false);
     flatCursorRef.current = null;
     flatRawRef.current = [];
     setHasMore(false);
@@ -679,7 +720,7 @@ function LibraryContent() {
         if (cancelled) return;
         flatRawRef.current = [];
         setAssets([]);
-        setLoadError(true);
+        setFlatError(true);
         setHasMore(false);
       } finally {
         if (!cancelled) setLoading(false);
@@ -890,7 +931,7 @@ function LibraryContent() {
           <div className="px-4">
             <GridSkeleton density={toolbar.view.density} />
           </div>
-        ) : loadError ? (
+        ) : bucketsError ? (
           <LibraryError onRetry={() => setRefreshKey((k) => k + 1)} />
         ) : buckets.length === 0 ? (
           <LibraryEmptyState toolbar={toolbar} activeLens={activeLens} placeFilter={placeFilter} />
@@ -914,7 +955,7 @@ function LibraryContent() {
         <div className="px-4">
           <GridSkeleton density={toolbar.view.density} />
         </div>
-      ) : loadError ? (
+      ) : flatError ? (
         <LibraryError onRetry={() => setRefreshKey((k) => k + 1)} />
       ) : assets.length === 0 ? (
         <LibraryEmptyState toolbar={toolbar} activeLens={activeLens} placeFilter={placeFilter} />
