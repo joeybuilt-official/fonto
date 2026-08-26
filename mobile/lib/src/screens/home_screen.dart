@@ -1526,7 +1526,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               return RepaintBoundary(
                 child: _DeviceTile(
                   entity: entity,
-                  onTap: () => _openDeviceAsset(entity),
+                  onTap: () => _openDeviceAsset(shown, i),
                 ),
               );
             },
@@ -1537,10 +1537,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ];
   }
 
-  void _openDeviceAsset(AssetEntity entity) {
+  void _openDeviceAsset(List<AssetEntity> entities, int index) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => DeviceAssetViewerScreen(entity: entity),
+        builder: (_) => DeviceAssetViewerScreen(
+          entities: entities,
+          initialIndex: index,
+        ),
       ),
     );
   }
