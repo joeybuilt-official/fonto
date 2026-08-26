@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Photos/Files split — surface segmented control + Inbox banner + scoped lens
+// Camera/Files split — surface segmented control + Inbox banner + scoped lens
 // chips. Rendered only when the `librarySurfaceSplit` flag is ON; replaces the
-// flat KIND lens row. See plans/photos-vs-files-split/plan.md.
+// flat KIND lens row. The "Camera" surface is the moment+video union (its label
+// used to be "Photos", which misread as excluding video). See
+// plans/photos-vs-files-split/plan.md.
 
 "use client";
 
 import {
-  Images,
+  Camera,
   Files as FilesIcon,
   FileQuestion,
   Image as ImageIcon,
@@ -64,6 +66,38 @@ export function computeKindParam(
 
 export function lensesForSurface(surface: LibrarySurface): LensOption[] {
   return surface === "files" ? FILE_LENSES : PHOTO_LENSES;
+}
+
+// Inbox has no real KIND — it is the "no kind yet" holding area, addressed by
+// `?unclassified=1`. This sentinel carries that state through the single `?kind=`
+// param (M2 lens reconciliation: `surface`/`lens` collapsed into `?kind=`).
+export const INBOX_KIND = "unclassified";
+
+// WRITE direction: a (surface, lens) selection → the `?kind=` value to put in
+// the URL. Inbox maps to the sentinel; Photos/Files map through computeKindParam
+// (which is never null for those surfaces).
+export function kindForSelection(surface: LibrarySurface, lens: string): string {
+  if (surface === "unsorted") return INBOX_KIND;
+  return computeKindParam(surface, lens) ?? "moment,video";
+}
+
+// READ direction: the inverse of kindForSelection. Derive which (surface, lens)
+// the control should show purely from the `?kind=` value, so no separate
+// `?surface=`/`?lens=` params (or a localStorage hop) are needed. A missing kind
+// defaults to Photos · All; a comma-union resolves to that surface's "all" lens.
+export function deriveSplitState(kind: string | null): {
+  surface: LibrarySurface;
+  lens: string;
+} {
+  if (kind === INBOX_KIND) return { surface: "unsorted", lens: "all" };
+  if (!kind) return { surface: "photos", lens: "all" };
+  const kinds = kind.split(",");
+  const isFiles = kinds.some(
+    (k) => k === "screenshot" || k === "graphics" || k === "document"
+  );
+  const surface: LibrarySurface = isFiles ? "files" : "photos";
+  const lens = kinds.length === 1 ? kinds[0] : "all";
+  return { surface, lens };
 }
 
 function segBtn(active: boolean): string {
@@ -134,8 +168,8 @@ export function LibrarySurfaceControl({
           onClick={() => onSurface("photos")}
           className={segBtn(surface === "photos")}
         >
-          <Images className="h-4 w-4" />
-          Photos
+          <Camera className="h-4 w-4" />
+          Camera
         </button>
         <button
           role="tab"

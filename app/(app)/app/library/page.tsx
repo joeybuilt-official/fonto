@@ -46,14 +46,13 @@ import { useFeatureFlags } from "@/lib/hooks/use-feature-flags";
 import { trackLibrary } from "@/lib/telemetry/library";
 import {
   LibrarySurfaceControl,
-  computeKindParam,
+  deriveSplitState,
+  kindForSelection,
   type LibrarySurface,
 } from "../_components/library-surface-control";
 import { LibraryFilesView } from "../_components/library-files-view";
 import { GridSkeleton } from "../_components/grid-skeleton";
 import { ListErrorState } from "../_components/list-states";
-
-const SURFACE_LS_KEY = "fonto:library:surface";
 
 // Flat-grid (search / date-range / name·rating·largest sort) page size. The
 // path is cursor-paged from here rather than fetching every matching row.
@@ -66,8 +65,11 @@ const BULK_CHUNK = 1000;
 // params. The buckets fetch, the per-month timeline windows, and the flat-grid
 // pages all derive their filter params here so they can never drift on how a
 // filter maps to a query key. `flat` adds the sort/date-range/free-text/limit
-// (and the Inbox `unclassified` surface) that only the flat-grid + search path
-// needs; the base shape (buckets + month windows) sets sort/window/limit itself.
+// that only the flat-grid + search path needs; the base shape (buckets + month
+// windows) sets sort/window/limit itself. `kind` is the single lens param (M2
+// lens reconciliation): it carries a single kind (`document`), a comma-union
+// (`moment,video`), the Inbox sentinel (`unclassified` → `?unclassified=1`), or
+// null/`all` (no kind filter). `splitOn` only picks the default lens.
 function buildAssetListParams(input: {
   lifecycle: Lifecycle;
   kind: string | null;
@@ -80,10 +82,8 @@ function buildAssetListParams(input: {
   groupId: string | null;
   placeFilter: string | null;
   splitOn: boolean;
-  splitKind: string | null;
   flat: boolean;
   // flat-only — omitted by the base (buckets/month) callers.
-  surface?: LibrarySurface;
   sort?: SortKey;
   from?: string | null;
   to?: string | null;
@@ -91,14 +91,13 @@ function buildAssetListParams(input: {
 }): URLSearchParams {
   const sp = new URLSearchParams();
   sp.set("lifecycle", input.lifecycle);
-  if (input.flat && input.splitOn && input.surface === "unsorted") {
+  if (input.kind === "unclassified") {
+    // Inbox holding area — assets with no KIND yet. Sentinel, not a real kind.
     sp.set("unclassified", "1");
-  } else if (input.splitOn) {
-    // Photos surface: "all" → moment,video; single lens → that kind.
-    if (input.splitKind) sp.set("kind", input.splitKind);
   } else {
-    // Task 20 — lens. Missing ?kind= => default "Moments"; "all" clears it.
-    const lensKind = input.kind ?? "moment";
+    // Missing ?kind= defaults to Photos·All (moment,video) under the split, or
+    // the "Moments" lens when flat; "all" clears the kind filter entirely.
+    const lensKind = input.kind ?? (input.splitOn ? "moment,video" : "moment");
     if (lensKind !== "all") sp.set("kind", lensKind);
   }
   if (input.mime) sp.set("mime", input.mime);
@@ -269,14 +268,12 @@ function LibraryContent() {
   // plans/photos-vs-files-split/plan.md.
   const flags = useFeatureFlags();
   const splitOn = flags.librarySurfaceSplit;
-  const surfaceParam = searchParams.get("surface");
-  const surface: LibrarySurface = splitOn
-    ? surfaceParam === "files" || surfaceParam === "unsorted" || surfaceParam === "photos"
-      ? surfaceParam
-      : "photos"
-    : "photos";
-  const splitLens = searchParams.get("lens") ?? "all";
-  const splitKind = splitOn ? computeKindParam(surface, splitLens) : null;
+  // M2 lens reconciliation: `?kind=` is the single lens param. Derive the
+  // control's (surface, lens) purely from it — no `?surface=`/`?lens=` params,
+  // no first-paint localStorage hop.
+  const { surface, lens: splitLens } = splitOn
+    ? deriveSplitState(toolbar.filters.kind)
+    : { surface: "photos" as LibrarySurface, lens: "all" };
   const photosActive = !splitOn || surface === "photos";
 
   const timelineSort =
@@ -297,24 +294,6 @@ function LibraryContent() {
 
   const [unsortedCount, setUnsortedCount] = useState(0);
 
-  // First-paint surface restore: when the flag is on and the URL carries no
-  // ?surface=, hop to the last-used surface (persisted) without a hydration
-  // mismatch (the initial render is always "photos").
-  useEffect(() => {
-    if (!splitOn || surfaceParam) return;
-    let last: string | null = null;
-    try {
-      last = window.localStorage.getItem(SURFACE_LS_KEY);
-    } catch {
-      /* private mode */
-    }
-    if (last === "files" || last === "unsorted") {
-      const sp = new URLSearchParams(searchParams.toString());
-      sp.set("surface", last);
-      router.replace(`${pathname}?${sp.toString()}`);
-    }
-  }, [splitOn, surfaceParam, searchParams, router, pathname]);
-
   // Inbox pending count for the banner badge (exact, via the buckets sum).
   useEffect(() => {
     if (!splitOn) return;
@@ -332,33 +311,26 @@ function LibraryContent() {
     // after a mutation (refreshKey), not on every Photos↔Files toggle.
   }, [splitOn, refreshKey]);
 
+  // Switching surface resets the lens to that surface's union (Photos·All →
+  // moment,video, Files·All → screenshot,graphics,document, Inbox → sentinel)
+  // and clears the free-text query on any move off Files (which owns search).
   const setSurface = useCallback(
     (s: LibrarySurface) => {
-      try {
-        window.localStorage.setItem(SURFACE_LS_KEY, s);
-      } catch {
-        /* private mode */
-      }
-      const sp = new URLSearchParams(searchParams.toString());
-      sp.set("surface", s);
-      sp.delete("lens");
-      sp.delete("kind");
-      if (s !== "files") sp.delete("q");
-      router.replace(`${pathname}?${sp.toString()}`);
+      toolbar.setFilters({
+        kind: kindForSelection(s, "all"),
+        ...(s !== "files" ? { q: "" } : {}),
+      });
       trackLibrary("library_surface_toggle", { to: s });
     },
-    [searchParams, router, pathname]
+    [toolbar]
   );
 
   const setSplitLens = useCallback(
     (lens: string) => {
-      const sp = new URLSearchParams(searchParams.toString());
-      if (lens === "all") sp.delete("lens");
-      else sp.set("lens", lens);
-      router.replace(`${pathname}?${sp.toString()}`);
+      toolbar.setFilters({ kind: kindForSelection(surface, lens) });
       trackLibrary("library_lens_select", { surface, lens });
     },
-    [searchParams, router, pathname, surface]
+    [toolbar, surface]
   );
 
   // ADR 0008 Phase 5 — apply the saved default-scope preference on first paint
@@ -383,12 +355,10 @@ function LibraryContent() {
         groupId: toolbar.filters.groupId,
         placeFilter,
         splitOn,
-        splitKind,
         flat: false,
       }),
     [
       splitOn,
-      splitKind,
       toolbar.filters.lifecycle,
       toolbar.filters.kind,
       toolbar.filters.mime,
@@ -648,9 +618,7 @@ function LibraryContent() {
         groupId: toolbar.filters.groupId,
         placeFilter,
         splitOn,
-        splitKind,
         flat: true,
-        surface,
         sort: toolbar.filters.sort,
         from: toolbar.filters.from,
         to: toolbar.filters.to,
@@ -658,8 +626,6 @@ function LibraryContent() {
       }),
     [
       splitOn,
-      surface,
-      splitKind,
       toolbar.filters.lifecycle,
       toolbar.filters.kind,
       toolbar.filters.mime,
@@ -920,7 +886,7 @@ function LibraryContent() {
 
       {splitOn && surface === "files" ? (
         <LibraryFilesView
-          kindParam={splitKind}
+          kindParam={toolbar.filters.kind}
           directoryPathPrefix={toolbar.filters.directoryPathPrefix}
           onOpenFolder={(path) =>
             toolbar.setFilters({ directoryPathPrefix: path, directoryPath: null })
