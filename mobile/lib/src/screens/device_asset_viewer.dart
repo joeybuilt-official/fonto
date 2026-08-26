@@ -155,6 +155,15 @@ class _DeviceAssetViewerScreenState extends State<DeviceAssetViewerScreen> {
               ),
             ),
           ),
+          // Location pill — makes it obvious at a glance that this copy lives
+          // only on the phone (not yet on Fonto). Server assets have no pill;
+          // absence reads as "on Fonto".
+          const Positioned(
+            top: 8,
+            left: 0,
+            right: 0,
+            child: Center(child: _LocationPill()),
+          ),
         ],
       ),
     );
@@ -450,6 +459,39 @@ class _DevicePageState extends State<_DevicePage> {
             Text(_fmtDate(widget.entity.createDateTime), style: detail),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Small "On device" chip shown at the top of the viewer so the user can tell
+/// at a glance the photo lives only on the phone (still pending upload to
+/// Fonto). Uses the same smartphone icon as the home "On this device" section.
+class _LocationPill extends StatelessWidget {
+  const _LocationPill();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.smartphone_outlined, size: 13, color: Colors.white),
+          SizedBox(width: 5),
+          Text(
+            "On device",
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }

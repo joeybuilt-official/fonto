@@ -1128,30 +1128,24 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
           .toList();
       candidates = (results[1] as List<MergeCandidate>);
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text("Couldn't load people: $e")));
+      if (!mounted) return;
+      await _showMergeInfoDialog("Couldn't load people", "$e");
       return;
     }
     if (!mounted) return;
-    if (others.isEmpty) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text("No other people to merge into yet.")),
-      );
-      return;
-    }
-    // Drop unnamed clusters — merge target must be a named person. Use the
-    // per-face tagging sheet to attach an unnamed face to someone.
+    // Any other face is a valid target now — a named person OR an unnamed
+    // cluster — so two faces can be merged directly. Candidates (server-ranked
+    // likely matches) are always named; drop them from the full list so a face
+    // never shows twice.
     final candidateIds = candidates.map((c) => c.person.id).toSet();
-    final namedCandidates =
-        candidates.where((c) => (c.person.name ?? "").isNotEmpty).toList();
-    final namedRest = others
-        .where((p) => !candidateIds.contains(p.id))
-        .where((p) => (p.name ?? "").isNotEmpty)
-        .toList();
-    if (namedCandidates.isEmpty && namedRest.isEmpty) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text("No named people to merge into yet."),
-        ),
+    final rest = others.where((p) => !candidateIds.contains(p.id)).toList();
+    if (candidates.isEmpty && rest.isEmpty) {
+      // A visible dialog, not a fleeting snackbar — the old snackbar read as
+      // "nothing happened" when there was simply no other face to merge into.
+      await _showMergeInfoDialog(
+        "Nothing to merge into",
+        "There's no other face to merge into yet. Once a second person or "
+            "face cluster exists, you can merge them here.",
       );
       return;
     }
@@ -1159,8 +1153,8 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       context: context,
       isScrollControlled: true,
       builder: (ctx) => _MergePicker(
-        candidates: namedCandidates,
-        others: namedRest,
+        candidates: candidates,
+        others: rest,
       ),
     );
     if (target == null || !mounted) return;
@@ -1170,7 +1164,9 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       final result =
           await widget.client.mergePerson(widget.person.id, target.id);
       if (!mounted) return;
-      final base = "Merged into ${target.name ?? "person"}";
+      final targetLabel =
+          (target.name ?? "").isNotEmpty ? target.name! : "face";
+      final base = "Merged into $targetLabel";
       final msg = result.assigned > 0
           ? "$base · auto-tagged ${result.assigned} ${result.assigned == 1 ? "photo" : "photos"}"
           : base;
@@ -1181,6 +1177,26 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       setState(() => _merging = false);
       messenger.showSnackBar(SnackBar(content: Text("Merge failed: $e")));
     }
+  }
+
+  /// Visible modal for the merge "no targets" / load-error cases. Replaces the
+  /// old easily-missed snackbar so tapping "Merge into…" always produces a
+  /// response instead of appearing to do nothing.
+  Future<void> _showMergeInfoDialog(String title, String message) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text("OK"),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Phase 3 (faces/UX) — rename this person. Prompts for a new name and PATCHes
@@ -1611,11 +1627,13 @@ class _MergeRow {
         );
       case 1:
         final c = candidate!;
+        final cName =
+            (c.person.name ?? "").isNotEmpty ? c.person.name! : "Unnamed face";
         return ListTile(
           // "Likely match" sparkle — amber is the intentional "this is the AI
           // suggesting" signal across the app, kept as-is.
           leading: const Icon(Icons.auto_awesome, color: Colors.amber),
-          title: Text(c.person.name!),
+          title: Text(cName),
           subtitle: Text("${c.person.instanceCount} faces"),
           trailing: _LikelihoodBadge(distance: c.distance),
           onTap: () => Navigator.of(context).pop(c.person),
@@ -1624,9 +1642,10 @@ class _MergeRow {
         return const Divider();
       default:
         final p = person!;
+        final named = (p.name ?? "").isNotEmpty;
         return ListTile(
-          leading: const Icon(Icons.person_outline),
-          title: Text(p.name!),
+          leading: Icon(named ? Icons.person_outline : Icons.face_outlined),
+          title: Text(named ? p.name! : "Unnamed face"),
           subtitle: Text("${p.instanceCount} faces"),
           onTap: () => Navigator.of(context).pop(p),
         );
@@ -1635,9 +1654,9 @@ class _MergeRow {
 }
 
 /// Bottom-sheet picker for "Merge into…". A TextField at the top filters
-/// both the ranked likely-matches list and the named-people list as the
-/// user types. Unnamed clusters never appear here — the caller filters
-/// them out before constructing this widget.
+/// both the ranked likely-matches list and the full people/faces list as
+/// the user types. Both named people AND unnamed face clusters are valid
+/// targets, so two faces can be merged directly.
 class _MergePicker extends StatefulWidget {
   const _MergePicker({required this.candidates, required this.others});
   final List<MergeCandidate> candidates;
@@ -1671,7 +1690,7 @@ class _MergePickerState extends State<_MergePicker> {
       if (cand.isNotEmpty) const _MergeRow.header("LIKELY MATCHES"),
       for (final c in cand) _MergeRow.candidate(c),
       if (cand.isNotEmpty && rest.isNotEmpty) const _MergeRow.divider(),
-      if (rest.isNotEmpty) const _MergeRow.header("ALL PEOPLE"),
+      if (rest.isNotEmpty) const _MergeRow.header("ALL PEOPLE & FACES"),
       for (final p in rest) _MergeRow.person(p),
     ];
 
@@ -1713,7 +1732,7 @@ class _MergePickerState extends State<_MergePicker> {
                       padding: const EdgeInsets.all(24),
                       child: Text(
                         q.isEmpty
-                            ? "No named people to merge into yet."
+                            ? "No other faces to merge into yet."
                             : "No matches for \"$_query\".",
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
