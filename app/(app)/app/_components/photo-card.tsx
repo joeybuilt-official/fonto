@@ -3,7 +3,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useSyncExternalStore } from "react";
-import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play, Share2, CircleDot } from "lucide-react";
+import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play, Share2, CircleDot, AlertTriangle, RotateCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 // Shared coarse-pointer signal. One cached MediaQueryList feeds every tile so
@@ -102,6 +102,44 @@ export interface Asset {
     createdBy: string;
     sharedAt: string;
   } | null;
+}
+
+// M3a retry — bounded confirmation poll after a reprocess is queued. Fast at
+// first (a cheap derivative regen lands in seconds), then backs off, because a
+// real re-classification of a large asset runs for minutes and a 30s window
+// would stop watching long before anything is knowable. ~2m52s over 15
+// requests; past that the tile reports what it actually knows (queued) rather
+// than asserting a second failure.
+const RETRY_POLL_DELAYS_MS = [
+  3000, 3000, 3000, 3000,
+  8000, 8000, 8000, 8000, 8000,
+  20000, 20000, 20000, 20000, 20000, 20000,
+];
+
+// The tile unmounts as the virtualizer scrolls it out, so component state can't
+// carry "already retried" — the remounted row still reads "failed" and would
+// offer a Retry that enqueues a duplicate job. Module scope survives that;
+// entries expire past the poll window plus margin, and every write sweeps the
+// expired ones so the map stays bounded by the assets retried in one TTL.
+const RETRY_QUEUED_TTL_MS = 5 * 60 * 1000;
+const recentRetries = new Map<string, number>();
+
+function markRetried(assetId: string) {
+  const now = Date.now();
+  for (const [id, expiresAt] of recentRetries) {
+    if (expiresAt <= now) recentRetries.delete(id);
+  }
+  recentRetries.set(assetId, now + RETRY_QUEUED_TTL_MS);
+}
+
+function retriedRecently(assetId: string): boolean {
+  const expiresAt = recentRetries.get(assetId);
+  if (expiresAt === undefined) return false;
+  if (expiresAt <= Date.now()) {
+    recentRetries.delete(assetId);
+    return false;
+  }
+  return true;
 }
 
 /** Phase 8a — "1:23" / "12:34" / "1:02:03". Plays nicely w/ the grid chip. */
@@ -241,6 +279,10 @@ export interface PhotoCardProps {
   /** Fired after the per-tile quick action moves this asset to trash, so the
    *  parent grid can drop it optimistically instead of waiting for a reload. */
   onTrashed?: (assetId: string) => void;
+  /** Fired once a retried asset has actually left "failed", so the parent can
+   *  refresh whatever it cached for the row (thumb URLs signed while no
+   *  derivative existed). */
+  onReprocessed?: (assetId: string) => void;
   onClick?: () => void;
   /** UX-3 — pre-resolved thumb URL from the batch URL endpoint. When set the
    *  card skips its per-tile /api/v1/assets/:id/url fetch entirely. AssetGrid
@@ -264,6 +306,7 @@ export function PhotoCard({
   onRemove,
   onAddToCollection,
   onTrashed,
+  onReprocessed,
   onClick,
   thumbUrl,
   responsiveUrls,
@@ -293,6 +336,79 @@ export function PhotoCard({
   const isProcessing =
     asset.processingState === "processing" ||
     asset.processingState === "extracted";
+
+  // M3a — the worker only terminalizes to "failed" on the last attempt
+  // (worker/index.ts) and the reaper does the same for stuck rows, so the
+  // state is genuinely dead-ended and the tile offers the one action that
+  // helps. `retryQueued` is optimistic: the row still reads "failed" until
+  // the poll below sees it leave that state (nothing else refetches the row,
+  // so without the poll the queued spinner would never resolve).
+  const isFailed = asset.processingState === "failed";
+  const [retryQueued, setRetryQueued] = useState(false);
+  // Known-queued but no longer watched: either the poll window elapsed or this
+  // tile remounted onto an asset retried within the TTL. Either way the only
+  // honest claim is that a retry is in flight, so the card says that instead of
+  // re-offering Retry.
+  const [retryPending, setRetryPending] = useState(
+    () => isFailed && retriedRecently(asset.id)
+  );
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const [retryResolved, setRetryResolved] = useState(false);
+  // The tile unmounts as the virtualizer scrolls it out; the token lets an
+  // in-flight poll stop instead of setting state on a dead card.
+  const retryPollRef = useRef<{ cancelled: boolean } | null>(null);
+  useEffect(
+    () => () => {
+      if (retryPollRef.current) retryPollRef.current.cancelled = true;
+    },
+    []
+  );
+
+  async function pollUntilReprocessed(token: { cancelled: boolean }) {
+    for (const delayMs of RETRY_POLL_DELAYS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (token.cancelled) return;
+      try {
+        const r = await fetch(`/api/v1/assets/${asset.id}`);
+        if (!r.ok) throw new Error(`asset ${r.status}`);
+        const d = (await r.json()) as { asset?: { processingState?: string } };
+        if (token.cancelled) return;
+        if (d.asset && d.asset.processingState !== "failed") {
+          recentRetries.delete(asset.id);
+          setRetryQueued(false);
+          setRetryResolved(true);
+          onReprocessed?.(asset.id);
+          return;
+        }
+      } catch (err) {
+        console.error("[fonto-photo-card] reprocess poll failed:", asset.id, err);
+      }
+    }
+    if (token.cancelled) return;
+    setRetryQueued(false);
+    setRetryPending(true);
+  }
+
+  async function handleRetry(e: React.MouseEvent) {
+    e.stopPropagation();
+    setRetryError(null);
+    setRetryQueued(true);
+    try {
+      const r = await fetch(`/api/v1/assets/${asset.id}/reprocess`, { method: "POST" });
+      if (!r.ok) throw new Error(`reprocess ${r.status}`);
+      const d = (await r.json()) as { queued?: boolean };
+      if (!d.queued) throw new Error("reprocess not queued");
+    } catch (err) {
+      console.error("[fonto-photo-card] reprocess failed:", asset.id, err);
+      setRetryQueued(false);
+      setRetryError("Retry failed.");
+      return;
+    }
+    markRetried(asset.id);
+    const token = { cancelled: false };
+    retryPollRef.current = token;
+    void pollUntilReprocessed(token);
+  }
 
   useEffect(() => {
     // UX-3 — when a batch URL is supplied, derived `url` covers it; skip the
@@ -476,6 +592,49 @@ export function PhotoCard({
         <div className="pointer-events-none absolute top-1.5 left-1.5 z-10 flex items-center gap-0.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
           <CircleDot className="h-2.5 w-2.5" />
           Live
+        </div>
+      )}
+
+      {/* M3a — terminal processing failure + per-asset retry. Centred so it
+          clears every corner badge; z-20 keeps it above them and above the
+          video play glyph. */}
+      {isFailed && !retryResolved && (
+        <div className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 rounded-[var(--ft-shape-extra-small)] bg-[var(--ft-color-error-container)] px-[var(--ft-space-2)] py-1.5">
+          {retryQueued ? (
+            <span className="flex items-center gap-1 text-[10px] font-semibold text-[var(--ft-color-on-error-container)]">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Queued
+            </span>
+          ) : retryPending ? (
+            <span className="flex max-w-40 items-center gap-1 text-center text-[10px] font-semibold text-[var(--ft-color-on-error-container)]">
+              <RotateCw className="h-4 w-4 shrink-0" />
+              Queued — may take a few minutes.
+            </span>
+          ) : (
+            <>
+              <span className="flex items-center gap-1 text-[10px] font-semibold text-[var(--ft-color-on-error-container)]">
+                <AlertTriangle className="h-4 w-4" />
+                Processing failed
+              </span>
+              <button
+                type="button"
+                onClick={handleRetry}
+                // The tile itself is role="button" with an Enter/Space handler,
+                // so a keyboard activation here would also open the lightbox.
+                onKeyDown={(e) => e.stopPropagation()}
+                aria-label={`Retry processing ${asset.filename}`}
+                className="flex items-center gap-1 rounded-[var(--ft-shape-full)] bg-[var(--ft-color-error)] px-2 py-1 text-[10px] font-medium text-[var(--ft-color-on-error)] transition-colors hover:bg-[var(--ft-color-error)]/90 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <RotateCw className="h-4 w-4" />
+                Retry
+              </button>
+              {retryError && (
+                <span role="alert" className="text-[10px] font-medium text-[var(--ft-color-on-error-container)]">
+                  {retryError}
+                </span>
+              )}
+            </>
+          )}
         </div>
       )}
 
