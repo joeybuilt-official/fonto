@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -17,9 +18,12 @@ import { parseScopeParam, scopeCond, isShootStage } from "@/lib/scope";
 import { exifFilterConditions } from "@/lib/assets/exifFilters";
 
 // Opaque keyset cursor: base64url(JSON({ s, b, i })) where
-//   s = sort axis ("created" | "captured")
-//   b = last row's sort-key ISO timestamp (createdAt, or COALESCE(capturedAt,
-//       createdAt) on the captured axis)
+//   s = sort axis ("created" | "captured" | "name" | "rating" | "largest")
+//   b = last row's sort-key value as text. For the time axes this is a
+//       microsecond-precision UTC timestamp string (createdAt, or
+//       COALESCE(capturedAt, createdAt) on the captured axis) — NEVER a JS
+//       Date round trip, which truncates to millisecond precision and makes
+//       the keyset predicate re-match the last row of the previous page.
 //   i = last row's id (tie-break)
 // Self-contained: decoding a cursor restores the sort axis too, so a caller
 // can page purely by echoing `cursor` without re-sending `?sort=`. The
@@ -42,6 +46,11 @@ const SORT_AXES: readonly SortAxis[] = [
 function isSortAxis(v: unknown): v is SortAxis {
   return typeof v === "string" && (SORT_AXES as readonly string[]).includes(v);
 }
+// `i` (opaque-cursor tie-break, or the discrete `?idBefore=`) is bound into
+// `gt/lt(schema.assets.id, idBeforeRaw)` against a uuid column — unvalidated,
+// a non-UUID value surfaces as an unhandled Postgres "invalid input syntax
+// for type uuid" (500) instead of a 400.
+const idBeforeSchema = z.string().uuid();
 type CursorPayload = { s: SortAxis; b: string; i: string };
 function encodeCursor(p: CursorPayload): string {
   return Buffer.from(JSON.stringify(p), "utf8").toString("base64url");
@@ -383,6 +392,9 @@ export async function GET(request: NextRequest) {
   // plus ?idBefore=<uuid> as the tie-break. Returns rows strictly older than
   // the cursor under the same ordering, so pages concatenate cleanly.
   const idBeforeRaw = decodedCursor?.i ?? searchParams.get("idBefore");
+  if (idBeforeRaw != null && !idBeforeSchema.safeParse(idBeforeRaw).success) {
+    return NextResponse.json({ error: "Invalid idBefore" }, { status: 400 });
+  }
   // Where the keyset "before" value comes from. The opaque cursor carries it
   // for every axis; the discrete ?createdBefore/?capturedBefore params stay
   // accepted for the two legacy time axes. name/rating/largest page only via
@@ -404,8 +416,14 @@ export async function GET(request: NextRequest) {
     switch (sortAxis) {
       case "created":
       case "captured": {
+        // Bind the raw cursor/param text as-is — reconstructing through
+        // `new Date(...).toISOString()` rounds to millisecond precision and
+        // makes the strict `<`/`>` comparison re-match the last row of the
+        // previous page (createdAt/capturedAt are timestamp(6), i.e.
+        // microsecond-precision, in Postgres). `Date.parse` here is only a
+        // format sanity check; Postgres parses the text directly.
         if (Number.isNaN(Date.parse(beforeRaw))) return null;
-        return sql`${new Date(beforeRaw).toISOString()}::timestamptz`;
+        return sql`${beforeRaw}::timestamptz`;
       }
       case "rating": {
         const n = Number.parseInt(beforeRaw, 10);
@@ -434,6 +452,22 @@ export async function GET(request: NextRequest) {
       where.push(strictCmp);
     }
   }
+
+  // The sort key emitted into the next cursor, projected in SQL as text at
+  // full column precision — never round-tripped through a JS Date, which
+  // node-postgres parses to millisecond precision and would silently drop
+  // the microsecond tail that timestamp(6) columns (createdAt/capturedAt)
+  // actually store, re-matching the last row of the page on the next fetch.
+  const sortKeyTextExpr =
+    sortAxis === "captured"
+      ? sql<string>`to_char(COALESCE(${schema.assets.capturedAt}, ${schema.assets.createdAt}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+      : sortAxis === "created"
+        ? sql<string>`to_char(${schema.assets.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+        : sortAxis === "name"
+          ? sql<string>`LOWER(${schema.assets.filename})`
+          : sortAxis === "rating"
+            ? sql<string>`${schema.assets.rating}::text`
+            : sql<string>`${schema.assets.sizeBytes}::text`;
 
   // UX-3 / Phase 5.5 — surface the stack member count alongside each asset so
   // PhotoCard can render a "Stack of N" badge without a per-tile round trip.
@@ -471,6 +505,7 @@ export async function GET(request: NextRequest) {
     .select({
       asset: assetGridColumns(),
       stackMemberCount: stackCounts.memberCount,
+      sortKeyRaw: sortKeyTextExpr,
     })
     .from(schema.assets)
     .leftJoin(stackCounts, eq(stackCounts.stackId, schema.assets.stackId))
@@ -491,23 +526,7 @@ export async function GET(request: NextRequest) {
   let cursor: string | null = null;
   if (lastRow && rows.length === limit) {
     const a = lastRow.asset;
-    let b: string;
-    switch (sortAxis) {
-      case "captured":
-        b = (a.capturedAt ?? a.createdAt).toISOString();
-        break;
-      case "name":
-        b = a.filename.toLowerCase();
-        break;
-      case "rating":
-        b = String(a.rating);
-        break;
-      case "largest":
-        b = String(a.sizeBytes);
-        break;
-      default:
-        b = a.createdAt.toISOString();
-    }
+    const b = lastRow.sortKeyRaw;
     cursor = encodeCursor({ s: sortAxis, b, i: a.id });
     // The legacy discrete-param `nextCursor` object only exists for the two
     // time axes; name/rating/largest callers page via the opaque `cursor`.

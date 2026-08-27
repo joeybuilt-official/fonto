@@ -14,7 +14,7 @@
 
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   File,
@@ -22,6 +22,10 @@ import {
   FileText,
   ScanText,
   Sparkles,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  X,
 } from "lucide-react";
 import { DocumentViewer } from "@/components/document-viewer";
 import { Button } from "@/components/ui/button";
@@ -119,6 +123,51 @@ function ResultRow({
   );
 }
 
+interface SimilarState {
+  status: "idle" | "loading" | "success" | "error";
+  assets: Asset[];
+  source: "clip" | "classification" | null;
+}
+
+const SIMILAR_IDLE: SimilarState = { status: "idle", assets: [], source: null };
+
+// Stable id for the single "visually similar" panel rendered beneath the
+// grid — every tile's toggle button points aria-controls at the same panel,
+// since only one is ever shown at a time (see SearchContent).
+const SIMILAR_PANEL_ID = "similar-results-panel";
+
+// O2 — per-tile "Visually similar" toggle. Rendered via AssetGrid's
+// renderTileAction slot, one per tile. Pure presentation: the fetch, cache,
+// and expanded/collapsed source of truth live in SearchContent so exactly
+// one results panel exists (see the "one panel at a time" note there).
+function SimilarToggleButton({
+  asset,
+  active,
+  onToggle,
+}: {
+  asset: Asset;
+  active: boolean;
+  onToggle: (assetId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={active}
+      aria-controls={active ? SIMILAR_PANEL_ID : undefined}
+      aria-label={`${active ? "Hide" : "Show"} assets visually similar to ${asset.filename}`}
+      onClick={() => onToggle(asset.id)}
+      className="flex w-full items-center justify-center gap-0.5 rounded-[var(--ft-shape-small)] py-0.5 text-[10px] text-[var(--ft-color-on-surface-variant)] hover:bg-[var(--ft-color-surface-container-low)] hover:text-[var(--ft-color-on-surface)] transition-colors"
+    >
+      {active ? (
+        <ChevronDown className="h-4 w-4" />
+      ) : (
+        <ChevronRight className="h-4 w-4" />
+      )}
+      Similar
+    </button>
+  );
+}
+
 function SearchContent() {
   const router = useRouter();
   const urlParams = useSearchParams();
@@ -149,6 +198,69 @@ function SearchContent() {
   const [clipHits, setClipHits] = useState<ClipHit[] | null>(null);
   const [clipUnavailable, setClipUnavailable] = useState(false);
   const [viewerAsset, setViewerAsset] = useState<Asset | null>(null);
+  // Plain/FTS pagination (color-ΔE and semantic re-rank never page — the API
+  // always sends cursor: null for those and flags `truncated` instead).
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [pageError, setPageError] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const cursorRef = useRef<string | null>(null);
+  // Bumped on every first-page (re)search so an in-flight loadMore or a
+  // slow first-page request from a previous query can't commit a stale
+  // cursor or stale results onto the current one.
+  const searchGenRef = useRef(0);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // O2 — single "visually similar" panel shared by every tile's toggle.
+  // similarCacheRef holds one resolved result per asset id so switching away
+  // from a tile and back (or a parent re-render from loadMore) never
+  // refetches; similarGenRef guards against a slow in-flight fetch for a
+  // previous tile clobbering the currently-selected one.
+  const [similarAssetId, setSimilarAssetId] = useState<string | null>(null);
+  const [similarState, setSimilarState] = useState<SimilarState>(SIMILAR_IDLE);
+  const similarCacheRef = useRef<Map<string, SimilarState>>(new Map());
+  const similarGenRef = useRef(0);
+
+  const fetchSimilar = useCallback((assetId: string) => {
+    const gen = ++similarGenRef.current;
+    setSimilarState({ status: "loading", assets: [], source: null });
+    void (async () => {
+      try {
+        const res = await fetch(`/api/v1/assets/${assetId}/similar`);
+        if (!res.ok) throw new Error(`similar ${res.status}`);
+        const data = (await res.json()) as {
+          assets?: Asset[];
+          source?: "clip" | "classification";
+        };
+        if (gen !== similarGenRef.current) return;
+        const next: SimilarState = {
+          status: "success",
+          assets: data.assets ?? [],
+          source: data.source ?? null,
+        };
+        similarCacheRef.current.set(assetId, next);
+        setSimilarState(next);
+      } catch {
+        if (gen !== similarGenRef.current) return;
+        setSimilarState({ status: "error", assets: [], source: null });
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!similarAssetId) return;
+    const cached = similarCacheRef.current.get(similarAssetId);
+    if (cached) {
+      similarGenRef.current++;
+      setSimilarState(cached);
+      return;
+    }
+    fetchSimilar(similarAssetId);
+  }, [similarAssetId, fetchSimilar]);
+
+  function toggleSimilar(assetId: string) {
+    setSimilarAssetId((cur) => (cur === assetId ? null : assetId));
+  }
 
   function openAsset(a: Asset) {
     const isDoc = !a.mimeType.startsWith("image/");
@@ -163,25 +275,10 @@ function SearchContent() {
     }
   }
 
-  const doSearch = useCallback(async () => {
-    // Smart-collection mode: ignore filters, fetch the preview.
-    if (smartCollectionId) {
-      setLoading(true);
-      setError(false);
-      try {
-        const res = await fetch(`/api/v1/smart-collections/${smartCollectionId}/assets`);
-        if (!res.ok) throw new Error(`smart-collection ${res.status}`);
-        const data = (await res.json()) as { assets?: Asset[] };
-        setResults(data.assets ?? []);
-      } catch {
-        setError(true);
-        setResults(null);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
+  // Shared param-builder so the first page (doSearch) and every subsequent
+  // page (loadMore) encode the exact same filter set — the only thing that
+  // may differ between the two requests is `cursor`.
+  const buildSearchParams = useCallback(() => {
     const q = toolbar.filters.q.trim();
     const cl = toolbar.filters.type ?? "";
     const df = toolbar.filters.from ?? "";
@@ -197,6 +294,75 @@ function SearchContent() {
       focalLength: toolbar.filters.focalLength ?? "",
     };
     const hasExif = Object.values(exif).some((v) => v !== "");
+
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (cl) params.set("classification", cl);
+    if (tid) params.set("tagId", tid);
+    if (df) params.set("dateFrom", df);
+    if (dt) params.set("dateTo", dt);
+    if (semantic) params.set("semantic", "true");
+    if (ocrOnly) params.set("ocrOnly", "true");
+    if (col) params.set("color", col);
+    for (const [k, v] of Object.entries(exif)) {
+      if (v) params.set(k, v);
+    }
+
+    return { q, cl, df, dt, col, tid, hasExif, params };
+  }, [
+    toolbar.filters.q,
+    toolbar.filters.type,
+    toolbar.filters.from,
+    toolbar.filters.to,
+    toolbar.filters.color,
+    toolbar.filters.tagIds,
+    toolbar.filters.cameraMake,
+    toolbar.filters.cameraModel,
+    toolbar.filters.lensModel,
+    toolbar.filters.iso,
+    toolbar.filters.fNumber,
+    toolbar.filters.focalLength,
+    semantic,
+    ocrOnly,
+  ]);
+
+  const doSearch = useCallback(async () => {
+    // Bump first — this is what makes a query/filter change reset paging: any
+    // loadMore or first-page fetch still in flight from the PREVIOUS query
+    // checks this generation before it writes cursor/results, so a stale
+    // cursor from a previous query can never be echoed back to the API.
+    const gen = ++searchGenRef.current;
+    cursorRef.current = null;
+    setHasMore(false);
+    setLoadingMore(false);
+    setPageError(false);
+    setTruncated(false);
+    // A new search invalidates any open "visually similar" panel and its
+    // cache — the source asset may not even be in the new result set.
+    setSimilarAssetId(null);
+    similarCacheRef.current.clear();
+
+    // Smart-collection mode: ignore filters, fetch the preview. Not paged.
+    if (smartCollectionId) {
+      setLoading(true);
+      setError(false);
+      try {
+        const res = await fetch(`/api/v1/smart-collections/${smartCollectionId}/assets`);
+        if (!res.ok) throw new Error(`smart-collection ${res.status}`);
+        const data = (await res.json()) as { assets?: Asset[] };
+        if (gen !== searchGenRef.current) return;
+        setResults(data.assets ?? []);
+      } catch {
+        if (gen !== searchGenRef.current) return;
+        setError(true);
+        setResults(null);
+      } finally {
+        if (gen === searchGenRef.current) setLoading(false);
+      }
+      return;
+    }
+
+    const { q, cl, df, dt, col, tid, hasExif, params } = buildSearchParams();
 
     if (!q && !cl && !tid && !df && !dt && !ocrOnly && !col && !hasExif) {
       setResults(null);
@@ -217,6 +383,7 @@ function SearchContent() {
         fetch(`/api/v1/search/clip?${clipParams.toString()}`)
           .then((r) => (r.ok ? r.json() : null))
           .then((d) => {
+            if (gen !== searchGenRef.current) return;
             if (!d) {
               setClipHits([]);
               setClipUnavailable(false);
@@ -226,6 +393,7 @@ function SearchContent() {
             setClipHits(Array.isArray(d.results) ? d.results : []);
           })
           .catch(() => {
+            if (gen !== searchGenRef.current) return;
             setClipHits([]);
             setClipUnavailable(false);
           });
@@ -234,46 +402,81 @@ function SearchContent() {
         setClipUnavailable(false);
       }
 
-      const params = new URLSearchParams();
-      if (q) params.set("q", q);
-      if (cl) params.set("classification", cl);
-      if (tid) params.set("tagId", tid);
-      if (df) params.set("dateFrom", df);
-      if (dt) params.set("dateTo", dt);
-      if (semantic) params.set("semantic", "true");
-      if (ocrOnly) params.set("ocrOnly", "true");
-      if (col) params.set("color", col);
-      for (const [k, v] of Object.entries(exif)) {
-        if (v) params.set(k, v);
-      }
-
       const res = await fetch(`/api/v1/search?${params.toString()}`);
       if (!res.ok) throw new Error(`search ${res.status}`);
-      const data = (await res.json()) as { assets?: Asset[] };
+      const data = (await res.json()) as {
+        assets?: Asset[];
+        cursor?: string | null;
+        truncated?: boolean;
+      };
+      if (gen !== searchGenRef.current) return;
       setResults(data.assets ?? []);
+      cursorRef.current = data.cursor ?? null;
+      setHasMore(!!data.cursor);
+      setTruncated(!!data.truncated);
     } catch {
+      if (gen !== searchGenRef.current) return;
       setError(true);
       setResults(null);
+      setHasMore(false);
+      setTruncated(false);
     } finally {
-      setLoading(false);
+      if (gen === searchGenRef.current) setLoading(false);
     }
-  }, [
-    smartCollectionId,
-    toolbar.filters.q,
-    toolbar.filters.type,
-    toolbar.filters.from,
-    toolbar.filters.to,
-    toolbar.filters.color,
-    toolbar.filters.tagIds,
-    toolbar.filters.cameraMake,
-    toolbar.filters.cameraModel,
-    toolbar.filters.lensModel,
-    toolbar.filters.iso,
-    toolbar.filters.fNumber,
-    toolbar.filters.focalLength,
-    ocrOnly,
-    semantic,
-  ]);
+  }, [smartCollectionId, buildSearchParams, ocrOnly, semantic]);
+
+  // Next-page fetch for plain/FTS search, echoing the cursor the previous
+  // page returned. A stale generation (query changed since this was queued)
+  // drops its response instead of appending onto the new query's results.
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return;
+    const cursor = cursorRef.current;
+    if (!cursor) return;
+    const gen = searchGenRef.current;
+    setLoadingMore(true);
+    setPageError(false);
+    try {
+      const { params } = buildSearchParams();
+      params.set("cursor", cursor);
+      const res = await fetch(`/api/v1/search?${params.toString()}`);
+      if (!res.ok) throw new Error(`search ${res.status}`);
+      const data = (await res.json()) as { assets?: Asset[]; cursor?: string | null };
+      if (gen !== searchGenRef.current) return;
+      setResults((prev) => [...(prev ?? []), ...((data.assets ?? []) as Asset[])]);
+      cursorRef.current = data.cursor ?? null;
+      setHasMore(!!data.cursor);
+    } catch {
+      // Leave cursorRef + hasMore untouched — the cursor may still be good
+      // (transient network failure), so Retry replays the same page instead
+      // of silently ending the list.
+      if (gen === searchGenRef.current) setPageError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, buildSearchParams]);
+
+  // Auto-load the next page when the sentinel below the results nears the
+  // viewport. `hasMore` is only ever true in plain/FTS mode (the API sends a
+  // null cursor for color/semantic), so this never fires in a mode that
+  // cannot page. `pageError` is excluded on purpose: while a page load is
+  // failing, the sentinel stays mounted (Retry needs it) but must NOT be
+  // observed, or loadMore's identity change on every failed attempt
+  // (loadingMore flips false) would tear down + re-observe the
+  // still-on-screen sentinel and refire immediately — an unbounded retry
+  // loop. Re-arming happens only via the explicit Retry button.
+  useEffect(() => {
+    if (!hasMore || pageError) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) void loadMore();
+      },
+      { rootMargin: "600px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, pageError, loadMore]);
 
   useEffect(() => {
     void doSearch();
@@ -354,9 +557,25 @@ function SearchContent() {
           </p>
         ) : results ? (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">
-              {results.length} result{results.length !== 1 ? "s" : ""} — grid mirrors Library (Immich: search is filtered timeline)
-            </p>
+            {/* Count reflects the accumulated results array, never a response
+                field — it's the honest "how many are loaded", not a claimed
+                total match count. Suppressed when truncated so the truncation
+                notice below is the single source of truth for the number
+                instead of two figures that could disagree. */}
+            {!truncated && (
+              <p className="text-xs text-muted-foreground">
+                {results.length} result{results.length !== 1 ? "s" : ""}
+                {hasMore ? " loaded so far" : ""} — grid mirrors Library (Immich: search is filtered timeline)
+              </p>
+            )}
+            {/* Honest truncation — color-ΔE and semantic re-rank never return a
+                cursor, so a cut-off result set says so instead of pretending
+                the list is complete. */}
+            {truncated && (
+              <p className="text-[11px] leading-3 text-[var(--ft-color-on-surface-variant)]">
+                Showing the first {results.length} matches — narrow your search to see more.
+              </p>
+            )}
             <AssetGrid
               assets={results as unknown as GridAsset[]}
               toolbar={toolbar}
@@ -364,7 +583,104 @@ function SearchContent() {
                 const a = results.find((r) => r.id === id);
                 if (a) openAsset(a);
               }}
+              renderTileAction={
+                smartCollectionId
+                  ? undefined
+                  : (a) => (
+                      <SimilarToggleButton
+                        asset={a as unknown as Asset}
+                        active={similarAssetId === a.id}
+                        onToggle={toggleSimilar}
+                      />
+                    )
+              }
             />
+            {/* O2 — one "visually similar" panel at a time, anchored below the
+                grid rather than duplicated per-row: opening a second tile's
+                results replaces this panel instead of stacking another list. */}
+            {similarAssetId && (
+              <div
+                id={SIMILAR_PANEL_ID}
+                className="space-y-1.5 rounded-[var(--ft-shape-medium)] border border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface)] p-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-[var(--ft-color-on-surface)]">
+                    Visually similar to{" "}
+                    {results.find((r) => r.id === similarAssetId)?.filename ?? "selected asset"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSimilarAssetId(null)}
+                    aria-label="Close visually similar panel"
+                    className="rounded-[var(--ft-shape-small)] p-1 text-[var(--ft-color-on-surface-variant)] hover:bg-[var(--ft-color-surface-container-low)] hover:text-[var(--ft-color-on-surface)]"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                {similarState.status === "loading" && (
+                  <p className="flex items-center gap-1.5 text-xs text-[var(--ft-color-on-surface-variant)]">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Looking for similar assets…
+                  </p>
+                )}
+                {similarState.status === "error" && (
+                  <p className="text-xs text-[var(--ft-color-error)]">
+                    Couldn&apos;t load similar assets.{" "}
+                    <button
+                      type="button"
+                      onClick={() => fetchSimilar(similarAssetId)}
+                      className="underline underline-offset-2"
+                    >
+                      Retry
+                    </button>
+                  </p>
+                )}
+                {similarState.status === "success" && similarState.assets.length === 0 && (
+                  <p className="text-xs text-[var(--ft-color-on-surface-variant)]">
+                    No visually similar matches.
+                  </p>
+                )}
+                {similarState.status === "success" && similarState.assets.length > 0 && (
+                  <div className="space-y-1.5">
+                    {similarState.source === "classification" && (
+                      <p className="text-[11px] leading-3 text-[var(--ft-color-on-surface-variant)]">
+                        No visual embedding yet — showing same-category matches.
+                      </p>
+                    )}
+                    {similarState.assets.map((a) => (
+                      <ResultRow key={a.id} asset={a} onOpen={() => openAsset(a)} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Infinite scroll for plain/FTS mode, mirroring the library flat
+                grid's sentinel idiom — never a "Load more" button. hasMore is
+                only true when the API sent a cursor, which excludes the
+                color/semantic modes by construction. */}
+            {hasMore && (
+              <div
+                ref={sentinelRef}
+                className="flex items-center justify-center gap-[var(--ft-space-2)] py-6 text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]"
+              >
+                {pageError ? (
+                  <p className="text-xs text-[var(--ft-color-error)]">
+                    Couldn&apos;t load more results.{" "}
+                    <button
+                      type="button"
+                      onClick={() => void loadMore()}
+                      className="underline underline-offset-2"
+                    >
+                      Retry
+                    </button>
+                  </p>
+                ) : (
+                  <>
+                    {loadingMore && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {loadingMore ? "Loading more…" : ""}
+                  </>
+                )}
+              </div>
+            )}
           </div>
         ) : null}
 

@@ -105,6 +105,11 @@ const DEFAULT_VIEW: ViewState = {
   viewMode: "grid",
 };
 
+// Stable identity for callers that omit `defaults` — a `defaults = {}`
+// parameter default would otherwise allocate a fresh object every render,
+// defeating the `filters` useMemo below (see UseToolbarStateOptions.defaults).
+const EMPTY_DEFAULTS: Readonly<Partial<FilterState & ViewState>> = Object.freeze({});
+
 // ---- URL serialisation ----------------------------------------------------
 
 function readFilters(sp: URLSearchParams): FilterState {
@@ -284,7 +289,7 @@ export interface ToolbarStateAPI {
 export function useToolbarState(
   options: UseToolbarStateOptions
 ): ToolbarStateAPI {
-  const { page, availableFilters = [], defaults = {} } = options;
+  const { page, availableFilters = [], defaults = EMPTY_DEFAULTS } = options;
 
   const router = useRouter();
   const pathname = usePathname();

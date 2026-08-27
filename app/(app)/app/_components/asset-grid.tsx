@@ -123,6 +123,18 @@ interface AssetGridProps {
   onLoadMore?: () => void;
   hasMore?: boolean;
   loadingMore?: boolean;
+  /** Optional per-tile extension slot, rendered below the tile in grid mode
+   *  (virtualised + non-virtualised paths). NOT byte-identical DOM when
+   *  omitted: every tile is always wrapped in a `flex flex-col gap-1` div
+   *  (kept unconditional so the wrapper's key stays stable across renders
+   *  and toggling this prop never remounts a tile). That wrapper is layout-
+   *  neutral for callers that omit the prop — as a grid item it stretches to
+   *  the same track size a bare tile would, and with a single child `gap-1`
+   *  adds no space — so no consumer's layout changes. Only a caller that
+   *  passes it gets the extra rendered content. Lets a page attach a
+   *  per-asset control (e.g. search's "Visually similar" toggle) without a
+   *  duplicate companion list. */
+  renderTileAction?: (asset: Asset) => React.ReactNode;
 }
 
 export function AssetGrid({
@@ -139,6 +151,7 @@ export function AssetGrid({
   onLoadMore,
   hasMore,
   loadingMore,
+  renderTileAction,
 }: AssetGridProps) {
   const mode = viewMode ?? (toolbar.view.viewMode === "list" ? "list" : "grid");
   const dens = density ?? toolbar.view.density;
@@ -268,6 +281,7 @@ export function AssetGrid({
           onLoadMore={onLoadMore}
           hasMore={hasMore}
           loadingMore={loadingMore}
+          renderTileAction={renderTileAction}
         />
       ) : (
         <>
@@ -275,22 +289,27 @@ export function AssetGrid({
             className="grid gap-2"
             style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
           >
-            {assets.map((a, i) => (
-              <PhotoCard
-                key={a.id}
-                asset={a}
-                thumbUrl={thumbUrls[a.id]}
-                responsiveUrls={responsiveUrls[a.id]}
-                selected={toolbar.selectedIds.has(a.id)}
-                selectMode={toolbar.selectMode}
-                onSelect={(e) => handleSelect(a.id, e)}
-                onClick={() => onAssetClick?.(a.id, i)}
-                onAddToCollection={onAddToCollection}
-                onRemove={onRemove}
-                onTrashed={onTrashed}
-                onReprocessed={refreshThumbUrls}
-              />
-            ))}
+            {assets.map((a, i) => {
+              const props = {
+                asset: a,
+                thumbUrl: thumbUrls[a.id],
+                responsiveUrls: responsiveUrls[a.id],
+                selected: toolbar.selectedIds.has(a.id),
+                selectMode: toolbar.selectMode,
+                onSelect: (e?: React.MouseEvent) => handleSelect(a.id, e),
+                onClick: () => onAssetClick?.(a.id, i),
+                onAddToCollection,
+                onRemove,
+                onTrashed,
+                onReprocessed: refreshThumbUrls,
+              };
+              return (
+                <div key={a.id} className="flex flex-col gap-1">
+                  <PhotoCard {...props} />
+                  {renderTileAction?.(a)}
+                </div>
+              );
+            })}
           </div>
           <LoadMoreSentinel
             onLoadMore={onLoadMore}
@@ -571,6 +590,7 @@ interface VirtualGridProps {
   onLoadMore?: () => void;
   hasMore?: boolean;
   loadingMore?: boolean;
+  renderTileAction?: (asset: Asset) => React.ReactNode;
 }
 
 function VirtualGrid({
@@ -589,6 +609,7 @@ function VirtualGrid({
   onLoadMore,
   hasMore,
   loadingMore,
+  renderTileAction,
 }: VirtualGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const rowCount = Math.ceil(assets.length / cols);
@@ -598,10 +619,15 @@ function VirtualGrid({
   // model no longer flips between the direct and virtualised render paths (no
   // h-[calc(100vh-160px)] magic offset) and lightbox scroll restore lines up.
   const { scrollEl, scrollMargin } = useScrollContext(parentRef);
+  // Tiles grow ~22px taller when renderTileAction renders its action row
+  // beneath the card; folding that into the initial guess (measureElement
+  // corrects it after render regardless) keeps first paint closer to real
+  // height and avoids virtual-scroll jitter while tiles settle.
+  const rowEstimate = renderTileAction ? 242 : 220;
   const rowVirt = useVirtualizer({
     count: rowCount,
     getScrollElement: () => scrollEl,
-    estimateSize: () => 220,
+    estimateSize: () => rowEstimate,
     overscan: 4,
     scrollMargin,
   });
@@ -663,22 +689,27 @@ function VirtualGrid({
                   gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
                 }}
               >
-                {rowAssets.map((a, i) => (
-                  <PhotoCard
-                    key={a.id}
-                    asset={a}
-                    thumbUrl={thumbUrls[a.id]}
-                    responsiveUrls={responsiveUrls[a.id]}
-                    selected={toolbar.selectedIds.has(a.id)}
-                    selectMode={toolbar.selectMode}
-                    onSelect={(e) => onSelect(a.id, e)}
-                    onClick={() => onAssetClick?.(a.id, start + i)}
-                    onAddToCollection={onAddToCollection}
-                    onRemove={onRemove}
-                    onTrashed={onTrashed}
-                    onReprocessed={onReprocessed}
-                  />
-                ))}
+                {rowAssets.map((a, i) => {
+                  const props = {
+                    asset: a,
+                    thumbUrl: thumbUrls[a.id],
+                    responsiveUrls: responsiveUrls[a.id],
+                    selected: toolbar.selectedIds.has(a.id),
+                    selectMode: toolbar.selectMode,
+                    onSelect: (e?: React.MouseEvent) => onSelect(a.id, e),
+                    onClick: () => onAssetClick?.(a.id, start + i),
+                    onAddToCollection,
+                    onRemove,
+                    onTrashed,
+                    onReprocessed,
+                  };
+                  return (
+                    <div key={a.id} className="flex flex-col gap-1">
+                      <PhotoCard {...props} />
+                      {renderTileAction?.(a)}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
