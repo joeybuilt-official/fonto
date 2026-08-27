@@ -17,8 +17,18 @@
 //     "videos": 12,
 //     "other": 122,
 //     "favorites": 48,
-//     "thisMonth": 17
+//     "thisMonth": 17,
+//     "processing": 9,
+//     "queued": 6,
+//     "inFlight": 3,
+//     "failed": 1,
+//     "pendingPeople": 2,
+//     "memoriesToday": 4
 //   }
+//
+// `processing` stays the aggregate non-terminal count (mobile + SDK read it);
+// `queued` / `inFlight` / `failed` are the explicit breakdown behind it, and the
+// buckets are exhaustive: queued + inFlight === processing for any row state.
 
 import { NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/server";
@@ -42,6 +52,9 @@ export async function GET() {
       favorites: 0,
       thisMonth: 0,
       processing: 0,
+      queued: 0,
+      inFlight: 0,
+      failed: 0,
     });
   }
   const workspaceId = workspaces[0].id;
@@ -74,6 +87,19 @@ export async function GET() {
       )::int`,
       processing: sql<number>`COUNT(*) FILTER (
         WHERE ${schema.assets.processingState} NOT IN ('ready', 'failed')
+      )::int`,
+      queued: sql<number>`COUNT(*) FILTER (
+        WHERE ${schema.assets.processingState} = 'captured'
+      )::int`,
+      // Complement, not an enumeration: processing_state is an unconstrained
+      // text column, so any legacy value ('processing') or state added later
+      // must still land in a bucket. Defining in-flight as "not terminal, not
+      // queued" keeps queued + inFlight === processing for every row.
+      inFlight: sql<number>`COUNT(*) FILTER (
+        WHERE ${schema.assets.processingState} NOT IN ('ready', 'failed', 'captured')
+      )::int`,
+      failed: sql<number>`COUNT(*) FILTER (
+        WHERE ${schema.assets.processingState} = 'failed'
       )::int`,
     })
     .from(schema.assets)
@@ -145,6 +171,9 @@ export async function GET() {
     favorites: row?.favorites ?? 0,
     thisMonth: row?.thisMonth ?? 0,
     processing: row?.processing ?? 0,
+    queued: row?.queued ?? 0,
+    inFlight: row?.inFlight ?? 0,
+    failed: row?.failed ?? 0,
     pendingPeople,
     memoriesToday,
   });

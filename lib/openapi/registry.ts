@@ -126,9 +126,20 @@ export const AssetSchema = registry.register(
       sizeBytes: z.number().int().nonnegative(),
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       syncState: z.enum(["synced", "syncing", "error"]).or(z.string()),
+      // M3 — the documented set now matches what the pipeline actually
+      // writes: captured -> classified -> extracted -> ready, or -> failed.
+      // `processing` is never written by the current pipeline (see
+      // `lib/processing/reapStuckAssets.ts`); it stays here for legacy rows.
       processingState: z
-        .enum(["captured", "processing", "ready", "failed"])
-        .or(z.string()),
+        .enum(["captured", "classified", "extracted", "ready", "failed", "processing"])
+        .or(z.string())
+        .openapi({
+          description:
+            "Pipeline state. Non-terminal: `captured` (queued), `classified` " +
+            "and `extracted` (in flight). Terminal: `ready`, `failed`. " +
+            "`processing` is a legacy literal the current pipeline never " +
+            "writes; older rows can still carry it and it means in-flight.",
+        }),
       lifecycleState: z
         .enum(["active", "archivable", "archived", "trashed"])
         .or(z.string()),
@@ -955,3 +966,52 @@ export const MapAssetSchema = registry.register(
 export const MapAssetsEnvelopeSchema = z.object({
   assets: z.array(MapAssetSchema),
 });
+
+// --- UX-1 — workspace stats -----------------------------------------------
+
+export const WorkspaceStatsSchema = registry.register(
+  "WorkspaceStats",
+  z
+    .object({
+      total: z.number().int().nonnegative(),
+      images: z.number().int().nonnegative(),
+      documents: z.number().int().nonnegative(),
+      videos: z.number().int().nonnegative(),
+      other: z.number().int().nonnegative(),
+      favorites: z.number().int().nonnegative(),
+      thisMonth: z.number().int().nonnegative(),
+      processing: z.number().int().nonnegative().openapi({
+        description:
+          "Aggregate non-terminal count — every asset whose " +
+          "`processingState` is neither `ready` nor `failed`.",
+      }),
+      // M3 — explicit breakdown behind `processing`.
+      queued: z.number().int().nonnegative().openapi({
+        description: "Assets with `processingState` = `captured` (enqueued, not started).",
+      }),
+      inFlight: z.number().int().nonnegative().openapi({
+        description:
+          "Assets mid-pipeline — `processingState` in `processing` (legacy), " +
+          "`classified`, or `extracted`.",
+      }),
+      failed: z.number().int().nonnegative().openapi({
+        description: "Assets with `processingState` = `failed` (terminal).",
+      }),
+      pendingPeople: z.number().int().nonnegative().optional().openapi({
+        description:
+          "Unnamed, non-hidden person clusters awaiting a name. Omitted when " +
+          "the caller has no workspace.",
+      }),
+      memoriesToday: z.number().int().nonnegative().optional().openapi({
+        description:
+          "Assets captured on today's MM-DD (±3 days) in a prior year. " +
+          "Omitted when the caller has no workspace.",
+      }),
+    })
+    .openapi({
+      description:
+        "Single-shot counts for the /home landing, scoped to the caller's " +
+        "primary workspace, active lifecycle, PERSONAL scope. All-zero when " +
+        "the caller has no workspace.",
+    })
+);

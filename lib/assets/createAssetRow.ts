@@ -800,6 +800,11 @@ export function jsonSafe(value: unknown): unknown {
 // lightbox/detail view keeps OCR + extracted text. serializeAsset() spreads
 // whatever columns it's given, so omitting these here simply drops them from
 // the list payload without any other change.
+//
+// The thumbnail*/preview* R2 key columns must STAY in this projection: the
+// list route signs them into each row's inline `thumbUrls` (M3c), so dropping
+// them would silently push the grid back onto a POST /api/v1/assets/urls
+// round-trip.
 export function assetGridColumns() {
   const { clipVec, extractedText, ocrText, ...rest } = getTableColumns(
     schema.assets

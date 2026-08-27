@@ -21,6 +21,7 @@ import {
   AssetSchema,
   AssetEnvelopeSchema,
   AssetsEnvelopeSchema,
+  WorkspaceStatsSchema,
   TagEnvelopeSchema,
   TagsEnvelopeSchema,
   CollectionEnvelopeSchema,
@@ -2040,6 +2041,21 @@ registry.registerPath({
 });
 
 // ---------------------------------------------------------------------------
+// /api/v1/stats
+// ---------------------------------------------------------------------------
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/stats",
+  summary: "Workspace counts for the /home landing",
+  tags: ["Workspaces"],
+  security: AUTH_SECURITY,
+  responses: {
+    200: json(WorkspaceStatsSchema, "Counts for the caller's primary workspace."),
+    401: errorResponse("Not authenticated."),
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Coverage gate
 // ---------------------------------------------------------------------------
 // Routes registered above. The integration script (scripts/check-openapi-coverage.ts)
@@ -2123,6 +2139,7 @@ export const REGISTERED_ROUTES: ReadonlySet<string> = new Set([
   "POST /api/v1/persons/{id}/split",
   "PATCH /api/v1/faces/{id}",
   "POST /api/v1/faces/cluster",
+  "GET /api/v1/stats",
   "POST /api/v1/cron/purge-trashed",
   "POST /api/v1/cron/ocr-backfill",
 ]);

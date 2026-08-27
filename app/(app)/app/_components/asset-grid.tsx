@@ -21,6 +21,7 @@
 
 import {
   Fragment,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -160,9 +161,11 @@ export function AssetGrid({
   // deriving at render avoids the cascading re-render an effect would cause).
   // useBatchThumbUrls keeps a knownRef cache so an id is never signed twice.
   const [visibleIds, setVisibleIds] = useState<string[]>([]);
-  const { thumbUrls, responsiveUrls } = useBatchThumbUrls(
-    virtualise ? visibleIds : orderedIds
-  );
+  const {
+    thumbUrls,
+    responsiveUrls,
+    refresh: refreshThumbUrls,
+  } = useBatchThumbUrls(virtualise ? visibleIds : orderedIds);
 
   // Container width drives the column count. ResizeObserver is the only
   // source of truth — `window.innerWidth` would be wrong inside a split
@@ -260,6 +263,7 @@ export function AssetGrid({
           onAddToCollection={onAddToCollection}
           onRemove={onRemove}
           onTrashed={onTrashed}
+          onReprocessed={refreshThumbUrls}
           onVisibleIdsChange={setVisibleIds}
           onLoadMore={onLoadMore}
           hasMore={hasMore}
@@ -284,6 +288,7 @@ export function AssetGrid({
                 onAddToCollection={onAddToCollection}
                 onRemove={onRemove}
                 onTrashed={onTrashed}
+                onReprocessed={refreshThumbUrls}
               />
             ))}
           </div>
@@ -365,6 +370,10 @@ interface BatchThumbUrls {
    *  yet (or row is missing); PhotoCard treats empty as "render legacy
    *  thumb path" via the thumbUrl prop. */
   responsiveUrls: Record<string, Record<string, string>>;
+  /** Drops one id from the cache so the next batch re-signs it. A row that
+   *  failed processing was cached as `null` (no derivative existed); after a
+   *  successful reprocess the cache would otherwise hide the new thumb. */
+  refresh: (id: string) => void;
 }
 
 /** Returns stable per-id URL maps kept up-to-date with the current asset id
@@ -379,6 +388,9 @@ function useBatchThumbUrls(ids: string[]): BatchThumbUrls {
   // Snapshot the known keys so the effect deps stay stable; the id list is a
   // new array reference on every parent render.
   const knownRef = useRef<Set<string>>(new Set());
+  // Bumped by refresh() — the id list is unchanged there, so without it the
+  // effect wouldn't re-run and the evicted id would never be re-signed.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     // Evict entries no longer in the current id set so the maps + knownRef
@@ -461,9 +473,24 @@ function useBatchThumbUrls(ids: string[]): BatchThumbUrls {
     return () => {
       cancelled = true;
     };
-  }, [ids]);
+  }, [ids, refreshTick]);
 
-  return { thumbUrls, responsiveUrls };
+  const refresh = useCallback((id: string) => {
+    knownRef.current.delete(id);
+    setThumbUrls((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setResponsiveUrls((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setRefreshTick((t) => t + 1);
+  }, []);
+
+  return { thumbUrls, responsiveUrls, refresh };
 }
 
 // ---- list row -------------------------------------------------------------
@@ -539,6 +566,7 @@ interface VirtualGridProps {
   onAddToCollection?: (assetId: string) => void;
   onRemove?: (assetId: string) => void;
   onTrashed?: (assetId: string) => void;
+  onReprocessed?: (assetId: string) => void;
   onVisibleIdsChange?: (ids: string[]) => void;
   onLoadMore?: () => void;
   hasMore?: boolean;
@@ -556,6 +584,7 @@ function VirtualGrid({
   onAddToCollection,
   onRemove,
   onTrashed,
+  onReprocessed,
   onVisibleIdsChange,
   onLoadMore,
   hasMore,
@@ -647,6 +676,7 @@ function VirtualGrid({
                     onAddToCollection={onAddToCollection}
                     onRemove={onRemove}
                     onTrashed={onTrashed}
+                    onReprocessed={onReprocessed}
                   />
                 ))}
               </div>
