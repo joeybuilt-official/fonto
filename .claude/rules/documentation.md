@@ -21,16 +21,58 @@ The distinction is not about secrecy, it is about durability: committed docs are
 
 Read the specific files that bear on the task, not all of them every time. But never start non-trivial work without at least `in-progress.md` and the area folder for the thing you are changing.
 
+## The always-current plan & worklog
+
+Four artifacts, four altitudes. Each owns ONE fact-granularity; nothing restates another, so nothing
+drifts. This is the anti-redundancy contract — keep to it and the logs cannot contradict each other.
+
+| Altitude | File | Owns | Granularity |
+|---|---|---|---|
+| Strategic | `docs/claude/roadmap.md` | Initiatives, their band (Now/Next/Later), links down | one initiative |
+| Tactical | `docs/claude/in-progress.md` | The active queue, blocked, parked, per-row Next step | one task/feature |
+| Continuous | `docs/claude/worklog.md` **or** the repo's `CHANGELOG`/`HISTORY` `[Unreleased]` | What actually landed | one change |
+| Durable | `docs/claude/completed-features.md` | What now exists + its archived plan path | one shipped feature |
+
+A fifth surface, `CHANGELOG.md`/`HISTORY.md` release notes, is **user-facing and derived** — curated
+from the worklog at release time, not maintained per-change in parallel. If the repo uses its
+`[Unreleased]` section AS the running worklog, there is no separate `worklog.md` (one running log, never two).
+
+### The same-change update contract (every agent, every provider)
+
+In the SAME commit that lands work — Claude, Codex, Cursor, or any other tool:
+
+1. **Append one worklog line** (to `worklog.md`, or the `[Unreleased]` section) — what changed, where.
+2. **Update the `in-progress.md` row**: its status and its Next-step handoff — or remove the row on ship.
+3. **On ship**, additionally: add the `completed-features.md` entry, MOVE the `roadmap.md` initiative
+   (to Shipped if this was its last plan), and archive the plan folder.
+4. **On a new or reprioritised initiative**: add or move its `roadmap.md` row.
+
+This contract is plain-markdown, enforced by review and `/audit-claude-setup` — never a Claude-only
+permission gate, so it binds a non-Claude agent exactly as much as a Claude one. It is mirrored into
+`AGENTS.md` so every tool reads it. **Shipped-but-unlogged counts as not done** (see below).
+
+### The landing gate — mechanical enforcement
+
+The contract's deterministic core is enforced by `scripts/check-docs.sh`, which fails any commit that
+changes a non-markdown file (source, config, schema, scripts, CI) but not the worklog target in the
+same commit. It runs in required CI (`scripts/templates/ci-verify.yml`) and the pre-commit hook, so it
+binds every agent in every tool — the provider-neutral floor. The gate enforces **presence**, not
+**correctness**: a vague or wrong worklog line passes. Correctness is a review problem, not an
+automation problem — the honest limit of any git-native kit. The worklog target is auto-detected
+(`CHANGELOG.md`/`HISTORY.md` `[Unreleased]`, else `docs/claude/worklog.md`), overridable via
+`DOCS_WORKLOG`.
+
 ## When to write
 
 - **When a plan is made** — persist it to a file under the area folder, from `docs/claude/_templates/plan.md`, and link it from `in-progress.md`. Plans that live only in chat are erased by compaction.
 - **During the build, at the moment of discovery** — when reality contradicts the plan, record it inline with a `> **Build note:**` line. Written later, it is written wrong; written never, the next person rediscovers it the expensive way.
+- **When you pause or hand off** — before you stop, write the *exact next action* where the next session looks first: the `Notes` cell of the active row in `in-progress.md`, or the `Next step` line of the plan doc for a multi-session feature. Not a topic ("continue the auth work") — the file to open, the function to change, the command to run, the blocker. A cold session resumes from this and nothing else, so it is the one note always worth writing: the person who needs it is not you, and cannot reconstruct where you stopped from the code alone.
 - **When a decision is made that a future reader would otherwise question** — add an ADR entry to `architecture.md`. The trigger is "someone will wonder why we did this," not "this was hard."
 - **Always ADR-worthy: anything that moves a layer boundary or introduces a port.** A new port and the adapter behind it, a rule relocated between layers, a Detail swapped out (database, framework, vendor), or a deliberate decision to let one layer know about another. These are precisely what `architecture.md` exists for: the reasoning is invisible in the diff six months later, so without the entry the next person re-litigates a decision that was already made carefully. See `clean-architecture.md`.
 - **When you get burned by a non-obvious behavior** — add it to `key-patterns.md` as a gotcha, with the symptom, not just the fix. The next person will arrive with the symptom.
 - **When infrastructure changes** — update `infrastructure.md` in the same PR as the change. Infra docs that lag the infra are worse than none, because they are trusted.
 
-Update the doc in the same PR as the code it describes. A "docs pass later" never happens.
+Update the doc in the same PR as the code it describes. A "docs pass later" never happens. **Shipped-but-unlogged counts as not done:** if it is live and the log does not show it, the task is unfinished — finish it by writing the record. The first time the log lags reality, every reader stops trusting it and re-reads the code instead, which is the exact cost this whole file exists to avoid.
 
 ## When to archive
 
@@ -47,5 +89,9 @@ Archive, do not delete. The reasoning behind a shipped feature is the context fo
 ## Hygiene
 
 - One fact, one home. If something belongs in `architecture.md`, do not also paste it into a plan file — copies drift, and a reader cannot tell which copy is current.
+- **`completed-features.md` is the feature narrative, not a changelog.** It records what a user or
+  caller can now do, plus the archived plan path. If the repo keeps a `CHANGELOG.md`/`HISTORY.md`,
+  that stays the release/commit line; `completed-features.md` may reference a release but never
+  restates the commit log. One fact, one home — across both files, and across the four altitudes above.
 - Correct stale docs on sight. Finding an out-of-date statement and leaving it there makes you the reason the next person trusts it.
 - Keep entries short and dated. These files are read under context pressure; a wall of prose gets skimmed and misread.

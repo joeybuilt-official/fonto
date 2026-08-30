@@ -25,11 +25,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history, so the docs gate can diff against the PR base
 
+      # --- Set up your toolchain here (node/python/go/…); delete the ones you do not use. ---
       - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: 'pnpm' }
+        with:
+          node-version: 22
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
+
+      # Agent-mirror drift — fails if any tool-native file (.cursor/.clinerules/.windsurf/.github/
+      # copilot-instructions.md, GEMINI.md, CONVENTIONS.md) or the AGENTS.md rules block is stale vs
+      # AGENTS.md + .claude/rules/*.md. This is what keeps every tool's inlined ruleset honest.
+      - name: Agent mirrors in sync
+        run: sh scripts/sync-agents.sh --check
+
+      # Docs landing gate — fails if any commit in this PR changed code but not the worklog.
+      # Uses the PR base SHA (not a hardcoded branch name) so it works on any default branch and
+      # on the first commit; the ref-guard in check-docs.sh fails loudly rather than silently passing.
+      - name: Docs in sync
+        run: sh scripts/check-docs.sh --since "${{ github.event.pull_request.base.sha }}"
+        if: github.event_name == 'pull_request'
 
       - name: Typecheck
         run: pnpm typecheck          # CLAUDE.md → Key Commands
@@ -37,15 +57,20 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Plexo conformance
-        run: pnpm conformance        # zero-dep drift guard — fails on a non-Plexo AI provider
+      - name: Test
+        run: pnpm test:e2e
 
-      # Architecture-boundary check — fails on an import that points outward across a layer.
+      # Architecture-boundary check — fails on any import that points outward across a layer.
+      # Delete this step only if the repo has no boundary linter wired yet (MODULE:arch dropped).
       - name: Architecture boundaries
-        run: pnpm arch               # dependency-cruiser (guards the lib/intelligence port catalog, ADR-002)
+        run: pnpm arch         # dependency-cruiser / import-linter / ArchUnit / …
 
-      # Playwright e2e is NOT here: it needs a running app + Postgres + browsers. Put it in its own
-      # job with a service container and `pnpm exec playwright install --with-deps` before `pnpm test:e2e`.
+      # Expert-review gate — fails if non-trivial PR lacks review evidence:
+      # plan.md exists, checklist.md has items, adr.md has new section, PR has ≥2 persona sign-offs.
+      # Trivial escape: PR label "trivial", commit prefix "trivial:", or 1-file ≤15-line no-schema change.
+      - name: Expert review
+        run: sh scripts/check-expert-review.sh --since "${{ github.event.pull_request.base.sha }}"
+        if: github.event_name == 'pull_request'
 
       # Optional but recommended: a secret scan so a leaked credential fails the PR.
       # - name: Secret scan

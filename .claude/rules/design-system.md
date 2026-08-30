@@ -1,49 +1,79 @@
 # UI Design System
 
-> Applies to Fonto web and Flutter surfaces. Web values below are verified from `app/globals.css`, `lib/design-tokens.ts`, `components.json`, and sampled components.
+> **Applies when:** the project ships screens a human looks at (web app, desktop app, mobile app, or a styled docs/marketing surface).
+> **Delete this file (and its `@` import in `CLAUDE.md`) if:** the project has no user interface — a library, CLI, service, or job runner. Nothing here applies to terminal output.
 
-## Reference and visual language
+## Design reference
 
-**External design reference:** none. Follow Fonto's existing Material Design 3 token system.
+**This UI should feel like: Fonto's own existing app** (no external design reference chosen) — same aesthetic family as **Material Design 3**. Follow the token system already in `app/globals.css`, `lib/design-tokens.ts`, and `mobile/lib/src/theme/tokens.dart`.
 
-| Axis | Fonto choice |
-| --- | --- |
-| Chrome weight | Outlined cards with hairline `border border-border`; use token elevation selectively. |
-| Palette | Teal primary with semantic secondary, tertiary, error, and success roles. |
-| Density | Balanced overall, denser library grids and toolbar controls. |
-| Default text | `text-sm` / 14px body UI. |
-| Motion | Light transitions; respect reduced-motion preferences. |
+Name a real product, not adjectives. Fonto's material: web values below are verified from `app/globals.css`, `lib/design-tokens.ts`, `components.json`, and sampled components.
 
-## Component boundaries
+## Visual style
 
-- Generic primitives live in `components/ui/`; product-aware components live in `app/(app)/app/_components/` and `components/`.
-- Compose existing primitives before adding one. Variants belong on the primitive, not as call-site overrides.
-- Presentation maps known states to styles; it does not decide business eligibility or permissions.
-- Use `lucide-react` with `h-4 w-4` as the default icon size. Larger media or empty-state icons are deliberate exceptions.
-- Style through Tailwind CSS 4 and the `--ft-*` variables in `app/globals.css`.
+Pick one value per axis and hold it everywhere. An inconsistent axis is more noticeable than a "wrong" one.
 
-## Typography and spacing vocabulary
+| Axis | The choice to make | This project |
+| --- | --- | --- |
+| Chrome weight | flat/hairline borders → soft cards → heavy shadowed surfaces | Outlined cards with hairline `border border-border`; use token elevation selectively |
+| Palette strategy | monochrome + one accent → two-tone brand → full multi-hue | Teal primary with semantic secondary, tertiary, error, and success roles |
+| Density | dense (max info per viewport) → balanced → airy/marketing | Balanced overall, denser library grids and toolbar controls |
+| Default text size | small-body UI → standard-body → large/accessible-first | `text-sm` / 14px body UI |
+| Hover & motion | near-static, tint-only → light transitions → animated/expressive | Light transitions; respect reduced-motion preferences |
 
-| Role | Fonto value |
-| --- | --- |
-| Section header | `text-sm font-semibold text-foreground` |
-| Field label | `text-xs font-medium text-muted-foreground` |
-| Field value | `text-sm text-foreground` |
-| Section padding | `p-4` |
-| Element gap | `gap-3` / `space-y-3` |
-| Borders | `border border-border` or the matching `--ft-color-outline-variant` token |
+## Layout patterns by page archetype
+
+- **Detail / record page** — the primary pane is whatever the user actually came to see (the asset/document, the run log), not a grid of metadata. Metadata, related records, and destructive actions go in a secondary sidebar. A full-width header carries back-navigation, the record's name, and status. Getting this backwards — fields center-stage, real content in a tab — is the single most common design regression.
+- **List / index page** — full-width table or list, search plus filters directly above it, one consistent pagination or infinite-scroll mechanism, row click navigates to the detail page, primary "create" action top-right. Do not mix pagination styles across lists.
+- **Dashboard** — a scannable summary row on top, detail below; every tile states its time window and links to the filtered list it summarizes. A number with no drill-through is decoration.
+- **Form / wizard** — one column, grouped into labelled sections; multi-step only when steps are genuinely sequential, and then show step position and allow going back without data loss.
+- **Empty, loading, and error states** — designed, never default. Empty states name what would appear here and offer the action that creates it; loading uses skeletons matching the real layout so nothing jumps; error states say what failed and what to do next. See `error-handling.md`; these three are required for every async surface (see `frontend.md`).
+
+## Component conventions
+
+- **Primitives vs. domain components.** Generic, reusable, product-unaware primitives live in `components/ui/` (button, input, select, badge, dialog). Components that know about the product's nouns live in `app/(app)/app/_components/` and `components/`. Mixing them makes primitives unreusable and domain components untestable.
+- **Assemble before you invent.** A new component is composed from existing primitives first. Add a new primitive only when no combination expresses it — then add it to `components/ui/` so the next person finds it instead of building a third variant.
+- **Variants are a closed, named set**, declared on the primitive and reused verbatim (an illustrative set: `default`, `primary`, `success`, `warning`, `destructive`, `info`). Never style a one-off by overriding a primitive's internals from the call site — that override becomes the fourth unofficial variant.
+- **Presentation never encodes a business rule.** A badge's variant map — which status renders as destructive — is presentation and belongs here. *What makes a record "at risk"* is a domain rule and does not (see `clean-architecture.md`). A component that decides eligibility has made that rule unavailable to every other surface, and the two will disagree.
+- **One icon library and one icon size.** Use `lucide-react` at `h-4 w-4` everywhere; deviate only for a deliberate hero/empty-state graphic. Mixed icon sets and drifting sizes read as broken before anyone can say why.
+- Styling goes through Tailwind CSS 4 and the `--ft-*` variables in `app/globals.css`. Do not introduce a second styling mechanism alongside it.
+
+## Typography & spacing scale
+
+Fill each row from the project's own tokens, then treat the table as the vocabulary — no ad-hoc sizes at call sites.
+
+| Role | This project | Worked example (illustration only) |
+| --- | --- | --- |
+| Section header | `text-sm font-semibold text-foreground` | small, semibold, muted, uppercase with slight letter-spacing |
+| Field label | `text-xs font-medium text-muted-foreground` | one step below body, muted foreground |
+| Field value | `text-sm text-foreground` | body size, full-contrast foreground |
+| Section padding | `p-4` | one padding step (~16px) on every panel |
+| Element gap | `gap-3` / `space-y-3` | one vertical rhythm step (~12–16px) between stacked elements |
+| Borders | `border border-border` or the matching `--ft-color-outline-variant` token | 1px solid border token; a lower-opacity variant for row dividers |
 
 Use the existing `--ft-*` shape, color, type, space, and elevation tokens before adding a literal.
 
-## Page and form patterns
+Two sizes of the same thing is a bug: if a screen needs a size not in this table, extend the table rather than hardcoding a value.
 
-- Detail pages keep the asset/document as the primary pane and metadata/actions secondary.
-- Lists place search and filters above one consistent list/paging mechanism.
-- Empty states explain what belongs there and offer the next useful action; skeletons match final layout.
-- Labels sit above inputs. Pair only genuinely related short fields.
-- Keep primary/cancel placement consistent and preserve entered data on failed submission.
-- Put validation errors beside the field; reserve banners for submission failures.
+## Forms
+
+- **Labels above inputs**, never beside. Left-aligned labels break at narrow widths and force a second layout.
+- **Pair related fields in a two-column grid** (first/last name, start/end date) so the form reads as groups; keep single-column for anything long or free-text.
+- **Progressive disclosure driven by earlier answers** — fields that only apply to a chosen type appear after that choice. Do not render disabled fields that may never apply; disabled controls read as broken.
+- **Button placement is consistent across every form in the app**: primary submit and its cancel neighbour in the same position and order everywhere. Pick one and never vary it per screen.
+- **Errors are inline, adjacent to the offending field**, in the small destructive-text style, and the field itself gains an error border. A form-level banner is for submission failures only, not field validation.
+- Preserve entered data on failed submission. Re-typing a form because the server rejected one field is the fastest way to lose a user.
 
 ## Consistency check
 
-Before calling a UI change done: check the token system, loading/empty/error states, keyboard/focus behavior, icon size, responsive layout at narrow and wide widths, and reduced-motion behavior.
+Run this against any new or changed screen before calling it done:
+
+1. Does it match Fonto's existing Material 3 token system, or did it drift toward a different product's look?
+2. Every visual-style axis above matches the rest of the app (chrome, palette, density, text size, hover).
+3. It follows its page archetype's layout — and on a detail page, the primary pane holds real content, not metadata.
+4. Loading, empty, and error states all exist and were actually viewed, not assumed.
+5. No new primitive that an existing one could have covered; no primitive overridden from a call site.
+6. All icons from `lucide-react` at `h-4 w-4`.
+7. Every size, spacing, and border value comes from the scale table — no ad-hoc values.
+8. Forms: labels above, consistent button placement, inline field errors, input preserved on failure.
+9. Keyboard and focus behavior verified per `frontend.md` — the design is not done if it is mouse-only.

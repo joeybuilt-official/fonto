@@ -43,3 +43,16 @@ This carve-out is itself a setting: a project that chose the **strict** protocol
 The approval you are asking for is only as good as the proposal. Before you describe a change, run
 the self-check in `quality-bar.md` — it governs *what* you propose; this file governs *when and how*
 you propose it.
+
+## Expert Review (non-trivial changes)
+
+- **Every non-trivial change requires structured expert review before merge.** Trivial changes (per the list above, plus: single file, ≤15 lines added, no schema/API/interface change, or PR labeled `trivial` / commit prefixed `trivial:`) skip this gate.
+- **Four default personas must be considered:** Security, Performance, Maintainability, UX. Domain-specific personas may be added per project.
+- **Review evidence required (checked by `scripts/check-expert-review.sh` in CI):**
+  1. `plan.md` exists for the feature area (persisted under `docs/claude/<area>/...`).
+  2. `checklist.md` has ≥1 unchecked item at PR open (proves planning happened).
+  3. `adr.md` has a new section since the PR base branch (proves architectural decision recorded).
+  4. PR description contains sign-off from ≥2 named personas (e.g., `Security: ✓`, `Performance: LGTM`).
+- **Process:** Author drafts plan → opens PR → requests review from relevant personas → each persona comments with sign-off → CI gate passes → merge.
+- **Conflict escalation:** If personas disagree on a fundamental trade-off, the ADR records both positions and the decision; the operator (human) breaks ties.
+- **No rubber stamps:** A sign-off without reading the diff is a process violation. The adversary-review skill (§16) provides the grading rubric.
