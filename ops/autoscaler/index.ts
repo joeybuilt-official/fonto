@@ -119,6 +119,14 @@ function applyScale(target: number): Promise<void> {
       "up",
       "-d",
       "--no-recreate",
+      // fonto-worker declares depends_on: [postgres, valkey]. Without
+      // --no-deps, `up` also reconciles those services — and this
+      // container's compose invocation (mounted file, different working
+      // dir) doesn't share the main stack's project-name inference, so it
+      // tries to CREATE them fresh and collides with the already-running
+      // ones under their real names. We only ever want to touch replica
+      // count for one already-running service.
+      "--no-deps",
       "--scale",
       `${WORKER_SERVICE}=${target}`,
       WORKER_SERVICE,
