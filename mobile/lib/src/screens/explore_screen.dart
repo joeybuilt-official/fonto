@@ -1090,6 +1090,11 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   List<Asset> _assets = const [];
   final Map<String, String> _thumbs = {};
   bool _merging = false;
+  // Set the instant "Merge into…" is tapped, cleared in _pickAndMerge's
+  // finally. Rendered as a spinner ALONGSIDE the overflow menu (not in place
+  // of it, which is what _merging does) so the tap is visibly acknowledged
+  // before the first await without removing the menu the user just used.
+  bool _mergePicking = false;
   late String? _name;
   bool _changed = false;
 
@@ -1110,72 +1115,115 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
   /// pick a target, then POSTs the merge and pops back so the People grid
   /// reloads without the now-absorbed person.
   Future<void> _pickAndMerge() async {
-    final messenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
-    List<Person> others;
-    List<MergeCandidate> candidates;
-    try {
-      // Fan out both calls in parallel — the picker rendering only blocks on
-      // the slower one and we surface candidates above the flat list.
-      final results = await Future.wait([
-        widget.client.listPersons(),
-        widget.client.mergeCandidates(widget.person.id).catchError(
-              (_) => <MergeCandidate>[],
-            ),
-      ]);
-      others = (results[0] as List<Person>)
-          .where((p) => p.id != widget.person.id)
-          .toList();
-      candidates = (results[1] as List<MergeCandidate>);
-    } catch (e) {
-      if (!mounted) return;
-      await _showMergeInfoDialog("Couldn't load people", "$e");
-      return;
-    }
+    // Kept deliberately: this action was reported as silently doing nothing and
+    // these three prints are the only way to see how far it gets on a device
+    // (`adb logcat | grep "\[merge\]"`).
+    debugPrint("[merge] _pickAndMerge start person=${widget.person.id}");
     if (!mounted) return;
-    // Any other face is a valid target now — a named person OR an unnamed
-    // cluster — so two faces can be merged directly. Candidates (server-ranked
-    // likely matches) are always named; drop them from the full list so a face
-    // never shows twice.
-    final candidateIds = candidates.map((c) => c.person.id).toSet();
-    final rest = others.where((p) => !candidateIds.contains(p.id)).toList();
-    if (candidates.isEmpty && rest.isEmpty) {
-      // A visible dialog, not a fleeting snackbar — the old snackbar read as
-      // "nothing happened" when there was simply no other face to merge into.
-      await _showMergeInfoDialog(
-        "Nothing to merge into",
-        "There's no other face to merge into yet. Once a second person or "
-            "face cluster exists, you can merge them here.",
-      );
-      return;
-    }
-    final target = await showModalBottomSheet<Person>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => _MergePicker(
-        candidates: candidates,
-        others: rest,
-      ),
-    );
-    if (target == null || !mounted) return;
-    HapticFeedback.mediumImpact();
-    setState(() => _merging = true);
+    // Immediate, pre-await acknowledgement of the tap.
+    setState(() => _mergePicking = true);
+    // Outer guard: EVERY statement below — the context lookups, the candidate
+    // arithmetic, the bottom sheet, and the merge call — is inside it, so no
+    // throwable can end this action without the user seeing why.
     try {
-      final result =
-          await widget.client.mergePerson(widget.person.id, target.id);
+      final messenger = ScaffoldMessenger.of(context);
+      final navigator = Navigator.of(context);
+      List<Person> others;
+      List<MergeCandidate> candidates;
+      try {
+        // Fan out both calls in parallel — the picker rendering only blocks on
+        // the slower one and we surface candidates above the flat list.
+        final results = await Future.wait([
+          widget.client.listPersons(),
+          widget.client.mergeCandidates(widget.person.id).catchError(
+                (_) => <MergeCandidate>[],
+              ),
+        ]);
+        others = (results[0] as List<Person>)
+            .where((p) => p.id != widget.person.id)
+            .toList();
+        candidates = (results[1] as List<MergeCandidate>);
+      } catch (e) {
+        debugPrint("[merge] load failed ${e.runtimeType}: $e");
+        if (!mounted) return;
+        await _showMergeInfoDialog(
+          "Couldn't load people",
+          "${e.runtimeType}: $e",
+        );
+        return;
+      }
       if (!mounted) return;
-      final targetLabel =
-          (target.name ?? "").isNotEmpty ? target.name! : "face";
-      final base = "Merged into $targetLabel";
-      final msg = result.assigned > 0
-          ? "$base · auto-tagged ${result.assigned} ${result.assigned == 1 ? "photo" : "photos"}"
-          : base;
-      messenger.showSnackBar(SnackBar(content: Text(msg)));
-      navigator.pop(true);
-    } catch (e) {
+      // Any other face is a valid target now — a named person OR an unnamed
+      // cluster — so two faces can be merged directly. Candidates (server-ranked
+      // likely matches) are always named; drop them from the full list so a face
+      // never shows twice.
+      final candidateIds = candidates.map((c) => c.person.id).toSet();
+      final rest = others.where((p) => !candidateIds.contains(p.id)).toList();
+      if (candidates.isEmpty && rest.isEmpty) {
+        // A visible dialog, not a fleeting snackbar — the old snackbar read as
+        // "nothing happened" when there was simply no other face to merge into.
+        // This pre-check is also what guarantees the sheet below is never
+        // opened with both lists empty (an empty sheet is indistinguishable
+        // from the action doing nothing).
+        await _showMergeInfoDialog(
+          "Nothing to merge into",
+          "There's no other face to merge into yet. Once a second person or "
+              "face cluster exists, you can merge them here.",
+        );
+        return;
+      }
+      debugPrint(
+        "[merge] opening picker candidates=${candidates.length} "
+        "rest=${rest.length}",
+      );
+      final target = await showModalBottomSheet<Person>(
+        context: context,
+        isScrollControlled: true,
+        builder: (ctx) => _MergePicker(
+          candidates: candidates,
+          others: rest,
+        ),
+      );
+      debugPrint("[merge] picker closed target=${target?.id}");
+      // A null target here is a legitimate cancel (the sheet always had
+      // content) — say nothing.
+      if (target == null || !mounted) return;
+      HapticFeedback.mediumImpact();
+      setState(() => _merging = true);
+      try {
+        final result =
+            await widget.client.mergePerson(widget.person.id, target.id);
+        if (!mounted) return;
+        final targetLabel =
+            (target.name ?? "").isNotEmpty ? target.name! : "face";
+        final base = "Merged into $targetLabel";
+        final msg = result.assigned > 0
+            ? "$base · auto-tagged ${result.assigned} ${result.assigned == 1 ? "photo" : "photos"}"
+            : base;
+        messenger.showSnackBar(SnackBar(content: Text(msg)));
+        navigator.pop(true);
+      } catch (e) {
+        debugPrint("[merge] mergePerson failed ${e.runtimeType}: $e");
+        if (!mounted) return;
+        setState(() => _merging = false);
+        messenger.showSnackBar(SnackBar(content: Text("Merge failed: $e")));
+      }
+    } catch (e, stack) {
+      // Anything the inner handlers did not expect. The user reads this back to
+      // us verbatim, so include the runtime type and the top stack frame.
+      final frames = stack.toString().split("\n");
+      final topFrame = frames.isEmpty ? "" : frames.first.trim();
+      debugPrint("[merge] UNEXPECTED ${e.runtimeType}: $e");
+      debugPrint(stack.toString());
       if (!mounted) return;
-      setState(() => _merging = false);
-      messenger.showSnackBar(SnackBar(content: Text("Merge failed: $e")));
+      await _showMergeInfoDialog(
+        "Merge couldn't open",
+        "${e.runtimeType}: $e\n\n$topFrame",
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _mergePicking = false);
+      }
     }
   }
 
@@ -1388,6 +1436,17 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
       appBar: AppBar(
         title: Text(title),
         actions: [
+          // Sits beside the menu (not instead of it) so the "Merge into…" tap
+          // is acknowledged the moment it lands, before any network call.
+          if (_mergePicking)
+            const Padding(
+              padding: EdgeInsets.all(14),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
           _merging
               ? const Padding(
                   padding: EdgeInsets.all(14),
