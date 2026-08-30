@@ -115,50 +115,24 @@ builds:
   #
   # A success status is only posted when a job stored at least one artifact, so
   # this build ends by writing report files.
-  verify:
-    executor: docker
-    image: node:22-bookworm
-    secrets:
-      - GITHUB_TOKEN
-    commands:
-      # depth 50 (not 1) so scripts/check-docs.sh has history to walk.
-      - git clone --depth 50 --branch main https://x-access-token:$GITHUB_TOKEN@github.com/joeybuilt-official/fonto.git .
-      # pnpm 10 per CLAUDE.md; pnpm-lock.yaml is lockfileVersion 9.
-      - npm install -g pnpm@10 --no-fund --no-audit
-      - pnpm install --frozen-lockfile
-      # Blocking gates. Each was run against main @7d09774 before this entry
-      # landed and each exits 0 today, so a red build means a real regression.
-      - pnpm typecheck
-      - pnpm lint
-      - pnpm arch
-      # Guarded: scripts/check-endpoint-tests.ts + its allowlist are not on main
-      # yet (they arrived with the Panoply kit and are still untracked), and a
-      # clone of main would otherwise fail here on a missing file. The guard is
-      # an `if`, not `&& ... || true`, so once the script IS committed a real
-      # failure still fails the build.
-      - "if [ -f scripts/check-endpoint-tests.ts ]; then pnpm tsx scripts/check-endpoint-tests.ts; else echo 'skip - check-endpoint-tests.ts not on main'; fi"
-      # --dir lib on purpose: a bare `vitest run` also collects the Playwright
-      # specs under e2e/ and 16 files fail to collect ("No test suite found"),
-      # which is a runner mismatch, not a test failure.
-      - npx vitest run --dir lib
-      # `pnpm test:e2e` (Playwright) is deliberately NOT here: it needs browser
-      # binaries, a running Next server on :3500, and a seeded Postgres. On this
-      # runner it would fail every time, which is worse than not running it.
-      # Report-only, NOT blocking — both fail on pre-existing debt, so making
-      # them gates would pin CI permanently red and train everyone to ignore it.
-      # Output is captured as an artifact so the debt stays visible.
-      #   * openapi coverage: 118 routes are missing from lib/openapi/routes.ts
-      #     registry today. Blocking once that count reaches 0.
-      #   * check-docs: historical commits changed code without a worklog line.
-      #     Blocking once the range walked here is clean (or once it is scoped to
-      #     only the commits a build introduced, which needs the ref env above).
-      - pnpm tsx scripts/check-openapi-coverage.ts --strict > verify-openapi.txt 2>&1 || true
-      - "if [ -f scripts/check-docs.sh ]; then sh scripts/check-docs.sh --since HEAD~1 > verify-docs.txt 2>&1 || true; else echo 'skip - check-docs.sh not on main' > verify-docs.txt; fi"
-      # Artifact requirement: a green commit status is only delivered for a job
-      # that stored an artifact, so write one last (it is only reached when every
-      # blocking gate above passed).
-      - printf 'fonto verify OK\ncommit %s\n' "$(git rev-parse HEAD)" > verify-report.txt
-    artifacts:
-      - verify-report.txt
-      - verify-openapi.txt
-      - verify-docs.txt
+  # verify: REMOVED 2026-08-30 — see docs/claude/platform/open-problems-2026-08-30.md
+  #
+  # A node:22 verify job (pnpm install + typecheck + lint + arch + vitest) was
+  # added here to replace GitHub Actions, which has been failing on every run
+  # for days (quota/billing). It exceeded pushd's 30-minute BUILD_TIMEOUT_MS and
+  # exited 124 on every push.
+  #
+  # That was not merely noisy. pushd runs BUILD_CONCURRENCY=1, a single FIFO
+  # worker, so each timing-out verify burned 30 minutes of the ONLY build slot
+  # and starved the android-release builds the operator actually needs. It also
+  # emailed a failure notice per push.
+  #
+  # To reinstate it, one of these has to change first:
+  #   * give the runner a warm pnpm store (a cold install of this dep tree —
+  #     sharp, onnxruntime — is most of the 30 minutes), or
+  #   * raise BUILD_TIMEOUT_MS on service AND raise
+  #     BUILD_CONCURRENCY above 1, so CI cannot starve releases, or
+  #   * run verification somewhere that is not the release build queue.
+  #
+  # Until then the real pre-merge gate is local:
+  #   pnpm typecheck && pnpm lint && pnpm arch && npx vitest run --dir lib
