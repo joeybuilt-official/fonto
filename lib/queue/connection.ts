@@ -7,6 +7,16 @@
 //
 // Default URL is `redis://valkey:6379` to line up with the platform's Valkey
 // instance.
+//
+// The connection is LAZY. `next build` imports every route module to collect
+// its metadata, and ~30 of them reach `lib/cache/valkey` -> here. With an
+// eager connection that import opened a TCP socket during the build, where
+// REDIS_URL is unset and the default host does not resolve; combined with
+// `maxRetriesPerRequest: null` (infinite retries, required by BullMQ) it
+// retried forever, wrote ~90k `ENOTFOUND valkey` lines into the build log and
+// held the event loop open so the build could not exit. Deferring the socket
+// to the first command costs nothing at runtime — every caller issues a
+// command immediately — and makes module import free.
 
 import IORedis, { type RedisOptions } from "ioredis";
 
@@ -22,9 +32,14 @@ export function getRedisConnection(): IORedis {
   const opts: RedisOptions = {
     maxRetriesPerRequest: null, // required by BullMQ
     enableReadyCheck: false,
-    lazyConnect: false,
+    lazyConnect: true,
   };
   _connection = new IORedis(url, opts);
+  // ioredis emits `error` on every failed reconnect attempt; with no listener
+  // that becomes an unhandled 'error' event and takes the process down. The
+  // cache layer already fails open, and BullMQ surfaces its own errors, so
+  // swallowing here keeps a Valkey outage a degradation rather than a crash.
+  _connection.on("error", () => undefined);
   return _connection;
 }
 

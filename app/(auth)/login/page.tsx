@@ -133,126 +133,156 @@ function LoginPageInner() {
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="text-center">
-          <Link
-            href="/"
-            className="font-heading text-2xl font-semibold tracking-tight text-foreground"
-          >
-            <span className="text-primary">_</span>fonto
-          </Link>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {isSignUp ? "Create your account" : "Sign in to your account"}
+    <div className="flex flex-1 items-center justify-center bg-background px-4 py-10">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center">
+            <Link
+              href="/"
+              className="font-heading text-2xl font-semibold tracking-tight text-foreground"
+            >
+              <span className="text-primary">_</span>fonto
+            </Link>
+          </div>
+          <h1 className="text-lg font-medium tracking-tight text-foreground">
+            {isSignUp ? "Create your account" : "Sign in to Fonto"}
+          </h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            {isSignUp ? "A few details and you're in." : "Your account"}
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {isSignUp && (
-            <input
-              type="text"
-              aria-label="Name"
-              placeholder="Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full rounded border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          )}
-          <input
-            type="email"
-            aria-label="Email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className="w-full rounded border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-          />
-          <input
-            type="password"
-            aria-label="Password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            // Only enforce a minimum on sign-UP. Existing accounts with a
-            // legacy sub-8-char password must still be able to sign in.
-            minLength={isSignUp ? 8 : undefined}
-            className="w-full rounded border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-          />
-
-          {!isSignUp && (
-            <div className="text-right">
-              <Link
-                href={
-                  isMobileHandoff
-                    ? "/forgot-password?mobile=1"
-                    : "/forgot-password"
-                }
-                className="text-sm font-medium text-primary-text hover:underline"
-              >
-                Forgot password?
-              </Link>
-            </div>
-          )}
-
-          {error && (
-            <p role="alert" aria-live="polite" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            aria-busy={loading}
-            className="w-full rounded bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-          >
-            {loading ? "Loading..." : isSignUp ? "Create Account" : "Sign In"}
-          </button>
-        </form>
-
-        {/* M14 / ADR 0056 — SSO, shown only when an IdP is configured. Mobile
-            (?mobile=1) routes the post-login redirect through the PAT handoff.
-            Jex — passkey sign-in shares the divider block. */}
-        {(ssoProviderId || passkeySupported) && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <span className="h-px flex-1 bg-border" />
-              <span className="text-xs text-muted-foreground">or</span>
-              <span className="h-px flex-1 bg-border" />
-            </div>
-            <PasskeyLogin
-              onSuccess={go}
-            />
-            {ssoProviderId && (
-              <button
-                type="button"
-                aria-label="Sign in with SSO"
-                onClick={() =>
-                  signInSSO(
-                    ssoProviderId,
-                    successTarget
-                  )
-                }
-                className="w-full rounded border border-border bg-card px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                Sign in with SSO
-              </button>
+        <div className="rounded-md border border-border bg-card p-6">
+          <form onSubmit={handleSubmit} className="space-y-3">
+            {isSignUp && (
+              <div>
+                <label htmlFor="login-name" className="mb-1 block text-xs font-medium text-muted-foreground">
+                  Name
+                </label>
+                <input
+                  id="login-name"
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoComplete="name"
+                  className="w-full rounded-md border border-border bg-card px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/20"
+                />
+              </div>
             )}
-          </div>
-        )}
+            <div>
+              <label htmlFor="login-email" className="mb-1 block text-xs font-medium text-muted-foreground">
+                Email
+              </label>
+              <input
+                id="login-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+                placeholder="you@example.com"
+                className="w-full rounded-md border border-border bg-card px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/20"
+              />
+            </div>
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <label htmlFor="login-password" className="block text-xs font-medium text-muted-foreground">
+                  Password
+                </label>
+                {!isSignUp && (
+                  <Link
+                    href={
+                      isMobileHandoff
+                        ? "/forgot-password?mobile=1"
+                        : "/forgot-password"
+                    }
+                    className="text-[11px] text-muted-foreground hover:text-foreground"
+                  >
+                    Forgot?
+                  </Link>
+                )}
+              </div>
+              <input
+                id="login-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete={isSignUp ? "new-password" : "current-password"}
+                // Only enforce a minimum on sign-UP. Existing accounts with a
+                // legacy sub-8-char password must still be able to sign in.
+                minLength={isSignUp ? 8 : undefined}
+                placeholder="••••••••••••"
+                className="w-full rounded-md border border-border bg-card px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/20"
+              />
+            </div>
 
-        <p className="text-center text-sm text-muted-foreground">
-          {isSignUp ? "Already have an account?" : "Need an account?"}{" "}
+            {error && (
+              <div
+                role="alert"
+                aria-live="polite"
+                className="rounded-md border border-border px-3 py-2 text-xs text-foreground"
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              aria-busy={loading}
+              className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {loading ? "Signing in…" : isSignUp ? "Create Account" : "Sign In"}
+            </button>
+          </form>
+
+          {/* M14 / ADR 0056 — SSO, shown only when an IdP is configured. Mobile
+              (?mobile=1) routes the post-login redirect through the PAT handoff.
+              Jex — passkey sign-in shares the divider block. */}
+          {(ssoProviderId || passkeySupported) && (
+            <div className="mt-4 space-y-3">
+              <div className="relative my-4">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-border" />
+                </div>
+                <div className="relative flex justify-center text-xs">
+                  <span className="bg-card px-2 text-muted-foreground">or</span>
+                </div>
+              </div>
+              <PasskeyLogin
+                onSuccess={go}
+              />
+              {ssoProviderId && (
+                <button
+                  type="button"
+                  aria-label="Sign in with SSO"
+                  onClick={() =>
+                    signInSSO(
+                      ssoProviderId,
+                      successTarget
+                    )
+                  }
+                  className="flex w-full items-center justify-center rounded-md border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent focus:outline-none focus:ring-1 focus:ring-primary/20"
+                >
+                  Sign in with SSO
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <p className="mt-5 text-center text-xs text-muted-foreground">
+          {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
           <button
             type="button"
             onClick={() => {
               setIsSignUp(!isSignUp);
               setError("");
             }}
-            className="font-medium text-primary-text hover:underline"
+            className="font-medium text-foreground hover:underline"
           >
-            {isSignUp ? "Sign in" : "Sign up"}
+            {isSignUp ? "Sign in" : "Create one"}
           </button>
         </p>
       </div>
