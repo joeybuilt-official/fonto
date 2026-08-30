@@ -1,9 +1,17 @@
 # pushd build config — replaces Codemagic (see codemagic.yaml for prior art).
 # Native Flutter Android app in mobile/, signed release APK + AAB, emailed.
 #
-# Tag-trigger convention (handled by the pushd webhook, not this file):
-#   v*         -> run `android-release`  (signed APK+AAB, emailed)
-#   release-v* -> run `android-publish`  (signed AAB -> Play internal, draft)
+# Trigger convention (handled by the pushd webhook, not this file):
+#   v*         -> `android-release` is the one that matters (signed APK, emailed)
+#   release-v* -> `android-publish` also runs (signed AAB -> Play internal, draft)
+# Correction, verified against the running control plane: pushd does NOT filter
+# by tag. It enqueues EVERY entry below on EVERY push webhook and skips only
+# non-docker executors and Play-publish steps on a non-publish ref, so
+# `android-release` and `verify` both run on plain branch pushes too.
+#
+# `verify` (last entry) is this repo's CI: GitHub Actions is failing before it
+# executes a step, so pushd is the working verification plane. See that entry's
+# comment block for triggers, status reporting, and blocking vs report-only.
 #
 # Signing secrets are provisioned per-project in pushd's secret store (never in
 # this repo). mobile/android/app/build.gradle reads them as CM_* env vars:
@@ -75,3 +83,82 @@ builds:
     deliver:
       - email
       - play:internal:draft
+  # ---------------------------------------------------------------------------
+  # CI verification. This is now the repo's WORKING CI plane:
+  # .github/workflows/verify.yml (runs-on: ubuntu-latest) has failed on every run
+  # for days — ~2 seconds, zero steps executed, including on main — which is a
+  # GitHub Actions-side failure (billing/quota), not a code failure. That
+  # workflow file is deliberately left in place so the two planes keep the same
+  # command list if Actions is ever restored; until then it is dead weight and
+  # pushd is the plane that actually runs.
+  #
+  # Trigger: pushd enqueues EVERY entry under `builds:` on every push webhook
+  # (docs/pushd-yaml.md "On every push (GitHub webhook) ... one job per entry";
+  # apps/build/src/http.ts iterates yaml.builds and skips only non-docker
+  # executors and Play-publish steps). There is no per-entry trigger filter, so
+  # this runs on branch pushes AND tag pushes. Pull-request events are not
+  # accepted at all (the webhook payload schema requires push fields), but a PR
+  # from a branch in this repo still gets gated: the branch push fires the build
+  # and the commit status lands on the PR head SHA.
+  #
+  # Pass/fail is reported as the GitHub commit status `pushd/build` on the pushed
+  # SHA. Two pushd-side caveats shape this entry:
+  #   * every entry posts to that ONE status context, so the last job to finish
+  #     wins. `verify` is deliberately the LAST entry in this file: with a single
+  #     build worker the queue is FIFO, so it finishes after android-release and
+  #     its verdict is the one GitHub keeps.
+  #   * the build container receives no ref/SHA env (only declared secrets are
+  #     injected), so the clone below is pinned to `main`. On a push to main that
+  #     is the commit being reported on; on a feature-branch push this verifies
+  #     main rather than the branch. Making it exact needs a pushd change:
+  #     inject PUSHD_REF / PUSHD_COMMIT_SHA and clone that.
+  #
+  # A success status is only posted when a job stored at least one artifact, so
+  # this build ends by writing report files.
+  verify:
+    executor: docker
+    image: node:22-bookworm
+    secrets:
+      - GITHUB_TOKEN
+    commands:
+      # depth 50 (not 1) so scripts/check-docs.sh has history to walk.
+      - git clone --depth 50 --branch main https://x-access-token:$GITHUB_TOKEN@github.com/joeybuilt-official/fonto.git .
+      # pnpm 10 per CLAUDE.md; pnpm-lock.yaml is lockfileVersion 9.
+      - npm install -g pnpm@10 --no-fund --no-audit
+      - pnpm install --frozen-lockfile
+      # Blocking gates. Each was run against main @7d09774 before this entry
+      # landed and each exits 0 today, so a red build means a real regression.
+      - pnpm typecheck
+      - pnpm lint
+      - pnpm arch
+      # Guarded: scripts/check-endpoint-tests.ts + its allowlist are not on main
+      # yet (they arrived with the Panoply kit and are still untracked), and a
+      # clone of main would otherwise fail here on a missing file. The guard is
+      # an `if`, not `&& ... || true`, so once the script IS committed a real
+      # failure still fails the build.
+      - "if [ -f scripts/check-endpoint-tests.ts ]; then pnpm tsx scripts/check-endpoint-tests.ts; else echo 'skip - check-endpoint-tests.ts not on main'; fi"
+      # --dir lib on purpose: a bare `vitest run` also collects the Playwright
+      # specs under e2e/ and 16 files fail to collect ("No test suite found"),
+      # which is a runner mismatch, not a test failure.
+      - npx vitest run --dir lib
+      # `pnpm test:e2e` (Playwright) is deliberately NOT here: it needs browser
+      # binaries, a running Next server on :3500, and a seeded Postgres. On this
+      # runner it would fail every time, which is worse than not running it.
+      # Report-only, NOT blocking — both fail on pre-existing debt, so making
+      # them gates would pin CI permanently red and train everyone to ignore it.
+      # Output is captured as an artifact so the debt stays visible.
+      #   * openapi coverage: 118 routes are missing from lib/openapi/routes.ts
+      #     registry today. Blocking once that count reaches 0.
+      #   * check-docs: historical commits changed code without a worklog line.
+      #     Blocking once the range walked here is clean (or once it is scoped to
+      #     only the commits a build introduced, which needs the ref env above).
+      - pnpm tsx scripts/check-openapi-coverage.ts --strict > verify-openapi.txt 2>&1 || true
+      - "if [ -f scripts/check-docs.sh ]; then sh scripts/check-docs.sh --since HEAD~1 > verify-docs.txt 2>&1 || true; else echo 'skip - check-docs.sh not on main' > verify-docs.txt; fi"
+      # Artifact requirement: a green commit status is only delivered for a job
+      # that stored an artifact, so write one last (it is only reached when every
+      # blocking gate above passed).
+      - printf 'fonto verify OK\ncommit %s\n' "$(git rev-parse HEAD)" > verify-report.txt
+    artifacts:
+      - verify-report.txt
+      - verify-openapi.txt
+      - verify-docs.txt

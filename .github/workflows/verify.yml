@@ -1,3 +1,9 @@
+# NOTE: this workflow has failed on every run for days — ~2 seconds, zero steps
+# executed, including on main — which is a GitHub Actions-side failure
+# (billing/quota), not a code failure. The working CI plane is pushd: the
+# `verify` build in /.pushd.yaml runs the same checks on the self-hosted
+# runners and reports the `pushd/build` commit status. Kept here, unmodified,
+# so Actions resumes gating the moment the account-side problem is fixed.
 name: verify
 
 on:
