@@ -33,6 +33,7 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
+import { logger } from "@/lib/logger";
 import { isRawMime, extensionOf } from "@/lib/mime";
 
 export interface DecodedImage {
@@ -210,6 +211,13 @@ async function decodeWithHeifConvert(
  *      back to `dcraw_emu -w -T -Z <out> <file>` which demosaics the raw
  *      sensor data to a TIFF. Slower (~1-3s per shot) but always works for
  *      LibRaw-supported cameras.
+ *   3. If LibRaw rejects the file outright ("Unsupported file format or not
+ *      RAW file"), it probably never was RAW: every camera RAW container we
+ *      list is TIFF-derived, so the magic sniffer confuses the two in both
+ *      directions (see lib/mime.RAW_EXT_MIME) and a plain scanner TIFF can
+ *      land here. Probe the ORIGINAL bytes with sharp/libvips — if it reads
+ *      them, hand them back as a passthrough tagged `-misidentified-raw` so
+ *      the recovery is visible in logs instead of failing the asset.
  *
  * Files we touch live in a per-invocation tempdir that's removed in finally.
  */
@@ -225,6 +233,7 @@ async function decodeRawWithDcraw(
     await writeFile(inPath, input);
 
     // Stage 1: embedded preview → <inPath>.thumb.jpg / .thumb.ppm.
+    let embeddedError = "no embedded preview";
     try {
       await runSubprocess("simple_dcraw", ["-e", inPath], RAW_DECODE_TIMEOUT_MS);
       for (const thumbPath of [`${inPath}.thumb.jpg`, `${inPath}.thumb.ppm`]) {
@@ -242,20 +251,60 @@ async function decodeRawWithDcraw(
       if (err instanceof Error && err.message.includes("timed out")) {
         throw err;
       }
+      embeddedError = errorMessage(err);
     }
 
     // Stage 2: full demosaic to TIFF.
-    const outPath = join(dir, "out.tiff");
-    await runSubprocess(
-      "dcraw_emu",
-      ["-w", "-T", "-Z", outPath, inPath],
-      RAW_DECODE_TIMEOUT_MS
-    );
-    const tiff = await readFile(outPath).catch(() => null);
-    if (!tiff || tiff.length === 0) {
-      throw new Error(`dcraw_emu produced no output for ${filename}`);
+    let demosaicError: string;
+    try {
+      const outPath = join(dir, "out.tiff");
+      await runSubprocess(
+        "dcraw_emu",
+        ["-w", "-T", "-Z", outPath, inPath],
+        RAW_DECODE_TIMEOUT_MS
+      );
+      const tiff = await readFile(outPath).catch(() => null);
+      if (!tiff || tiff.length === 0) {
+        throw new Error(`dcraw_emu produced no output for ${filename}`);
+      }
+      return { buffer: tiff, sourceFormat: `${rawTagFromMime(mime)}-dcraw-tiff` };
+    } catch (err) {
+      demosaicError = errorMessage(err);
     }
-    return { buffer: tiff, sourceFormat: `${rawTagFromMime(mime)}-dcraw-tiff` };
+
+    // Stage 3: LibRaw says this isn't RAW — believe it, and let sharp try the
+    // original bytes. Header read only (`metadata()`), so a misidentified
+    // 400MB scanner TIFF doesn't cost a second full-size copy in the worker
+    // heap; the caller re-reads the same buffer with the same sharp options.
+    try {
+      const meta = await sharp(input, {
+        failOn: "none",
+        unlimited: true,
+      }).metadata();
+      if (!meta.width || !meta.height) {
+        throw new Error("sharp read no image dimensions");
+      }
+      logger.info(
+        {
+          filename,
+          mime,
+          sharpFormat: meta.format,
+          width: meta.width,
+          height: meta.height,
+        },
+        "decoded as misidentified RAW: dcraw rejected the file, sharp read it"
+      );
+      return {
+        buffer: input,
+        sourceFormat: `${rawTagFromMime(mime)}-misidentified-raw`,
+      };
+    } catch (err) {
+      throw new Error(
+        `raw decode failed for ${filename} (${mime}): ` +
+          `simple_dcraw: ${embeddedError}; dcraw_emu: ${demosaicError}; ` +
+          `sharp fallback: ${errorMessage(err)}`
+      );
+    }
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
@@ -326,6 +375,10 @@ async function decodePsdWithFfmpeg(
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function rawTagFromMime(mime: string): string {
