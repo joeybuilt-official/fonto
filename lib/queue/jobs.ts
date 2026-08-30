@@ -39,12 +39,6 @@ export type ThumbnailJob = z.infer<typeof ThumbnailJobSchema>;
 export const GenerateThumbnailsJobSchema = ThumbnailJobSchema;
 export type GenerateThumbnailsJob = z.infer<typeof GenerateThumbnailsJobSchema>;
 
-export const ClassifyJobSchema = z.object({
-  assetId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-});
-export type ClassifyJob = z.infer<typeof ClassifyJobSchema>;
-
 // Phase 4.2 — CLIP image embedding job. The worker downloads the asset's
 // preview derivative (or original if preview missing), POSTs to the Plexo
 // vision service, and writes the returned 512-dim float vector to
@@ -264,7 +258,6 @@ export const JobNames = {
   // (e.g. animated WebP, video posterframe) can land on the same queue
   // without ambiguity. Producers should use this name going forward.
   GenerateThumbnails: "generate-thumbnails",
-  Classify: "classify",
   ReapStuckAssets: "reap-stuck-assets",
   // Phase 3.2 — daily audit_log retention sweep.
   PruneAuditLog: "prune-audit-log",

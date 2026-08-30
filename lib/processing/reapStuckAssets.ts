@@ -15,12 +15,20 @@
 // Algorithm:
 //   1. Scan fonto.assets WHERE processing_state IN
 //        ('captured','classified','extracted')
-//        AND updated_at < NOW() - INTERVAL '<threshold> minutes'.
+//        AND updated_at < NOW() - INTERVAL '<threshold> minutes',
+//        oldest-first and capped at REAPER_STUCK_BATCH rows per tick.
 //   2. For each row:
 //        - if processing_attempts < 5 → re-enqueue on assetProcessingQueue
 //          with the original payload reconstructed from the row + workspace
-//          owner. Do NOT reset processing_state — the worker will set it to
-//          'ready' or 'failed' on its next run.
+//          owner, under a pinned jobId so repeat sweeps collapse onto the one
+//          job instead of fanning out a duplicate per tick. Do NOT reset
+//          processing_state — the worker will set it to 'ready' or 'failed'
+//          on its next run. Bump updated_at + processing_attempts on the way
+//          out: updated_at is what the scan orders and filters on (without it
+//          the capped scan re-picks the same head rows forever), and
+//          processing_attempts is otherwise only incremented by the worker on
+//          dequeue — a row buried deep in the queue never dequeues, so its
+//          budget below would never be spent.
 //        - if processing_attempts >= 5 → terminally fail: write
 //          processing_state='failed' + processing_error='reaped ...'. Do not
 //          re-enqueue.
@@ -38,7 +46,7 @@
 // 'syncing' forever — nothing else watches that column. See
 // reapStrandedSyncing() below.
 
-import { and, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { assetProcessingQueue, thumbnailQueue } from "@/lib/queue/queues";
@@ -58,6 +66,20 @@ export function getStuckThresholdMinutes(): number {
   if (!raw) return 60;
   const n = parseInt(raw, 10);
   if (!Number.isFinite(n) || n <= 0) return 60;
+  return n;
+}
+
+/**
+ * Bound on the primary stuck sweep. Unbounded, this one select fanned every
+ * non-terminal row onto the queue every tick — the amplifier that turned ~6.6k
+ * genuinely unprocessed assets into a ~497k queue. Rows not picked up this tick
+ * stay eligible and drain over subsequent sweeps, oldest-first.
+ */
+export function getStuckBatch(): number {
+  const raw = process.env.REAPER_STUCK_BATCH;
+  if (!raw) return 200;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return 200;
   return n;
 }
 
@@ -123,6 +145,7 @@ export async function reapStuckAssets(): Promise<ReapResult> {
   // Drizzle does not have a portable `INTERVAL` helper across dialects, so use
   // a tagged SQL fragment. Postgres-specific by design — fonto is Postgres-only.
   const cutoff = sql`now() - (${thresholdMinutes}::int * interval '1 minute')`;
+  const batch = getStuckBatch();
 
   const stuck = await db
     .select({
@@ -150,7 +173,12 @@ export async function reapStuckAssets(): Promise<ReapResult> {
         ]),
         lt(schema.assets.updatedAt, cutoff)
       )
-    );
+    )
+    // Oldest-first + capped: the sweep is a cursor over the backlog, not a
+    // full-table fan-out. The re-enqueue below bumps updated_at, which is what
+    // moves the cursor forward on the next tick.
+    .orderBy(asc(schema.assets.updatedAt))
+    .limit(batch);
 
   log.info({ event: "reaper.scan", candidates: stuck.length }, "reaper scan");
 
@@ -235,7 +263,18 @@ export async function reapStuckAssets(): Promise<ReapResult> {
     };
 
     try {
-      await assetProcessingQueue().add(JobNames.ProcessAsset, payload);
+      await assetProcessingQueue().add(JobNames.ProcessAsset, payload, {
+        jobId: `reap-${row.id}`,
+      });
+      // Advance the cursor and spend one unit of the retry budget. Both writes
+      // are what make the REAPER_MAX_ATTEMPTS branch above reachable at all.
+      await db
+        .update(schema.assets)
+        .set({
+          processingAttempts: sql`${schema.assets.processingAttempts} + 1`,
+          updatedAt: sql`now()`,
+        })
+        .where(eq(schema.assets.id, row.id));
       // Phase 1.1 — if the row never got its derivatives generated (e.g. the
       // worker died before the thumbnail job landed, or the thumbnail queue
       // was empty when the row was first enqueued), re-fan that job out now.
@@ -248,10 +287,11 @@ export async function reapStuckAssets(): Promise<ReapResult> {
           row.mimeType === "application/pdf")
       ) {
         try {
-          await thumbnailQueue().add(JobNames.GenerateThumbnails, {
-            assetId: row.id,
-            workspaceId: row.workspaceId,
-          });
+          await thumbnailQueue().add(
+            JobNames.GenerateThumbnails,
+            { assetId: row.id, workspaceId: row.workspaceId },
+            { jobId: `reap-thumb-${row.id}` }
+          );
         } catch (err) {
           log.warn(
             {
@@ -343,10 +383,11 @@ async function backfillReadyThumbnails(): Promise<number> {
   let backfilled = 0;
   for (const row of rows) {
     try {
-      await thumbnailQueue().add(JobNames.GenerateThumbnails, {
-        assetId: row.id,
-        workspaceId: row.workspaceId,
-      });
+      await thumbnailQueue().add(
+        JobNames.GenerateThumbnails,
+        { assetId: row.id, workspaceId: row.workspaceId },
+        { jobId: `reap-thumb-${row.id}` }
+      );
       log.info(
         { event: "reaper.thumbnail_backfill", assetId: row.id },
         "ready asset missing thumbnail — re-enqueued GenerateThumbnails"

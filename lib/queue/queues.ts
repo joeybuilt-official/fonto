@@ -12,7 +12,6 @@ import type {
   ProcessAssetJob,
   OcrJob,
   ThumbnailJob,
-  ClassifyJob,
   ClipDedupCheckJob,
   WebhookDeliveryJob,
   EmbedAssetJob,
@@ -32,7 +31,6 @@ export const QueueNames = {
   // Phase 1.1 — queue name is plural ("thumbnails") so BullMQ's per-queue
   // Redis key prefix doesn't collide with the legacy singular handle.
   Thumbnail: "thumbnails",
-  Classify: "classify",
   // Maintenance queue hosts low-frequency housekeeping jobs (e.g. the
   // reap-stuck-assets sweep). Kept on its own queue so its single-concurrency
   // worker never contends with asset-processing throughput.
@@ -78,7 +76,12 @@ const defaultJobOptions: JobsOptions = {
   attempts: 5,
   backoff: { type: "exponential", delay: 2000 },
   removeOnComplete: 1000,
-  removeOnFail: false,
+  // Bounded, not immortal. BullMQ refuses an `add` whose jobId already exists
+  // in ANY set — including `failed` — so an unbounded failed set combined with
+  // the pinned jobIds the producers now use (reap-<id>, process-<id>) would let
+  // one failed job block that asset from ever being re-enqueued. Keep the last
+  // 1000 for diagnosis; older failures age out.
+  removeOnFail: 1000,
 };
 
 /**
@@ -120,10 +123,6 @@ export function ocrQueue(): Queue<OcrJob> {
 
 export function thumbnailQueue(): Queue<ThumbnailJob> {
   return getOrCreate<ThumbnailJob>(QueueNames.Thumbnail);
-}
-
-export function classifyQueue(): Queue<ClassifyJob> {
-  return getOrCreate<ClassifyJob>(QueueNames.Classify);
 }
 
 /**
@@ -409,7 +408,6 @@ export function allQueues(): Queue[] {
   assetProcessingQueue();
   ocrQueue();
   thumbnailQueue();
-  classifyQueue();
   maintenanceQueue();
   webhookDeliveryQueue();
   clipEmbeddingQueue();

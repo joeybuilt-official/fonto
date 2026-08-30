@@ -490,15 +490,22 @@ export async function enqueueAssetProcessing(args: {
 }): Promise<void> {
   const { assetId, workspaceId, userId, userEmail, filename, mimeType, extractedText } = args;
   try {
-    await assetProcessingQueue().add(JobNames.ProcessAsset, {
-      assetId,
-      workspaceId,
-      userId,
-      email: userEmail ?? undefined,
-      filename,
-      mimeType,
-      extractedText: extractedText ?? undefined,
-    });
+    // Pinned jobId: one in-flight process-asset job per asset. Re-scan
+    // endpoints share this helper, so without it a user clicking re-scan
+    // twice (or the reaper racing an upload) fans out duplicate work.
+    await assetProcessingQueue().add(
+      JobNames.ProcessAsset,
+      {
+        assetId,
+        workspaceId,
+        userId,
+        email: userEmail ?? undefined,
+        filename,
+        mimeType,
+        extractedText: extractedText ?? undefined,
+      },
+      { jobId: `process-${assetId}` }
+    );
   } catch (err) {
     console.error("[fonto] failed to enqueue process-asset job:", err);
   }
