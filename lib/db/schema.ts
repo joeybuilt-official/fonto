@@ -193,6 +193,18 @@ export const assets = fontoSchema.table(
     thumbnail1024AvifKey: text("thumbnail_1024_avif_key"),
     previewAvifKey: text("preview_avif_key"),
     thumbnailGeneratedAt: timestamp("thumbnail_generated_at", { withTimezone: true }),
+    // Thumbnail derivative pipeline state. Mirrors `hlsState` below so a
+    // permanently-failed derivative is a queryable row instead of an entry
+    // buried in BullMQ's Redis `failed` set.
+    //   'idle'        — no generation pass has been attempted yet (default).
+    //   'generating'  — a thumbnails job is in flight.
+    //   'ready'       — the derivative keys above are populated.
+    //   'skipped'     — MIME type carries no thumbnail (non-image, non-video,
+    //                   non-PDF); generation was never attempted.
+    //   'failed'      — the last attempt of the job exhausted its retries (or
+    //                   raised an unrecoverable error). Safe to re-enqueue —
+    //                   generation is idempotent + overwrites.
+    thumbnailState: text("thumbnail_state").notNull().default("idle"),
     // T2.4 (fonto-perf-audit 2026-06-15) — 4x4 WebP LQIP encoded as a data URL
     // (~50–200 bytes). Rendered as `background-image` on the grid tile while
     // the real thumb loads → removes the white flash + reduces CLS on fast
@@ -346,6 +358,7 @@ export const assets = fontoSchema.table(
     index("assets_lifecycle_state_idx").on(table.lifecycleState),
     index("assets_processing_state_idx").on(table.processingState),
     index("assets_ocr_state_idx").on(table.ocrState),
+    index("assets_thumbnail_state_idx").on(table.thumbnailState),
     index("assets_phash_idx").on(table.phash),
     // Timeline browsing: workspace assets ordered by capture date.
     index("assets_workspace_captured_at_idx").on(

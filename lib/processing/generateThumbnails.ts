@@ -188,6 +188,12 @@ export async function generateThumbnails(
   const isPdf = asset.mimeType === "application/pdf";
   if (!asset.mimeType.startsWith("image/") && !isVideo && !isPdf) {
     log.info({ mimeType: asset.mimeType }, "non-image / non-video — skipping");
+    // Record the skip so these rows don't sit in 'idle' forever and muddy a
+    // "which assets are missing a thumbnail?" query.
+    await db
+      .update(schema.assets)
+      .set({ thumbnailState: "skipped" })
+      .where(eq(schema.assets.id, assetId));
     return { skipped: true, reason: "non-image" };
   }
 
@@ -427,6 +433,7 @@ export async function generateThumbnails(
       previewAvifKey,
       thumbnailGeneratedAt: new Date(),
       lqip,
+      thumbnailState: "ready",
       ...motionFields,
     })
     .where(eq(schema.assets.id, assetId));
