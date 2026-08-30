@@ -548,6 +548,32 @@ export async function GET(request: NextRequest) {
   });
 }
 
+// Legacy multipart cap. This handler buffers the WHOLE body into Node memory
+// (`request.formData()` → `file.arrayBuffer()`), so the cap is a memory
+// guardrail, not a policy knob: the direct-to-R2 / tus flows stream and carry
+// the much larger MAX_UPLOAD_BYTES (default 500 MB) instead. Overridable with
+// LEGACY_MAX_UPLOAD_BYTES (bytes) for hosts with headroom; the default stays
+// 50 MB because every byte above it is resident RSS per concurrent request.
+const DEFAULT_LEGACY_MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+
+function legacyMaxUploadBytes(): number {
+  const raw = process.env.LEGACY_MAX_UPLOAD_BYTES;
+  if (!raw) return DEFAULT_LEGACY_MAX_UPLOAD_BYTES;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_LEGACY_MAX_UPLOAD_BYTES;
+  return Math.floor(n);
+}
+
+function tooLargeResponse(cap: number): NextResponse {
+  const mb = Math.floor(cap / (1024 * 1024));
+  return NextResponse.json(
+    {
+      error: `File too large. Maximum legacy multipart upload size is ${mb} MB. Use the resumable upload flow (POST /api/v1/assets/init, or the tus endpoint) for larger files.`,
+    },
+    { status: 413 }
+  );
+}
+
 /**
  * @deprecated Phase 1.2 (parity): use the two-step direct-to-R2 flow.
  *   1. POST /api/v1/assets/init                  → presigned PUT URL
@@ -619,6 +645,19 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // Size guard BEFORE a single body byte is read. `request.formData()` buffers
+  // the ENTIRE multipart body into Node memory, so a cap tested on `file.size`
+  // afterwards is already too late — a multi-GB video OOM-kills the process
+  // during the parse, and (worse) a death after the row insert below strands
+  // the asset at sync_state='syncing' with no bytes in R2. Content-Length is
+  // the only size signal available pre-parse; when it is absent (chunked
+  // transfer encoding) the post-parse check on `file.size` is the fallback.
+  const cap = legacyMaxUploadBytes();
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > cap) {
+    return tooLargeResponse(cap);
+  }
+
   const formData = await request.formData();
   const file = formData.get("file");
   if (!file || !(file instanceof File)) {
@@ -626,14 +665,11 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
   }
   const source = (formData.get("source") as string | null) ?? "web-upload";
 
-  // Legacy multipart cap stays at 50 MB — direct-to-R2 path raises this to
-  // MAX_UPLOAD_BYTES (default 500 MB) since that flow streams.
-  const LEGACY_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-  if (file.size > LEGACY_MAX_UPLOAD_BYTES) {
-    return NextResponse.json(
-      { error: "File too large. Maximum upload size is 50 MB. Use /api/v1/assets/init for larger uploads." },
-      { status: 413 }
-    );
+  // Fallback cap for requests that arrived without a usable Content-Length.
+  // The body is already resident here, so this only stops the write — the
+  // pre-parse guard above is what protects the process.
+  if (file.size > cap) {
+    return tooLargeResponse(cap);
   }
 
   // Phase 9.1 — quota preflight (same check as init route).
@@ -702,14 +738,20 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
   // The legacy path uploads to R2 AFTER the row exists. createAssetRow inserts
   // the row as `synced` (so the direct-to-R2 path is correct); we override it
   // back to `syncing` while we PUT the buffer.
+  // Everything that can throw is computed BEFORE the flip to `syncing`, and
+  // everything after it runs inside the try — so no in-process failure can
+  // leave the row parked at `syncing` with no bytes in R2 (that state is not
+  // swept; `error` is the terminal, retryable one). A process death mid-PUT
+  // still strands the row, which is exactly why the size guard above must
+  // keep multi-GB bodies off this path.
   const asset = result.asset;
-  await db
-    .update(schema.assets)
-    .set({ syncState: "syncing" })
-    .where(eq(schema.assets.id, asset.id));
-
   const key = assetStorageKey(workspaceId, asset.id, file.name);
   try {
+    await db
+      .update(schema.assets)
+      .set({ syncState: "syncing" })
+      .where(eq(schema.assets.id, asset.id));
+
     await storage().put(key, buffer, {
       contentType: mimeType,
       contentLength: file.size,
@@ -758,11 +800,26 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
       { status: 201 }
     );
   } catch (err) {
-    console.error("[fonto] R2 upload failed:", err);
-    await db
-      .update(schema.assets)
-      .set({ syncState: "error" })
-      .where(eq(schema.assets.id, asset.id));
+    console.error("[fonto] legacy multipart upload failed:", {
+      assetId: asset.id,
+      workspaceId,
+      key,
+      err,
+    });
+    // Best-effort terminal state. If this write also fails the row stays at
+    // whatever it was, but the caller still gets an honest 500 rather than an
+    // exception thrown out of the catch.
+    try {
+      await db
+        .update(schema.assets)
+        .set({ syncState: "error" })
+        .where(eq(schema.assets.id, asset.id));
+    } catch (markErr) {
+      console.error("[fonto] failed to mark asset sync_state=error:", {
+        assetId: asset.id,
+        err: markErr,
+      });
+    }
     return NextResponse.json({ error: "Upload failed" }, { status: 500 });
   }
 }

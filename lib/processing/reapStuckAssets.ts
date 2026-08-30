@@ -31,6 +31,12 @@
 // recently touched by either a re-enqueue or the worker will not match on the
 // next tick. The terminal-failure branch sets processing_state='failed', which
 // also drops the row out of the scan predicate.
+//
+// A second, independent sweep covers sync_state: the legacy multipart upload
+// route inserts the row, flips sync_state to 'syncing', then does the R2 PUT.
+// A process death mid-PUT (OOM on a multi-GB video) strands the row at
+// 'syncing' forever — nothing else watches that column. See
+// reapStrandedSyncing() below.
 
 import { and, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
@@ -69,12 +75,41 @@ export function getThumbnailBackfillBatch(): number {
   return n;
 }
 
+/**
+ * Configurable threshold (minutes) after which a row still in
+ * sync_state='syncing' is considered stranded by a dead uploader process.
+ * Defaults to 60 minutes — comfortably past the slowest legitimate multi-GB
+ * multipart PUT, so a still-running upload is never reaped out from under
+ * itself.
+ */
+export function getSyncStrandedThresholdMinutes(): number {
+  const raw = process.env.REAPER_SYNC_STRANDED_THRESHOLD_MINUTES;
+  if (!raw) return 60;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return 60;
+  return n;
+}
+
+/**
+ * Bound on the stranded-sync sweep so one tick can't rewrite an unbounded
+ * number of rows. Leftovers still match the predicate and drain on later ticks.
+ */
+export function getSyncStrandedBatch(): number {
+  const raw = process.env.REAPER_SYNC_STRANDED_BATCH;
+  if (!raw) return 200;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return 200;
+  return n;
+}
+
 export interface ReapResult {
   candidates: number;
   reenqueued: number;
   exhausted: number;
   /** Ready rows missing a thumbnail that had GenerateThumbnails re-enqueued. */
   thumbnailBackfilled: number;
+  /** Rows stranded in sync_state='syncing' that were moved to 'error'. */
+  syncStranded: number;
 }
 
 /**
@@ -122,9 +157,16 @@ export async function reapStuckAssets(): Promise<ReapResult> {
   if (stuck.length === 0) {
     // No stuck rows, but ready-but-thumbnailless rows can still exist (a
     // thumbnail job that never landed on a row the pipeline already marked
-    // 'ready'). Run that independent sweep before returning.
+    // 'ready'). Run those independent sweeps before returning.
     const thumbnailBackfilled = await backfillReadyThumbnails();
-    return { candidates: 0, reenqueued: 0, exhausted: 0, thumbnailBackfilled };
+    const syncStranded = await reapStrandedSyncing();
+    return {
+      candidates: 0,
+      reenqueued: 0,
+      exhausted: 0,
+      thumbnailBackfilled,
+      syncStranded,
+    };
   }
 
   // Resolve workspace -> user mapping in a single batch query rather than
@@ -245,8 +287,15 @@ export async function reapStuckAssets(): Promise<ReapResult> {
   }
 
   const thumbnailBackfilled = await backfillReadyThumbnails();
+  const syncStranded = await reapStrandedSyncing();
 
-  return { candidates: stuck.length, reenqueued, exhausted, thumbnailBackfilled };
+  return {
+    candidates: stuck.length,
+    reenqueued,
+    exhausted,
+    thumbnailBackfilled,
+    syncStranded,
+  };
 }
 
 /**
@@ -316,4 +365,88 @@ async function backfillReadyThumbnails(): Promise<number> {
   }
 
   return backfilled;
+}
+
+/**
+ * Bounded sweep for rows stranded in sync_state='syncing'. The legacy multipart
+ * upload route writes the row, flips sync_state to 'syncing', performs the R2
+ * PUT, then writes 'synced' or (on a caught error) 'error'. A process death
+ * mid-PUT — an OOM on a multi-GB video — skips both terminal writes and leaves
+ * the row at 'syncing' forever, invisible to every other sweep in this file.
+ *
+ * The bytes died with the process and are not recoverable from here, so this
+ * does NOT re-enqueue anything: it writes sync_state='error' so the row stops
+ * being invisible and the user can re-upload it. Idempotent — the write drops
+ * the row out of this predicate, and the threshold keeps an in-flight upload
+ * from being reaped out from under itself.
+ */
+async function reapStrandedSyncing(): Promise<number> {
+  const thresholdMinutes = getSyncStrandedThresholdMinutes();
+  const log = logger.child({ component: "reaper", thresholdMinutes });
+  const cutoff = sql`now() - (${thresholdMinutes}::int * interval '1 minute')`;
+  const batch = getSyncStrandedBatch();
+
+  const rows = await db
+    .select({
+      id: schema.assets.id,
+      workspaceId: schema.assets.workspaceId,
+      updatedAt: schema.assets.updatedAt,
+    })
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.syncState, "syncing"),
+        lt(schema.assets.updatedAt, cutoff)
+      )
+    )
+    .limit(batch);
+
+  log.info(
+    { event: "reaper.sync_stranded_scan", candidates: rows.length },
+    "reaper stranded-sync scan"
+  );
+
+  let reaped = 0;
+  for (const row of rows) {
+    const stuckForMinutes = Math.round(
+      (Date.now() - row.updatedAt.getTime()) / 60000
+    );
+    try {
+      await db
+        .update(schema.assets)
+        .set({ syncState: "error" })
+        .where(
+          and(
+            eq(schema.assets.id, row.id),
+            // Guard against a concurrent completion between the scan and this
+            // write — only reap a row that is still stranded.
+            eq(schema.assets.syncState, "syncing")
+          )
+        );
+      log.warn(
+        {
+          event: "reaper.sync_stranded",
+          assetId: row.id,
+          workspaceId: row.workspaceId,
+          stuckForMinutes,
+        },
+        "asset stranded in sync_state=syncing — marking error"
+      );
+      reaped += 1;
+    } catch (err) {
+      // Don't let one bad row stop the sweep — the next tick will retry it.
+      log.error(
+        {
+          event: "reaper.sync_stranded_failed",
+          assetId: row.id,
+          workspaceId: row.workspaceId,
+          stuckForMinutes,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "failed to mark stranded sync row as error"
+      );
+    }
+  }
+
+  return reaped;
 }
