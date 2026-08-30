@@ -26,6 +26,7 @@ import {
   hlsRenditionKey,
   hlsSegmentKeyPrefix,
   assetStorageKey,
+  assetStorageKeyLegacy,
 } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { probeVideo, type VideoProbe } from "@/lib/processing/probeVideo";
@@ -172,7 +173,16 @@ export async function transcodeVideoHls(
   try {
     // 1. Download source.
     const sourceKey = assetStorageKey(opts.workspaceId, opts.assetId, opts.filename);
-    const buf = await storage().getBuffer(sourceKey);
+    let buf: Buffer;
+    try {
+      buf = await storage().getBuffer(sourceKey);
+    } catch {
+      // Sources uploaded before the fonto/ prefix migration are still
+      // stored under the legacy key (see route.ts's delete handler, which
+      // already falls back the same way).
+      const legacyKey = assetStorageKeyLegacy(opts.workspaceId, opts.assetId, opts.filename);
+      buf = await storage().getBuffer(legacyKey);
+    }
     await writeFile(sourcePath, buf);
 
     // M13 — probe once. The copy gate + HDR detection both need it; the job

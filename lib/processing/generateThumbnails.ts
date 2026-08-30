@@ -28,6 +28,7 @@ import {
   assetResponsiveDerivativeKey,
   assetMotionKey,
   assetStorageKey,
+  assetStorageKeyLegacy,
 } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { findEmbeddedMotionVideo } from "@/lib/processing/extractMotionPhoto";
@@ -191,7 +192,16 @@ export async function generateThumbnails(
   }
 
   const originalKey = assetStorageKey(workspaceId, assetId, asset.filename);
-  const original = await downloadOriginal(bucket, originalKey);
+  let original: Buffer;
+  try {
+    original = await downloadOriginal(bucket, originalKey);
+  } catch {
+    // Originals uploaded before the fonto/ prefix migration are still
+    // stored under the legacy key (see route.ts's delete handler, which
+    // already falls back the same way).
+    const legacyKey = assetStorageKeyLegacy(workspaceId, assetId, asset.filename);
+    original = await downloadOriginal(bucket, legacyKey);
+  }
   log.info({ bytes: original.length }, "downloaded original");
 
   let decodedBuffer: Buffer;
