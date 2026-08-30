@@ -141,6 +141,27 @@ class UploadQueue {
     return _instance!;
   }
 
+  /// Terminal `last_error` for a queued upload whose source file has vanished
+  /// from disk. Older builds staged imports in the OS cache dir, which Android
+  /// evicts under storage pressure — the row then re-read a dead path forever.
+  /// Retrying can never help; the user has to re-select the file.
+  static const missingSourceError =
+      "Source file no longer available — re-select it";
+
+  /// Durable staging directory for files an import downloads on the user's
+  /// behalf. Deliberately NOT [getTemporaryDirectory]: Android's cache dir is
+  /// evicted by the OS whenever storage runs low, which stranded queued uploads
+  /// with a file_path that no longer existed. Application-support is app-private
+  /// and never evicted; each staged file is deleted once its upload succeeds.
+  static Future<Directory> stagingDir() async {
+    final base = await getApplicationSupportDirectory();
+    final dir = Directory(p.join(base.path, "upload_staging"));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
   /// Hash the bytes (streamed; doesn't load the whole file). Returns
   /// hex digest. Used for the UNIQUE dedupe key + idempotent enqueue.
   static Future<String> hashFile(File file) async {
@@ -204,6 +225,8 @@ class UploadQueue {
   ///      rows that are actually fine. Give them one clean shot now that
   ///      stalls fail fast; genuinely-bad rows will re-exhaust and become
   ///      'failed' (surfacing in the ⚠ list) rather than looping.
+  /// Rows already marked [missingSourceError] are never revived — their source
+  /// file is gone, so another attempt would just re-read the same dead path.
   /// Returns how many rows were recovered.
   Future<int> recoverStuck() async {
     // Only reclaim in_flight rows whose lease has expired — a row claimed by a
@@ -220,11 +243,18 @@ class UploadQueue {
           in_flight_since = NULL,
           attempts = CASE WHEN attempts >= ? THEN 0 ELSE attempts END,
           last_error = CASE WHEN attempts >= ? THEN NULL ELSE last_error END
-      WHERE (state = 'in_flight'
-             AND (in_flight_since IS NULL OR in_flight_since < ?))
-         OR (state = 'pending' AND attempts >= ?)
+      WHERE ((state = 'in_flight'
+              AND (in_flight_since IS NULL OR in_flight_since < ?))
+         OR (state = 'pending' AND attempts >= ?))
+        AND (last_error IS NULL OR last_error <> ?)
       """,
-      [_maxAttempts, _maxAttempts, leaseCutoff, _maxAttempts],
+      [
+        _maxAttempts,
+        _maxAttempts,
+        leaseCutoff,
+        _maxAttempts,
+        missingSourceError,
+      ],
     );
   }
 
@@ -252,15 +282,67 @@ class UploadQueue {
     return rows.map(UploadQueueEntry.fromRow).toList();
   }
 
-  /// Reset every failed row back to a fresh pending attempt. Returns count.
+  /// Reset failed rows back to a fresh pending attempt — except rows whose
+  /// source file is gone from disk. Re-queuing those burns five more attempts
+  /// re-reading the same dead path and lands right back in 'failed', so they
+  /// keep the [missingSourceError] message instead. Returns the count actually
+  /// re-queued.
   Future<int> retryFailed() async {
+    final rows = await _db.query(
+      "uploads",
+      columns: ["id", "file_path"],
+      where: "state = 'failed'",
+    );
+    final retryable = <int>[];
+    final missing = <int>[];
+    for (final r in rows) {
+      final id = r["id"] as int;
+      final path = r["file_path"] as String;
+      if (await File(path).exists()) {
+        retryable.add(id);
+      } else {
+        missing.add(id);
+      }
+    }
+    if (missing.isNotEmpty) {
+      final ph = List.filled(missing.length, "?").join(",");
+      await _db.rawUpdate(
+        "UPDATE uploads SET last_error = ? WHERE id IN ($ph)",
+        <Object?>[missingSourceError, ...missing],
+      );
+    }
+    if (retryable.isEmpty) return 0;
+    final ph = List.filled(retryable.length, "?").join(",");
     return _db.rawUpdate(
-      "UPDATE uploads SET state = 'pending', attempts = 0, last_error = NULL WHERE state = 'failed'",
+      "UPDATE uploads SET state = 'pending', attempts = 0, last_error = NULL "
+      "WHERE id IN ($ph)",
+      <Object?>[...retryable],
     );
   }
 
   /// Drop failed rows from the queue entirely. Returns count.
   Future<int> clearFailed() async {
+    // Delete each row's staged source first. Staging is now a durable dir the
+    // OS never evicts, so dropping the row alone would leak those bytes on the
+    // device forever. GUARDED to the staging dirs — a camera-roll pick carries
+    // the user's real device path, which we must NOT delete.
+    final rows = await _db.query(
+      "uploads",
+      columns: ["file_path"],
+      where: "state = 'failed'",
+    );
+    final stagingPath = (await stagingDir()).path;
+    final tmpPath = (await getTemporaryDirectory()).path;
+    for (final r in rows) {
+      final path = r["file_path"] as String;
+      if (!p.isWithin(stagingPath, path) && !p.isWithin(tmpPath, path)) {
+        continue;
+      }
+      try {
+        final f = File(path);
+        if (await f.exists()) await f.delete();
+      } catch (_) {/* best-effort */}
+    }
     return _db.delete("uploads", where: "state = 'failed'");
   }
 
@@ -325,9 +407,12 @@ class UploadQueue {
     if (!auth.isConfigured) return 0;
     final queue = await UploadQueue.open();
     final client = FontoClient(auth);
-    // Resolve the temp dir once so we can safely delete ONLY upload sources we
-    // created under it. Camera-roll picks flow through this same queue with the
-    // user's REAL device file path, which must never be deleted.
+    // Resolve the staging dir once so we can safely delete ONLY upload sources
+    // we created under it. Camera-roll picks flow through this same queue with
+    // the user's REAL device file path, which must never be deleted. The legacy
+    // temp dir is still checked so rows staged by older builds are cleaned up
+    // too, instead of leaking bytes on the device forever.
+    final stagingPath = (await stagingDir()).path;
     final tmpPath = (await getTemporaryDirectory()).path;
     var processed = 0;
     var ok = 0;
@@ -383,22 +468,32 @@ class UploadQueue {
           );
           await Future.wait(chunk.map((entry) async {
             try {
+              final file = File(entry.filePath);
+              // Re-hash the bytes we are about to send. entry.sha256 was
+              // computed when the file was staged, which can be hours earlier —
+              // if anything replaced those bytes since (a re-import writing the
+              // same deterministic staging filename), the stored digest is stale
+              // and the server rejects the upload with a 409 SHA-256 mismatch
+              // forever. Hashing here means the digest always describes the
+              // bytes of this attempt.
+              final sha256Hex = await hashFile(file);
               // Direct-to-R2: presign → PUT bytes straight to R2 → complete.
-              // The bytes never transit the Fonto server. We already computed
-              // entry.sha256 as the dedupe key, so pass it through for the
-              // server-side integrity check. uploadFileDirect transparently
-              // falls back to the legacy multipart route for files over the
-              // 5 GiB single-PUT ceiling.
+              // The bytes never transit the Fonto server; the digest goes along
+              // for the server-side integrity check. uploadFileDirect
+              // transparently falls back to the legacy multipart route for files
+              // over the 5 GiB single-PUT ceiling.
               final asset = await client.uploadFileDirect(
-                File(entry.filePath),
+                file,
                 virtualPath: entry.virtualPath,
-                sha256Hex: entry.sha256,
+                sha256Hex: sha256Hex,
               );
               await queue._markSuccess(entry.id, asset.id);
-              // Best-effort cleanup of the temp source we downloaded for this
-              // upload. GUARDED to getTemporaryDirectory() — a camera-roll pick
-              // carries the user's real device path, which we must NOT delete.
-              if (p.isWithin(tmpPath, entry.filePath)) {
+              // Best-effort cleanup of the staged source we downloaded for this
+              // upload. GUARDED to the staging dir (plus the legacy temp dir) —
+              // a camera-roll pick carries the user's real device path, which we
+              // must NOT delete.
+              if (p.isWithin(stagingPath, entry.filePath) ||
+                  p.isWithin(tmpPath, entry.filePath)) {
                 try {
                   final f = File(entry.filePath);
                   if (await f.exists()) await f.delete();
@@ -414,6 +509,23 @@ class UploadQueue {
                 entry.id,
                 "${e.status}: ${e.message}",
                 terminal: terminal,
+              );
+            } on FileSystemException catch (e) {
+              // Covers PathNotFoundException (its subclass): the source file is
+              // gone — an OS-evicted cache staging path from an older build, or
+              // a picked file the user deleted. Re-reading the same path can
+              // never succeed, so fail TERMINALLY instead of retrying forever.
+              final gone = !await File(entry.filePath).exists();
+              await queue._markFailure(
+                entry.id,
+                gone
+                    ? missingSourceError
+                    : "Could not read source file: ${e.message}",
+                // Only a genuinely missing file is unrecoverable. A transient
+                // read error (busy disk, mid-stream I/O fault) on a file that
+                // still exists must stay retryable — marking it terminal would
+                // discard an upload the next attempt could have completed.
+                terminal: gone,
               );
             } catch (e) {
               await queue._markFailure(entry.id, e.toString(), terminal: false);

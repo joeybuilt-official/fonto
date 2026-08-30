@@ -532,7 +532,7 @@ class DriveDownloadQueue {
       final gsi = GoogleSignIn(scopes: [_kDriveScope]);
       final user = await gsi.signInSilently();
       if (user == null) return;
-      final tmpDir = await getTemporaryDirectory();
+      final tmpDir = await UploadQueue.stagingDir();
       var consecutiveZeros = 0;
       while (await q.pendingCount() > 0 && consecutiveZeros < 3) {
         final auth = await user.authentication;
@@ -574,7 +574,7 @@ class DriveDownloadQueue {
     if (token == null) return;
 
     final headers = {"Authorization": "Bearer $token"};
-    final tmpDir = await getTemporaryDirectory();
+    final tmpDir = await UploadQueue.stagingDir();
     await processAll(headers, tmpDir);
 
     // If more items remain, schedule another run. WorkManager dedupes via keep.

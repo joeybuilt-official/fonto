@@ -20,7 +20,6 @@ import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:google_sign_in/google_sign_in.dart";
 import "package:http/http.dart" as http;
-import "package:path_provider/path_provider.dart";
 import "package:workmanager/workmanager.dart";
 
 import "../state/drive_download_queue.dart";
@@ -77,7 +76,7 @@ Future<void> _downloadAndEnqueueAll(
           token == null ? <String, String>{} : {"Authorization": "Bearer $token"};
       final downloaded = await DriveDownloadQueue.processAll(
         headers,
-        await getTemporaryDirectory(),
+        await UploadQueue.stagingDir(),
       );
       if (downloaded == 0) {
         consecutiveZeros++;
@@ -159,7 +158,7 @@ Future<void> _downloadAllPagesFromDrive(
           : {"Authorization": "Bearer $dlToken"};
       final downloaded = await DriveDownloadQueue.processAll(
         dlHeaders,
-        await getTemporaryDirectory(),
+        await UploadQueue.stagingDir(),
       );
       if (downloaded == 0) {
         consecutiveZeros++;
