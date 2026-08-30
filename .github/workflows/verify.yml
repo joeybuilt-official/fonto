@@ -1,16 +1,32 @@
-# NOTE: this workflow has failed on every run for days — ~2 seconds, zero steps
-# executed, including on main — which is a GitHub Actions-side failure
-# (billing/quota), not a code failure. The working CI plane is pushd: the
-# `verify` build in /.pushd.yaml runs the same checks on the self-hosted
-# runners and reports the `pushd/build` commit status. Kept here, unmodified,
-# so Actions resumes gating the moment the account-side problem is fixed.
+# DISABLED — see the `on:` block below and docs/claude/platform/open-problems-2026-08-30.md.
+#
+# This repo currently has NO automated CI. Both planes are down:
+#   * GitHub Actions (this file) fails instantly on every run — Actions
+#     quota/billing, not code.
+#   * The pushd `verify` build was removed on 2026-08-30: it exceeded pushd's
+#     30-minute BUILD_TIMEOUT_MS and, with BUILD_CONCURRENCY=1, each timeout
+#     burned the only build slot and starved android-release. A build that
+#     always fails is worse than no build.
+#
+# The real pre-merge gate is therefore LOCAL, and should be run by hand:
+#   pnpm typecheck && pnpm lint && pnpm arch && npx vitest run --dir lib
+#
 name: verify
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  # DISABLED 2026-08-30. This workflow failed on EVERY run for days, including
+  # on main — ~2 seconds, zero steps executed, which on a GitHub-hosted runner
+  # means an Actions quota/billing problem, not a code problem. Every failure
+  # emailed the operator.
+  #
+  # Also disabled at the repo level (state: disabled_manually). Triggers are
+  # reduced to manual-only so re-enabling it in the UI cannot silently restart
+  # the email flood before the underlying Actions problem is fixed.
+  #
+  # To bring it back: resolve GitHub Actions billing/quota, run it once via
+  # `gh workflow run verify.yml` to confirm it actually executes steps, THEN
+  # restore the push/pull_request triggers.
+  workflow_dispatch:
 
 jobs:
   verify:
