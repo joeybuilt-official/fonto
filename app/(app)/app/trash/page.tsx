@@ -16,6 +16,10 @@ interface TrashedAsset extends Asset {
   deletedAt?: string | null;
 }
 
+// Stable identity so it doesn't defeat useToolbarState's internal useMemo
+// (a fresh object literal per render would change filters' identity too).
+const TRASH_TOOLBAR_DEFAULTS = { sort: "oldest", viewMode: "list" } as const;
+
 function BulkBar({
   count,
   onRestore,
@@ -71,7 +75,7 @@ function TrashContent() {
     availableFilters: ["mime", "favorite"],
     // Trash defaults to oldest-first so users see the about-to-purge rows
     // up top once the retention countdown lands.
-    defaults: { sort: "oldest", viewMode: "list" },
+    defaults: TRASH_TOOLBAR_DEFAULTS,
   });
 
   const [rawItems, setRawItems] = useState<TrashedAsset[]>([]);

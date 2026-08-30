@@ -528,23 +528,44 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
       }
       const data = parsed.data;
 
+      // Mark in-flight so the state column tracks the job rather than the
+      // Redis set — mirrors the HLS worker's 'transcoding' stamp.
+      await db
+        .update(schema.assets)
+        .set({ thumbnailState: "generating" })
+        .where(eq(schema.assets.id, data.assetId));
+
       log.info("generating thumbnails");
-      const result = await generateThumbnails({
-        assetId: data.assetId,
-        workspaceId: data.workspaceId,
-      });
-      if (result.skipped) {
-        log.info({ reason: result.reason }, "thumbnail job skipped");
-      } else {
-        log.info(
-          {
-            thumbBytes: result.thumbBytes,
-            previewBytes: result.previewBytes,
-          },
-          "thumbnails generated"
-        );
+      try {
+        const result = await generateThumbnails({
+          assetId: data.assetId,
+          workspaceId: data.workspaceId,
+        });
+        if (result.skipped) {
+          log.info({ reason: result.reason }, "thumbnail job skipped");
+        } else {
+          log.info(
+            {
+              thumbBytes: result.thumbBytes,
+              previewBytes: result.previewBytes,
+            },
+            "thumbnails generated"
+          );
+        }
+        return result;
+      } catch (err) {
+        // Only a TERMINAL failure is recorded: an unrecoverable error, or the
+        // last configured attempt. A retryable miss stays 'generating' so the
+        // column doesn't flap while BullMQ still has attempts left.
+        const isLastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+        if (err instanceof UnrecoverableError || isLastAttempt) {
+          await db
+            .update(schema.assets)
+            .set({ thumbnailState: "failed" })
+            .where(eq(schema.assets.id, data.assetId));
+        }
+        throw err;
       }
-      return result;
     },
     {
       connection: getRedisConnection(),

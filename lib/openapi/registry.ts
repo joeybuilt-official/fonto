@@ -16,6 +16,7 @@
 // The generator runs at request time in `app/api/v1/openapi.json/route.ts`.
 import { z } from "zod";
 import { OpenAPIRegistry, extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
+import { PROCESSING_STATES } from "@/lib/processing/state";
 
 // Must be called before any `.openapi()` chains lower in this file.
 extendZodWithOpenApi(z);
@@ -131,7 +132,7 @@ export const AssetSchema = registry.register(
       // `processing` is never written by the current pipeline (see
       // `lib/processing/reapStuckAssets.ts`); it stays here for legacy rows.
       processingState: z
-        .enum(["captured", "classified", "extracted", "ready", "failed", "processing"])
+        .enum(PROCESSING_STATES)
         .or(z.string())
         .openapi({
           description:
@@ -496,6 +497,35 @@ export const PublicInvitationViewSchema = registry.register(
 
 export const AssetEnvelopeSchema = z.object({ asset: AssetSchema });
 export const AssetsEnvelopeSchema = z.object({ assets: z.array(AssetSchema) });
+
+// M2.5 — GET /api/v1/search cursor pagination. Only plain-text/FTS search
+// pages; the color-ΔE filter and the Plexo semantic re-rank both reshape the
+// result set in-process after the SQL cut, so they always return
+// `cursor: null` and signal cutoff via `truncated` instead.
+export const SearchEnvelopeSchema = AssetsEnvelopeSchema.extend({
+  count: z.number().int().nonnegative().openapi({
+    description:
+      "Number of assets in THIS page, not a total match count across the " +
+      "whole result set. Search runs no COUNT query — FTS plus facet " +
+      "filters would make one expensive to compute on every request — so " +
+      "there is no honest total to report.",
+  }),
+  cursor: z.string().nullable().openapi({
+    description:
+      "Opaque keyset cursor for the next page (echo it back as `?cursor=`). " +
+      "Populated only for plain-text/FTS search (no `color` filter, no " +
+      "`semantic=true`); always `null` in those two modes. In plain/FTS " +
+      "mode, `null` means there is no further page — a full page still gets " +
+      "a cursor even when it happens to be the last one, since the server " +
+      "only learns that on the *next* (empty) fetch.",
+  }),
+  truncated: z.boolean().openapi({
+    description:
+      "True when the color/semantic result set was cut off with no cursor " +
+      "to continue from. Always `false` for plain/FTS search, which pages " +
+      "via `cursor` instead.",
+  }),
+});
 export const TagsEnvelopeSchema = z.object({ tags: z.array(TagSchema) });
 export const TagEnvelopeSchema = z.object({ tag: TagSchema });
 export const CollectionEnvelopeSchema = z.object({ collection: CollectionSchema });

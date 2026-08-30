@@ -21,6 +21,7 @@ import {
   AssetSchema,
   AssetEnvelopeSchema,
   AssetsEnvelopeSchema,
+  SearchEnvelopeSchema,
   WorkspaceStatsSchema,
   TagEnvelopeSchema,
   TagsEnvelopeSchema,
@@ -286,6 +287,15 @@ registry.registerPath({
             "grid is sorted server-side, so it stays correct across pages. " +
             "`name`/`rating`/`largest` page only via the opaque `cursor`.",
         }),
+      processingState: z.string().optional().openapi({
+        description:
+          "Pipeline-state filter. A single state or a comma-separated set " +
+          "drawn from `captured`, `classified`, `extracted`, `ready`, " +
+          "`failed`, `processing` (legacy in-flight literal) — e.g. " +
+          "`?processingState=classified,extracted` for in-flight work or " +
+          "`?processingState=failed` for the failure queue. Any other token " +
+          "is rejected with 400. Omit for the unfiltered library.",
+      }),
       dateFrom: z.string().optional().openapi({
         description:
           "Inclusive lower bound (ISO) on the captured timeline " +
@@ -327,6 +337,9 @@ registry.registerPath({
   },
   responses: {
     200: json(AssetsEnvelopeSchema, "Assets, sorted by the active axis."),
+    400: errorResponse(
+      "Unrecognised `processingState` token, or a malformed `idBefore`."
+    ),
     401: errorResponse("Not authenticated."),
   },
 });
@@ -559,29 +572,25 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/api/v1/assets/{id}/similar",
-  summary: "Find perceptually similar assets",
+  summary: "Find visually similar assets (CLIP kNN, classification fallback)",
   tags: ["Assets", "Search"],
   security: AUTH_SECURITY,
   request: {
     params: PathIdParam,
-    query: z.object({
-      threshold: z
-        .coerce.number()
-        .min(0)
-        .max(64)
-        .optional()
-        .openapi({ description: "Max Hamming distance on the 64-bit pHash." }),
-      limit: z.coerce.number().int().min(1).max(100).optional(),
-    }),
   },
   responses: {
     200: json(
       z.object({
-        assets: z.array(
-          AssetSchema.extend({ distance: z.number().int().min(0).max(64) })
-        ),
+        assets: z.array(AssetSchema),
+        source: z.enum(["clip", "classification"]).openapi({
+          description:
+            "`clip` = pgvector kNN over the source asset's own CLIP " +
+            "embedding, best match first. `classification` = fallback used " +
+            "when the asset has no embedding yet, or no neighbour clears " +
+            "the similarity threshold.",
+        }),
       }),
-      "Candidates ordered by ascending Hamming distance."
+      "Up to 10 similar assets."
     ),
     401: errorResponse("Not authenticated."),
     404: errorResponse("Source asset not found."),
@@ -1291,17 +1300,62 @@ registry.registerPath({
     query: z.object({
       q: z.string().optional().openapi({ description: "Free-text query." }),
       mime: z.string().optional(),
-      tag: z.string().optional(),
-      correspondent: UuidSchema.optional(),
-      documentType: UuidSchema.optional(),
-      from: z.string().datetime().optional(),
-      to: z.string().datetime().optional(),
-      limit: z.coerce.number().int().min(1).max(200).optional(),
-      offset: z.coerce.number().int().min(0).optional(),
+      classification: z.string().optional().openapi({
+        description: "Filter on the `classification` column.",
+      }),
+      tagId: z.string().optional(),
+      correspondentId: UuidSchema.optional(),
+      documentTypeId: UuidSchema.optional(),
+      dateFrom: z.string().datetime().optional(),
+      dateTo: z.string().datetime().optional(),
+      semantic: z.enum(["true", "false"]).optional().openapi({
+        description:
+          "`true` re-ranks via Plexo semantic search (requires `q`); disables cursor pagination.",
+      }),
+      ocrOnly: z.enum(["true", "false"]).optional().openapi({
+        description: "`true` restricts matches to assets with extracted OCR text.",
+      }),
+      color: z.string().optional().openapi({
+        description:
+          "Dominant-color filter — a chip name (e.g. `red`) or hex value; disables cursor pagination.",
+      }),
+      scope: z.enum(["PERSONAL", "SHOOT", "all"]).optional().openapi({
+        description: "Asset scope filter. Defaults to `PERSONAL`.",
+      }),
+      cameraMake: z.string().optional().openapi({
+        description: "Substring match on the camera-make EXIF field.",
+      }),
+      cameraModel: z.string().optional().openapi({
+        description: "Substring match on the camera-model EXIF field.",
+      }),
+      lensModel: z.string().optional().openapi({
+        description: "Substring match on the lens-model EXIF field.",
+      }),
+      iso: z.string().optional().openapi({ description: "Exact match on the ISO EXIF field." }),
+      fNumber: z.string().optional().openapi({
+        description: "Exact match on the f-number (aperture) EXIF field.",
+      }),
+      focalLength: z.string().optional().openapi({
+        description: "Exact match on the focal-length EXIF field.",
+      }),
+      cursor: z.string().optional().openapi({
+        description:
+          "Opaque keyset cursor (echo the previous response's `cursor`). " +
+          "Only valid for plain-text/FTS search — NOT supported when a " +
+          "`color` filter or `semantic=true` re-rank is active, since those " +
+          "modes reshape the result set after the SQL cut and can't page. " +
+          "Sending `cursor` in either mode returns 400, as does a malformed " +
+          "cursor.",
+      }),
     }),
   },
   responses: {
-    200: json(AssetsEnvelopeSchema, "Matching assets."),
+    200: json(SearchEnvelopeSchema, "Matching assets."),
+    400: errorResponse(
+      "Cursor sent with a color/semantic search, the cursor is malformed " +
+        "(including a non-UUID `i` field), or `color` is not a known chip " +
+        "name or valid hex value."
+    ),
     401: errorResponse("Not authenticated."),
   },
 });

@@ -36,7 +36,6 @@ import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:google_sign_in/google_sign_in.dart";
 import "package:http/http.dart" as http;
-import "package:path_provider/path_provider.dart";
 import "package:url_launcher/url_launcher.dart";
 
 import "../state/upload_queue.dart";
@@ -332,7 +331,7 @@ class _GooglePhotosImportScreenState extends State<GooglePhotosImportScreen> {
 
     int ok = 0;
     try {
-      final tmpDir = await getTemporaryDirectory();
+      final tmpDir = await UploadQueue.stagingDir();
       for (final item in items) {
         if (!mounted) return;
         try {

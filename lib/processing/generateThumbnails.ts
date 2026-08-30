@@ -19,6 +19,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import sharp from "sharp";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
@@ -28,8 +30,9 @@ import {
   assetResponsiveDerivativeKey,
   assetMotionKey,
   assetStorageKey,
+  assetStorageKeyLegacy,
 } from "@/lib/r2";
-import { storage } from "@/lib/storage";
+import { storage, type StreamResult } from "@/lib/storage";
 import { findEmbeddedMotionVideo } from "@/lib/processing/extractMotionPhoto";
 import { pairAppleMotion } from "@/lib/processing/motionPairing";
 import { nextSeq } from "@/lib/db/seq";
@@ -85,8 +88,41 @@ export interface GenerateThumbnailsResult {
   previewAvifBytes?: number;
 }
 
-async function downloadOriginal(bucket: string, key: string): Promise<Buffer> {
-  return storage().getBuffer(key);
+/**
+ * Read an original into memory. Originals uploaded before the fonto/ prefix
+ * migration are still stored under the legacy key (see route.ts's delete
+ * handler, which already falls back the same way).
+ */
+async function downloadOriginal(key: string, legacyKey: string): Promise<Buffer> {
+  try {
+    return await storage().getBuffer(key);
+  } catch {
+    return await storage().getBuffer(legacyKey);
+  }
+}
+
+/**
+ * Stream an original straight to `destPath` (same legacy-key fallback). Video
+ * originals are multi-GB and only ever reach ffprobe/ffmpeg, which take a path
+ * — buffering one would put the whole file in the worker's heap for nothing.
+ * Returns the bytes written.
+ */
+async function downloadOriginalToFile(
+  key: string,
+  legacyKey: string,
+  destPath: string
+): Promise<number> {
+  let src: StreamResult;
+  try {
+    src = await storage().getStream(key);
+  } catch {
+    src = await storage().getStream(legacyKey);
+  }
+  await pipeline(
+    Readable.fromWeb(src.body as Parameters<typeof Readable.fromWeb>[0]),
+    fs.createWriteStream(destPath)
+  );
+  return (await fs.promises.stat(destPath)).size;
 }
 
 async function uploadDerivative(
@@ -187,12 +223,17 @@ export async function generateThumbnails(
   const isPdf = asset.mimeType === "application/pdf";
   if (!asset.mimeType.startsWith("image/") && !isVideo && !isPdf) {
     log.info({ mimeType: asset.mimeType }, "non-image / non-video — skipping");
+    // Record the skip so these rows don't sit in 'idle' forever and muddy a
+    // "which assets are missing a thumbnail?" query.
+    await db
+      .update(schema.assets)
+      .set({ thumbnailState: "skipped" })
+      .where(eq(schema.assets.id, assetId));
     return { skipped: true, reason: "non-image" };
   }
 
   const originalKey = assetStorageKey(workspaceId, assetId, asset.filename);
-  const original = await downloadOriginal(bucket, originalKey);
-  log.info({ bytes: original.length }, "downloaded original");
+  const legacyKey = assetStorageKeyLegacy(workspaceId, assetId, asset.filename);
 
   let decodedBuffer: Buffer;
   // M12 / ADR 0014 — set when this still carries an embedded Android motion
@@ -200,10 +241,12 @@ export async function generateThumbnails(
   let motionVideoKey: string | null = null;
   if (isVideo) {
     // ffmpeg's accurate-seek wants a file path; pipe-via-stdin defeats
-    // keyframe seeking. Write to a tmp file, probe, extract, unlink.
+    // keyframe seeking. Stream to a tmp file (never buffer — a video original
+    // is multi-GB), probe, extract, unlink.
     const tmp = path.join(os.tmpdir(), `fonto-vid-${assetId}.bin`);
-    await fs.promises.writeFile(tmp, original);
     try {
+      const bytes = await downloadOriginalToFile(originalKey, legacyKey, tmp);
+      log.info({ bytes }, "downloaded original");
       const probe = await probeVideo(tmp);
       log.info(probe, "probed video");
       const thumbAt = probe.durationSec
@@ -244,6 +287,8 @@ export async function generateThumbnails(
     // Phase 6.7 — documents render their first page via poppler's pdftoppm
     // (PNG), then ride the same sharp encode pipeline as images. pdfinfo
     // supplies the page count. pdftoppm wants a file path, not stdin.
+    const original = await downloadOriginal(originalKey, legacyKey);
+    log.info({ bytes: original.length }, "downloaded original");
     const tmp = path.join(os.tmpdir(), `fonto-pdf-${assetId}.pdf`);
     await fs.promises.writeFile(tmp, original);
     try {
@@ -265,6 +310,8 @@ export async function generateThumbnails(
     // this is a passthrough; for HEIC it uses sharp(libheif) or heif-convert;
     // for RAW it shells out to dcraw_emu. Failures here are real (corrupt
     // input) and should fail the job so the reaper can retry / mark failed.
+    const original = await downloadOriginal(originalKey, legacyKey);
+    log.info({ bytes: original.length }, "downloaded original");
     const decoded = await decodeToBuffer(original, asset.mimeType, asset.filename);
     log.info(
       { sourceFormat: decoded.sourceFormat, decodedBytes: decoded.buffer.length },
@@ -417,6 +464,7 @@ export async function generateThumbnails(
       previewAvifKey,
       thumbnailGeneratedAt: new Date(),
       lqip,
+      thumbnailState: "ready",
       ...motionFields,
     })
     .where(eq(schema.assets.id, assetId));

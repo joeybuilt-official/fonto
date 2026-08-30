@@ -17,7 +17,6 @@ import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:http/http.dart" as http;
-import "package:path_provider/path_provider.dart";
 
 import "../state/upload_queue.dart";
 import "../theme/tokens.dart";
@@ -260,7 +259,7 @@ class _NextcloudImportScreenState extends State<NextcloudImportScreen> {
     });
     var ok = 0;
     try {
-      final tmpDir = await getTemporaryDirectory();
+      final tmpDir = await UploadQueue.stagingDir();
       for (final e in items) {
         if (!mounted) return;
         try {

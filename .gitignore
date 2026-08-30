@@ -57,3 +57,6 @@ next-env.d.ts
 # Claude local configuration
 .claude/settings.local.json
 CLAUDE.local.md
+
+# Staging dir for the existing-repo degit + /adapt-claude-setup flow
+.claude-kit-tmp/

@@ -10,7 +10,7 @@ set -eu
 
 echo "pre-commit: typecheck…"; pnpm typecheck
 echo "pre-commit: lint…";      pnpm lint
-echo "pre-commit: test…";      pnpm conformance
+echo "pre-commit: test…";      pnpm test:e2e
 
 # Architecture boundaries (delete if no boundary linter is wired yet — MODULE:arch dropped).
 echo "pre-commit: architecture boundaries…"; pnpm arch
@@ -18,6 +18,16 @@ echo "pre-commit: architecture boundaries…"; pnpm arch
 # Keep the tool-native agent mirrors in sync with AGENTS.md (fails if a mirror drifted).
 if [ -f scripts/sync-agents.sh ]; then
   echo "pre-commit: agent mirrors…"; sh scripts/sync-agents.sh --check
+fi
+
+# Docs landing gate — no code change lands without its worklog line in the same commit.
+if [ -f scripts/check-docs.sh ]; then
+  echo "pre-commit: docs gate…"; sh scripts/check-docs.sh
+fi
+
+# Expert-review gate (local: checks staged change for trivial escape or review evidence).
+if [ -f scripts/check-expert-review.sh ]; then
+  echo "pre-commit: expert review…"; sh scripts/check-expert-review.sh
 fi
 
 echo "pre-commit: OK"

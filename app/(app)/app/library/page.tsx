@@ -97,8 +97,9 @@ function buildAssetListParams(input: {
     sp.set("unclassified", "1");
   } else {
     // Missing ?kind= defaults to Photos·All (moment,video) under the split, or
-    // the "Moments" lens when flat; "all" clears the kind filter entirely.
-    const lensKind = input.kind ?? (input.splitOn ? "moment,video" : "moment");
+    // the "All" lens when flat — matches the mobile app's default view, which
+    // shows photos + videos together; "all" clears the kind filter entirely.
+    const lensKind = input.kind ?? (input.splitOn ? "moment,video" : "all");
     if (lensKind !== "all") sp.set("kind", lensKind);
   }
   if (input.mime) sp.set("mime", input.mime);
@@ -290,8 +291,9 @@ function LibraryContent() {
   const orderedBuckets =
     toolbar.filters.sort === "oldest" ? [...buckets].reverse() : buckets;
 
-  // Active lens — a missing ?kind= resolves to the default "Moments" lens.
-  const activeLens = toolbar.filters.kind ?? "moment";
+  // Active lens — a missing ?kind= resolves to the default "All" lens
+  // (mobile parity: the app's default view is photos + videos together).
+  const activeLens = toolbar.filters.kind ?? "all";
 
   const [unsortedCount, setUnsortedCount] = useState(0);
 

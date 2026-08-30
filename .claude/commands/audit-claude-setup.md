@@ -85,6 +85,28 @@ update the rule, or fix the code — with a recommendation.
 - Area folders that are empty, and active work with no area folder at all.
 - The completed log not mentioning anything from the last several months, which usually means the
   whole lifecycle has quietly stopped being used — worth saying out loud rather than patching.
+- **Worklog currency.** Take the newest dated line in the worklog (`worklog.md`, or the `CHANGELOG`
+  `[Unreleased]` section if that is the target), then run
+  `git log --no-merges --since=<that date> --name-only` and list commits that touched
+  source/config/schema/shipped-docs but added no worklog line in the same commit. Each is a
+  same-change-contract miss — report the SHAs. Typo/format-only commits are exempt (they earn no line).
+- **Roadmap currency** — three cross-file consistency checks, all drift-to-report (never a judgment call):
+  (a) every `roadmap.md` **Now** initiative has a live `in-progress.md` row or a `completed-features.md`
+  entry dated after it entered Now — otherwise it is stale;
+  (b) every active queue row and every recent completed entry rolls up to exactly one initiative —
+  surface orphans (a row with no `roadmap.md` initiative);
+  (c) no contradiction: nothing in **Shipped** still has open queue rows, and nothing fully shipped is
+  still sitting in **Now**. Report the drift and the single reconciling edit.
+  Severity mapping: stale roadmap band / lagging worklog = **P1**; orphan queue row = **P2**.
+- **Shipped-but-unlogged — the log lags reality without being fully dead.** The bullet above catches a
+  lifecycle that fully stopped; this catches the subtler, more common case where features kept
+  shipping but the log fell behind. Diff work merged since the newest `completed-features.md` entry
+  (`--since <ref>` if given) against the completed log and `in-progress.md`, and flag each gap: a
+  feature whose commits merged but has no completed-log entry, or that still sits in `in-progress.md`
+  marked active — name the merging commit/PR for each. Also flag an active `in-progress.md` row or
+  plan item carrying no `Next step`/handoff. This is the after-the-fact backstop for `documentation.md`
+  ("When to write" → handoff-on-pause and "shipped-but-unlogged counts as not done"); a log that lags
+  reality is read as confidently as a true one.
 - **Exempt from all of the above: `docs/claude/reports/`** — the append-only dated archive of
   command-generated reports (`/assess-stack --save` output). Old reports referencing since-removed
   elements are history serving trend comparison, not staleness; never flag, archive, or prune them.
@@ -108,6 +130,17 @@ Also check the harness config itself: `.claude/settings.json` deny entries that 
 real command (harmless), and destructive commands the current stack allows that the deny list never
 learned about (not harmless) — a new ORM's schema-push command, a new deploy CLI.
 
+- **AGENTS.md present and bridged.** `AGENTS.md` exists at the repo root and `CLAUDE.md` imports it
+  (`@AGENTS.md`). If absent → **P0**: the entire non-Claude onboarding path is missing — every tool
+  other than Claude has no front door.
+- **Deny-list ↔ guardrails sync.** Compare the destructive-command categories in `.claude/settings.json`
+  `deny` (force-push, `db:push`/`reset`/`drop` and ORM equivalents, `curl | sh`, publish/deploy,
+  secret reads) against the `MUST NOT` list in the `AGENTS.md` `MIRROR` block. A deny entry with no
+  corresponding cross-tool `MUST NOT` (e.g. Check 5 added a new ORM's push command to the deny list
+  but the guardrails never learned it) → **P1**: the Claude gate and the cross-tool doctrine have
+  diverged, and `sync-agents.sh` will propagate the stale block to every mirror. Fix = add the line to
+  `AGENTS.md` and re-run `sh scripts/sync-agents.sh`.
+
 ## Check 6 — Has the layer map drifted?
 
 `clean-architecture.md` maps four layers to directories (`{{DOMAIN_DIR}}`, `{{USECASE_DIR}}`,
@@ -127,8 +160,28 @@ learned about (not harmless) — a new ORM's schema-push command, a new deploy C
   lint plugins, dependency-graph linters, architecture-test libraries) in the lint config and CI. If
   none exists, flag it: every violation you counted above is a review argument that a lint rule would
   have made a CI failure.
+- **Is the gate wired, not just installed?** A dependency-boundary linter present in the dev
+  dependencies but absent from the pre-commit gate and required CI is decoration. Confirm
+  `{{ARCH_CHECK_CMD}}` is in the `CLAUDE.md` Key Commands table AND runs as a required CI check
+  (`scripts/templates/ci-verify.yml` copied to `.github/workflows/`). A config that exists but nothing
+  runs → **P1**: the check that never runs.
 - **Aspirational rows that never landed.** A layer row marked `target:` at adapt time whose directory
   is still empty months later is a decision to surface, not to silently keep printing.
+
+## Check 7 — Is the provider hub still wired and in sync?
+
+The cross-tool layer rots like any other config. Read-only unless `--fix`.
+
+- **Read-order resolves.** Every path named in `AGENTS.md`'s onboarding read-order and every
+  `.claude/rules/*.md` it points at exists on disk. A dead pointer here is as bad as a dead `@` import
+  → **P0** if `AGENTS.md` names a rule file that was pruned.
+- **Mirrors in sync.** Run `sh scripts/sync-agents.sh --check`. Any `STALE` mirror → **P1** (a
+  hand-edited or drifted tool file now contradicts `AGENTS.md`; fix = re-run the script). A mirror with
+  its `GENERATED … DO NOT EDIT` header removed (edited by hand) → **P1**, with the note that edits
+  belong in `AGENTS.md`.
+- **Inline doctrine matches source.** The three inline claims in `AGENTS.md` still match their source
+  rules: the dependency rule vs `clean-architecture.md`, the same-change update contract vs
+  `documentation.md`, the guardrails vs `settings.json` deny (see Check 5). Divergence → **P2**.
 
 ---
 

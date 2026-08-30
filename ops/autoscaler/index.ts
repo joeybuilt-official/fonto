@@ -49,6 +49,11 @@ const CEILING = numEnv("AUTOSCALER_CEILING", 4, 1);
 const DAMPENING_MS = numEnv("AUTOSCALER_DAMPENING_MS", 60_000, 0);
 const DRY_RUN = process.env.AUTOSCALER_DRY_RUN === "1";
 const COMPOSE_FILE = process.env.AUTOSCALER_COMPOSE_FILE ?? "/etc/fonto-compose/docker-compose.yml";
+// The mounted compose file is shared across the whole stack (every service,
+// not just fonto-worker) — `docker compose up` interpolates ALL of it before
+// doing anything, so any unrelated service's missing ${VAR} blocks OUR scale
+// call too. Point this at the real .env so interpolation has what it needs.
+const ENV_FILE = process.env.AUTOSCALER_ENV_FILE;
 const WORKER_SERVICE = process.env.AUTOSCALER_WORKER_SERVICE ?? "fonto-worker";
 const REDIS_URL = process.env.REDIS_URL ?? "redis://valkey:6379";
 
@@ -60,7 +65,47 @@ function numEnv(name: string, fallback: number, min: number): number {
 }
 
 let lastScaleAt = 0;
-let currentReplicas = FLOOR;
+
+/**
+ * Real running-replica count for WORKER_SERVICE, read straight from the
+ * Docker daemon via the compose service label — NOT trusted from an
+ * in-memory counter. A counter that only updates after a scale THIS
+ * process applied desyncs from reality the moment the container restarts
+ * (deploy, crash, host reboot) and starts from a hardcoded guess again;
+ * on this box that desync already caused a real scale-down that killed a
+ * healthy, actively-processing worker. Re-deriving it every tick makes
+ * that whole bug class impossible instead of resetting it to a guess.
+ */
+function getCurrentReplicas(): Promise<number> {
+  return new Promise((resolve) => {
+    const child = spawn(
+      "docker",
+      [
+        "ps",
+        "--filter",
+        `label=com.docker.compose.service=${WORKER_SERVICE}`,
+        "--filter",
+        "status=running",
+        "--format",
+        "{{.ID}}",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (b: Buffer) => (stdout += b.toString("utf8")));
+    child.stderr.on("data", (b: Buffer) => (stderr += b.toString("utf8")));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        log("error", "replica_count_failed", { exitCode: code, stderr: stderr.slice(0, 400) });
+        resolve(FLOOR);
+        return;
+      }
+      const count = stdout.split("\n").filter((l) => l.trim().length > 0).length;
+      resolve(Math.max(count, FLOOR));
+    });
+  });
+}
 
 function log(level: "info" | "warn" | "error", msg: string, ctx: Record<string, unknown> = {}) {
   const line = {
@@ -110,9 +155,18 @@ function applyScale(target: number): Promise<void> {
       "compose",
       "-f",
       COMPOSE_FILE,
+      ...(ENV_FILE ? ["--env-file", ENV_FILE] : []),
       "up",
       "-d",
       "--no-recreate",
+      // fonto-worker declares depends_on: [postgres, valkey]. Without
+      // --no-deps, `up` also reconciles those services — and this
+      // container's compose invocation (mounted file, different working
+      // dir) doesn't share the main stack's project-name inference, so it
+      // tries to CREATE them fresh and collides with the already-running
+      // ones under their real names. We only ever want to touch replica
+      // count for one already-running service.
+      "--no-deps",
       "--scale",
       `${WORKER_SERVICE}=${target}`,
       WORKER_SERVICE,
@@ -137,7 +191,10 @@ function applyScale(target: number): Promise<void> {
 }
 
 async function tick(redis: IORedis): Promise<void> {
-  const { total, per } = await queueDepth(redis);
+  const [{ total, per }, currentReplicas] = await Promise.all([
+    queueDepth(redis),
+    getCurrentReplicas(),
+  ]);
   const target = decideTarget(total, currentReplicas);
   const sinceLastMs = Date.now() - lastScaleAt;
 
@@ -167,7 +224,6 @@ async function tick(redis: IORedis): Promise<void> {
   if (!DRY_RUN) {
     await applyScale(target);
   }
-  currentReplicas = target;
   lastScaleAt = Date.now();
 }
 
@@ -182,6 +238,7 @@ async function main(): Promise<void> {
     dampeningMs: DAMPENING_MS,
     dryRun: DRY_RUN,
     composeFile: COMPOSE_FILE,
+    envFile: ENV_FILE ?? null,
     workerService: WORKER_SERVICE,
   });
 

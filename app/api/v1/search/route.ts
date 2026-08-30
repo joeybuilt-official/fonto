@@ -3,10 +3,12 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
+import { z } from "zod";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
-import { eq, and, or, ilike, inArray, gte, lte, isNull, sql } from "drizzle-orm";
+import { eq, and, or, asc, ilike, inArray, gte, lte, isNull, sql, getTableColumns } from "drizzle-orm";
+import { logger } from "@/lib/logger";
 import { plexoMemorySearch } from "@/lib/plexo";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { deltaE76, parseHex, rgbToLab, type PaletteColor } from "@/lib/perceptual";
@@ -16,6 +18,10 @@ import { getCacheLayer } from "@/lib/cache/valkey";
 
 const COLOR_DELTA_E_THRESHOLD = 30;
 const SEARCH_CACHE_TTL_SEC = 300;
+const PAGE_SIZE = 100;
+// Color-ΔE / semantic modes re-shape the result set in JS after the SQL cut, so
+// they can't page; they scan a wider window and return one capped page.
+const UNPAGED_SCAN_LIMIT = 500;
 
 // Chip names from the web filter popover + mobile filter sheet arrive as the
 // color *name* (e.g. "red"); parseHex only understands hex, so map known names
@@ -51,8 +57,63 @@ const COLOR_NAME_HEX: Record<string, string> = {
 // listed here so its agent and this one share the same tag convention.
 type CachedSearchResponse = {
   assets: ReturnType<typeof serializeAsset>[];
-  total: number;
+  // Item count in THIS page. Not a total-match count — see the field-rename
+  // note on the route handler for why.
+  count: number;
+  // Opaque next-page cursor; null in the excluded modes and once the last row
+  // has been served (including a final page that is exactly PAGE_SIZE long).
+  cursor: string | null;
+  // True when results were cut off and there is no cursor to continue with, so
+  // the client can render "showing the first N matches".
+  truncated: boolean;
 };
+
+// Opaque keyset cursor, same base64url(JSON({ s, b, i })) idiom as
+// /api/v1/assets: s = sort axis, b = last row's createdAt AT FULL STORED
+// PRECISION (Postgres `timestamptz::text`, microseconds — NOT a JS Date ISO
+// string, which only carries milliseconds and would silently drop the
+// fractional-microsecond remainder), i = last row's id (tie-break). Search has
+// ONE axis (createdAt ASC), so `s` is a literal here; sharing the /assets
+// helper would mean lifting its 5-value SortAxis union out of that route,
+// which is a bigger change than a decode function. Only plain/FTS search
+// pages — the color-ΔE filter and the Plexo semantic re-rank both mutate the
+// result set after the SQL cut, so a keyset walked across them would skip and
+// duplicate rows.
+type SearchCursor = { s: "created"; b: string; i: string };
+function encodeCursor(p: SearchCursor): string {
+  return Buffer.from(JSON.stringify(p), "utf8").toString("base64url");
+}
+// `b` is validated as a plausible `timestamptz`-text shape only — never run
+// through `Date.parse`/`new Date()`. This value is compared in SQL as
+// `${b}::timestamptz`, so a JS Date round-trip (millisecond precision) would
+// reintroduce the exact bug this cursor exists to fix.
+// Matches both the legacy `timestamptz::text` output (space-separated,
+// numeric UTC offset — session-DateStyle-dependent, kept only so a cursor
+// issued before the `to_char` fix below still decodes) and the current
+// `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` mask (T-separated, literal Z).
+const TIMESTAMPTZ_TEXT_RE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}(:?\d{2})?|Z)$/;
+// `i` is bound into `${schema.assets.id} > ${cursor.i}` against a uuid
+// column — an unvalidated string there surfaces as an unhandled Postgres
+// "invalid input syntax for type uuid" (500) instead of the 400 a malformed
+// cursor should produce.
+const cursorIdSchema = z.string().uuid();
+function decodeCursor(raw: string): SearchCursor | null {
+  try {
+    const p = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    if (
+      p?.s === "created" &&
+      typeof p?.b === "string" &&
+      TIMESTAMPTZ_TEXT_RE.test(p.b) &&
+      typeof p?.i === "string" &&
+      cursorIdSchema.safeParse(p.i).success
+    ) {
+      return p as SearchCursor;
+    }
+  } catch {
+    // fall through — malformed cursor is rejected at the boundary below
+  }
+  return null;
+}
 
 function stableStringify(input: unknown): string {
   if (input === null || typeof input !== "object") return JSON.stringify(input);
@@ -73,7 +134,9 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const workspaces = await getUserWorkspaces(user.id);
-  if (!workspaces.length) return NextResponse.json({ assets: [] });
+  if (!workspaces.length) {
+    return NextResponse.json({ assets: [], count: 0, cursor: null, truncated: false } satisfies CachedSearchResponse);
+  }
   const workspaceIds = workspaces.map((w) => w.id);
 
   const { searchParams } = request.nextUrl;
@@ -88,11 +151,43 @@ export async function GET(request: NextRequest) {
   const semantic = searchParams.get("semantic") === "true";
   const ocrOnly = searchParams.get("ocrOnly") === "true";
   const colorHex = searchParams.get("color")?.trim() ?? "";
+  // Reject an unparseable `color` at the boundary rather than silently
+  // falling back to plain mode: `paginated` below is derived from
+  // `colorHex` being non-empty, so a bad value that fell through would
+  // still disable cursor paging while `truncated` kept claiming a
+  // color-filtered cutoff happened — an incoherent response shape for a
+  // request the caller can simply be told to fix.
+  const resolvedColorRgb = colorHex ? parseHex(COLOR_NAME_HEX[colorHex.toLowerCase()] ?? colorHex) : null;
+  if (colorHex && !resolvedColorRgb) {
+    logger.child({ component: "search" }).warn({ userId: user.id, colorHex }, "rejected malformed search color filter");
+    return NextResponse.json({ error: "Invalid color filter" }, { status: 400 });
+  }
   const scopeParam = parseScopeParam(searchParams);
   // EXIF facet filters (camera/lens/iso/aperture/focal) — shared with the
   // library + smart-collection query surfaces. Hash the raw values so the
   // cache key changes when any EXIF filter changes.
   const exifKey = EXIF_FILTER_KEYS.map((k) => `${k}=${searchParams.get(k) ?? ""}`).join("&");
+
+  // Paging is sound only in plain/FTS mode. Both excluded modes are decided by
+  // request params (not by how many rows come back) so the gate is
+  // deterministic and safe to bake into the cache key.
+  const semanticActive = semantic && q.length > 0;
+  const paginated = !colorHex && !semanticActive;
+  const cursorRaw = searchParams.get("cursor")?.trim() ?? "";
+  let cursor: SearchCursor | null = null;
+  if (cursorRaw) {
+    if (!paginated) {
+      return NextResponse.json(
+        { error: "Cursor pagination is not supported with a color or semantic search" },
+        { status: 400 },
+      );
+    }
+    cursor = decodeCursor(cursorRaw);
+    if (!cursor) {
+      logger.child({ component: "search" }).warn({ userId: user.id }, "rejected malformed search cursor");
+      return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
+    }
+  }
 
   // Build the cache key from a STABLE digest of every input that affects the
   // result. workspaceIds are sorted before hashing so a user whose membership
@@ -116,6 +211,11 @@ export async function GET(request: NextRequest) {
       colorHex: colorHex.toLowerCase(),
       scope: scopeParam ?? "default",
       exif: exifKey,
+      // WITHOUT this, page 2 would serve page 1's cached body: same filters,
+      // different window. Hash the DECODED cursor so two encodings of the same
+      // position share an entry, and null in the non-pageable modes where the
+      // cursor is rejected anyway.
+      cursor: cursor ? `${cursor.b}|${cursor.i}` : null,
     }),
   );
   const cacheKey = `search:${primaryWorkspaceId}:${queryHash}:${filtersHash}`;
@@ -190,44 +290,73 @@ export async function GET(request: NextRequest) {
       .from(schema.tags)
       .where(eq(schema.tags.id, tagId))
       .limit(1);
-    if (!target?.path) return { assets: [], total: 0 };
+    if (!target?.path) return { assets: [], count: 0, cursor: null, truncated: false };
     const taggedAssets = await db
       .selectDistinct({ assetId: schema.assetTags.assetId })
       .from(schema.assetTags)
       .innerJoin(schema.tags, eq(schema.tags.id, schema.assetTags.tagId))
       .where(sql`${schema.tags.path} LIKE ${target.path + "%"}`);
     assetIds = taggedAssets.map((r) => r.assetId);
-    if (!assetIds.length) return { assets: [], total: 0 };
+    if (!assetIds.length) return { assets: [], count: 0, cursor: null, truncated: false };
     conditions.push(inArray(schema.assets.id, assetIds));
   }
 
+  // Keyset predicate: strictly past the bound key, or on the bound key and past
+  // its id. Mirrors /api/v1/assets, minus the direction switch (search has one
+  // axis, createdAt ASC).
+  //
+  // The bound travels as TEXT end to end — never through `new Date(...)` —
+  // because `createdAt` is a `timestamptz` with microsecond precision and a
+  // JS Date only carries milliseconds. Comparing a Date-truncated bound
+  // against the full-precision column made `gt` true for the very row the
+  // cursor was built from (re-serving it on the next page) and made the `eq`
+  // tiebreak below unreachable in practice, since the truncated bound could
+  // essentially never equal the untruncated stored value. Casting the bound
+  // text back to `timestamptz` in SQL keeps the comparison exact and mirrors
+  // the `ORDER BY created_at ASC, id ASC` below exactly.
+  if (cursor) {
+    conditions.push(
+      sql`(${schema.assets.createdAt} > ${cursor.b}::timestamptz OR (${schema.assets.createdAt} = ${cursor.b}::timestamptz AND ${schema.assets.id} > ${cursor.i}))`,
+    );
+  }
+
+  const scanLimit = paginated ? PAGE_SIZE : UNPAGED_SCAN_LIMIT;
   let assets = await db
-    .select()
+    .select({
+      ...getTableColumns(schema.assets),
+      // Full-precision text form of the same column, for building the next
+      // cursor bound (see above) — never derived by re-formatting the JS
+      // Date the driver hands back, which would re-truncate to milliseconds.
+      // An explicit `to_char` mask (mirrors /api/v1/assets' sortKeyTextExpr)
+      // rather than `::text`: the latter's output format tracks the session's
+      // `DateStyle` GUC, so under a non-default DateStyle every emitted cursor
+      // would stop matching TIMESTAMPTZ_TEXT_RE and page 2 would 400 forever.
+      createdAtText: sql<string>`to_char(${schema.assets.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+    })
     .from(schema.assets)
     .where(and(...conditions))
-    .orderBy(schema.assets.createdAt)
-    .limit(500);
+    .orderBy(asc(schema.assets.createdAt), asc(schema.assets.id))
+    .limit(scanLimit);
+  const scannedFullWindow = assets.length === scanLimit;
 
   // Color filter — applied in JS after the SQL pull because Postgres can't
-  // efficiently compute Lab ΔE in pure SQL. Limit raised to 500 above so
-  // the JS filter has enough headroom; we still cap output at 100.
-  if (colorHex) {
-    const resolved = COLOR_NAME_HEX[colorHex.toLowerCase()] ?? colorHex;
-    const rgb = parseHex(resolved);
-    if (rgb) {
-      const targetLab = rgbToLab(rgb[0], rgb[1], rgb[2]);
-      assets = assets.filter((a) => {
-        const palette = a.colors as PaletteColor[] | null;
-        if (!palette || palette.length === 0) return false;
-        for (const c of palette) {
-          const cRgb = parseHex(c.hex);
-          if (!cRgb) continue;
-          const lab = rgbToLab(cRgb[0], cRgb[1], cRgb[2]);
-          if (deltaE76(targetLab, lab) <= COLOR_DELTA_E_THRESHOLD) return true;
-        }
-        return false;
-      });
-    }
+  // efficiently compute Lab ΔE in pure SQL. This mode scans
+  // UNPAGED_SCAN_LIMIT rows so the JS filter has headroom; output stays capped
+  // at PAGE_SIZE. `resolvedColorRgb` was already validated at the request
+  // boundary above, so an unparseable `color` never reaches here.
+  if (colorHex && resolvedColorRgb) {
+    const targetLab = rgbToLab(resolvedColorRgb[0], resolvedColorRgb[1], resolvedColorRgb[2]);
+    assets = assets.filter((a) => {
+      const palette = a.colors as PaletteColor[] | null;
+      if (!palette || palette.length === 0) return false;
+      for (const c of palette) {
+        const cRgb = parseHex(c.hex);
+        if (!cRgb) continue;
+        const lab = rgbToLab(cRgb[0], cRgb[1], cRgb[2]);
+        if (deltaE76(targetLab, lab) <= COLOR_DELTA_E_THRESHOLD) return true;
+      }
+      return false;
+    });
   }
 
   // Semantic re-ranking via Plexo if requested and query given
@@ -247,12 +376,38 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Cap to 100 and serialize via serializeAsset — handles ALL bigint columns
+  // Cap the page and serialize via serializeAsset — handles ALL bigint columns
   // (phash AND seq). The previous hand-rolled map only converted phash, so the
   // unconverted `seq` bigint threw "Do not know how to serialize a BigInt" and
-  // 500'd every search.
-  const trimmed = assets.slice(0, 100).map((a) => serializeAsset(a));
+  // 500'd every search. Strip `createdAtText` first — it exists only to build
+  // the cursor below and is not part of the published Asset shape.
+  const page = assets.slice(0, PAGE_SIZE);
+  const trimmed = page.map((a) => {
+    const { createdAtText, ...rest } = a;
+    void createdAtText;
+    return serializeAsset(rest);
+  });
 
-    return { assets: trimmed, total: trimmed.length };
+  // A full page gets a cursor built from its last row; a short page is the end
+  // of the result set. In the excluded modes there is no honest cursor, so say
+  // the results were cut off instead.
+  if (paginated) {
+    const last = page[page.length - 1];
+    return {
+      assets: trimmed,
+      count: trimmed.length,
+      cursor:
+        last && scannedFullWindow
+          ? encodeCursor({ s: "created", b: last.createdAtText, i: last.id })
+          : null,
+      truncated: false,
+    };
+  }
+  return {
+    assets: trimmed,
+    count: trimmed.length,
+    cursor: null,
+    truncated: scannedFullWindow || assets.length > PAGE_SIZE,
+  };
   }
 }

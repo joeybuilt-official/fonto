@@ -1,4 +1,4 @@
-# Fonto - Claude Code Guidelines
+# Fonto — Claude Code Guidelines
 
 ## Project Overview
 
@@ -25,6 +25,8 @@ Fonto is an AI-classified digital asset manager for photos, documents, and scans
 | Typecheck / static analysis | `pnpm typecheck` |
 | Lint | `pnpm lint` |
 | Build | `pnpm build` |
+| Architecture boundary check | `pnpm arch` |
+| Endpoint coverage check | `pnpm tsx scripts/check-endpoint-tests.ts` |
 | OpenAPI registration check | `pnpm tsx scripts/check-openapi-coverage.ts --strict` |
 | Generate migration | `pnpm db:generate` |
 | Apply migration | `pnpm db:migrate` |
@@ -54,7 +56,11 @@ scripts/              Maintenance and verification scripts
 
 ## How We Work Together
 
-`AGENTS.md` is user-owned and authoritative. Read it first; its rules win over this kit. Before writing Next.js code, read the relevant guide in `node_modules/next/dist/docs/`.
+`AGENTS.md` is user-owned and authoritative. Read it first; its rules win over this kit. It is also the provider-neutral hub for every other tool (Cursor, Copilot, Codex, Windsurf, Cline, aider, Gemini), so it loads into every agent's context via the import below. Before writing Next.js code, read the relevant guide in `node_modules/next/dist/docs/`.
+
+The rules below are not suggestions. When a rule and a shortcut conflict, the rule wins — or raise the conflict explicitly and let me decide. Read the module that governs what you're touching before you touch it.
+
+@AGENTS.md
 
 ### Architecture - the premise everything else inherits from
 
@@ -89,7 +95,9 @@ Clean Architecture is the target for new code: business rules stay inward, while
 
 Team-shared context lives in `docs/claude/` and is committed to git. Read these when relevant:
 
+- `docs/claude/roadmap.md` - the overall plan; initiatives in Now/Next/Later; read with in-progress.md
 - `docs/claude/in-progress.md` - ordered active work; start here
+- `docs/claude/worklog.md` - running change log; append one line in the same commit as your change
 - `docs/claude/completed-features.md` - shipped work and archived plans
 - `docs/claude/architecture.md` - Fonto system shape, boundaries, and decisions
 - `docs/claude/infrastructure.md` - runtime, deployment evidence, stores, and jobs

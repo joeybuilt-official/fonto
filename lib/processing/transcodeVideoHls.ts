@@ -18,16 +18,20 @@
 // after; failures bubble and the job handler marks 'failed'.
 
 import { spawn } from "node:child_process";
+import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import {
   hlsMasterKey,
   hlsRenditionKey,
   hlsSegmentKeyPrefix,
   assetStorageKey,
+  assetStorageKeyLegacy,
 } from "@/lib/r2";
-import { storage } from "@/lib/storage";
+import { storage, type StreamResult } from "@/lib/storage";
 import { probeVideo, type VideoProbe } from "@/lib/processing/probeVideo";
 
 // M13 / ADR 0054 — video transcode stays CPU-only on the host (GPUs reserved for
@@ -170,10 +174,25 @@ export async function transcodeVideoHls(
   await mkdir(outDir, { recursive: true });
 
   try {
-    // 1. Download source.
+    // 1. Download source. Streamed straight to the temp file — ffmpeg only
+    //    ever reads it as a path, so buffering a multi-GB original would put
+    //    the whole file in the worker's heap for nothing (OOM territory at
+    //    WORKER_CONCURRENCY > 1).
     const sourceKey = assetStorageKey(opts.workspaceId, opts.assetId, opts.filename);
-    const buf = await storage().getBuffer(sourceKey);
-    await writeFile(sourcePath, buf);
+    let src: StreamResult;
+    try {
+      src = await storage().getStream(sourceKey);
+    } catch {
+      // Sources uploaded before the fonto/ prefix migration are still
+      // stored under the legacy key (see route.ts's delete handler, which
+      // already falls back the same way).
+      const legacyKey = assetStorageKeyLegacy(opts.workspaceId, opts.assetId, opts.filename);
+      src = await storage().getStream(legacyKey);
+    }
+    await pipeline(
+      Readable.fromWeb(src.body as Parameters<typeof Readable.fromWeb>[0]),
+      createWriteStream(sourcePath)
+    );
 
     // M13 — probe once. The copy gate + HDR detection both need it; the job
     // handler also re-uses duration/dims for the sprite, but probing here keeps

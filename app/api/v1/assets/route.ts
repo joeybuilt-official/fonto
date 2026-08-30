@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
@@ -14,12 +15,16 @@ import { detectMime } from "@/lib/mime";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 import { parseScopeParam, scopeCond, isShootStage } from "@/lib/scope";
+import { isProcessingState } from "@/lib/processing/state";
 import { exifFilterConditions } from "@/lib/assets/exifFilters";
 
 // Opaque keyset cursor: base64url(JSON({ s, b, i })) where
-//   s = sort axis ("created" | "captured")
-//   b = last row's sort-key ISO timestamp (createdAt, or COALESCE(capturedAt,
-//       createdAt) on the captured axis)
+//   s = sort axis ("created" | "captured" | "name" | "rating" | "largest")
+//   b = last row's sort-key value as text. For the time axes this is a
+//       microsecond-precision UTC timestamp string (createdAt, or
+//       COALESCE(capturedAt, createdAt) on the captured axis) — NEVER a JS
+//       Date round trip, which truncates to millisecond precision and makes
+//       the keyset predicate re-match the last row of the previous page.
 //   i = last row's id (tie-break)
 // Self-contained: decoding a cursor restores the sort axis too, so a caller
 // can page purely by echoing `cursor` without re-sending `?sort=`. The
@@ -42,6 +47,11 @@ const SORT_AXES: readonly SortAxis[] = [
 function isSortAxis(v: unknown): v is SortAxis {
   return typeof v === "string" && (SORT_AXES as readonly string[]).includes(v);
 }
+// `i` (opaque-cursor tie-break, or the discrete `?idBefore=`) is bound into
+// `gt/lt(schema.assets.id, idBeforeRaw)` against a uuid column — unvalidated,
+// a non-UUID value surfaces as an unhandled Postgres "invalid input syntax
+// for type uuid" (500) instead of a 400.
+const idBeforeSchema = z.string().uuid();
 type CursorPayload = { s: SortAxis; b: string; i: string };
 function encodeCursor(p: CursorPayload): string {
   return Buffer.from(JSON.stringify(p), "utf8").toString("base64url");
@@ -234,6 +244,27 @@ export async function GET(request: NextRequest) {
     where.push(isNull(schema.assets.capturedAt));
   }
 
+  // Pipeline-state filter. `?processingState=failed` (single) or a
+  // comma-separated set (`?processingState=classified,extracted`) narrows the
+  // grid to the states a client actually wants — the mobile "processing
+  // detail" view fetches just the in-flight or failed assets instead of paging
+  // the entire library to find them. Backed by assets_processing_state_idx.
+  // Unlike `?kind=`, an unrecognised token is a 400 rather than a silent drop:
+  // a typo'd state would otherwise return the UNFILTERED library and read as
+  // "nothing is failing". Absent param = unfiltered, exactly as before.
+  const processingStateRaw = searchParams.get("processingState");
+  if (processingStateRaw != null) {
+    const states = processingStateRaw.split(",").map((s) => s.trim());
+    if (!states.every((s) => isProcessingState(s))) {
+      return NextResponse.json({ error: "Invalid processingState" }, { status: 400 });
+    }
+    if (states.length === 1) {
+      where.push(eq(schema.assets.processingState, states[0]));
+    } else {
+      where.push(inArray(schema.assets.processingState, states));
+    }
+  }
+
   // Date-range filter over the captured timeline (COALESCE(capturedAt,
   // createdAt)). `?dateFrom=<iso>` (inclusive lower) and `?dateTo=<iso>`
   // (inclusive upper) narrow the flat grid SERVER-side (unlike a post-fetch JS
@@ -383,6 +414,9 @@ export async function GET(request: NextRequest) {
   // plus ?idBefore=<uuid> as the tie-break. Returns rows strictly older than
   // the cursor under the same ordering, so pages concatenate cleanly.
   const idBeforeRaw = decodedCursor?.i ?? searchParams.get("idBefore");
+  if (idBeforeRaw != null && !idBeforeSchema.safeParse(idBeforeRaw).success) {
+    return NextResponse.json({ error: "Invalid idBefore" }, { status: 400 });
+  }
   // Where the keyset "before" value comes from. The opaque cursor carries it
   // for every axis; the discrete ?createdBefore/?capturedBefore params stay
   // accepted for the two legacy time axes. name/rating/largest page only via
@@ -404,8 +438,14 @@ export async function GET(request: NextRequest) {
     switch (sortAxis) {
       case "created":
       case "captured": {
+        // Bind the raw cursor/param text as-is — reconstructing through
+        // `new Date(...).toISOString()` rounds to millisecond precision and
+        // makes the strict `<`/`>` comparison re-match the last row of the
+        // previous page (createdAt/capturedAt are timestamp(6), i.e.
+        // microsecond-precision, in Postgres). `Date.parse` here is only a
+        // format sanity check; Postgres parses the text directly.
         if (Number.isNaN(Date.parse(beforeRaw))) return null;
-        return sql`${new Date(beforeRaw).toISOString()}::timestamptz`;
+        return sql`${beforeRaw}::timestamptz`;
       }
       case "rating": {
         const n = Number.parseInt(beforeRaw, 10);
@@ -434,6 +474,22 @@ export async function GET(request: NextRequest) {
       where.push(strictCmp);
     }
   }
+
+  // The sort key emitted into the next cursor, projected in SQL as text at
+  // full column precision — never round-tripped through a JS Date, which
+  // node-postgres parses to millisecond precision and would silently drop
+  // the microsecond tail that timestamp(6) columns (createdAt/capturedAt)
+  // actually store, re-matching the last row of the page on the next fetch.
+  const sortKeyTextExpr =
+    sortAxis === "captured"
+      ? sql<string>`to_char(COALESCE(${schema.assets.capturedAt}, ${schema.assets.createdAt}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+      : sortAxis === "created"
+        ? sql<string>`to_char(${schema.assets.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+        : sortAxis === "name"
+          ? sql<string>`LOWER(${schema.assets.filename})`
+          : sortAxis === "rating"
+            ? sql<string>`${schema.assets.rating}::text`
+            : sql<string>`${schema.assets.sizeBytes}::text`;
 
   // UX-3 / Phase 5.5 — surface the stack member count alongside each asset so
   // PhotoCard can render a "Stack of N" badge without a per-tile round trip.
@@ -471,6 +527,7 @@ export async function GET(request: NextRequest) {
     .select({
       asset: assetGridColumns(),
       stackMemberCount: stackCounts.memberCount,
+      sortKeyRaw: sortKeyTextExpr,
     })
     .from(schema.assets)
     .leftJoin(stackCounts, eq(stackCounts.stackId, schema.assets.stackId))
@@ -491,23 +548,7 @@ export async function GET(request: NextRequest) {
   let cursor: string | null = null;
   if (lastRow && rows.length === limit) {
     const a = lastRow.asset;
-    let b: string;
-    switch (sortAxis) {
-      case "captured":
-        b = (a.capturedAt ?? a.createdAt).toISOString();
-        break;
-      case "name":
-        b = a.filename.toLowerCase();
-        break;
-      case "rating":
-        b = String(a.rating);
-        break;
-      case "largest":
-        b = String(a.sizeBytes);
-        break;
-      default:
-        b = a.createdAt.toISOString();
-    }
+    const b = lastRow.sortKeyRaw;
     cursor = encodeCursor({ s: sortAxis, b, i: a.id });
     // The legacy discrete-param `nextCursor` object only exists for the two
     // time axes; name/rating/largest callers page via the opaque `cursor`.
@@ -527,6 +568,32 @@ export async function GET(request: NextRequest) {
     cursor,
     nextCursor,
   });
+}
+
+// Legacy multipart cap. This handler buffers the WHOLE body into Node memory
+// (`request.formData()` → `file.arrayBuffer()`), so the cap is a memory
+// guardrail, not a policy knob: the direct-to-R2 / tus flows stream and carry
+// the much larger MAX_UPLOAD_BYTES (default 500 MB) instead. Overridable with
+// LEGACY_MAX_UPLOAD_BYTES (bytes) for hosts with headroom; the default stays
+// 50 MB because every byte above it is resident RSS per concurrent request.
+const DEFAULT_LEGACY_MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+
+function legacyMaxUploadBytes(): number {
+  const raw = process.env.LEGACY_MAX_UPLOAD_BYTES;
+  if (!raw) return DEFAULT_LEGACY_MAX_UPLOAD_BYTES;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_LEGACY_MAX_UPLOAD_BYTES;
+  return Math.floor(n);
+}
+
+function tooLargeResponse(cap: number): NextResponse {
+  const mb = Math.floor(cap / (1024 * 1024));
+  return NextResponse.json(
+    {
+      error: `File too large. Maximum legacy multipart upload size is ${mb} MB. Use the resumable upload flow (POST /api/v1/assets/init, or the tus endpoint) for larger files.`,
+    },
+    { status: 413 }
+  );
 }
 
 /**
@@ -600,6 +667,19 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // Size guard BEFORE a single body byte is read. `request.formData()` buffers
+  // the ENTIRE multipart body into Node memory, so a cap tested on `file.size`
+  // afterwards is already too late — a multi-GB video OOM-kills the process
+  // during the parse, and (worse) a death after the row insert below strands
+  // the asset at sync_state='syncing' with no bytes in R2. Content-Length is
+  // the only size signal available pre-parse; when it is absent (chunked
+  // transfer encoding) the post-parse check on `file.size` is the fallback.
+  const cap = legacyMaxUploadBytes();
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > cap) {
+    return tooLargeResponse(cap);
+  }
+
   const formData = await request.formData();
   const file = formData.get("file");
   if (!file || !(file instanceof File)) {
@@ -607,14 +687,11 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
   }
   const source = (formData.get("source") as string | null) ?? "web-upload";
 
-  // Legacy multipart cap stays at 50 MB — direct-to-R2 path raises this to
-  // MAX_UPLOAD_BYTES (default 500 MB) since that flow streams.
-  const LEGACY_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-  if (file.size > LEGACY_MAX_UPLOAD_BYTES) {
-    return NextResponse.json(
-      { error: "File too large. Maximum upload size is 50 MB. Use /api/v1/assets/init for larger uploads." },
-      { status: 413 }
-    );
+  // Fallback cap for requests that arrived without a usable Content-Length.
+  // The body is already resident here, so this only stops the write — the
+  // pre-parse guard above is what protects the process.
+  if (file.size > cap) {
+    return tooLargeResponse(cap);
   }
 
   // Phase 9.1 — quota preflight (same check as init route).
@@ -683,14 +760,20 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
   // The legacy path uploads to R2 AFTER the row exists. createAssetRow inserts
   // the row as `synced` (so the direct-to-R2 path is correct); we override it
   // back to `syncing` while we PUT the buffer.
+  // Everything that can throw is computed BEFORE the flip to `syncing`, and
+  // everything after it runs inside the try — so no in-process failure can
+  // leave the row parked at `syncing` with no bytes in R2 (that state is not
+  // swept; `error` is the terminal, retryable one). A process death mid-PUT
+  // still strands the row, which is exactly why the size guard above must
+  // keep multi-GB bodies off this path.
   const asset = result.asset;
-  await db
-    .update(schema.assets)
-    .set({ syncState: "syncing" })
-    .where(eq(schema.assets.id, asset.id));
-
   const key = assetStorageKey(workspaceId, asset.id, file.name);
   try {
+    await db
+      .update(schema.assets)
+      .set({ syncState: "syncing" })
+      .where(eq(schema.assets.id, asset.id));
+
     await storage().put(key, buffer, {
       contentType: mimeType,
       contentLength: file.size,
@@ -739,11 +822,26 @@ async function handlePost(request: NextRequest): Promise<NextResponse> {
       { status: 201 }
     );
   } catch (err) {
-    console.error("[fonto] R2 upload failed:", err);
-    await db
-      .update(schema.assets)
-      .set({ syncState: "error" })
-      .where(eq(schema.assets.id, asset.id));
+    console.error("[fonto] legacy multipart upload failed:", {
+      assetId: asset.id,
+      workspaceId,
+      key,
+      err,
+    });
+    // Best-effort terminal state. If this write also fails the row stays at
+    // whatever it was, but the caller still gets an honest 500 rather than an
+    // exception thrown out of the catch.
+    try {
+      await db
+        .update(schema.assets)
+        .set({ syncState: "error" })
+        .where(eq(schema.assets.id, asset.id));
+    } catch (markErr) {
+      console.error("[fonto] failed to mark asset sync_state=error:", {
+        assetId: asset.id,
+        err: markErr,
+      });
+    }
     return NextResponse.json({ error: "Upload failed" }, { status: 500 });
   }
 }

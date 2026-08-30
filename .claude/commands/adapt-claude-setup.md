@@ -12,7 +12,10 @@ is a bug.
 ## Hard rules (read before doing anything)
 
 - **This command edits configuration only.** In scope: `CLAUDE.md`, `.claude/**`, `docs/claude/**`,
-  `.gitignore` (append-only). Out of scope, always: application source, tests, schema, CI configs,
+  `.gitignore` (append-only). In scope also: `AGENTS.md`, and the generated tool mirrors it emits —
+  `.github/copilot-instructions.md`, `.cursor/rules/`, `.clinerules/`, `.windsurf/rules/`, `GEMINI.md`,
+  `CONVENTIONS.md` — plus `scripts/` (the `sync-agents.sh` mechanism and `scripts/templates/`).
+  Out of scope, always: application source, tests, schema, CI configs,
   `package.json`/`pyproject.toml`/etc. If adapting seems to require a source change, report it in
   Phase 5 instead of doing it. Sole exception: if the user accepts the coverage scaffold (Q6), you
   may **create** the two new tooling files it names — never modify existing source, manifests, or CI.
@@ -74,6 +77,11 @@ everywhere — do not pretend otherwise. Record the directories that most nearly
 the concrete evidence of non-conformance (which files hold business logic in which outer layer, with
 counts); both feed Phase 2 and Phase 5.
 
+**Architecture-boundary linter.** Look for `.dependency-cruiser.*`, `.importlinter`/`[importlinter]`,
+an ArchUnit test, `.go-arch-lint.yml`, NetArchTest. If present, fill `{{ARCH_CHECK_CMD}}` from it and
+keep `MODULE:arch`. If absent, the kit does NOT generate a config (it would be layout-coupled and
+rewritten) — drop `MODULE:arch` and report the arch gate as a recommended manual setup step.
+
 **Data layer.** ORM/migration tooling (Drizzle, Prisma, TypeORM, Knex, Alembic, Django migrations,
 ActiveRecord, Ecto, golang-migrate, Flyway, EF Core) plus the real location of the schema file and
 migrations directory — confirm by listing, never by convention. Record the tool's dangerous
@@ -109,6 +117,15 @@ Whatever a hook already enforces does not need to be a rule.
 `.github/copilot-instructions.md`, any `.claude/` that predates the kit — these are inputs to a merge,
 never things to overwrite. Also check whether `docs/` already has a convention worth folding into
 rather than scaffolding a fresh `docs/claude/` tree beside it.
+
+**Running change log.** Detect `CHANGELOG.md`/`HISTORY.md` and whether either carries an
+`## [Unreleased]` (or equivalent running) section. This decides the worklog target: an existing
+running log is REUSED as the worklog; only a repo with none gets a fresh `docs/claude/worklog.md`.
+Never create a second parallel log.
+
+**Existing provider files.** `AGENTS.md`, `.cursor/rules/`, `.clinerules/`, `.windsurf/rules/`,
+`.github/copilot-instructions.md`, `GEMINI.md`, `CONVENTIONS.md`. A pre-existing `AGENTS.md` is a
+merge input (theirs wins), never an overwrite — same doctrine as `CLAUDE.md`.
 
 ---
 
@@ -218,7 +235,32 @@ Work in this order; it is the order that avoids leaving orphans.
    keep theirs verbatim and record the difference for the report. Never delete a line they wrote.
 7. **Scaffold `docs/claude/`** only if absent: the in-progress queue, the completed log, and area
    folders matching the modules you kept — no folders for work that does not exist.
-8. **Append to `.gitignore`** if missing: `.claude/settings.local.json`, `CLAUDE.local.md`.
+8. **Scaffold the plan artifacts** (with the `docs/claude/` scaffold, only if absent): create
+   `roadmap.md` from the kit template (keep the example row for the user to delete). For the worklog,
+   use the Phase 1 decision — if a reusable `CHANGELOG`/`HISTORY` `[Unreleased]` log exists, point the
+   contract at it and do NOT create `worklog.md`; otherwise create `worklog.md`.
+9. **Generate the provider-neutral hub — run this LAST, after the rules are filled and pruned (steps
+   1–8).** Copy the kit's `AGENTS.md` template, fill `{{PROJECT_NAME}}` (its only placeholder), keep its
+   `<!-- PANOPLY:RULES:BEGIN/END -->` markers, then run `sh scripts/sync-agents.sh`. The generator emits
+   **self-contained** tool mirrors — each one inlines the `MIRROR` preamble followed by the full body of
+   every surviving `.claude/rules/*.md` module (`.cursor/rules/` gets one `.mdc` per module plus a
+   preamble file; `.github/copilot-instructions.md`, `GEMINI.md`, `CONVENTIONS.md`, `.clinerules/`,
+   `.windsurf/rules/` each get one concatenated file) — and refills `AGENTS.md`'s `PANOPLY:RULES` block
+   with the same bodies, so no tool is left a bare pointer to `.claude/rules/`. Run it AFTER pruning so a
+   deleted module never gets inlined (a stale rule inlined everywhere is worse than a missing one). If an
+   `AGENTS.md` already existed, MERGE (theirs wins, same as `CLAUDE.md`): keep their content, append the
+   onboarding contract + `MIRROR` block + the `PANOPLY:RULES` markers + the sync note, then run the
+   script. Add `@AGENTS.md` to `CLAUDE.md` (Edit 1 of the CLAUDE.md changes).
+10. **Wire the enforcement plane.** Copy `scripts/templates/ci-verify.yml` and
+    `scripts/templates/pre-commit` in place, filling their `<CMD>` slots from the Key Commands table.
+    **Then run the branch protection init script interactively:** `sh scripts/init-repo-protection.sh`.
+    This script uses `gh` CLI to configure branch protection on the default branch (require PR, require
+    `verify` check, no force-push, no direct push). It prompts for confirmation and reports success/
+    failure. If `gh` is unavailable or unauthenticated, it prints manual instructions and exits 0.
+    Include the script's outcome in the Phase 5 report.
+    **The CI template now includes the expert-review gate** (`check-expert-review.sh`) and the docs gate
+    (`check-docs.sh`) by default — verify both jobs are present in the copied workflow.
+11. **Append to `.gitignore`** if missing: `.claude/settings.local.json`, `CLAUDE.local.md`.
 
 ---
 
@@ -243,9 +285,19 @@ Run these and fix what they find. Do not report success on an unverified step.
   illustration layouts in `clean-architecture.md` have been deleted. Under "adopt as target", a
   planned-but-absent directory gets its row marked `target:` so the map never claims a directory
   that is not there — **never create directories**; that is a source change and out of scope.
+- **Provider hub wired.** `AGENTS.md` exists, `{{PROJECT_NAME}}` filled, `CLAUDE.md` contains
+  `@AGENTS.md`, and `sh scripts/sync-agents.sh --check` exits clean. `AGENTS.md`'s read-order paths all
+  resolve on disk (`roadmap.md`, `in-progress.md`, the worklog target, the rule modules it names).
+- **Mirrors are self-contained, not pointers.** Every generated mirror inlines the full rule bodies —
+  spot-check by grepping a distinctive sentence from `clean-architecture.md` and confirming it appears
+  verbatim in `.github/copilot-instructions.md`, `GEMINI.md`, and a `.cursor/rules/*.mdc`. No mirror
+  should say only "the canonical rules live in `.claude/rules/`" — that is the bug this generator fixes.
+- **Plan artifacts present.** `roadmap.md` exists; the worklog target exists (either `worklog.md` or a
+  `CHANGELOG`/`HISTORY` `[Unreleased]` section) — exactly one, never both.
 - **Nothing outside scope changed.** `git status --porcelain` must show changes only under
-  `CLAUDE.md`, `.claude/`, `docs/claude/`, `.gitignore`. If anything else is dirty and you touched
-  it, revert it and say so.
+  `CLAUDE.md`, `.claude/`, `docs/claude/`, `.gitignore`, `AGENTS.md`, the generated tool-mirror paths
+  (`.github/copilot-instructions.md`, `.cursor/`, `.clinerules/`, `.windsurf/`, `GEMINI.md`,
+  `CONVENTIONS.md`), and `scripts/`. If anything else is dirty and you touched it, revert it and say so.
 - **Length discipline.** `CLAUDE.md` stays under ~120 lines; it loads into every context window.
   If it is longer, move depth into a rules module rather than trimming the "why" from rules.
 
@@ -272,6 +324,14 @@ Output, in this order and nothing more:
    the invariant that is invisible in the code (what must never happen in this system), the
    deploy/release path and what is dangerous about it, the decision that keeps getting re-litigated,
    the directory newcomers always misuse. Name the exact file and section where each belongs.
+7. **Worklog target** — state which was chosen: "reusing `CHANGELOG` `[Unreleased]`" vs "created
+   `docs/claude/worklog.md`".
+8. **Provider mirrors** — list the tool files emitted; note the source of truth is `AGENTS.md` and the
+    fix for any drift is `sh scripts/sync-agents.sh` (wire `--check` into pre-commit/CI).
+9. **Branch protection** — report the outcome of `init-repo-protection.sh`: "configured" / "skipped (no gh)" / "skipped (user declined)" / "failed (reason)". If configured, note that `verify` check is now required on `{{DEFAULT_BRANCH}}`.
+10. **Expert-review gate** — report whether `check-expert-review.sh` is wired into the CI template and pre-commit hook. Note the trivial escape hatches (PR label "trivial", commit prefix "trivial:", 1-file ≤15-line no-schema change).
+11. **Enforcement status** — if branch protection configured and `verify` check required, enforcement is BINDING. Otherwise, enforcement is ADVISORY: manual step needed to enable branch protection on `{{DEFAULT_BRANCH}}` and mark `ci-verify` checks required. Until then, `.claude/settings.json` binds only Claude and cross-tool guardrails are doc-level prose.
+12. **Architecture gate** — if no boundary linter exists, name it as a recommended setup: the per-stack tool (`clean-architecture.md` → Enforcement) encoding the filled layer map, started in report-only.
 
 Close by telling the user to run `/audit-claude-setup` in a few months — a stale rule is read exactly
 as confidently as a true one.
