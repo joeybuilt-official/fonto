@@ -21,6 +21,8 @@ import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { recomputeCoverFacesForWorkspace } from "@/lib/faces/cluster";
 import { propagateNamedPerson } from "@/lib/faces/propagate";
 import { db, schema } from "@/lib/db";
+import { cacheInvalidate } from "@/lib/cache/valkey";
+import { revalidateTag } from "next/cache";
 
 interface MergeBody {
   into?: unknown;
@@ -105,6 +107,18 @@ export async function POST(
   if (target.name) {
     propagated = await propagateNamedPerson(target.id, target.workspaceId);
   }
+
+  // The persons list is Valkey-cached for 5 minutes (see GET /api/v1/persons),
+  // so without this the merged-away source person keeps coming back from cache
+  // and the merge reads as "nothing happened" — which is exactly how it looks
+  // on the mobile People grid, the only surface that re-lists persons straight
+  // after a merge. AWAITED, unlike the fire-and-forget invalidate on POST
+  // /api/v1/persons: the client refetches the list immediately after this
+  // response, so the eviction has to have happened before we reply. The helper
+  // fails open with a 250ms command timeout, so a Valkey blip cannot stall the
+  // merge.
+  revalidateTag(`ws:${target.workspaceId}:persons`, "max");
+  await cacheInvalidate(`ws:${target.workspaceId}:persons`);
 
   const [refreshed] = await db
     .select()
