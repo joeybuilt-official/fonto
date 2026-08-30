@@ -813,9 +813,14 @@ export function jsonSafe(value: unknown): unknown {
 // them would silently push the grid back onto a POST /api/v1/assets/urls
 // round-trip.
 export function assetGridColumns() {
-  const { clipVec, extractedText, ocrText, ...rest } = getTableColumns(
-    schema.assets
-  );
+  // thumbnailState is worker-owned bookkeeping (generateThumbnails + worker
+  // write it; nothing reads it in app/, components/ or mobile/), so it has no
+  // business on every row of every library page. It arrived with migration
+  // 0059 and reached this projection only because assetGridColumns is
+  // select-everything-except — which is exactly what the conformance guard
+  // exists to catch. Give it a reader before giving it a place here.
+  const { clipVec, extractedText, ocrText, thumbnailState, ...rest } =
+    getTableColumns(schema.assets);
   return rest;
 }
 
