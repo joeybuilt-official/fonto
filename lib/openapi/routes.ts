@@ -287,6 +287,15 @@ registry.registerPath({
             "grid is sorted server-side, so it stays correct across pages. " +
             "`name`/`rating`/`largest` page only via the opaque `cursor`.",
         }),
+      processingState: z.string().optional().openapi({
+        description:
+          "Pipeline-state filter. A single state or a comma-separated set " +
+          "drawn from `captured`, `classified`, `extracted`, `ready`, " +
+          "`failed`, `processing` (legacy in-flight literal) — e.g. " +
+          "`?processingState=classified,extracted` for in-flight work or " +
+          "`?processingState=failed` for the failure queue. Any other token " +
+          "is rejected with 400. Omit for the unfiltered library.",
+      }),
       dateFrom: z.string().optional().openapi({
         description:
           "Inclusive lower bound (ISO) on the captured timeline " +
@@ -328,6 +337,9 @@ registry.registerPath({
   },
   responses: {
     200: json(AssetsEnvelopeSchema, "Assets, sorted by the active axis."),
+    400: errorResponse(
+      "Unrecognised `processingState` token, or a malformed `idBefore`."
+    ),
     401: errorResponse("Not authenticated."),
   },
 });

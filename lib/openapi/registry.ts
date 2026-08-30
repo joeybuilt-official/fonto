@@ -16,6 +16,7 @@
 // The generator runs at request time in `app/api/v1/openapi.json/route.ts`.
 import { z } from "zod";
 import { OpenAPIRegistry, extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
+import { PROCESSING_STATES } from "@/lib/processing/state";
 
 // Must be called before any `.openapi()` chains lower in this file.
 extendZodWithOpenApi(z);
@@ -131,7 +132,7 @@ export const AssetSchema = registry.register(
       // `processing` is never written by the current pipeline (see
       // `lib/processing/reapStuckAssets.ts`); it stays here for legacy rows.
       processingState: z
-        .enum(["captured", "classified", "extracted", "ready", "failed", "processing"])
+        .enum(PROCESSING_STATES)
         .or(z.string())
         .openapi({
           description:

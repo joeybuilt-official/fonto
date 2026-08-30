@@ -15,6 +15,7 @@ import { detectMime } from "@/lib/mime";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 import { parseScopeParam, scopeCond, isShootStage } from "@/lib/scope";
+import { isProcessingState } from "@/lib/processing/state";
 import { exifFilterConditions } from "@/lib/assets/exifFilters";
 
 // Opaque keyset cursor: base64url(JSON({ s, b, i })) where
@@ -241,6 +242,27 @@ export async function GET(request: NextRequest) {
     where.push(isNotNull(schema.assets.capturedAt));
   } else if (capturedState === "undated") {
     where.push(isNull(schema.assets.capturedAt));
+  }
+
+  // Pipeline-state filter. `?processingState=failed` (single) or a
+  // comma-separated set (`?processingState=classified,extracted`) narrows the
+  // grid to the states a client actually wants — the mobile "processing
+  // detail" view fetches just the in-flight or failed assets instead of paging
+  // the entire library to find them. Backed by assets_processing_state_idx.
+  // Unlike `?kind=`, an unrecognised token is a 400 rather than a silent drop:
+  // a typo'd state would otherwise return the UNFILTERED library and read as
+  // "nothing is failing". Absent param = unfiltered, exactly as before.
+  const processingStateRaw = searchParams.get("processingState");
+  if (processingStateRaw != null) {
+    const states = processingStateRaw.split(",").map((s) => s.trim());
+    if (!states.every((s) => isProcessingState(s))) {
+      return NextResponse.json({ error: "Invalid processingState" }, { status: 400 });
+    }
+    if (states.length === 1) {
+      where.push(eq(schema.assets.processingState, states[0]));
+    } else {
+      where.push(inArray(schema.assets.processingState, states));
+    }
   }
 
   // Date-range filter over the captured timeline (COALESCE(capturedAt,
