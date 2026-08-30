@@ -8,6 +8,8 @@
 // placeholder matching the web tile. Same loading / error+retry / empty /
 // data state machine as collections_screen.dart / updates_screen.dart.
 
+import "dart:async";
+
 import "package:cached_network_image/cached_network_image.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
@@ -1128,65 +1130,27 @@ class _PersonAssetsScreenState extends State<_PersonAssetsScreen> {
     try {
       final messenger = ScaffoldMessenger.of(context);
       final navigator = Navigator.of(context);
-      List<Person> others;
-      List<MergeCandidate> candidates;
-      try {
-        // Fan out both calls in parallel — the picker rendering only blocks on
-        // the slower one and we surface candidates above the flat list.
-        final results = await Future.wait([
-          widget.client.listPersons(),
-          widget.client.mergeCandidates(widget.person.id).catchError(
-                (_) => <MergeCandidate>[],
-              ),
-        ]);
-        others = (results[0] as List<Person>)
-            .where((p) => p.id != widget.person.id)
-            .toList();
-        candidates = (results[1] as List<MergeCandidate>);
-      } catch (e) {
-        debugPrint("[merge] load failed ${e.runtimeType}: $e");
-        if (!mounted) return;
-        await _showMergeInfoDialog(
-          "Couldn't load people",
-          "${e.runtimeType}: $e",
-        );
-        return;
-      }
-      if (!mounted) return;
-      // Any other face is a valid target now — a named person OR an unnamed
-      // cluster — so two faces can be merged directly. Candidates (server-ranked
-      // likely matches) are always named; drop them from the full list so a face
-      // never shows twice.
-      final candidateIds = candidates.map((c) => c.person.id).toSet();
-      final rest = others.where((p) => !candidateIds.contains(p.id)).toList();
-      if (candidates.isEmpty && rest.isEmpty) {
-        // A visible dialog, not a fleeting snackbar — the old snackbar read as
-        // "nothing happened" when there was simply no other face to merge into.
-        // This pre-check is also what guarantees the sheet below is never
-        // opened with both lists empty (an empty sheet is indistinguishable
-        // from the action doing nothing).
-        await _showMergeInfoDialog(
-          "Nothing to merge into",
-          "There's no other face to merge into yet. Once a second person or "
-              "face cluster exists, you can merge them here.",
-        );
-        return;
-      }
-      debugPrint(
-        "[merge] opening picker candidates=${candidates.length} "
-        "rest=${rest.length}",
-      );
+      // The sheet opens FIRST and loads its own lists.
+      //
+      // It used to await listPersons + mergeCandidates before showing anything.
+      // /api/v1/persons is Valkey-cached and quick, but merge-candidates
+      // measured 13.4s on the production library (it cross-joins the sampled
+      // source faces against every face of every named person), so the tap
+      // looked like it did nothing right up until it didn't. That is the whole
+      // bug: the work was correct, the wait was unreported. Nothing blocks the
+      // sheet now — _MergePicker renders its own loading, empty and error
+      // states, and the "nothing to merge into" case is its empty state rather
+      // than a pre-check out here.
       final target = await showModalBottomSheet<Person>(
         context: context,
         isScrollControlled: true,
         builder: (ctx) => _MergePicker(
-          candidates: candidates,
-          others: rest,
+          client: widget.client,
+          sourcePersonId: widget.person.id,
         ),
       );
       debugPrint("[merge] picker closed target=${target?.id}");
-      // A null target here is a legitimate cancel (the sheet always had
-      // content) — say nothing.
+      // A null target is a legitimate cancel — say nothing.
       if (target == null || !mounted) return;
       HapticFeedback.mediumImpact();
       setState(() => _merging = true);
@@ -1717,41 +1681,187 @@ class _MergeRow {
 /// the user types. Both named people AND unnamed face clusters are valid
 /// targets, so two faces can be merged directly.
 class _MergePicker extends StatefulWidget {
-  const _MergePicker({required this.candidates, required this.others});
-  final List<MergeCandidate> candidates;
-  final List<Person> others;
+  const _MergePicker({required this.client, required this.sourcePersonId});
+
+  final FontoClient client;
+  final String sourcePersonId;
 
   @override
   State<_MergePicker> createState() => _MergePickerState();
 }
 
 class _MergePickerState extends State<_MergePicker> {
+  /// Server-side page size; the route clamps to 500 and orders by
+  /// instance_count desc, so the first page is the most-used faces. Typing
+  /// re-queries the server by name instead of filtering this page, so a NAMED
+  /// person outside the top 500 stays reachable. An UNNAMED cluster past rank
+  /// 500 is not — it has no name to search for. That is a deliberate trade for
+  /// not shipping 7,716 rows of presigned URLs to open a picker; merging into
+  /// an unnamed cluster that small is what the People grid itself is for.
+  static const int _pageLimit = 500;
+  static const Duration _searchDebounce = Duration(milliseconds: 300);
+
   String _query = "";
+  Timer? _debounce;
+  // Guards against an out-of-order search response overwriting a newer one.
+  int _searchSeq = 0;
+
+  List<Person> _others = const [];
+  bool _loadingOthers = true;
+  String? _othersError;
+
+  List<MergeCandidate> _candidates = const [];
+  bool _loadingCandidates = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Both loads are fired here and neither gates the first frame — the sheet
+    // is on screen before either returns. `notify: false` because setState()
+    // during initState hits the framework's "called in constructor" assert;
+    // the loading fields are already initialised to their in-flight values.
+    _loadOthers(notify: false);
+    _loadCandidates();
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  /// [notify] is false only for the initState call — see the note there. Every
+  /// other entry point (debounced search, Retry) needs the rebuild.
+  Future<void> _loadOthers({bool notify = true}) async {
+    final seq = ++_searchSeq;
+    if (notify) {
+      setState(() {
+        _loadingOthers = true;
+        _othersError = null;
+      });
+    } else {
+      _loadingOthers = true;
+      _othersError = null;
+    }
+    try {
+      final list = await widget.client.listPersons(
+        limit: _pageLimit,
+        query: _query,
+      );
+      if (!mounted || seq != _searchSeq) return;
+      setState(() {
+        _others =
+            list.where((p) => p.id != widget.sourcePersonId).toList();
+        _loadingOthers = false;
+      });
+    } catch (e) {
+      debugPrint("[merge] listPersons failed ${e.runtimeType}: $e");
+      if (!mounted || seq != _searchSeq) return;
+      setState(() {
+        _othersError = "${e.runtimeType}: $e";
+        _loadingOthers = false;
+      });
+    }
+  }
+
+  Future<void> _loadCandidates() async {
+    try {
+      final list = await widget.client.mergeCandidates(widget.sourcePersonId);
+      if (!mounted) return;
+      setState(() {
+        _candidates = list;
+        _loadingCandidates = false;
+      });
+    } catch (e) {
+      // Suggestions are optional; the full list beneath them is the real
+      // control. Drop the section rather than failing the whole sheet — but
+      // log it, so a broken endpoint is never silent.
+      debugPrint("[merge] mergeCandidates failed ${e.runtimeType}: $e");
+      if (!mounted) return;
+      setState(() => _loadingCandidates = false);
+    }
+  }
+
+  void _onQueryChanged(String v) {
+    setState(() => _query = v);
+    _debounce?.cancel();
+    _debounce = Timer(_searchDebounce, _loadOthers);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final q = _query.trim().toLowerCase();
-    final cand = q.isEmpty
-        ? widget.candidates
-        : widget.candidates
-            .where((c) => (c.person.name ?? "").toLowerCase().contains(q))
-            .toList();
-    final rest = q.isEmpty
-        ? widget.others
-        : widget.others
-            .where((p) => (p.name ?? "").toLowerCase().contains(q))
-            .toList();
-    final empty = cand.isEmpty && rest.isEmpty;
+    // Candidates are server-ranked against the source person and are never
+    // re-ranked by the search box, so the section is hidden once the user types
+    // — otherwise it would sit above a filtered list contradicting it.
+    final showCandidates = _query.trim().isEmpty && _candidates.isNotEmpty;
+    // Candidates are always named persons; drop them from the flat list so a
+    // face never appears twice.
+    final candidateIds = _candidates.map((c) => c.person.id).toSet();
+    final rest = showCandidates
+        ? _others.where((p) => !candidateIds.contains(p.id)).toList()
+        : _others;
     // Flatten headers + rows into one list so ListView.builder lazily builds
     // tiles — a library with hundreds of named people no longer materialises
     // every ListTile the moment the sheet opens.
     final rows = <_MergeRow>[
-      if (cand.isNotEmpty) const _MergeRow.header("LIKELY MATCHES"),
-      for (final c in cand) _MergeRow.candidate(c),
-      if (cand.isNotEmpty && rest.isNotEmpty) const _MergeRow.divider(),
+      if (showCandidates) const _MergeRow.header("LIKELY MATCHES"),
+      if (showCandidates)
+        for (final c in _candidates) _MergeRow.candidate(c),
+      if (showCandidates && rest.isNotEmpty) const _MergeRow.divider(),
       if (rest.isNotEmpty) const _MergeRow.header("ALL PEOPLE & FACES"),
       for (final p in rest) _MergeRow.person(p),
     ];
+
+    // The required trio — loading / empty / error — all designed. A blank sheet
+    // is exactly what "nothing happened" looked like, so none of these states
+    // is allowed to render as one.
+    final Widget body;
+    if (_othersError != null) {
+      body = Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              "Couldn't load people.\n$_othersError",
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: _loadOthers,
+              child: const Text("Retry"),
+            ),
+          ],
+        ),
+      );
+    } else if (_loadingOthers && rows.isEmpty) {
+      // Fixed height so the sheet doesn't stretch to full screen while empty
+      // and then snap back down when the rows land.
+      body = const SizedBox(
+        height: 160,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    } else if (rows.isEmpty) {
+      body = Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          _query.trim().isEmpty
+              ? "No other faces to merge into yet."
+              : "No matches for \"$_query\".",
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+      );
+    } else {
+      body = ListView.builder(
+        shrinkWrap: true,
+        itemCount: rows.length,
+        itemBuilder: (context, i) => rows[i].build(context),
+      );
+    }
 
     return SafeArea(
       child: Padding(
@@ -1776,7 +1886,7 @@ class _MergePickerState extends State<_MergePicker> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: TextField(
                 autofocus: true,
-                onChanged: (v) => setState(() => _query = v),
+                onChanged: _onQueryChanged,
                 decoration: const InputDecoration(
                   hintText: "Type a name…",
                   prefixIcon: Icon(Icons.search),
@@ -1785,26 +1895,10 @@ class _MergePickerState extends State<_MergePicker> {
                 ),
               ),
             ),
-            Flexible(
-              child: empty
-                  ? Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        q.isEmpty
-                            ? "No other faces to merge into yet."
-                            : "No matches for \"$_query\".",
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                            ),
-                      ),
-                    )
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: rows.length,
-                      itemBuilder: (context, i) => rows[i].build(context),
-                    ),
-            ),
+            // Non-blocking: the sheet stays usable while either list arrives.
+            if (_loadingOthers || _loadingCandidates)
+              const LinearProgressIndicator(minHeight: 2),
+            Flexible(child: body),
           ],
         ),
       ),

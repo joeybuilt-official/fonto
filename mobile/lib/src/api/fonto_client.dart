@@ -1041,8 +1041,24 @@ class FontoClient {
     return raw.map(GeoPlace.fromJson).toList();
   }
 
-  Future<List<Person>> listPersons() async {
-    final j = await _getJson("/api/v1/persons");
+  /// [limit] caps the returned clusters (the route clamps it to 500 and orders
+  /// by instance_count desc) and [query] does a server-side name match. Both
+  /// exist for the merge picker, which must not download the whole People grid
+  /// — 7,716 clusters with presigned cover URLs — just to open. Omit both for
+  /// the full grid, which is what every other caller wants.
+  ///
+  /// Note [query] only matches NAMED persons server-side; unnamed clusters drop
+  /// out. That matches what the picker's old client-side filter did (an unnamed
+  /// cluster has a null name, so it never matched a non-empty query either).
+  Future<List<Person>> listPersons({int? limit, String? query}) async {
+    final params = <String, String>{};
+    if (limit != null) params["limit"] = "$limit";
+    final q = (query ?? "").trim();
+    if (q.isNotEmpty) params["q"] = q;
+    final j = await _getJson(
+      "/api/v1/persons",
+      params.isEmpty ? null : params,
+    );
     final raw = (j["persons"] as List? ?? const []).cast<Map<String, dynamic>>();
     return raw.map(Person.fromJson).toList();
   }

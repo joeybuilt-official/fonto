@@ -19,6 +19,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
+import { getCacheLayer } from "@/lib/cache/valkey";
 
 // Per-merge sample cap on source faces. Above this we'd cross-join
 // thousands of vectors with the workspace; 25 is plenty to identify the
@@ -28,6 +29,18 @@ const SOURCE_SAMPLE = 25;
 // the embedding similarity is noise; no point listing rank-50 candidates.
 const MAX_CANDIDATE_DISTANCE = 0.55;
 const LIMIT = 20;
+// Matches the /api/v1/persons catalogue TTL. The ranking only moves when
+// clustering does, and the tag below evicts it the moment it actually moves.
+const CANDIDATES_CACHE_TTL_SEC = 300;
+
+interface CandidateOut {
+  id: string;
+  name: string;
+  instanceCount: number;
+  distance: number;
+}
+
+type CachedCandidates = { candidates: CandidateOut[] };
 
 export async function GET(
   _req: NextRequest,
@@ -54,6 +67,40 @@ export async function GET(
     .limit(1);
   if (!src) return NextResponse.json({ candidates: [] });
 
+  // The scoring query below cross-joins the sampled source faces against every
+  // face of every named person: measured at 13.4s on a 352k-face library
+  // (113,604 of those faces sit on named persons = 2.84M distance computations
+  // per tap). It cannot use face_instances_embedding_hnsw_idx — MIN() over a
+  // cross join is not a nearest-neighbour scan — and both index-friendly
+  // rewrites were measured and REJECTED: sampling 50 target faces per person
+  // (699ms) and an HNSW probe post-filtered to named persons (762ms) each
+  // returned ZERO rows for a person with a known duplicate at distance 0.398,
+  // while pre-filtering the probe by the named ids returned the right answer
+  // in 30.6s — worse than the exact query it replaced. (The post-filtered probe
+  // was run with hnsw.ef_search below its LIMIT, which pgvector needs raised to
+  // at least the LIMIT, so that one variant is not conclusively dead — an
+  // indexed rewrite is still the durable fix and wants a proper recall test.)
+  //
+  // So cache it rather than degrade it. The tag is the one the person mutators
+  // already evict (`ws:<id>:persons` — merge, split, and PATCH/DELETE all call
+  // cacheInvalidate on it), so a rename/merge/split refreshes the ranking,
+  // while ordinary ingest — which evicts `ws:<id>:assets` — leaves it alone.
+  // Candidates are a ranked suggestion, never an authority: the full person
+  // list beside them in the picker stays exact.
+  const cache = getCacheLayer<CachedCandidates>();
+  const payload = await cache.getOrCompute(
+    `merge-candidates:${src.workspaceId}:${src.id}`,
+    CANDIDATES_CACHE_TTL_SEC,
+    async () => ({ candidates: await computeCandidates() }),
+    {
+      cacheName: "merge-candidates",
+      workspaceId: src.workspaceId,
+      tags: [`ws:${src.workspaceId}:persons`],
+    },
+  );
+  return NextResponse.json(payload);
+
+  async function computeCandidates(): Promise<CandidateOut[]> {
   // For each candidate named person, take the minimum cosine distance from
   // ANY of their faces to ANY sampled source face. Drop persons further than
   // MAX_CANDIDATE_DISTANCE — at that point the embedding similarity is noise
@@ -87,12 +134,11 @@ export async function GET(
     min_dist: number;
   }[];
 
-  const candidates = rows.map((row) => ({
+  return rows.map((row) => ({
     id: row.id,
     name: row.name,
     instanceCount: row.instance_count,
     distance: row.min_dist,
   }));
-
-  return NextResponse.json({ candidates });
+  }
 }
