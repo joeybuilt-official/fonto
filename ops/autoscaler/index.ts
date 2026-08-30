@@ -49,6 +49,11 @@ const CEILING = numEnv("AUTOSCALER_CEILING", 4, 1);
 const DAMPENING_MS = numEnv("AUTOSCALER_DAMPENING_MS", 60_000, 0);
 const DRY_RUN = process.env.AUTOSCALER_DRY_RUN === "1";
 const COMPOSE_FILE = process.env.AUTOSCALER_COMPOSE_FILE ?? "/etc/fonto-compose/docker-compose.yml";
+// The mounted compose file is shared across the whole stack (every service,
+// not just fonto-worker) — `docker compose up` interpolates ALL of it before
+// doing anything, so any unrelated service's missing ${VAR} blocks OUR scale
+// call too. Point this at the real .env so interpolation has what it needs.
+const ENV_FILE = process.env.AUTOSCALER_ENV_FILE;
 const WORKER_SERVICE = process.env.AUTOSCALER_WORKER_SERVICE ?? "fonto-worker";
 const REDIS_URL = process.env.REDIS_URL ?? "redis://valkey:6379";
 
@@ -110,6 +115,7 @@ function applyScale(target: number): Promise<void> {
       "compose",
       "-f",
       COMPOSE_FILE,
+      ...(ENV_FILE ? ["--env-file", ENV_FILE] : []),
       "up",
       "-d",
       "--no-recreate",
@@ -182,6 +188,7 @@ async function main(): Promise<void> {
     dampeningMs: DAMPENING_MS,
     dryRun: DRY_RUN,
     composeFile: COMPOSE_FILE,
+    envFile: ENV_FILE ?? null,
     workerService: WORKER_SERVICE,
   });
 
