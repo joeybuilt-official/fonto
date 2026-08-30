@@ -18,6 +18,8 @@ import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
 import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { db, schema } from "@/lib/db";
+import { cacheInvalidate } from "@/lib/cache/valkey";
+import { revalidateTag } from "next/cache";
 
 interface SplitBody {
   face_ids?: unknown;
@@ -120,6 +122,16 @@ export async function POST(
     ) c
     WHERE fonto.persons.id = c.person_id
   `);
+
+  // The persons list is Valkey-cached for 5 minutes (see GET /api/v1/persons),
+  // so without this the split-out person never appears in the People grid and
+  // the source keeps its old face count — the split reads as "nothing
+  // happened". AWAITED for the same reason as the merge route: the client
+  // refetches the list immediately after this response, so the eviction has to
+  // have happened before we reply. The helper fails open with a 250ms command
+  // timeout, so a Valkey blip cannot stall the split.
+  revalidateTag(`ws:${source.workspaceId}:persons`, "max");
+  await cacheInvalidate(`ws:${source.workspaceId}:persons`);
 
   const [sourceAfter] = await db
     .select()

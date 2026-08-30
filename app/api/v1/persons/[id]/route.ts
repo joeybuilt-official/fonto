@@ -16,6 +16,8 @@ import { requireWorkspaceAccessOrResponse } from "@/lib/authz";
 import { parsePartialDate, toColumns } from "@/lib/temporal/precision";
 import { db, schema } from "@/lib/db";
 import { invalidateByDependency } from "@/lib/reaudit/invalidate";
+import { cacheInvalidate } from "@/lib/cache/valkey";
+import { revalidateTag } from "next/cache";
 
 const DEFAULT_FACES_LIMIT = 24;
 const MAX_FACES_LIMIT = 200;
@@ -261,6 +263,15 @@ export async function PATCH(
     void invalidateByDependency({ workspaceId: person.workspaceId, personIds: [person.id] });
   }
 
+  // The persons list is Valkey-cached for 5 minutes (see GET /api/v1/persons),
+  // so without this the rename/hide keeps reading back the old row and the edit
+  // looks like it never happened. AWAITED for the same reason as the merge
+  // route: the client refetches the list immediately after this response, so the
+  // eviction has to have happened before we reply. The helper fails open with a
+  // 250ms command timeout, so a Valkey blip cannot stall the update.
+  revalidateTag(`ws:${person.workspaceId}:persons`, "max");
+  await cacheInvalidate(`ws:${person.workspaceId}:persons`);
+
   return NextResponse.json({
     person: {
       ...updated,
@@ -305,6 +316,15 @@ export async function DELETE(
 
   // Phase 7 — dependents lose this person's date anchor; re-audit them.
   void invalidateByDependency({ workspaceId: person.workspaceId, personIds: [person.id] });
+
+  // The persons list is Valkey-cached for 5 minutes (see GET /api/v1/persons),
+  // so without this the deleted person keeps coming back from cache and the
+  // delete reads as "nothing happened". AWAITED: the client refetches the list
+  // immediately after this response, so the eviction has to have happened
+  // before we reply. The helper fails open with a 250ms command timeout, so a
+  // Valkey blip cannot stall the delete.
+  revalidateTag(`ws:${person.workspaceId}:persons`, "max");
+  await cacheInvalidate(`ws:${person.workspaceId}:persons`);
 
   return NextResponse.json({ ok: true as const });
 }
