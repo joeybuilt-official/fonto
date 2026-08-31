@@ -78,7 +78,11 @@ export async function GET(
   if (file.endsWith(".ts")) {
     const range = request.headers.get("range") ?? undefined;
     try {
-      const { body, contentLength, contentRange } = await storage().getStream(key, { range });
+      const { body, contentLength, contentRange } = await storage().getStream(key, {
+        range,
+        // Body becomes the response body — the player paces it.
+        consumerPaced: true,
+      });
       const headers: Record<string, string> = {
         "Content-Type": "video/mp2t",
         "Accept-Ranges": "bytes",

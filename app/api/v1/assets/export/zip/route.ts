@@ -296,7 +296,11 @@ async function handle(params: ExportParams): Promise<Response> {
         : uniqueName(a, usedNames);
       let body: ReadableStream;
       try {
-        ({ body } = await storage().getStream(assetStorageKey(a.workspaceId, a.id, a.filename)));
+        ({ body } = await storage().getStream(
+          assetStorageKey(a.workspaceId, a.id, a.filename),
+          // Archived straight into the response — the downloader paces it.
+          { consumerPaced: true }
+        ));
       } catch {
         // Missing object — skip it rather than abort the whole archive.
         continue;

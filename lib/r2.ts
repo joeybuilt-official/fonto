@@ -3,19 +3,118 @@
 import { S3Client } from "@aws-sdk/client-s3";
 
 let _s3: S3Client | null = null;
+let _s3Streaming: S3Client | null = null;
 
+// Socket-inactivity budget for every R2 request, in ms.
+//
+// Why this exists: the AWS SDK ships `DEFAULT_REQUEST_TIMEOUT = 0` — no
+// timeout at all. On 2026-08-31 that deadlocked the thumbnail queue: two
+// sockets to R2 (172.64.x.x:443) sat in CLOSE_WAIT holding 1,363,984 and
+// 269,378 bytes of undelivered response body, the job promises never settled,
+// and 12 `generate-thumbnails` slots were held for 40 minutes with 5,325 jobs
+// waiting and the workers at 0.4% CPU. Same shape as the 12-hour multi-GB
+// stall the week before. R2 half-closes a connection, the SDK waits forever.
+//
+// MUST STAY UNDER 6000. @smithy/node-http-handler installs the socket timeout
+// immediately only when `0 < socketTimeout < 6000`; at 6000 or above it defers
+// registration by 3s, and the handler's `resolve` (which fires as soon as
+// response HEADERS arrive, long before a streamed body is drained) clears that
+// pending registration. A value of 6000+ therefore leaves exactly the case
+// that hung us — draining a response body — completely unguarded.
+//
+// This is inactivity, not total duration: every byte received resets it, so a
+// multi-GB video download is unaffected as long as bytes keep arriving. A
+// genuinely slow-but-progressing giant file is bounded by the size ceiling in
+// generateThumbnails.ts instead.
+//
+// A timeout here rejects with a retryable TimeoutError, so the SDK's own retry
+// policy re-issues the call on a fresh socket. The dead socket is destroyed
+// rather than parked in the agent's pool.
+const DEFAULT_SOCKET_TIMEOUT_MS = 5_000;
+const DEFAULT_CONNECTION_TIMEOUT_MS = 3_000;
+
+export interface R2Timeouts {
+  connectionTimeout: number;
+  socketTimeout: number;
+}
+
+function timeoutFromEnv(name: string, fallback: number, ceilingExclusive?: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  // Guard the 6000ms cliff documented above — an operator raising this to
+  // "be safe" would silently disable body-drain protection.
+  if (ceilingExclusive != null && parsed >= ceilingExclusive) return fallback;
+  return parsed;
+}
+
+/**
+ * Resolve the R2 transport timeouts from the environment. Exported so the
+ * 6000ms cliff documented above is pinned by a test rather than by a comment
+ * nobody re-reads — an operator raising R2_SOCKET_TIMEOUT_MS past it would
+ * otherwise silently restore the deadlock this whole block exists to prevent.
+ */
+export function resolveR2Timeouts(): R2Timeouts {
+  return {
+    connectionTimeout: timeoutFromEnv(
+      "R2_CONNECTION_TIMEOUT_MS",
+      DEFAULT_CONNECTION_TIMEOUT_MS
+    ),
+    socketTimeout: timeoutFromEnv(
+      "R2_SOCKET_TIMEOUT_MS",
+      DEFAULT_SOCKET_TIMEOUT_MS,
+      6_000
+    ),
+  };
+}
+
+function baseClientConfig() {
+  return {
+    endpoint: process.env.R2_ENDPOINT,
+    region: "auto" as const,
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+    },
+  };
+}
+
+/**
+ * The client for every R2 call WE drain ourselves — processing, uploads,
+ * reconcile, presign, stat, put, delete. Socket-timeout armed, because if we
+ * are the consumer then a silent socket means a dead socket.
+ */
 export function getS3Client(): S3Client {
   if (!_s3) {
     _s3 = new S3Client({
-      endpoint: process.env.R2_ENDPOINT,
-      region: "auto",
-      credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-      },
+      ...baseClientConfig(),
+      requestHandler: resolveR2Timeouts(),
     });
   }
   return _s3;
+}
+
+/**
+ * The client for R2 reads whose body is handed STRAIGHT to a client response
+ * (HLS segment playback, zip export). Deliberately NOT socket-timeout armed.
+ *
+ * Those streams are consumer-paced: a paused video player or a slow download
+ * applies backpressure, the TCP window closes, and the socket legitimately
+ * goes quiet for longer than any inactivity budget we would want on our own
+ * reads. Arming the timeout here would destroy the transfer mid-flight and
+ * turn a slow connection into a broken segment or a truncated zip.
+ *
+ * The hang this guards against elsewhere is bounded here by the request's own
+ * lifecycle — the client disconnects and the response stream is torn down.
+ * Use this ONLY when the bytes leave the process; anything we drain ourselves
+ * uses getS3Client().
+ */
+export function getS3StreamingClient(): S3Client {
+  if (!_s3Streaming) {
+    _s3Streaming = new S3Client(baseClientConfig());
+  }
+  return _s3Streaming;
 }
 
 export function assetStorageKey(workspaceId: string, assetId: string, filename: string): string {
