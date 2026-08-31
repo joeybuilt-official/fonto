@@ -53,7 +53,7 @@
 // 'syncing' forever — nothing else watches that column. See
 // reapStrandedSyncing() below.
 
-import { and, asc, eq, inArray, isNull, like, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, like, lt, notInArray, or, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { assetProcessingQueue, thumbnailQueue } from "@/lib/queue/queues";
@@ -82,6 +82,28 @@ export function getStuckThresholdMinutes(): number {
  * genuinely unprocessed assets into a ~497k queue. Rows not picked up this tick
  * stay eligible and drain over subsequent sweeps, oldest-first.
  */
+/**
+ * Thumbnail states the reaper must NOT re-drive.
+ *
+ * 'skipped' is a decision (non-renderable mime, or an original over the size
+ * ceiling). 'failed' is a verdict already reached after BullMQ exhausted the
+ * job's own attempts — re-running it just repeats the same failure.
+ *
+ * Why this matters more than it looks: the worker stamps `thumbnail_state`
+ * WITHOUT touching `updated_at`, so the `updatedAt < cutoff` filter below
+ * never stops matching a settled row. Before this guard, 1,549 JPEG-XR DNGs
+ * that no decoder in the image can read were re-enqueued 200 at a time every
+ * REAPER_INTERVAL_MS, each attempt paying a full R2 download, forever — which
+ * is what flattened thumbnail throughput after the R2 deadlock was fixed.
+ *
+ * Retrying a terminal row is deliberately an OPERATOR action, not an
+ * automatic one: `scripts/backfill-thumbnails.ts` excludes only 'skipped', so
+ * it remains the way to give every failed row a fresh attempt after a fix
+ * lands. Transient failures are already covered one layer down by BullMQ's
+ * per-job attempts, which is what decides 'failed' in the first place.
+ */
+const THUMBNAIL_TERMINAL_STATES = ["skipped", "failed"] as const;
+
 export function getStuckBatch(): number {
   const raw = process.env.REAPER_STUCK_BATCH;
   if (!raw) return 200;
@@ -322,12 +344,10 @@ export async function reapStuckAssets(): Promise<ReapResult> {
       // was empty when the row was first enqueued), re-fan that job out now.
       // Cheap to re-run; non-image rows are guarded the same way the
       // producer does it.
-      // 'skipped' is a decision, not a gap: either a non-renderable mime or an
-      // original over the size ceiling. Re-driving it re-runs the same skip
-      // every tick and, for the oversized case, used to re-wedge a worker slot.
+      // See THUMBNAIL_TERMINAL_STATES — a settled row is not a gap.
       if (
         row.thumbnailKey == null &&
-        row.thumbnailState !== "skipped" &&
+        !(THUMBNAIL_TERMINAL_STATES as readonly string[]).includes(row.thumbnailState) &&
         (row.mimeType.startsWith("image/") ||
           row.mimeType.startsWith("video/") ||
           row.mimeType === "application/pdf")
@@ -412,8 +432,8 @@ async function backfillReadyThumbnails(): Promise<number> {
       and(
         eq(schema.assets.processingState, "ready"),
         isNull(schema.assets.thumbnailKey),
-        // See the stuck-sweep guard above — a skipped row is settled, not stuck.
-        ne(schema.assets.thumbnailState, "skipped"),
+        // See THUMBNAIL_TERMINAL_STATES — a settled row is not stuck.
+        notInArray(schema.assets.thumbnailState, [...THUMBNAIL_TERMINAL_STATES]),
         lt(schema.assets.updatedAt, cutoff),
         or(
           like(schema.assets.mimeType, "image/%"),
