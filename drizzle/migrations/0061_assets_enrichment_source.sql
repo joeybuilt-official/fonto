@@ -1,0 +1,46 @@
+-- 0061_assets_enrichment_source.sql
+--
+-- Adds assets.enrichment_source — one provenance marker recording WHICH tier
+-- produced a row's classification / description / OCR metadata.
+--
+-- Why this exists: the enrichment-throughput plan splits enrichment by model
+-- class. Cheap discriminative models (CLIP argmax, a real OCR model) run for
+-- every asset on the fast path; the generative VLM moves to its own queue and
+-- runs on demand. Both tiers write the SAME columns (classification,
+-- sub_classification, description, ocr_text). Without a marker, once cheap-path
+-- metadata is mixed into those columns there is no later migration that can
+-- separate a CLIP-argmax guess from a VLM answer — the information is simply
+-- gone. So the marker has to land with (or before) the first cheap-path write,
+-- not after.
+--
+-- Values written by the new path:
+--   'unified-vlm'  — the single-round-trip vision model (the pre-plan path)
+--   'clip-argmax'  — zero-shot CLIP argmax over the taxonomy, no LLM
+--   'clip-pending' — no CLIP vector yet; classification deferred
+--   'lazy-vlm'     — VLM description produced on demand, after the asset
+--                    was already viewable
+--
+-- Existing rows stay NULL, which reads as "pre-plan, unknown" — deliberately
+-- distinct from every value above. Nothing is backfilled: inventing a
+-- provenance for 230k historical rows would be exactly the confident fiction
+-- this column exists to prevent.
+--
+-- No index. The column is low-cardinality and is read by coverage aggregates
+-- that already scan (count(*) FILTER (WHERE ...)), where a btree adds cost at
+-- write time and buys nothing at read time. Add one if a filtered lookup
+-- appears.
+--
+-- Safety: additive only. ADD COLUMN with no default and no NOT NULL is
+-- metadata-only on PostgreSQL 11+ — no table rewrite, only a brief ACCESS
+-- EXCLUSIVE lock. Nothing is dropped, narrowed, or backfilled. Idempotent per
+-- this repo's convention: re-running is a no-op.
+--
+-- Hand-authored deliberately: `drizzle-kit generate` cannot produce an
+-- incremental diff in this repo — drizzle.config.ts points `out` at ./drizzle
+-- while the real history lives in ./drizzle/migrations with no
+-- meta/_journal.json, so generation only ever emits a full CREATE-everything
+-- baseline. Every migration 0001-0060 here is likewise hand-authored numbered
+-- SQL; this file follows that established convention.
+
+ALTER TABLE "fonto"."assets"
+  ADD COLUMN IF NOT EXISTS "enrichment_source" text;

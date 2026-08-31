@@ -250,6 +250,13 @@ export const assets = fontoSchema.table(
     subClassification: text("sub_classification"),
     classifyMethod: text("classify_method"),
     classifyConfidence: real("classify_confidence"),
+    //   enrichment_source: WHICH enrichment tier produced this row's
+    //   classification / description / OCR. 'unified-vlm' | 'clip-argmax' |
+    //   'clip-pending' | 'lazy-vlm'. NULL means pre-plan / unknown and is
+    //   deliberately distinct from every value above — historical rows are
+    //   never backfilled, because inventing a provenance is the exact fiction
+    //   this column exists to prevent. Migration 0061.
+    enrichmentSource: text("enrichment_source"),
     autoTaggedAt: timestamp("auto_tagged_at", { withTimezone: true }),
     // Phase 5.5 — manual stacks. NULL = standalone asset. When set, the row
     // belongs to a `fonto.stacks` group and the timeline hides it unless the

@@ -819,7 +819,9 @@ export function assetGridColumns() {
   // 0059 and reached this projection only because assetGridColumns is
   // select-everything-except — which is exactly what the conformance guard
   // exists to catch. Give it a reader before giving it a place here.
-  const { clipVec, extractedText, ocrText, thumbnailState, ...rest } =
+  // enrichmentSource (migration 0061) is the same shape: a provenance marker
+  // the enrichment tiers write and only operator coverage queries read.
+  const { clipVec, extractedText, ocrText, thumbnailState, enrichmentSource, ...rest } =
     getTableColumns(schema.assets);
   return rest;
 }
