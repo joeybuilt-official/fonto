@@ -84,6 +84,7 @@ async function main(): Promise<void> {
               OR mime_type = 'application/pdf'
             )
             AND thumbnail_key IS NULL
+            AND thumbnail_state <> 'skipped'
             AND (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
           ORDER BY created_at DESC, id DESC
           LIMIT ${batchSize}
@@ -98,6 +99,7 @@ async function main(): Promise<void> {
               OR mime_type = 'application/pdf'
             )
             AND thumbnail_key IS NULL
+            AND thumbnail_state <> 'skipped'
           ORDER BY created_at DESC, id DESC
           LIMIT ${batchSize}
         `) as unknown as Array<AssetRow & { created_at: string }>;

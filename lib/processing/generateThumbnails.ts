@@ -65,6 +65,36 @@ const LQIP_QUALITY = 25;
 // so clients can cache aggressively.
 const DERIVATIVE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
+// Size ceilings above which an original is not worth a thumbnail slot.
+//
+// The socket-inactivity timeout in `lib/r2.ts` kills a DEAD transfer, but a
+// slow-but-progressing 19GB read is not dead — it just holds one of
+// THUMBNAIL_WORKER_CONCURRENCY slots for as long as it takes while the queue
+// backs up behind it. On 2026-08-31 three QuickTime originals (17GB, 13GB,
+// 17GB) held all three slots for ~12 hours that way, and the reaper re-drove
+// them every tick because both of its re-enqueue selects key on
+// `thumbnail_key IS NULL` alone.
+//
+// Over the ceiling the row is stamped `thumbnail_state='skipped'` BEFORE any
+// byte is read, and the reaper now excludes skipped rows — so the job stops
+// recurring instead of re-wedging a slot every tick.
+//
+// Two ceilings, because the two paths fail differently: image/PDF originals
+// are read fully into the worker heap (`downloadOriginal`), so their ceiling
+// guards an OOM — the class fixed in 88bdea9. Video streams to a tmp file
+// (`downloadOriginalToFile`), so its ceiling guards wall-clock and container
+// disk, and can be far higher.
+const DEFAULT_MAX_BUFFERED_BYTES = 512 * 1024 * 1024;
+const DEFAULT_MAX_STREAMED_BYTES = 5 * 1024 * 1024 * 1024;
+
+function byteCeilingFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
 export interface GenerateThumbnailsInput {
   assetId: string;
   workspaceId: string;
@@ -72,7 +102,7 @@ export interface GenerateThumbnailsInput {
 
 export interface GenerateThumbnailsResult {
   skipped: boolean;
-  reason?: "non-image" | "asset-missing" | "no-r2-bucket";
+  reason?: "non-image" | "asset-missing" | "no-r2-bucket" | "too-large";
   thumbnailKey?: string;
   previewKey?: string;
   thumbBytes?: number;
@@ -205,6 +235,7 @@ export async function generateThumbnails(
       workspaceId: schema.assets.workspaceId,
       filename: schema.assets.filename,
       mimeType: schema.assets.mimeType,
+      sizeBytes: schema.assets.sizeBytes,
     })
     .from(schema.assets)
     .where(eq(schema.assets.id, assetId))
@@ -230,6 +261,29 @@ export async function generateThumbnails(
       .set({ thumbnailState: "skipped" })
       .where(eq(schema.assets.id, assetId));
     return { skipped: true, reason: "non-image" };
+  }
+
+  // Bail before the first byte is read. `size_bytes` is NOT NULL and stamped
+  // at ingest, so this costs nothing on top of the select above.
+  const ceiling = isVideo
+    ? byteCeilingFromEnv("THUMBNAIL_MAX_STREAMED_BYTES", DEFAULT_MAX_STREAMED_BYTES)
+    : byteCeilingFromEnv("THUMBNAIL_MAX_BUFFERED_BYTES", DEFAULT_MAX_BUFFERED_BYTES);
+  if (asset.sizeBytes > ceiling) {
+    log.warn(
+      {
+        event: "thumbnails.skipped_too_large",
+        mimeType: asset.mimeType,
+        sizeBytes: asset.sizeBytes,
+        ceiling,
+        path: isVideo ? "streamed" : "buffered",
+      },
+      "original over the thumbnail size ceiling — skipping"
+    );
+    await db
+      .update(schema.assets)
+      .set({ thumbnailState: "skipped" })
+      .where(eq(schema.assets.id, assetId));
+    return { skipped: true, reason: "too-large" };
   }
 
   const originalKey = assetStorageKey(workspaceId, assetId, asset.filename);

@@ -17,7 +17,7 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { getS3Client } from "@/lib/r2";
+import { getS3Client, getS3StreamingClient } from "@/lib/r2";
 import type {
   CopyOptions,
   GetOptions,
@@ -106,7 +106,8 @@ export class R2Backend implements StorageBackend {
   }
 
   async getStream(key: string, opts?: GetOptions): Promise<StreamResult> {
-    const out = await getS3Client().send(
+    const client = opts?.consumerPaced ? getS3StreamingClient() : getS3Client();
+    const out = await client.send(
       new GetObjectCommand({ Bucket: bucket(), Key: key, Range: opts?.range })
     );
     if (!out.Body) throw new Error(`R2 object empty body: ${key}`);

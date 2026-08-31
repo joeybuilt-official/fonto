@@ -28,6 +28,13 @@ export interface PutOptions {
 export interface GetOptions {
   /** Raw HTTP Range header value (e.g. "bytes=0-1023") for byte-range reads. */
   range?: string;
+  /**
+   * Set ONLY when this stream's body is handed straight to a client response
+   * and is therefore drained at the client's pace. Backpressure from a paused
+   * player or a slow download legitimately idles the socket, so the backend
+   * must not apply its inactivity timeout. See `getS3StreamingClient()`.
+   */
+  consumerPaced?: boolean;
 }
 
 export interface PresignGetOptions {

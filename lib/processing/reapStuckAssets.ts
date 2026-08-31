@@ -53,7 +53,7 @@
 // 'syncing' forever — nothing else watches that column. See
 // reapStrandedSyncing() below.
 
-import { and, asc, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, like, lt, ne, or, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { assetProcessingQueue, thumbnailQueue } from "@/lib/queue/queues";
@@ -169,6 +169,7 @@ export async function reapStuckAssets(): Promise<ReapResult> {
       extractedText: schema.assets.extractedText,
       processingAttempts: schema.assets.processingAttempts,
       thumbnailKey: schema.assets.thumbnailKey,
+      thumbnailState: schema.assets.thumbnailState,
       // Presence only. Never pull the 512-dim vector itself into the sweep's
       // working set — the batch is up to REAPER_STUCK_BATCH rows wide.
       hasClipVec: sql<boolean>`${schema.assets.clipVec} IS NOT NULL`,
@@ -321,8 +322,12 @@ export async function reapStuckAssets(): Promise<ReapResult> {
       // was empty when the row was first enqueued), re-fan that job out now.
       // Cheap to re-run; non-image rows are guarded the same way the
       // producer does it.
+      // 'skipped' is a decision, not a gap: either a non-renderable mime or an
+      // original over the size ceiling. Re-driving it re-runs the same skip
+      // every tick and, for the oversized case, used to re-wedge a worker slot.
       if (
         row.thumbnailKey == null &&
+        row.thumbnailState !== "skipped" &&
         (row.mimeType.startsWith("image/") ||
           row.mimeType.startsWith("video/") ||
           row.mimeType === "application/pdf")
@@ -407,6 +412,8 @@ async function backfillReadyThumbnails(): Promise<number> {
       and(
         eq(schema.assets.processingState, "ready"),
         isNull(schema.assets.thumbnailKey),
+        // See the stuck-sweep guard above — a skipped row is settled, not stuck.
+        ne(schema.assets.thumbnailState, "skipped"),
         lt(schema.assets.updatedAt, cutoff),
         or(
           like(schema.assets.mimeType, "image/%"),
