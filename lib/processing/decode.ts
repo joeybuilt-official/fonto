@@ -284,6 +284,23 @@ async function decodeRawWithDcraw(
       if (!meta.width || !meta.height) {
         throw new Error("sharp read no image dimensions");
       }
+      // Reading the header is not the same as being able to decode the pixels.
+      // A DNG whose tiles are JPEG XR ("WMPHOTO", TIFF compression 29199) parses
+      // cleanly — sharp reports sensible width/height/channels — but libvips has
+      // no JXR codec and the TIFF's PhotometricInterpretation is 'Linear Raw',
+      // which it maps to 'multiband'. The failure then surfaces two layers away
+      // as `vips_colourspace: no known route from 'multiband' to 'srgb'` during
+      // encode, which reads like a colour bug and is not one. Fail here with the
+      // real reason instead. Nothing in this image decodes JPEG XR: LibRaw,
+      // ffmpeg and ImageMagick all reject it (IM shells out to a JxrDecApp that
+      // is not installed), so this is a missing codec, not a bad file.
+      if (meta.space === "multiband") {
+        throw new Error(
+          `unsupported ${meta.format ?? "image"} colour model 'multiband' for ${filename} ` +
+            `(${meta.channels ?? "?"}ch ${meta.depth ?? "?"}) — no decoder available; ` +
+            `typically a JPEG XR-compressed DNG, which needs jxrlib`
+        );
+      }
       logger.info(
         {
           filename,
