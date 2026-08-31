@@ -1484,6 +1484,7 @@ function startMaintenanceWorker(): Worker {
             candidates: result.candidates,
             reenqueued: result.reenqueued,
             exhausted: result.exhausted,
+            settledWithoutEnrichment: result.settledWithoutEnrichment,
           },
           "reaper tick complete"
         );

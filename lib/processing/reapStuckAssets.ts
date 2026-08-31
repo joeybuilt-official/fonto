@@ -29,16 +29,23 @@
 //          processing_attempts is otherwise only incremented by the worker on
 //          dequeue — a row buried deep in the queue never dequeues, so its
 //          budget below would never be spent.
-//        - if processing_attempts >= 5 → terminally fail: write
-//          processing_state='failed' + processing_error='reaped ...'. Do not
-//          re-enqueue.
+//        - if processing_attempts >= 5 → settle, without re-enqueueing. A row
+//          that already carries a thumbnail AND a CLIP vector is findable and
+//          viewable; only the generative tail (VLM description +
+//          classification) is outstanding, and that stage is slow enough to
+//          blow the stuck threshold on its own. Calling it 'failed' is a lie
+//          the UI then asks the user to retry — and the retry re-runs the same
+//          stalled stage. Those rows get processing_state='ready' +
+//          processing_error=NULL, and the enrichment is left to a later
+//          backfill. Every other exhausted row terminally fails: write
+//          processing_state='failed' + processing_error='reaped ...'.
 //   3. Emit structured pino lines tagged event=reaper.scan / .reenqueue /
-//      .exhausted so the metrics layer can chart sweep activity.
+//      .settled / .exhausted so the metrics layer can chart sweep activity.
 //
 // Idempotency: running back-to-back is safe. The threshold ensures a row
 // recently touched by either a re-enqueue or the worker will not match on the
-// next tick. The terminal-failure branch sets processing_state='failed', which
-// also drops the row out of the scan predicate.
+// next tick. The settle branches write processing_state='ready' or 'failed',
+// both of which drop the row out of the scan predicate.
 //
 // A second, independent sweep covers sync_state: the legacy multipart upload
 // route inserts the row, flips sync_state to 'syncing', then does the R2 PUT.
@@ -128,6 +135,12 @@ export interface ReapResult {
   candidates: number;
   reenqueued: number;
   exhausted: number;
+  /**
+   * Rows that exhausted their retries but already had a thumbnail and a CLIP
+   * vector, so they were settled as 'ready' rather than 'failed' — viewable
+   * and searchable, with only the generative tail outstanding.
+   */
+  settledWithoutEnrichment: number;
   /** Ready rows missing a thumbnail that had GenerateThumbnails re-enqueued. */
   thumbnailBackfilled: number;
   /** Rows stranded in sync_state='syncing' that were moved to 'error'. */
@@ -156,6 +169,9 @@ export async function reapStuckAssets(): Promise<ReapResult> {
       extractedText: schema.assets.extractedText,
       processingAttempts: schema.assets.processingAttempts,
       thumbnailKey: schema.assets.thumbnailKey,
+      // Presence only. Never pull the 512-dim vector itself into the sweep's
+      // working set — the batch is up to REAPER_STUCK_BATCH rows wide.
+      hasClipVec: sql<boolean>`${schema.assets.clipVec} IS NOT NULL`,
       updatedAt: schema.assets.updatedAt,
     })
     .from(schema.assets)
@@ -192,6 +208,7 @@ export async function reapStuckAssets(): Promise<ReapResult> {
       candidates: 0,
       reenqueued: 0,
       exhausted: 0,
+      settledWithoutEnrichment: 0,
       thumbnailBackfilled,
       syncStranded,
     };
@@ -210,9 +227,33 @@ export async function reapStuckAssets(): Promise<ReapResult> {
 
   let reenqueued = 0;
   let exhausted = 0;
+  let settledWithoutEnrichment = 0;
 
   for (const row of stuck) {
     if (row.processingAttempts >= REAPER_MAX_ATTEMPTS) {
+      if (row.thumbnailKey && row.hasClipVec) {
+        // Cheap stages already landed: the asset renders in the grid and
+        // answers semantic search. Only the generative tail is missing, so
+        // this is not a failure — settle it as 'ready' with no error, and
+        // leave the description/classification to a later backfill. Marking
+        // it 'failed' would put it behind a retry that re-runs the whole
+        // chain and stalls at the same stage.
+        await db
+          .update(schema.assets)
+          .set({ processingState: "ready", processingError: null })
+          .where(eq(schema.assets.id, row.id));
+        log.info(
+          {
+            event: "reaper.settled",
+            assetId: row.id,
+            attempts: row.processingAttempts,
+          },
+          "asset exhausted retries but is viewable — settling as ready"
+        );
+        settledWithoutEnrichment += 1;
+        continue;
+      }
+
       // Terminal failure. The row is dropped out of the candidate set on
       // future sweeps by the processing_state filter.
       await db
@@ -333,6 +374,7 @@ export async function reapStuckAssets(): Promise<ReapResult> {
     candidates: stuck.length,
     reenqueued,
     exhausted,
+    settledWithoutEnrichment,
     thumbnailBackfilled,
     syncStranded,
   };
