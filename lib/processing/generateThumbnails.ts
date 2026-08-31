@@ -22,7 +22,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import sharp from "sharp";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import {
@@ -258,7 +258,7 @@ export async function generateThumbnails(
     // "which assets are missing a thumbnail?" query.
     await db
       .update(schema.assets)
-      .set({ thumbnailState: "skipped" })
+      .set({ thumbnailState: "skipped", updatedAt: sql`now()` })
       .where(eq(schema.assets.id, assetId));
     return { skipped: true, reason: "non-image" };
   }
@@ -281,7 +281,7 @@ export async function generateThumbnails(
     );
     await db
       .update(schema.assets)
-      .set({ thumbnailState: "skipped" })
+      .set({ thumbnailState: "skipped", updatedAt: sql`now()` })
       .where(eq(schema.assets.id, assetId));
     return { skipped: true, reason: "too-large" };
   }
@@ -519,6 +519,7 @@ export async function generateThumbnails(
       thumbnailGeneratedAt: new Date(),
       lqip,
       thumbnailState: "ready",
+      updatedAt: sql`now()`,
       ...motionFields,
     })
     .where(eq(schema.assets.id, assetId));
