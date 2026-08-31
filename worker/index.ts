@@ -532,7 +532,13 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
       // Redis set — mirrors the HLS worker's 'transcoding' stamp.
       await db
         .update(schema.assets)
-        .set({ thumbnailState: "generating" })
+        // Bump updated_at with it. The reaper's thumbnail backfill filters on
+        // `updated_at < cutoff`, so a state write that leaves the timestamp
+        // untouched keeps the row eternally selectable — which is how 1,402
+        // undecodable DNGs got re-enqueued 200 at a time every tick. Stamping
+        // it here gives every attempt one threshold window of quiet, matching
+        // what the stuck sweep already does when it re-enqueues.
+        .set({ thumbnailState: "generating", updatedAt: sql`now()` })
         .where(eq(schema.assets.id, data.assetId));
 
       log.info("generating thumbnails");
@@ -561,7 +567,7 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
         if (err instanceof UnrecoverableError || isLastAttempt) {
           await db
             .update(schema.assets)
-            .set({ thumbnailState: "failed" })
+            .set({ thumbnailState: "failed", updatedAt: sql`now()` })
             .where(eq(schema.assets.id, data.assetId));
         }
         throw err;
