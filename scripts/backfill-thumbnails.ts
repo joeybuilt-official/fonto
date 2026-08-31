@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Phase 1.1 — backfill thumbnail derivatives for image assets uploaded
-// before Phase 1.1 shipped.
+// Phase 1.1 — backfill thumbnail derivatives for assets that have none.
+//
+// Covers every mime type `generate-thumbnails` can actually render: images,
+// videos (ffmpeg keyframe) and PDFs. It was image-only until 2026-08-30,
+// which left 164 thumbnail-less videos and 5 PDFs permanently unreachable by
+// the only tool an operator has for this — they render as a broken-image icon
+// in the grid and nothing ever retries them. The mime set here must stay in
+// step with `backfillReadyThumbnails()` in lib/processing/reapStuckAssets.ts,
+// which sweeps the same three types.
 //
 // Behaviour: enqueues `generate-thumbnails` jobs on the BullMQ thumbnails
 // queue and exits. The worker pool does the actual sharp encode + R2 PUT.
@@ -71,7 +78,11 @@ async function main(): Promise<void> {
           SELECT id, workspace_id, created_at::text AS created_at
           FROM fonto.assets
           WHERE lifecycle_state = 'active'
-            AND mime_type LIKE 'image/%'
+            AND (
+              mime_type LIKE 'image/%'
+              OR mime_type LIKE 'video/%'
+              OR mime_type = 'application/pdf'
+            )
             AND thumbnail_key IS NULL
             AND (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
           ORDER BY created_at DESC, id DESC
@@ -81,7 +92,11 @@ async function main(): Promise<void> {
           SELECT id, workspace_id, created_at::text AS created_at
           FROM fonto.assets
           WHERE lifecycle_state = 'active'
-            AND mime_type LIKE 'image/%'
+            AND (
+              mime_type LIKE 'image/%'
+              OR mime_type LIKE 'video/%'
+              OR mime_type = 'application/pdf'
+            )
             AND thumbnail_key IS NULL
           ORDER BY created_at DESC, id DESC
           LIMIT ${batchSize}
