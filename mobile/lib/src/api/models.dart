@@ -27,6 +27,7 @@ class Asset {
     this.scope,
     this.motionPhoto = false,
     this.stackMemberCount,
+    this.previewUnavailable = false,
   });
 
   final String id;
@@ -82,6 +83,12 @@ class Asset {
   // or null when the asset isn't a stack primary. Drives the Layers "N" badge
   // on the grid tile; a value > 1 means extra frames are hidden behind it.
   final int? stackMemberCount;
+  // Phase 4 / M2 — server-derived (thumbnail_state = 'skipped'): this asset
+  // will NEVER get a preview, as opposed to not having one yet. Those need
+  // opposite treatment, and a missing thumbnail alone cannot tell them apart.
+  // Drives the "no preview" tile instead of a network fetch that would fall
+  // back to the undecodable original and render Icons.broken_image.
+  final bool previewUnavailable;
 
   bool get isProcessing =>
       processingState != null &&
@@ -111,6 +118,7 @@ class Asset {
         scope: scope,
         motionPhoto: motionPhoto,
         stackMemberCount: stackMemberCount,
+        previewUnavailable: previewUnavailable,
       );
 
   static Asset fromJson(Map<String, dynamic> j) => Asset(
@@ -138,6 +146,7 @@ class Asset {
         scope: j["scope"] as String?,
         motionPhoto: (j["motionPhoto"] as bool?) ?? false,
         stackMemberCount: (j["stackMemberCount"] as num?)?.toInt(),
+        previewUnavailable: (j["previewUnavailable"] as bool?) ?? false,
       );
 
   /// Null-safe list parse. Returns null — instead of throwing and aborting the

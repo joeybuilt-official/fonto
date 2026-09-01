@@ -29,6 +29,7 @@ import "../state/sync_service.dart";
 import "../state/upload_queue.dart";
 import "../theme/tokens.dart";
 import "../widgets/list_states.dart";
+import "../widgets/preview_unavailable_tile.dart";
 import "../widgets/live_badge.dart";
 import "asset_detail_screen.dart";
 import "device_asset_viewer.dart";
@@ -2801,7 +2802,14 @@ class _AssetTile extends StatelessWidget {
     final placeholderColor =
         Theme.of(context).colorScheme.surfaceContainerHighest;
     final Widget media;
-    if (url == null) {
+    if (asset.previewUnavailable) {
+      // Phase 4 / M2 — this asset can never be thumbnailed. Checked BEFORE the
+      // url branch: the urls endpoint falls back to the ORIGINAL when no
+      // derivative exists, and here the original is exactly the file nothing
+      // can decode, so fetching it would cost a request per tile and land in
+      // the errorWidget's broken-image icon.
+      media = PreviewUnavailableTile(asset: asset);
+    } else if (url == null) {
       // No URL yet: images/videos get a neutral box; docs get the doc card.
       media = (_isImage || _isVideo)
           ? Container(color: placeholderColor)

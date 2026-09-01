@@ -834,7 +834,19 @@ export function assetGridColumns() {
     thumbnailError,
     ...rest
   } = getTableColumns(schema.assets);
-  return rest;
+  return {
+    ...rest,
+    // Phase 4 / M2 — the ONE bit of thumbnailState the grid legitimately needs:
+    // "this asset will never have a preview", so the tile can say so honestly
+    // instead of rendering an empty square forever. Derived in SQL rather than
+    // shipping the raw state (or thumbnailError's up-to-1000 chars) on every row
+    // of every library page.
+    //
+    // It must be derived, not inferred client-side: a missing thumbnailKey alone
+    // cannot distinguish "still generating" from "will never render", and those
+    // two need opposite treatment — a spinner versus a permanent explanation.
+    previewUnavailable: sql<boolean>`${schema.assets.thumbnailState} = 'skipped'`,
+  };
 }
 
 export function serializeAsset<T extends { phash?: bigint | null }>(

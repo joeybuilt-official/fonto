@@ -3,8 +3,9 @@
 "use client";
 
 import { useEffect, useState, useRef, useSyncExternalStore } from "react";
-import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play, Share2, CircleDot, AlertTriangle, RotateCw } from "lucide-react";
+import { Image as ImageIcon, Loader2, Check, MoreVertical, FolderPlus, Download, Trash2, Heart, Star, Layers, Play, Share2, CircleDot, AlertTriangle, RotateCw, FileQuestion } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { formatLabel } from "@/lib/utils";
 
 // Shared coarse-pointer signal. One cached MediaQueryList feeds every tile so
 // a large grid doesn't register thousands of listeners. Drives the always-on
@@ -87,6 +88,12 @@ export interface Asset {
   // white flash + reduces CLS on fast scroll. NULL on non-image assets and on
   // rows that pre-date the backfill (UI tolerates either).
   lqip?: string | null;
+  // Phase 4 / M2 — server-derived (thumbnail_state = 'skipped'): this asset will
+  // NEVER get a preview, as opposed to not having one yet. The two need opposite
+  // treatment — a permanent explanation versus a spinner — and a missing
+  // thumbnail key alone cannot tell them apart. Derived in assetGridColumns() so
+  // neither the raw state nor thumbnailError ships on every row.
+  previewUnavailable?: boolean | null;
   // Task #32 — set on assets produced by /transform (crop / rotate-as-new);
   // points back at the source asset so the lightbox can surface a "Derived
   // from …" badge that navigates to the origin.
@@ -322,8 +329,15 @@ export function PhotoCard({
   // Initialise from the mime so non-image rows never flash the spinner
   // for the one frame between mount and effect-fire. If a batch URL was
   // already supplied we're never in loading state.
+  // previewUnavailable rows must NOT enter loading: the per-card URL fetch below
+  // transparently falls back to the ORIGINAL when no derivative exists, and for
+  // these assets the original is precisely the file nothing can decode. Letting
+  // it through would hand <img> an undecodable source and render the
+  // broken-image glyph this whole phase exists to avoid.
   const [loading, setLoading] = useState(() =>
-    thumbUrl !== undefined ? false : asset.mimeType.startsWith("image/")
+    thumbUrl !== undefined || asset.previewUnavailable
+      ? false
+      : asset.mimeType.startsWith("image/")
   );
   const [hovered, setHovered] = useState(false);
   const coarsePointer = useCoarsePointer();
@@ -417,6 +431,10 @@ export function PhotoCard({
     // Non-image rows never enter loading state (initial useState handles
     // that), so nothing to do here either.
     if (!asset.mimeType.startsWith("image/")) return;
+    // Same reason as the loading initialiser: this endpoint falls back to the
+    // original, which for a previewUnavailable asset is the undecodable file.
+    // Asking for it would cost a request per tile and end in a broken image.
+    if (asset.previewUnavailable) return;
     // Phase 1.1 — grid cells request the 256px thumb variant. The URL route
     // transparently falls back to the original if the derivative hasn't been
     // generated yet (legacy assets, in-flight backfill), so unbackfilled
@@ -560,6 +578,36 @@ export function PhotoCard({
             // the viewport doesn't block the scroll frame on image decode.
             decoding="async"
           />
+        ) : asset.previewUnavailable ? (
+          // Phase 4 / M2 — an asset that can never be thumbnailed gets an honest
+          // tile, not a broken-image glyph and not silent omission from the grid.
+          // It NAMES the format and says so in one plain sentence; the capture
+          // date and dimensions come from EXIF, which reads fine even when the
+          // pixels do not decode. role="img" + aria-label because the tile is
+          // standing in for the image itself — without it a screen reader
+          // announces only the surrounding card. The meaning is carried by text,
+          // never by colour alone.
+          <div
+            role="img"
+            aria-label={`${formatLabel(asset.mimeType, asset.filename)} — no preview available. ${asset.filename}`}
+            className="flex h-full w-full flex-col items-center justify-center gap-1 p-3 text-center"
+          >
+            <FileQuestion
+              className="h-4 w-4 text-[var(--ft-color-on-surface-variant)]"
+              aria-hidden="true"
+            />
+            <span className="text-xs font-medium text-[var(--ft-color-on-surface)]">
+              {formatLabel(asset.mimeType, asset.filename)}
+            </span>
+            <span className="text-xs text-[var(--ft-color-on-surface-variant)]">
+              No preview available
+            </span>
+            {asset.widthPx && asset.heightPx ? (
+              <span className="text-xs text-[var(--ft-color-on-surface-variant)]">
+                {asset.widthPx}&times;{asset.heightPx}
+              </span>
+            ) : null}
+          </div>
         ) : (
           <ImageIcon className="h-8 w-8 text-[var(--ft-color-on-surface-variant)]" />
         )}

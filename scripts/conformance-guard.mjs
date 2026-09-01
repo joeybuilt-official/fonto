@@ -123,6 +123,11 @@ const LIST_PROJECTION_WHITELIST = new Set([
   "variantGroupId", "isCanonical", "qualityMetrics", "consolidationState",
   "trashPurgeAt", "motionPhoto", "motionVideoKey", "motionCompanionAssetId",
   "motionCompanion",
+  // Derived boolean (not a column): thumbnail_state = 'skipped'. One bit per
+  // row, added deliberately in the same change as its reader — the Phase 4
+  // "preview unavailable" tile. Ships instead of the raw thumbnailState and
+  // thumbnailError, both of which stay off the list projection.
+  "previewUnavailable",
 ]);
 
 const ASSETS_TABLE_ANCHOR = "export const assets = fontoSchema.table(";
