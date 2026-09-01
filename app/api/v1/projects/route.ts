@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue.
+// T1.3 (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B workspace-scoped catalogue.
 // See CACHE-CONVENTION.md.
 export const revalidate = 300;
 

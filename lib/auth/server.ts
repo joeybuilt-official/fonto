@@ -43,7 +43,7 @@ export interface AuthContext {
  * Returns `null` when neither auth method succeeds, or when a PAT was
  * presented but the per-key rate limit is exceeded.
  */
-// T1.1 / fonto-perf-audit.md — React cache() memoises per-request so middleware,
+// T1.1 / docs/claude/platform/completed/perf-audit/perf-audit-plan.md — React cache() memoises per-request so middleware,
 // server components, and route handlers in the same render share one auth lookup.
 async function _getAuthContext(): Promise<AuthContext | null> {
   try {
@@ -92,7 +92,7 @@ export const getAuthContext = cache(_getAuthContext);
  * but exported under its historical name so existing call sites keep working
  * without touching every route.
  */
-// T1.1 / fonto-perf-audit.md — wrapped in cache() so repeated getAuthUser()
+// T1.1 / docs/claude/platform/completed/perf-audit/perf-audit-plan.md — wrapped in cache() so repeated getAuthUser()
 // calls within one request share the underlying getAuthContext memo.
 const _getAuthUser = async (): Promise<User | null> => {
   const ctx = await getAuthContext();

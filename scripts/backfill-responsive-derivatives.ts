@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// T2.3c (fonto-perf-audit.md) — backfill responsive derivative tiers for
+// T2.3c (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — backfill responsive derivative tiers for
 // image assets ingested before T2.3a + T2.3b shipped the 6 new columns:
 //   thumbnail_256_avif_key
 //   thumbnail_512_webp_key, thumbnail_512_avif_key

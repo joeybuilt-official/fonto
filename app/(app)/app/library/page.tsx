@@ -267,7 +267,7 @@ function LibraryContent() {
   // Photos/Files segmented control + an Inbox holding area for unclassified
   // assets; only the Photos surface drives the timeline. When OFF, everything
   // is inert and the page behaves exactly as before. See
-  // plans/photos-vs-files-split/plan.md.
+  // docs/claude/ui/photos-vs-files-split/plan.md.
   const flags = useFeatureFlags();
   const splitOn = flags.librarySurfaceSplit;
   // M2 lens reconciliation: `?kind=` is the single lens param. Derive the

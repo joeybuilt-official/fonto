@@ -31,7 +31,7 @@
 //
 // DO NOT run while LIBRARY_SURFACE_SPLIT_ENABLED is ON in prod — a live sweep
 // would make assets jump between Photos / Files / Inbox mid-session. Run it with
-// the flag OFF, off-hours. See plans/photos-vs-files-split/plan.md §8.
+// the flag OFF, off-hours. See docs/claude/ui/photos-vs-files-split/plan.md §8.
 
 import { spawn } from "node:child_process";
 import path from "node:path";

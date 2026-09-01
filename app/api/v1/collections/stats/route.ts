@@ -7,7 +7,7 @@
 // Five parallel COUNT queries, all hitting partial indexes — fast at
 // any library size the partial indexes cover.
 //
-// T1.3' (fonto-perf-audit.md) — class-B aggregate. Counts come from
+// T1.3' (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B aggregate. Counts come from
 // `fonto.assets` so every asset-side mutation evicts via `ws:<id>:assets`;
 // the `ws:<id>:collections` tag is also fired for symmetry w/ the rest of
 // the Collections surface. See CACHE-CONVENTION.md.

@@ -4,7 +4,7 @@
 // GET  /api/v1/person-groups — built-in groups + workspace-custom groups
 // POST /api/v1/person-groups — create a custom group for the workspace
 //
-// T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue. The "no
+// T1.3 (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B workspace-scoped catalogue. The "no
 // workspace" branch is keyed separately so it can never collide with a real
 // workspace cache row. See CACHE-CONVENTION.md.
 export const revalidate = 300;

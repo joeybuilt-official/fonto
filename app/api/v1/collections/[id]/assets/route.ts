@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// T1.3' (fonto-perf-audit.md) — class-B aggregate. GET returns the assets
+// T1.3' (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B aggregate. GET returns the assets
 // linked to a collection (one row per asset), so the cache key includes the
 // collection id + the resolved scope param, and the tag list covers BOTH
 // `:collections` (link table changes) AND `:assets` (asset CRUD).

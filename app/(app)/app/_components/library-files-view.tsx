@@ -6,7 +6,7 @@
 // A retrieval-oriented surface (vs the Photos timeline): pinned search bar
 // (server-side filename + OCR + source), recency bands, LIST rows (type icon +
 // filename + OCR/source snippet + imported date), imported-at DESC, and a
-// Properties sheet on tap. See plans/photos-vs-files-split/plan.md.
+// Properties sheet on tap. See docs/claude/ui/photos-vs-files-split/plan.md.
 
 "use client";
 

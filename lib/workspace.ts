@@ -74,7 +74,7 @@ export type UserWorkspace = typeof schema.workspaces.$inferSelect & {
  * single-user case this returns the same set; for shared workspaces the
  * caller sees every workspace they've been invited to.
  */
-// T1.1 / fonto-perf-audit.md — React cache() memoises per-request keyed by
+// T1.1 / docs/claude/platform/completed/perf-audit/perf-audit-plan.md — React cache() memoises per-request keyed by
 // userId so repeated lookups in one render (layout + server components) share
 // the workspace fetch.
 const _getUserWorkspaces = async (
