@@ -28,6 +28,7 @@ import "../state/pending_mutations.dart";
 import "../theme/tokens.dart";
 import "../widgets/asset_video_player.dart";
 import "../widgets/live_badge.dart";
+import "../widgets/preview_unavailable_tile.dart";
 
 class AssetDetailScreen extends StatefulWidget {
   const AssetDetailScreen({
@@ -903,7 +904,18 @@ class _AssetDetailScreenState extends State<AssetDetailScreen> {
               }
               final url = _previews[a.id];
               return PhotoViewGalleryPageOptions.customChild(
-                child: url == null
+                // Phase 4 / M2 — checked FIRST. For an asset that can never be
+                // previewed, url == null would otherwise spin forever and a
+                // resolved url would be the undecodable original behind
+                // Icons.broken_image. Neither tells the user what is going on;
+                // the tile names the format and says so plainly. The app bar's
+                // download action still works, which is the point — the file is
+                // intact, only unrenderable here.
+                child: a.previewUnavailable
+                    ? Center(
+                        child: PreviewUnavailableTile(asset: a, compact: false),
+                      )
+                    : url == null
                     ? (_previewFailed.contains(a.id)
                         ? Center(
                             child: Column(
