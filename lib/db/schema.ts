@@ -205,6 +205,14 @@ export const assets = fontoSchema.table(
     //                   raised an unrecoverable error). Safe to re-enqueue —
     //                   generation is idempotent + overwrites.
     thumbnailState: text("thumbnail_state").notNull().default("idle"),
+    // Migration 0062 — WHY the last thumbnail attempt failed, beside the
+    // thumbnailState that records THAT it failed. Written only on the terminal
+    // failure path and cleared on a subsequent success or skip, so it can never
+    // outlive the state it explains. Deliberately NOT processingError: that one
+    // is written with processingState, and an asset can be fully processed and
+    // enriched while its thumbnail failed (110 video/mp4 rows were exactly that
+    // on 2026-09-01). Truncated to 1000 chars, matching processingError.
+    thumbnailError: text("thumbnail_error"),
     // T2.4 (fonto-perf-audit 2026-06-15) — 4x4 WebP LQIP encoded as a data URL
     // (~50–200 bytes). Rendered as `background-image` on the grid tile while
     // the real thumb loads → removes the white flash + reduces CLS on fast

@@ -821,8 +821,19 @@ export function assetGridColumns() {
   // exists to catch. Give it a reader before giving it a place here.
   // enrichmentSource (migration 0061) is the same shape: a provenance marker
   // the enrichment tiers write and only operator coverage queries read.
-  const { clipVec, extractedText, ocrText, thumbnailState, enrichmentSource, ...rest } =
-    getTableColumns(schema.assets);
+  // thumbnailError (migration 0062) likewise: free-text worker diagnostics read
+  // only after a row has been located by thumbnailState. Shipping it on every
+  // library row would widen the projection by up to 1000 chars per asset for a
+  // field the grid never renders.
+  const {
+    clipVec,
+    extractedText,
+    ocrText,
+    thumbnailState,
+    enrichmentSource,
+    thumbnailError,
+    ...rest
+  } = getTableColumns(schema.assets);
   return rest;
 }
 

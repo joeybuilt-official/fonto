@@ -1,0 +1,49 @@
+-- 0062_assets_thumbnail_error.sql
+--
+-- Adds assets.thumbnail_error — the REASON a thumbnail job failed terminally,
+-- stored beside the thumbnail_state that records THAT it failed.
+--
+-- Why this exists: 0059 made a permanently-failed thumbnail "a queryable fact
+-- instead of a record buried in BullMQ's Redis `failed` set". It stopped one
+-- step short: the state landed on the row, the reason did not. On 2026-09-01
+-- all 278 rows in thumbnail_state='failed' carried no reason at all, and
+-- recovering it meant reconstructing job ids and hand-querying Redis — the
+-- exact diagnosis loop 0059 set out to end. Worse, the reason lived only in the
+-- retained failed job, which is also the thing that blocked the retry, so
+-- reading it and retrying were mutually exclusive.
+--
+-- Why NOT reuse processing_error: that column is written together with
+-- processing_state (worker/index.ts, reapStuckAssets.ts). An asset can be
+-- processing_state='ready' with a perfectly good CLIP vector and extracted
+-- text while its thumbnail failed — 110 video/mp4 rows are in exactly that
+-- position. Overloading processing_error would surface a processing failure on
+-- an asset that processed correctly, and would make "why did the thumbnail
+-- fail" unanswerable for any row whose pipeline error came first. Two distinct
+-- failures do not share one field (data-modeling.md, item 5).
+--
+-- Written on the terminal-failure path only, cleared when a thumbnail
+-- subsequently succeeds or the row is skipped, so it can never outlive the
+-- state it explains. Truncated to 1000 chars, matching processing_error.
+--
+-- Existing rows stay NULL, which reads as "reason not captured" — the 276 rows
+-- currently in 'failed' predate this column and nothing is backfilled;
+-- inventing reasons for them would be fiction. They repopulate naturally on the
+-- next deliberate retry via scripts/backfill-thumbnails.ts.
+--
+-- No index. It is free text read only after a row has already been located by
+-- thumbnail_state (which is indexed, assets_thumbnail_state_idx). A btree on
+-- error text costs write time and buys nothing.
+--
+-- Safety: additive only. ADD COLUMN with no default and no NOT NULL is
+-- metadata-only on PostgreSQL 11+ — no table rewrite, only a brief ACCESS
+-- EXCLUSIVE lock. Nothing is dropped, narrowed, or backfilled. Idempotent per
+-- this repo's convention: re-running is a no-op.
+--
+-- Hand-authored deliberately, per the convention established by 0001-0061:
+-- drizzle.config.ts points `out` at ./drizzle while the real history lives in
+-- ./drizzle/migrations with no meta/_journal.json, so `drizzle-kit generate`
+-- only ever emits a full CREATE-everything baseline rather than an incremental
+-- diff.
+
+ALTER TABLE "fonto"."assets"
+  ADD COLUMN IF NOT EXISTS "thumbnail_error" text;

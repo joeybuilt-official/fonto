@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   const redis = new IORedis(redisUrl, { maxRetriesPerRequest: null });
   const queue = new Queue("thumbnails", { connection: redis });
 
-  const stats = { enqueued: 0, scanned: 0, batches: 0 };
+  const stats = { enqueued: 0, scanned: 0, batches: 0, reclaimed: 0 };
   console.log(
     `[backfill-thumbnails] start (batch=${batchSize}${dryRun ? ", dry-run" : ""})`
   );
@@ -69,7 +69,10 @@ async function main(): Promise<void> {
   // worker drains, which is how a prior run ballooned to 1.7M jobs against
   // 35 actual rows. With `jobId: backfill-thumb:<id>` on each enqueue,
   // BullMQ dedupes re-runs while previous jobs are still in flight, so
-  // it's safe to run this script back-to-back as new rows arrive.
+  // it's safe to run this script back-to-back as new rows arrive. NOTE: that
+  // dedupe also covers jobs retained in the completed/failed sets, so a
+  // terminal job must be reclaimed before its row can be retried — see the
+  // `queue.remove` call below. Measured 2026-09-01: reclaimed 277 of 277.
   let cursorCreatedAt: string | null = null;
   let cursorId: string | null = null;
   for (;;) {
@@ -113,6 +116,27 @@ async function main(): Promise<void> {
         console.log(`[backfill-thumbnails] would enqueue ${r.id} ws=${r.workspace_id}`);
       }
     } else {
+      // Reclaim the retained TERMINAL job for each id before re-adding.
+      // BullMQ refuses an add whose jobId already exists — and that includes
+      // jobs sitting in the completed/failed sets, not just in-flight ones.
+      // Without this the script is a silent no-op for exactly the rows it
+      // exists to retry: `addBulk` drops every one of them and the run still
+      // reports them as enqueued. (Observed 2026-09-01: 277 rows "enqueued",
+      // `wait` never left 0, no job executed.)
+      //
+      // Verified against BullMQ's removeJob lua ("In order to be able to remove
+      // a job, it cannot be active"): an ACTIVE job is refused and returns 0, so
+      // a thumbnail currently being generated is never yanked out from under
+      // the worker. A WAITING job IS removable, but removing and immediately
+      // re-adding it is a no-op in effect — the ballooning guarded against above
+      // came from re-SELECTING rows each batch, not from job ids.
+      const reclaimed = await Promise.allSettled(
+        rows.map((r) => queue.remove(`backfill-thumb-${r.id}`))
+      );
+      stats.reclaimed += reclaimed.filter(
+        (o) => o.status === "fulfilled" && o.value === 1
+      ).length;
+
       await queue.addBulk(
         rows.map((r) => ({
           name: "generate-thumbnails",
@@ -128,7 +152,7 @@ async function main(): Promise<void> {
     cursorId = last.id;
 
     console.log(
-      `[backfill-thumbnails] batch ${stats.batches} enqueued ${rows.length}; running total ${stats.enqueued}`
+      `[backfill-thumbnails] batch ${stats.batches} enqueued ${rows.length}; running total ${stats.enqueued}; reclaimed ${stats.reclaimed}`
     );
 
     if (rows.length < batchSize) break;
