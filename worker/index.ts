@@ -565,9 +565,21 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
         // column doesn't flap while BullMQ still has attempts left.
         const isLastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
         if (err instanceof UnrecoverableError || isLastAttempt) {
+          // Record the REASON alongside the state (migration 0062). Until this
+          // landed, 'failed' was written bare: on 2026-09-01 all 278 failed rows
+          // carried no reason, and recovering one meant reconstructing its job
+          // id and hand-querying Redis — the exact loop thumbnail_state was
+          // introduced to end. Worse, the reason lived only in the retained
+          // failed job, which is also what blocks a re-enqueue, so reading it
+          // and retrying it were mutually exclusive.
+          const reason = err instanceof Error ? err.message : String(err);
           await db
             .update(schema.assets)
-            .set({ thumbnailState: "failed", updatedAt: sql`now()` })
+            .set({
+              thumbnailState: "failed",
+              thumbnailError: reason.slice(0, 1000),
+              updatedAt: sql`now()`,
+            })
             .where(eq(schema.assets.id, data.assetId));
         }
         throw err;

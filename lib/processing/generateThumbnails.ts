@@ -258,7 +258,7 @@ export async function generateThumbnails(
     // "which assets are missing a thumbnail?" query.
     await db
       .update(schema.assets)
-      .set({ thumbnailState: "skipped", updatedAt: sql`now()` })
+      .set({ thumbnailState: "skipped", thumbnailError: null, updatedAt: sql`now()` })
       .where(eq(schema.assets.id, assetId));
     return { skipped: true, reason: "non-image" };
   }
@@ -281,7 +281,7 @@ export async function generateThumbnails(
     );
     await db
       .update(schema.assets)
-      .set({ thumbnailState: "skipped", updatedAt: sql`now()` })
+      .set({ thumbnailState: "skipped", thumbnailError: null, updatedAt: sql`now()` })
       .where(eq(schema.assets.id, assetId));
     return { skipped: true, reason: "too-large" };
   }
@@ -519,6 +519,9 @@ export async function generateThumbnails(
       thumbnailGeneratedAt: new Date(),
       lqip,
       thumbnailState: "ready",
+      // Clear any reason from a prior terminal failure (migration 0062) — the
+      // column must never outlive the state it explains.
+      thumbnailError: null,
       updatedAt: sql`now()`,
       ...motionFields,
     })
