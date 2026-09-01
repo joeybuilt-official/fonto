@@ -511,7 +511,46 @@ export function PhotoCard({
             : undefined
         }
       >
-        {loading ? (
+        {asset.previewUnavailable ? (
+          // Phase 4 / M2 — an asset that can never be thumbnailed gets an honest
+          // tile: the format NAMED, one plain sentence, and the EXIF dimensions,
+          // which read fine even when the pixels do not decode. Never a
+          // broken-image glyph, never silent omission from the grid.
+          //
+          // This branch is FIRST, ahead of every URL branch, and that ordering is
+          // load-bearing. The list route signs an inline thumb URL that falls
+          // back to the ORIGINAL when no derivative exists, so `url` is truthy
+          // even here — and the original is precisely the file nothing can
+          // decode. Placed after the URL branches (as it was on first write) the
+          // <img> wins, fails to decode, and the browser paints its alt text
+          // across the tile. Verified against production on 2026-09-01: that is
+          // exactly what happened.
+          //
+          // role="img" + aria-label because this stands in for the image itself;
+          // without it a screen reader announces only the surrounding card. The
+          // meaning is carried by text, never by colour alone.
+          <div
+            role="img"
+            aria-label={`${formatLabel(asset.mimeType, asset.filename)} — no preview available. ${asset.filename}`}
+            className="flex h-full w-full flex-col items-center justify-center gap-1 p-3 text-center"
+          >
+            <FileQuestion
+              className="h-4 w-4 text-[var(--ft-color-on-surface-variant)]"
+              aria-hidden="true"
+            />
+            <span className="text-xs font-medium text-[var(--ft-color-on-surface)]">
+              {formatLabel(asset.mimeType, asset.filename)}
+            </span>
+            <span className="text-xs text-[var(--ft-color-on-surface-variant)]">
+              No preview available
+            </span>
+            {asset.widthPx && asset.heightPx ? (
+              <span className="text-xs text-[var(--ft-color-on-surface-variant)]">
+                {asset.widthPx}&times;{asset.heightPx}
+              </span>
+            ) : null}
+          </div>
+        ) : loading ? (
           <Loader2 className="h-5 w-5 animate-spin text-[var(--ft-color-on-surface-variant)]" />
         ) : responsiveUrls ? (
           // T2.3b — <picture> w/ AVIF + WebP srcsets at 256/512/1024. The
@@ -578,36 +617,6 @@ export function PhotoCard({
             // the viewport doesn't block the scroll frame on image decode.
             decoding="async"
           />
-        ) : asset.previewUnavailable ? (
-          // Phase 4 / M2 — an asset that can never be thumbnailed gets an honest
-          // tile, not a broken-image glyph and not silent omission from the grid.
-          // It NAMES the format and says so in one plain sentence; the capture
-          // date and dimensions come from EXIF, which reads fine even when the
-          // pixels do not decode. role="img" + aria-label because the tile is
-          // standing in for the image itself — without it a screen reader
-          // announces only the surrounding card. The meaning is carried by text,
-          // never by colour alone.
-          <div
-            role="img"
-            aria-label={`${formatLabel(asset.mimeType, asset.filename)} — no preview available. ${asset.filename}`}
-            className="flex h-full w-full flex-col items-center justify-center gap-1 p-3 text-center"
-          >
-            <FileQuestion
-              className="h-4 w-4 text-[var(--ft-color-on-surface-variant)]"
-              aria-hidden="true"
-            />
-            <span className="text-xs font-medium text-[var(--ft-color-on-surface)]">
-              {formatLabel(asset.mimeType, asset.filename)}
-            </span>
-            <span className="text-xs text-[var(--ft-color-on-surface-variant)]">
-              No preview available
-            </span>
-            {asset.widthPx && asset.heightPx ? (
-              <span className="text-xs text-[var(--ft-color-on-surface-variant)]">
-                {asset.widthPx}&times;{asset.heightPx}
-              </span>
-            ) : null}
-          </div>
         ) : (
           <ImageIcon className="h-8 w-8 text-[var(--ft-color-on-surface-variant)]" />
         )}
