@@ -21,7 +21,7 @@
 // `batchId`. Other soft-FKs (correspondents / stacks) keep dangling-on-delete
 // semantics; shoots are special-cased because scope makes orphaning user-visible.
 //
-// T1.3' (fonto-perf-audit.md) — class-B aggregate. GET embeds per-shoot asset
+// T1.3' (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B aggregate. GET embeds per-shoot asset
 // counts grouped by stage, so the cache is invalidated by BOTH the shoots tag
 // AND the assets tag (any asset-side mutation that changes shoot_id/stage must
 // fire `ws:<id>:assets`). See CACHE-CONVENTION.md.

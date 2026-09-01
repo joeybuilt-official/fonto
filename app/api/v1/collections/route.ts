@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
-// T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue. GET is
+// T1.3 (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B workspace-scoped catalogue. GET is
 // wrapped in `unstable_cache` keyed by workspaceId and tagged with
 // `ws:<id>:collections`; mutating routes (POST here, plus
 // /projects/[id] DELETE which detaches collections) call `revalidateTag`

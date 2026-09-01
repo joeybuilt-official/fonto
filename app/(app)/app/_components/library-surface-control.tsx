@@ -5,7 +5,7 @@
 // chips. Rendered only when the `librarySurfaceSplit` flag is ON; replaces the
 // flat KIND lens row. The "Camera" surface is the moment+video union (its label
 // used to be "Photos", which misread as excluding video). See
-// plans/photos-vs-files-split/plan.md.
+// docs/claude/ui/photos-vs-files-split/plan.md.
 
 "use client";
 

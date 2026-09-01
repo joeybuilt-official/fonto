@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue. The
+// T1.3 (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B workspace-scoped catalogue. The
 // per-asset tag-assign route is NOT class-B (per-asset cardinality) and
 // stays out of this cache. The Valkey layer below is T2.2 and shares hits
 // across instances; the `revalidate` export + `revalidateTag` POST hook are

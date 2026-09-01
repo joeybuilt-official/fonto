@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Executes a smart collection's saved query against the assets table.
 //
-// T1.3' (fonto-perf-audit.md) — class-B aggregate. The cache key is the
+// T1.3' (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B aggregate. The cache key is the
 // smart-collection id + scope + sorted workspace id list; PATCH on the
 // smart collection itself (which rewrites `query`) evicts via
 // `ws:<id>:smart_collections`, and any asset-side mutation evicts via

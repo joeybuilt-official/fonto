@@ -1,37 +1,39 @@
-# DISABLED — see the `on:` block below and docs/claude/platform/open-problems-2026-08-30.md.
+# Pre-merge gate. Runs on the self-hosted `hive` runner pool, NOT on
+# GitHub-hosted runners.
 #
-# This repo currently has NO automated CI. Both planes are down:
-#   * GitHub Actions (this file) fails instantly on every run — Actions
-#     quota/billing, not code.
-#   * The pushd `verify` build was removed on 2026-08-30: it exceeded pushd's
-#     30-minute BUILD_TIMEOUT_MS and, with BUILD_CONCURRENCY=1, each timeout
-#     burned the only build slot and starved android-release. A build that
-#     always fails is worse than no build.
+# History: this workflow was disabled on 2026-08-30 because every run failed in
+# ~2 seconds with zero steps executed — the joeybuilt-official org is on the
+# GitHub Free plan and had burned its 2,000 included Actions minutes, so
+# `ubuntu-latest` jobs were rejected before they started ("recent account
+# payments have failed or your spending limit needs to be increased"). That was
+# a billing problem, not a code problem.
 #
-# The real pre-merge gate is therefore LOCAL, and should be run by hand:
-#   pnpm typecheck && pnpm lint && pnpm arch && npx vitest run --dir lib
+# Moving to `[self-hosted, hive]` takes this workflow off metered minutes
+# entirely — self-hosted runners do not consume the included-minutes quota — so
+# the push/pull_request triggers are restored here.
 #
+# Runner pool note: runner-pool are interchangeable for this job. Only
+# runner-docker mounts a docker socket (it alone carries the extra `docker` label),
+# so do NOT add a `services:` block or a `docker run` step to this workflow
+# without also targeting that label — otherwise the job lands on a
+# docker-less runner ~3 times in 4, at random.
 name: verify
 
 on:
-  # DISABLED 2026-08-30. This workflow failed on EVERY run for days, including
-  # on main — ~2 seconds, zero steps executed, which on a GitHub-hosted runner
-  # means an Actions quota/billing problem, not a code problem. Every failure
-  # emailed the operator.
-  #
-  # Also disabled at the repo level (state: disabled_manually). Triggers are
-  # reduced to manual-only so re-enabling it in the UI cannot silently restart
-  # the email flood before the underlying Actions problem is fixed.
-  #
-  # To bring it back: resolve GitHub Actions billing/quota, run it once via
-  # `gh workflow run verify.yml` to confirm it actually executes steps, THEN
-  # restore the push/pull_request triggers.
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: [self-hosted, hive]
+    timeout-minutes: 30
+    env:
+      # `next build` on this app exceeds Node's ~2 GB default heap and dies with
+      # exit 134 ("Ineffective mark-compacts near heap limit"). The runners are
+      # capped at 8 GiB, so 6 GiB is the headroom-preserving ceiling.
+      NODE_OPTIONS: --max-old-space-size=6144
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

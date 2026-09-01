@@ -9,7 +9,7 @@
 // Ordered by asset count DESC (most-photographed places first).
 // Requires migration 0037 (assets_workspace_placename_idx) for fast GROUP BY.
 //
-// T1.3' (fonto-perf-audit.md) — class-B aggregate. Wholly derived from
+// T1.3' (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B aggregate. Wholly derived from
 // `fonto.assets` (no places table), so the cache key is the sorted workspace
 // id list and the tag list is per-workspace `:places` (synthetic — no mutation
 // route owns it) + `:assets` (which every asset-side mutation must fire).

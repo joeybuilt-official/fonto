@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue. GET is
+// T1.3 (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B workspace-scoped catalogue. GET is
 // wrapped in `unstable_cache` keyed by the sorted workspaceId list and
 // tagged with `ws:<id>:smart_collections` per workspace; mutating routes
 // (POST here, PATCH/DELETE on /[id]) call `revalidateTag` on success.

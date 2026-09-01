@@ -240,7 +240,7 @@ async function main(): Promise<void> {
   // `presplit` (Photos/Files split) targets only the rows that could land on
   // the WRONG surface: unclassified (kind IS NULL) + png/gif "moment"s that the
   // shape-fallback may re-bucket to screenshot/graphics. See
-  // plans/photos-vs-files-split/plan.md and scripts/photos-vs-files-presplit-sweep.ts.
+  // docs/claude/ui/photos-vs-files-split/plan.md and scripts/photos-vs-files-presplit-sweep.ts.
   const scope: "moments-only" | "all-images" | "presplit" =
     scopeRaw === "all-images"
       ? "all-images"

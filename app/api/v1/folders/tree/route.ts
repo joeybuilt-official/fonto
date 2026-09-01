@@ -18,7 +18,7 @@
 // tree can hit thousands of rows but each is ~40 bytes; a 1k-folder
 // workspace fits in ~40KB which is fine for a single fetch.
 //
-// T1.3' (fonto-perf-audit.md) — class-B aggregate. Counts come from
+// T1.3' (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B aggregate. Counts come from
 // `fonto.assets`, so any asset-side mutation that touches directory_path /
 // lifecycle_state evicts via `ws:<id>:assets`. The `ws:<id>:folders` tag is
 // the synthetic folder-catalogue tag (no folders table — the tree is derived).

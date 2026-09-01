@@ -14,7 +14,7 @@
 // browser UI. This is intentional — a deleted client should not delete
 // a shoot's photos.
 //
-// T1.3 (fonto-perf-audit.md) — class-B workspace-scoped catalogue. GET is
+// T1.3 (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B workspace-scoped catalogue. GET is
 // wrapped in `unstable_cache` keyed by workspaceId and tagged with
 // `ws:<id>:clients`; the matching POST/PATCH/DELETE call `revalidateTag`
 // on success so cached responses evict immediately. See CACHE-CONVENTION.md.

@@ -20,7 +20,7 @@ git push origin v1.0.17
 ```
 
 After the green build, republish the APK to `myfonto.com/fonto.apk` per
-the recipe in `next-session-deploy.md`. To go back to push-triggered,
+the recipe in `docs/claude/platform/hive-deploy-runbook.md`. To go back to push-triggered,
 restore the `events: [push, pull_request]` + `changeset: mobile/**` block
 in `codemagic.yaml`.
 

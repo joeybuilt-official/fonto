@@ -8,7 +8,7 @@
 // `?tab=` (default = albums; missing param = albums for clean URLs).
 // Detail routes `collections/[id]`, `projects/[id]`, `stacks/[id]`
 // keep their own pages — this wrapper only collapses the landing
-// surfaces. ADR 0004, plan-ux.md Phase 2.
+// surfaces. ADR 0004, docs/claude/ui/completed/ux-nav-consolidation/ux-nav-consolidation-plan.md Phase 2.
 
 "use client";
 

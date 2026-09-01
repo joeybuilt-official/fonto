@@ -1,6 +1,6 @@
 # Fonto cache convention (T1.3)
 
-Reference: [`fonto-perf-audit.md`](./fonto-perf-audit.md) §T1.3 — per-route cache audit.
+Reference: [`docs/claude/platform/completed/perf-audit/perf-audit-plan.md`](./docs/claude/platform/completed/perf-audit/perf-audit-plan.md) §T1.3 — per-route cache audit.
 
 This doc captures the convention every `/api/v1/*/route.ts` handler should follow when deciding whether to mark itself `force-dynamic`, opt-in to `revalidate`, or wrap a query in `unstable_cache` + tag-based invalidation.
 
@@ -195,4 +195,4 @@ These look like class-B catalogues at first glance but embed aggregated counts f
 
 ---
 
-Owner: this convention is part of the perf-audit follow-through. Updates should reference both this file and `fonto-perf-audit.md` so the two stay in sync.
+Owner: this convention is part of the perf-audit follow-through. Updates should reference both this file and `docs/claude/platform/completed/perf-audit/perf-audit-plan.md` so the two stay in sync.

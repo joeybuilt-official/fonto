@@ -17,7 +17,7 @@
 // upcoming Phase 5 redirect layer use these anchors so old bookmarks
 // land on the right section.
 //
-// ADR 0004, plan-ux.md Phase 3. UX-C1 (Home stays) + UX-C5 (Activity
+// ADR 0004, docs/claude/ui/completed/ux-nav-consolidation/ux-nav-consolidation-plan.md Phase 3. UX-C1 (Home stays) + UX-C5 (Activity
 // merges into Updates) defaults applied — operator may revisit either
 // once usage data exists.
 

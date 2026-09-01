@@ -6,7 +6,7 @@
 // Backs the "Things" explore grid (auto labels + user tags surfaced as
 // browseable tiles).
 //
-// T1.3' (fonto-perf-audit.md) — class-B aggregate. Embeds per-tag asset
+// T1.3' (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B aggregate. Embeds per-tag asset
 // counts so it's tagged BOTH `:tags` (so tag CRUD evicts) AND `:assets`
 // (so asset CRUD / asset_tags link/unlink evicts). See CACHE-CONVENTION.md.
 export const revalidate = 300;
