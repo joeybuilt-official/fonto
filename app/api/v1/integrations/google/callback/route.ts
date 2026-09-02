@@ -20,10 +20,16 @@ import { and, eq } from "drizzle-orm";
 import { exchangeCode } from "@/lib/integrations/google";
 import { verifyState } from "@/lib/integrations/oauthState";
 import { encryptToken } from "@/lib/integrations/tokenCrypto";
+import { publicOrigin } from "@/lib/http/publicOrigin";
 
-/** Build an absolute redirect to an /app path on the request's own origin. */
+/**
+ * Build an absolute redirect to an /app path on the origin the BROWSER used.
+ * Not `request.nextUrl.origin`: in the standalone container that is the bind
+ * address (`https://0.0.0.0:3500`), which the browser cannot resolve.
+ */
 function appRedirect(request: NextRequest, path: string): NextResponse {
-  return NextResponse.redirect(new URL(path, request.nextUrl.origin));
+  const origin = publicOrigin(request.headers, request.nextUrl.origin);
+  return NextResponse.redirect(new URL(path, origin));
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
