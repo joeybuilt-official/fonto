@@ -408,6 +408,9 @@ After a feature is tested and signed off:
 1. Move its entire folder — plan, research, references, everything — into that area's `completed/` subfolder.
 2. **Rename the files to describe what shipped**, not generic `plan.md`. A folder of six files named `plan.md` is unsearchable.
 3. Add an entry to `completed-features.md`: what shipped, when, and the archived path.
+4. Delete the task's `docs/claude/in-progress.d/<slug>.md` fragment **in the same PR that ships the
+   code** — a fragment that outlives its merge is planned against as if still open. Leftovers are
+   retired from PR state with `phalanx-docs-reconcile.sh --apply` (Phalanx ≥ 1.7.30), never by guessing.
 4. Remove the item from `in-progress.md`.
 5. Update any closed issue or milestone descriptions that pointed at the old paths.
 
