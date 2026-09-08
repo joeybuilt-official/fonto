@@ -13,6 +13,9 @@ import { eq, and, inArray } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
+import { describeError } from "@/lib/errors/describeError";
+import { EnrichmentSource } from "./enrichmentSource";
+import { tryGenerative } from "./tryGenerative";
 import {
   plexoEnsureWorkspace,
   plexoClassifyAsset,
@@ -25,7 +28,7 @@ import {
 } from "@/lib/plexo";
 import { assetProcessingDurationSeconds } from "@/lib/metrics";
 import { emitWebhook } from "@/lib/webhooks/emit";
-import { classifyAsset } from "@/lib/classify/classify";
+import { classifyAsset, classifyAssetArgmax } from "@/lib/classify/classify";
 import { deriveKind, classifyTextCodeByMime } from "@/lib/classify/kind";
 import { tryEnqueueFaceDetect } from "@/lib/assets/createAssetRow";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
@@ -132,6 +135,9 @@ async function processAssetInner(
   // runs (CLIP/LLM often misses phone photos of receipts because the
   // hand + table backdrop pulls the classifier toward "photo").
   let imageOcrText: string | null = null;
+  // Provenance for this row's generative fields. Set ONLY when a tier actually
+  // produced (or failed to produce) them; NULL keeps its documented meaning.
+  let enrichmentSource: EnrichmentSource | null = null;
   // ADR 0002 — unified analyze-image result, hoisted so the suggested-tags
   // block at the end can use the unified call's tags instead of an extra
   // plexoSuggestTags round-trip. null when the unified path didn't run
@@ -204,13 +210,25 @@ async function processAssetInner(
             // unified result before downstream heuristics run.
             return { topLevel: "photo" };
           }
-          const topLevel = await plexoClassifyAsset(
-            workspaceIdForLlm,
-            filename,
-            mimeType,
-            extractedText ?? undefined,
+          const attempt = await tryGenerative(() =>
+            plexoClassifyAsset(
+              workspaceIdForLlm,
+              filename,
+              mimeType,
+              extractedText ?? undefined,
+            ),
           );
-          return { topLevel };
+          if (attempt.ok) return { topLevel: attempt.value };
+          // No completion tier. CLIP already scored this image; take its
+          // argmax rather than failing the asset over a label.
+          const argmax = await classifyAssetArgmax(clipVec);
+          enrichmentSource = EnrichmentSource.ClipArgmax;
+          console.warn(
+            "[fonto] classify degraded to CLIP argmax for",
+            assetId,
+            attempt.reason,
+          );
+          return { topLevel: argmax.topLevel ?? "photo" };
         },
       });
       classification = clipResult.topLevel;
@@ -375,16 +393,35 @@ async function processAssetInner(
         preDescribeOcrText = ocrRow?.ocrText ?? null;
         imageOcrText = preDescribeOcrText;
 
-        description = await plexoDescribeImage(
-          plexoWorkspaceId,
-          filename,
-          mimeType,
-          {
-            classification,
-            labels: preDescribeLabels,
-            ocrText: preDescribeOcrText,
-          }
+        // Capture before the closure: `plexoWorkspaceId` is a mutable `let`, so
+        // narrowing does not survive into a deferred callback.
+        const workspaceIdForDescribe = plexoWorkspaceId;
+        const described = await tryGenerative(() =>
+          plexoDescribeImage(
+            workspaceIdForDescribe,
+            filename,
+            mimeType,
+            {
+              classification,
+              labels: preDescribeLabels,
+              ocrText: preDescribeOcrText,
+            }
+          )
         );
+        if (described.ok) {
+          description = described.value;
+        } else {
+          // A caption is the least load-bearing field the pipeline produces.
+          // Leave it null and let the row reach 'ready' with its thumbnail,
+          // CLIP vector, OCR and classification intact.
+          description = null;
+          enrichmentSource = EnrichmentSource.ClipArgmax;
+          console.warn(
+            "[fonto] description degraded (no completion tier) for",
+            assetId,
+            described.reason,
+          );
+        }
       }
 
       // Force screenshots — the classifier otherwise tends to file text-heavy
@@ -470,14 +507,33 @@ async function processAssetInner(
         classifyMethodLabel = null;
         ctx.classifyMethod = "skip";
       } else {
-        classification = await plexoClassifyAsset(
-          plexoWorkspaceId,
-          filename,
-          mimeType,
-          docText ?? extractedText ?? undefined,
+        const workspaceIdForDoc = plexoWorkspaceId;
+        const docClass = await tryGenerative(() =>
+          plexoClassifyAsset(
+            workspaceIdForDoc,
+            filename,
+            mimeType,
+            docText ?? extractedText ?? undefined,
+          ),
         );
-        classifyMethodLabel = "llm-fallback";
-        ctx.classifyMethod = "llm-fallback";
+        if (docClass.ok) {
+          classification = docClass.value;
+          classifyMethodLabel = "llm-fallback";
+          ctx.classifyMethod = "llm-fallback";
+        } else {
+          // Documents have no CLIP vector to fall back on, so take the same
+          // mime-derived default plexoClassifyAsset itself uses when the model
+          // returns something outside the taxonomy. Honest and non-blocking.
+          classification = "document";
+          classifyMethodLabel = null;
+          ctx.classifyMethod = "skip";
+          enrichmentSource = EnrichmentSource.ClipArgmax;
+          console.warn(
+            "[fonto] document classify degraded (no completion tier) for",
+            assetId,
+            docClass.reason,
+          );
+        }
       }
 
       description = await plexoDescribeDocument(
@@ -552,6 +608,7 @@ async function processAssetInner(
       subClassification,
       classifyMethod: classifyMethodLabel,
       classifyConfidence,
+      enrichmentSource,
       kind,
     })
     .where(eq(schema.assets.id, assetId));
@@ -686,14 +743,27 @@ async function processAssetInner(
     // so skip the extra plexoSuggestTags round-trip. Legacy path still
     // calls plexoSuggestTags because its description was produced without
     // tag-suggestion context.
-    const llmTags = unifiedResultTopLevel
-      ? unifiedResultTopLevel.suggestedTags
-      : await plexoSuggestTags(
-          plexoWorkspaceId,
-          filename,
-          classification,
-          description,
+    const suggested = unifiedResultTopLevel
+      ? ({ ok: true, value: unifiedResultTopLevel.suggestedTags } as const)
+      : await tryGenerative(() =>
+          plexoSuggestTags(
+            plexoWorkspaceId,
+            filename,
+            classification,
+            description,
+          ),
         );
+    if (!suggested.ok) {
+      enrichmentSource = EnrichmentSource.ClipArgmax;
+      console.warn(
+        "[fonto] tag suggestions degraded (no completion tier) for",
+        assetId,
+        suggested.reason,
+      );
+    }
+    // CLIP's curated taxonomy tags are added separately below, so a degraded
+    // row still gets tags — just not model-authored ones.
+    const llmTags = suggested.ok ? suggested.value : [];
     const [asset] = await db
       .select({ workspaceId: schema.assets.workspaceId })
       .from(schema.assets)
