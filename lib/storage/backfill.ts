@@ -71,10 +71,17 @@ export async function backfillStorageMirror(
   let enqueued = 0;
   for (const r of rows) {
     try {
-      await storageSyncQueue().add(JobNames.StorageSync, {
-        assetId: r.id,
-        workspaceId: r.workspaceId,
-      });
+      // Pinned jobId: ONE sync job per asset. This tick runs every few minutes
+      // and re-selects any asset still lacking its stamp, so without a pinned id
+      // a permanently unsyncable asset is re-enqueued forever. BullMQ refuses an
+      // add whose id already exists (including in the failed set), which is
+      // exactly the behaviour wanted here: the retained failed job IS the record
+      // that this asset needs an operator, and clearing it re-arms the retry.
+      await storageSyncQueue().add(
+        JobNames.StorageSync,
+        { assetId: r.id, workspaceId: r.workspaceId },
+        { jobId: `storage-sync-${r.id}` },
+      );
       enqueued++;
     } catch (err) {
       log.warn({ assetId: r.id, err }, "backfill enqueue failed");

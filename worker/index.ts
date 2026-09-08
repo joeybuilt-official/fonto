@@ -63,6 +63,7 @@ import {
 } from "@/lib/queue/jobs";
 import { runDriftSweep } from "@/lib/reaudit/driftSweep";
 import { describeError } from "@/lib/errors/describeError";
+import { isMissingObjectError } from "@/lib/storage/read";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
 import { processAsset } from "@/lib/processing/processAsset";
@@ -579,10 +580,18 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
           // failed job, which is also what blocks a re-enqueue, so reading it
           // and retrying it were mutually exclusive.
           const reason = describeError(err);
+          // Terminal-by-construction vs. genuinely failed. `decodeToBuffer`
+          // rejects a mime it has no decoder for (BMP, EPS, ...) — that is not a
+          // failure to be retried, it is a format we will never render, and
+          // 'skipped' is the state the reaper and the backfill already leave
+          // alone. Filing it as 'failed' put 37 permanently-undecodable rows in
+          // the user-visible failure count and let the backfill's `image/%`
+          // filter re-enqueue them forever.
+          const undecodable = reason.includes("unsupported mime type");
           await db
             .update(schema.assets)
             .set({
-              thumbnailState: "failed",
+              thumbnailState: undecodable ? "skipped" : "failed",
               thumbnailError: reason.slice(0, 1000),
               updatedAt: sql`now()`,
             })
@@ -644,7 +653,20 @@ function startStorageSyncWorker(): Worker<StorageSyncJob> {
       }
       const data = parsed.data;
 
-      const result = await syncAssetStorage(data.assetId, data.workspaceId);
+      const result = await syncAssetStorage(data.assetId, data.workspaceId).catch(
+        (err: unknown) => {
+          // The original is GONE from R2. Retrying cannot conjure bytes back, so
+          // spending five attempts per tick on it only floods the log: 18 such
+          // assets produced 18,355 failures in 17 hours on 2026-09-08 and rotated
+          // the worker's 50 MB log faster than it could be read back.
+          if (isMissingObjectError(err)) {
+            throw new UnrecoverableError(
+              `original missing from object storage: ${describeError(err)}`,
+            );
+          }
+          throw err;
+        },
+      );
       if (!result.synced) {
         log.info({ reason: result.reason }, "storage-sync skipped");
       } else {
