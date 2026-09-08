@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
   // while one is in flight.
   const jobId = await addBackfillReconcileJob(
     { workspaceId: workspace.id, batchSize, maxRows },
-    { jobId: `reconcile:${workspace.id}:${manifest.contentHash.slice(0, 16)}` }
+    { jobId: `reconcile-${workspace.id}-${manifest.contentHash.slice(0, 16)}` }
   );
 
   return NextResponse.json({ manifest, enqueued: true, jobId });

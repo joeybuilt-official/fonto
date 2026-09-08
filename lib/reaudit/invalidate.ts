@@ -75,7 +75,7 @@ export async function invalidateByDependency(args: InvalidateArgs): Promise<{ re
       await q.add(
         JobNames.InferDate,
         { assetId },
-        { jobId: `reaudit:${assetId}:${triggerHash}:${bucket}` }
+        { jobId: `reaudit-${assetId}-${triggerHash}-${bucket}` }
       );
       requeued++;
     } catch {

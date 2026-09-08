@@ -62,6 +62,7 @@ import {
   type InferDateJob,
 } from "@/lib/queue/jobs";
 import { runDriftSweep } from "@/lib/reaudit/driftSweep";
+import { describeError } from "@/lib/errors/describeError";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
 import { processAsset } from "@/lib/processing/processAsset";
@@ -452,7 +453,12 @@ function startAssetProcessingWorker(): Worker<ProcessAssetJob> {
           .where(eq(schema.assets.id, data.assetId));
         log.info("asset processed");
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        // describeError, NOT err.message: an Effect `Data.TaggedError` (e.g.
+        // CapabilityUnavailableError) subclasses Error with an EMPTY message,
+        // and writing that produced 6,704 rows stamped processing_error='' on
+        // 2026-09-04 — unfindable by `IS NULL` and stripped of the one detail
+        // that explained them.
+        const msg = describeError(err);
         log.error({ err: msg }, "asset processing failed");
         // Distinguish a retryable failure from the final attempt. On a
         // retryable failure keep the row in 'captured' so BullMQ (and, as a
@@ -572,7 +578,7 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
           // introduced to end. Worse, the reason lived only in the retained
           // failed job, which is also what blocks a re-enqueue, so reading it
           // and retrying it were mutually exclusive.
-          const reason = err instanceof Error ? err.message : String(err);
+          const reason = describeError(err);
           await db
             .update(schema.assets)
             .set({

@@ -16,7 +16,8 @@
 // simplification — the fallback path (federated throws → embedded serves) is
 // real and per-call; upgrade to stream liveness lands with the Jex SDK.
 
-import { Cause, Context, Effect, Exit, Layer } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Option } from "effect";
+import { describeError } from "@/lib/errors/describeError";
 import {
   PlexoFederatedCompletionLayer,
   PlexoFederatedImageEmbeddingLayer,
@@ -75,9 +76,29 @@ function tiersFor<T>(embedded: Layer.Layer<T>, federated: Layer.Layer<T>): Reado
 /**
  * Per-call resolution: invoke the service from each tier in rank order; the
  * first success wins and its tier is logged; a failing tier falls through.
- * If every tier fails, the last failure cause is surfaced (preserving the
- * adapter's typed error, e.g. RateLimitError).
+ *
+ * When EVERY tier fails, the reason from every tier is preserved, not just the
+ * last one. Surfacing only the last cause is how a real outage got misreported
+ * on 2026-09-04: the federated tier failed with Plexo's actual explanation
+ * ("no providers configured for workspace"), the embedded tier then failed with
+ * an empty-message CapabilityUnavailableError, and only that second, emptier
+ * error reached the caller — so the pipeline recorded nothing usable and the
+ * true cause took a Redis-and-container-log excavation to recover.
+ *
+ * A typed non-capability error (e.g. RateLimitError) is still surfaced
+ * unchanged, because callers match on its type to decide whether to retry.
  */
+/**
+ * A non-empty reason for a failed tier. Prefers the typed failure (so a tagged
+ * error's fields survive) and falls back to the rendered cause for a defect or
+ * interruption, which carry no failure value at all.
+ */
+function describeCause<E>(cause: Cause.Cause<E>): string {
+  const failure = Option.getOrNull(Cause.failureOption(cause));
+  if (failure !== null) return describeError(failure);
+  return Cause.pretty(cause).split("\n")[0] || "unknown cause";
+}
+
 export function resolve<T, S, A, E>(
   tag: Context.Tag<T, S>,
   port: string,
@@ -86,6 +107,7 @@ export function resolve<T, S, A, E>(
 ): Effect.Effect<A, E | CapabilityUnavailableError> {
   return Effect.gen(function* () {
     let lastCause: Cause.Cause<E> | undefined;
+    const attempts: string[] = [];
     for (const { tier, layer } of tiers) {
       const exit = yield* Effect.exit(
         Effect.flatMap(tag, invoke).pipe(Effect.provide(layer)),
@@ -97,10 +119,30 @@ export function resolve<T, S, A, E>(
         return exit.value;
       }
       lastCause = exit.cause;
+      const reason = describeCause(exit.cause);
+      attempts.push(`${tier}: ${reason}`);
+      // Per-tier attribution at the moment of failure. Without this a
+      // fall-through is invisible until something downstream reports a
+      // symptom far from its cause.
+      yield* Effect.logWarning("jex/tier-failed").pipe(
+        Effect.annotateLogs({ port, tier, reason }),
+      );
     }
-    return yield* lastCause
-      ? Effect.failCause(lastCause)
-      : Effect.fail(new CapabilityUnavailableError({ port, reason: "no adapter registered" }));
+    if (!lastCause) {
+      return yield* Effect.fail(
+        new CapabilityUnavailableError({ port, reason: "no adapter registered" }),
+      );
+    }
+    // Every tier failed. If the final failure is a capability error, rebuild it
+    // with EVERY tier's reason — same type, so `instanceof` checks at call
+    // sites keep working, but the message now names what actually happened.
+    const lastFailure = Option.getOrNull(Cause.failureOption(lastCause));
+    if (lastFailure instanceof CapabilityUnavailableError) {
+      return yield* Effect.fail(
+        new CapabilityUnavailableError({ port, reason: attempts.join(" | ") }),
+      );
+    }
+    return yield* Effect.failCause(lastCause);
   });
 }
 
