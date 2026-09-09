@@ -16,13 +16,17 @@
 // Left untouched: 1 row (2026-06-18, clock-skew `failedReason`) — an
 // isolated, unrelated incident. Not in either group above.
 //
-// Predicate: `hls_state = 'failed' AND updated_at >= '2026-07-06' AND
-// updated_at < '2026-07-08'`. Both recoverable groups' `updated_at` (the
-// worker's own failure timestamp) falls inside this window; the 2026-06-18
-// outlier falls outside it. No `hls_error` column exists to filter on
-// (BullMQ `failedReason` lives in Redis, not Postgres) — the date window is
-// the exact, evidenced boundary from the C3 investigation (worklog
-// 2026-09-09 finding(C3)), not a heuristic guess. Dry-run before applying
+// Predicate: `hls_state = 'failed' AND created_at >= '2026-07-06' AND
+// created_at < '2026-07-08'`. `created_at` is what's evidenced against the
+// live incident windows — `updated_at` is NOT: it drifts on every unrelated
+// touch to the row (this session's own earlier Phase B1/B2/C1 backfills
+// bumped `updated_at` on many of these same assets), so it undercounts.
+// Verified live against prod (2026-09-09): all 29 recoverable rows carry
+// `created_at` inside 2026-07-06T05:06:58Z-2026-07-07T20:04:47Z; the lone
+// 2026-06-18 clock-skew outlier falls well outside it. No `hls_error`
+// column exists to filter on (BullMQ `failedReason` lives in Redis, not
+// Postgres) — the date window is the exact, evidenced boundary from the C3
+// investigation (worklog 2026-09-09 finding(C3)). Dry-run before applying
 // and confirm the count is 29 and none is the known outlier.
 //
 // Retry mechanism: unlike thumbnails, `addVideoHlsTranscodeJob` never pins a
@@ -52,7 +56,7 @@ interface FailedHlsRow {
   workspace_id: string;
   mime_type: string;
   sync_state: string;
-  updated_at: Date;
+  created_at: Date;
 }
 
 async function main(): Promise<void> {
@@ -64,11 +68,11 @@ async function main(): Promise<void> {
   const sql = postgres(dbUrl, { prepare: false });
 
   const rows = (await sql`
-    SELECT id, workspace_id, mime_type, sync_state, updated_at
+    SELECT id, workspace_id, mime_type, sync_state, created_at
     FROM fonto.assets
     WHERE hls_state = 'failed'
-      AND updated_at >= '2026-07-06'
-      AND updated_at < '2026-07-08'
+      AND created_at >= '2026-07-06'
+      AND created_at < '2026-07-08'
   `) as unknown as FailedHlsRow[];
 
   console.log(
@@ -79,7 +83,7 @@ async function main(): Promise<void> {
   if (dryRun) {
     for (const r of rows) {
       console.log(
-        `  would retry ${r.id}: mime=${r.mime_type} sync_state=${r.sync_state} updated_at=${r.updated_at.toISOString()}`
+        `  would retry ${r.id}: mime=${r.mime_type} sync_state=${r.sync_state} created_at=${r.created_at.toISOString()}`
       );
     }
     await sql.end({ timeout: 5 });
