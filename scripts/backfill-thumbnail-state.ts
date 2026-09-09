@@ -93,7 +93,11 @@ async function main(): Promise<void> {
     console.log(
       `[backfill-thumbnail-state] batch ${batches} updated ${updated.length}; running total ${totalUpdated}`
     );
-    if (updated.length < batchSize) break;
+    // Deliberately no "updated.length < batchSize -> stop" shortcut: with
+    // FOR UPDATE SKIP LOCKED a short batch can mean "some matching rows were
+    // transiently locked by a concurrent writer", not "none remain". Looping
+    // until a batch is truly empty costs one extra round-trip at the end and
+    // guarantees a full drain even while the live pipeline is writing.
   }
 
   console.log(`[backfill-thumbnail-state] complete: ${totalUpdated} rows set to ready across ${batches} batches`);
