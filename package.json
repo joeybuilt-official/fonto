@@ -15,6 +15,7 @@
     "db:studio": "drizzle-kit studio",
     "backfill:exif": "tsx scripts/backfill-exif.ts",
     "backfill:thumbnails": "tsx scripts/backfill-thumbnails.ts",
+    "backfill:thumbnail-state": "tsx scripts/backfill-thumbnail-state.ts",
     "backfill:motion": "tsx scripts/backfill-motion-photos.ts",
     "backfill:responsive": "tsx scripts/backfill-responsive-derivatives.ts",
     "backfill:lqip": "tsx scripts/backfill-lqip.ts",
