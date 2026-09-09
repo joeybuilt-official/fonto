@@ -63,6 +63,7 @@ import {
 } from "@/lib/queue/jobs";
 import { runDriftSweep } from "@/lib/reaudit/driftSweep";
 import { describeError } from "@/lib/errors/describeError";
+import { isPermanentThumbnailFailure } from "@/lib/processing/permanentThumbnailFailure";
 import { isMissingObjectError } from "@/lib/storage/read";
 import { nearestNeighbors } from "@/lib/vectors";
 import { signWebhookPayload } from "@/lib/webhooks/emit";
@@ -586,8 +587,11 @@ function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
           // 'skipped' is the state the reaper and the backfill already leave
           // alone. Filing it as 'failed' put 37 permanently-undecodable rows in
           // the user-visible failure count and let the backfill's `image/%`
-          // filter re-enqueue them forever.
-          const undecodable = reason.includes("unsupported mime type");
+          // filter re-enqueue them forever. Phase C1 (2026-09-09) generalized
+          // this from one substring to the full set of known-permanent
+          // signatures — see permanentThumbnailFailure.ts for the evidence
+          // behind each one.
+          const undecodable = isPermanentThumbnailFailure(reason);
           await db
             .update(schema.assets)
             .set({
