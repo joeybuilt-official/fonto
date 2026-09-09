@@ -13,6 +13,13 @@
 // thing that hung, unguarded. An operator "being generous" with the env var
 // would silently reintroduce the outage, so the clamp is tested, not trusted.
 //
+// C3 (2026-09-09) added the connectionTimeout default assertion below: 14
+// live `hls_state='failed'` rows carried `socket did not establish ... within
+// 3000 ms` — the SDK default connectionTimeout was never raised even after
+// the socketTimeout fix above landed. connectionTimeout has no smithy
+// registration cliff (that's a socketTimeout-only bug), so it's pinned only
+// to "greater than the old 3000ms default," not to an exact ceiling.
+//
 // Run: npx vitest run lib/r2.test.ts
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -33,6 +40,14 @@ describe("resolveR2Timeouts", () => {
 
   it("defaults to a positive connection timeout", () => {
     expect(resolveR2Timeouts().connectionTimeout).toBeGreaterThan(0);
+  });
+
+  it("defaults the connection timeout above the SDK's 3000ms default that caused the C3 incident", () => {
+    // 14 production hls_state='failed' rows hit "socket did not establish
+    // ... within 3000 ms" under connection contention (concurrent R2
+    // connections during a transcode/backfill burst) — 3000ms was too tight
+    // for a legitimate-but-slow handshake, not a dead peer.
+    expect(resolveR2Timeouts().connectionTimeout).toBeGreaterThan(3000);
   });
 
   it("accepts an operator override below the cliff", () => {

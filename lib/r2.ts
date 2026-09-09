@@ -31,7 +31,29 @@ let _s3Streaming: S3Client | null = null;
 // policy re-issues the call on a fresh socket. The dead socket is destroyed
 // rather than parked in the agent's pool.
 const DEFAULT_SOCKET_TIMEOUT_MS = 5_000;
-const DEFAULT_CONNECTION_TIMEOUT_MS = 3_000;
+
+// Connection-establishment budget — TIME TO OPEN THE TCP SOCKET, a distinct
+// smithy setting from socketTimeout above (post-connection inactivity). Left
+// at the @smithy/node-http-handler default of 3000ms until C3 (2026-09-09)
+// found it live-firing in production: 14 `hls_state='failed'` rows carrying
+// `socket did not establish ... within 3000 ms`, clustered in the same
+// 2026-07-06/07 windows as documented worker-contention incidents (10 rows
+// share the 05:07-07:13Z window that held 12 worker slots for 40 minutes on
+// giant multi-GB QuickTimes; 2 of those 10 rows ARE 10.98GB/13.2GB files).
+// Many concurrent R2 connections competing for the outbound path during a
+// transcode/backfill burst can legitimately push TCP handshake time past 3s
+// — that is contention, not a dead peer, and doesn't deserve to fail.
+//
+// Unlike socketTimeout, this setting has NO 6000ms smithy registration cliff
+// to respect (that cliff is specific to the socket-timeout install path in
+// node-http-handler) — so there's no correctness ceiling forcing a small
+// number here, only a judgement call on "how long is a legitimate handshake
+// allowed to take under load before we call it dead." 10s: generous enough
+// to ride out the exact contention profile that produced the 14-row
+// incident, while still bounded — a genuinely unreachable R2 endpoint fails
+// within 10s and lets the SDK's retry policy (or BullMQ's job retry) recover
+// on a fresh attempt, rather than hanging indefinitely.
+const DEFAULT_CONNECTION_TIMEOUT_MS = 10_000;
 
 export interface R2Timeouts {
   connectionTimeout: number;
