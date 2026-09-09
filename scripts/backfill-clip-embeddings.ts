@@ -9,6 +9,14 @@
 // Re-running is safe — the WHERE predicate excludes rows that already have
 // a non-NULL `clip_vec`, and the worker itself is idempotent.
 //
+// Before each enqueue we reclaim any TERMINAL job retained under the same
+// deterministic jobId (`backfill-clip-<id>`) — see `backfill-thumbnails.ts`'s
+// 2026-09-01 fix. BullMQ refuses `add`/`addBulk` for a jobId that already
+// exists in ANY set, including `completed`/`failed`, not just active/waiting.
+// Without the reclaim, re-running this script against rows whose prior
+// attempt failed (and was retained by `removeOnFail`) silently no-ops: the
+// script reports them "enqueued" but the worker never sees a new job.
+//
 // Usage:
 //   pnpm backfill:clip                   # default batch=200
 //   pnpm backfill:clip -- --batch=100    # tune enqueue batch
@@ -47,7 +55,7 @@ async function main(): Promise<void> {
   const redis = new IORedis(redisUrl, { maxRetriesPerRequest: null });
   const queue = new Queue("clip-embedding", { connection: redis });
 
-  const stats = { enqueued: 0, scanned: 0, batches: 0 };
+  const stats = { enqueued: 0, scanned: 0, batches: 0, reclaimed: 0 };
   console.log(
     `[backfill-clip] start (batch=${batchSize}${dryRun ? ", dry-run" : ""})`
   );
@@ -112,6 +120,18 @@ async function main(): Promise<void> {
         console.log(`[backfill-clip] would enqueue ${r.id} ws=${r.workspace_id}`);
       }
     } else {
+      // Reclaim the retained TERMINAL job for each id before re-adding —
+      // see the header comment. Removing an ACTIVE job is refused by
+      // BullMQ (returns 0), so a job currently in flight is never yanked
+      // out from under the worker; a WAITING job is removable but
+      // remove-then-re-add is a no-op in effect.
+      const reclaimed = await Promise.allSettled(
+        rows.map((r) => queue.remove(`backfill-clip-${r.id}`))
+      );
+      stats.reclaimed += reclaimed.filter(
+        (o) => o.status === "fulfilled" && o.value === 1
+      ).length;
+
       await queue.addBulk(
         rows.map((r) => ({
           name: "embed-asset",
@@ -127,7 +147,7 @@ async function main(): Promise<void> {
     cursorId = last.id;
 
     console.log(
-      `[backfill-clip] batch ${stats.batches} enqueued ${rows.length}; running total ${stats.enqueued}`
+      `[backfill-clip] batch ${stats.batches} enqueued ${rows.length}; running total ${stats.enqueued}; reclaimed ${stats.reclaimed}`
     );
 
     if (rows.length < batchSize) break;
