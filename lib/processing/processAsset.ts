@@ -344,6 +344,24 @@ async function processAssetInner(
         unifiedResultTopLevel = unifiedResult;
       } else {
         // Legacy chain — flag off OR unified call failed mid-flight.
+        //
+        // B1 — when `useUnified` is on, `classify()` above (line ~211)
+        // returned the `{topLevel:"photo"}` placeholder on the assumption
+        // THIS branch's unified call would overwrite it. It just failed, so
+        // nothing has classified this asset yet — take the CLIP argmax
+        // instead of leaving the placeholder looking like a real answer.
+        // Same degrade convention as the other three sites in this file.
+        if (useUnified && clipResult.method === "llm-fallback") {
+          const argmax = await classifyAssetArgmax(clipVec);
+          classification = argmax.topLevel ?? "photo";
+          subClassification = argmax.subLevel;
+          clipSuggestedTags = argmax.suggestedTags;
+          enrichmentSource = EnrichmentSource.ClipArgmax;
+          console.warn(
+            "[fonto] classify degraded to CLIP argmax after unified failure for",
+            assetId,
+          );
+        }
         // Image-grounded signals BEFORE description so the caption can quote
         // real OCR text and reference the objects/scene the vision model saw.
         if (intelligence.available("label")) {
