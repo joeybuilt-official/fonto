@@ -60,3 +60,12 @@ CLAUDE.local.md
 
 # Staging dir for the existing-repo degit + /adapt-claude-setup flow
 .claude-kit-tmp/
+
+# Local tool/harness state (Claude Code session state, phalanx autorun flag,
+# pnpm store cache) — machine-local, never commit.
+.claude-state.json
+.phalanx-autorun
+.pnpm-store/
+
+# Panoply adapt / one-off scratch artifacts
+panoply-adapt.log
