@@ -30,6 +30,7 @@ import { assetProcessingDurationSeconds } from "@/lib/metrics";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { classifyAsset, classifyAssetArgmax } from "@/lib/classify/classify";
 import { deriveKind, classifyTextCodeByMime } from "@/lib/classify/kind";
+import { visionNeedsPreview } from "@/lib/mime";
 import { tryEnqueueFaceDetect } from "@/lib/assets/createAssetRow";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
 import {
@@ -150,11 +151,20 @@ async function processAssetInner(
     if (mimeType.startsWith("image/")) {
       // Phase 4.6 — try zero-shot CLIP first; fall back to vision-LLM
       // classification if confidence is too low (or CLIP is unavailable).
-      const clipVec = await waitForClipVec(assetId);
+      // E4-M4 (P2-M4): read `clip_vec` ONCE where it is. The old
+      // `waitForClipVec` polled the row every 250ms for 3s on the assumption
+      // the clip-embedding worker (separate queue, separate process) would
+      // have landed the vector — a fresh upload enqueues process-asset and
+      // clip-embed from the same upload handler, so the poll usually missed
+      // and just stalled a worker slot. `classifyAsset` already handles a
+      // null vec by deferring to the unified/LLM tier, which is the
+      // authoritative classifier in the today-configuration; there is nothing
+      // worth waiting for.
 
       // Read EXIF + dimensions row ONCE upfront — needed for both the
       // legacy and unified paths (camera-evidence + hints + screenshot
-      // override).
+      // override). Also carries `clip_vec` in the same trip so M4 adds no
+      // query.
       const [dims] = await db
         .select({
           widthPx: schema.assets.widthPx,
@@ -166,10 +176,12 @@ async function processAssetInner(
           iso: schema.assets.iso,
           focalLength: schema.assets.focalLength,
           lensModel: schema.assets.lensModel,
+          clipVec: schema.assets.clipVec,
         })
         .from(schema.assets)
         .where(eq(schema.assets.id, assetId))
         .limit(1);
+      const clipVec = dims?.clipVec ?? null;
       cameraEvidence = {
         exposureTime: dims?.exposureTime ?? null,
         fNumber: dims?.fNumber ?? null,
@@ -252,32 +264,47 @@ async function processAssetInner(
             .where(eq(schema.assets.id, assetId))
             .limit(1);
           if (imgRow) {
-            const visionKey =
-              imgRow.previewKey ??
-              assetStorageKey(imgRow.workspaceId, assetId, filename);
-            const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
-            const unifiedStartedAt = Date.now();
-            unifiedResult = await intelligence.analyzeImage({
-              workspaceId: plexoWorkspaceId,
-              imageUrl: signedUrl,
-              mimeType,
-              filename,
-              hints: {
-                topClipClass: clipResult.method === "clip" ? clipResult.taxonomyTopKey : undefined,
-                clipConfidence: clipResult.confidence,
-                cameraMake: dims?.cameraMake ?? undefined,
-                hasExposureExif:
-                  cameraEvidence.exposureTime != null ||
-                  cameraEvidence.fNumber != null ||
-                  cameraEvidence.iso != null ||
-                  cameraEvidence.focalLength != null,
-                widthPx: dims?.widthPx ?? undefined,
-                heightPx: dims?.heightPx ?? undefined,
-              },
-            });
-            console.log(
-              `[fonto] analyzeImage timing assetId=${assetId} unified=1 model=${unifiedResult.model} latencyMs=${Date.now() - unifiedStartedAt} serverLatencyMs=${unifiedResult.latencyMs}`,
-            );
+            // E4-M6 — for preview-required mimes (RAW/HEIC/AVIF) the VLM
+            // cannot decode the raw original; feeding it made it confabulate
+            // a generic scene. When the sharp-decoded preview hasn't landed
+            // yet, skip the unified call entirely — `unifiedResult` stays
+            // null and the else-branch below takes the CLIP-argmax degrade
+            // already in place, so the row never stalls. Decodable mimes
+            // keep the `previewKey ?? original` fallback.
+            if (visionNeedsPreview(mimeType) && !imgRow.previewKey) {
+              console.warn(
+                "[fonto] unified analyze skipped (preview-required mime, no preview yet) for",
+                assetId,
+                mimeType,
+              );
+            } else {
+              const visionKey =
+                imgRow.previewKey ??
+                assetStorageKey(imgRow.workspaceId, assetId, filename);
+              const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
+              const unifiedStartedAt = Date.now();
+              unifiedResult = await intelligence.analyzeImage({
+                workspaceId: plexoWorkspaceId,
+                imageUrl: signedUrl,
+                mimeType,
+                filename,
+                hints: {
+                  topClipClass: clipResult.method === "clip" ? clipResult.taxonomyTopKey : undefined,
+                  clipConfidence: clipResult.confidence,
+                  cameraMake: dims?.cameraMake ?? undefined,
+                  hasExposureExif:
+                    cameraEvidence.exposureTime != null ||
+                    cameraEvidence.fNumber != null ||
+                    cameraEvidence.iso != null ||
+                    cameraEvidence.focalLength != null,
+                  widthPx: dims?.widthPx ?? undefined,
+                  heightPx: dims?.heightPx ?? undefined,
+                },
+              });
+              console.log(
+                `[fonto] analyzeImage timing assetId=${assetId} unified=1 model=${unifiedResult.model} latencyMs=${Date.now() - unifiedStartedAt} serverLatencyMs=${unifiedResult.latencyMs}`,
+              );
+            }
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -379,19 +406,29 @@ async function processAssetInner(
               // not the original. The VLM can't decode HEIC/RAW, so handing it
               // the raw original makes it confabulate a generic scene — which is
               // exactly how Drive-imported HEIC photos all got tagged
-              // sunset/golden-hour. Falls back to the original only when the
-              // preview derivative isn't ready yet (thumbnail job races this one);
-              // a reprocess pass then picks up the now-present preview.
-              const visionKey =
-                imgRow.previewKey ??
-                assetStorageKey(imgRow.workspaceId, assetId, filename);
-              const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
-              const labelBase64 = Buffer.from(
-                await (await fetch(signedUrl)).arrayBuffer()
-              ).toString("base64");
-              preDescribeLabels = (await intelligence.label(labelBase64)).labels.map(
-                (l) => l.label
-              );
+              // sunset/golden-hour. E4-M6: for preview-required mimes with no
+              // preview yet, skip entirely (degrade) — never feed the raw
+              // original. Decodable mimes fall back to it as before.
+              const previewDecodable =
+                !visionNeedsPreview(mimeType) || imgRow.previewKey != null;
+              if (previewDecodable) {
+                const visionKey =
+                  imgRow.previewKey ??
+                  assetStorageKey(imgRow.workspaceId, assetId, filename);
+                const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
+                const labelBase64 = Buffer.from(
+                  await (await fetch(signedUrl)).arrayBuffer()
+                ).toString("base64");
+                preDescribeLabels = (await intelligence.label(labelBase64)).labels.map(
+                  (l) => l.label
+                );
+              } else {
+                console.warn(
+                  "[fonto] pre-describe labels skipped (preview-required mime, no preview yet) for",
+                  assetId,
+                  mimeType,
+                );
+              }
             }
           } catch (err) {
             console.warn("[fonto] pre-describe labels failed for", assetId, err);
@@ -617,10 +654,15 @@ async function processAssetInner(
     ocrText: imageOcrText,
   });
 
+  // E4-M1 (P2-M1) — single atomic terminal write. `ready` is written in the
+  // SAME statement as the classification/description fields it carries, so
+  // the row is never observably `extracted` with post-ML fields (a transient
+  // a reaper tick or a mid-pipeline crash could otherwise settle on). This is
+  // the "write-ordering" milestone of the consolidation E4 re-scope.
   await db
     .update(schema.assets)
     .set({
-      processingState: "extracted",
+      processingState: "ready",
       classification,
       description,
       subClassification,
@@ -629,11 +671,6 @@ async function processAssetInner(
       enrichmentSource,
       kind,
     })
-    .where(eq(schema.assets.id, assetId));
-
-  await db
-    .update(schema.assets)
-    .set({ processingState: "ready" })
     .where(eq(schema.assets.id, assetId));
 
   // T2.1 / T1.3' — the pipeline has now written classification, description,
@@ -888,42 +925,6 @@ async function processAssetInner(
         .where(eq(schema.assets.id, assetId));
     }
   }
-}
-
-/**
- * Phase 4.6 — short-poll for `clip_vec` to land on an asset row. The CLIP
- * embedding is produced by the Phase 4.2 worker, which may race with this
- * pipeline. Cap the wait at ~3s; if it doesn't show up by then we let
- * `classifyAsset` see a null vec and fall back to the LLM classifier.
- *
- * Returns `null` if:
- *   - the column doesn't exist yet (4.2 hasn't landed) — DB returns a
- *     property-missing error which we swallow,
- *   - the timeout elapses,
- *   - the embedding worker explicitly stored a zero-length vector.
- */
-async function waitForClipVec(assetId: string): Promise<number[] | null> {
-  const deadline = Date.now() + 3000;
-  const interval = 250;
-  while (Date.now() < deadline) {
-    try {
-      // TODO(4.2): once `assets.clip_vec` is part of the schema we can use
-      // the typed column selector. Until then, fall back to a raw select
-      // that doesn't fail if the column is missing.
-      const rows = (await db.execute(
-        (await import("drizzle-orm")).sql`select clip_vec from fonto.assets where id = ${assetId}::uuid limit 1`,
-      )) as unknown as { rows?: Array<{ clip_vec?: number[] | null }> };
-      const vec = rows.rows?.[0]?.clip_vec;
-      if (Array.isArray(vec) && vec.length > 0) {
-        return vec;
-      }
-    } catch {
-      // Column doesn't exist (pre-4.2) — give up immediately.
-      return null;
-    }
-    await new Promise((r) => setTimeout(r, interval));
-  }
-  return null;
 }
 
 /**

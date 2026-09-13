@@ -47,6 +47,12 @@ export type GenerateThumbnailsJob = z.infer<typeof GenerateThumbnailsJobSchema>;
 export const EmbedAssetJobSchema = z.object({
   assetId: z.string().uuid(),
   workspaceId: z.string().uuid(),
+  // E4-M6 — bounded delayed re-enqueue counter for preview-required mimes
+  // whose sharp-decoded preview hasn't landed yet. The clip worker re-adds
+  // the job with `delay` when `embedAsset` returns `preview-not-ready`,
+  // giving the thumbnail worker time to produce the preview before the row
+  // is left for the `backfill:clip` sweep. Absent on the original enqueue.
+  previewRetries: z.number().int().min(0).default(0).optional(),
 });
 export type EmbedAssetJob = z.infer<typeof EmbedAssetJobSchema>;
 

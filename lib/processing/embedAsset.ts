@@ -29,6 +29,7 @@ import { logger } from "@/lib/logger";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { intelligence } from "@/lib/intelligence/client";
+import { visionNeedsPreview } from "@/lib/mime";
 
 export interface EmbedAssetInput {
   assetId: string;
@@ -42,7 +43,8 @@ export interface EmbedAssetResult {
     | "asset-missing"
     | "no-r2-bucket"
     | "vision-not-configured"
-    | "clip-column-missing";
+    | "clip-column-missing"
+    | "preview-not-ready";
   modelId?: string;
   dimensions?: number;
 }
@@ -94,6 +96,20 @@ export async function embedAsset(
   if (!asset.mimeType.startsWith("image/")) {
     log.info({ mimeType: asset.mimeType }, "non-image asset — skipping");
     return { skipped: true, reason: "non-image" };
+  }
+
+  // E4-M6 — if this container needs the sharp-decoded preview and the preview
+  // has not been generated yet, skip. The vision model cannot decode a RAW /
+  // HEIC / AVIF original, so there is no fallback worth attempting — the row
+  // is re-covered by `backfill:clip` once its thumbnail lands (the same
+  // accepted gap as the `skipped` thumbnail rows B2 measured). Decodable
+  // mimes (JPEG/PNG/…) keep the `previewKey ?? original` fallback.
+  if (visionNeedsPreview(asset.mimeType) && !asset.previewKey) {
+    log.info(
+      { mimeType: asset.mimeType },
+      "preview-required mime without a generated preview — skipping embed"
+    );
+    return { skipped: true, reason: "preview-not-ready" };
   }
 
   // Prefer preview (1080px WebP) — small, web-safe, already decoded by sharp.

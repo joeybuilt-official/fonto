@@ -87,6 +87,24 @@ export function isRawMime(mimeType: string): boolean {
   return RAW_MIME_TYPES.has(mimeType.toLowerCase());
 }
 
+/**
+ * E4-M6 — mimes whose RAW original must NOT be handed to an ML consumer
+ * (CLIP embedder / VLM) directly. These containers are not decodable by the
+ * vision model from the original bytes — feeding the original made the VLM
+ * confabulate a generic scene and the embedder fail — so they may only go
+ * through the sharp-decoded preview derivative (`previewKey`, produced when
+ * `thumbnail_state='ready'`).
+ *
+ * Raw camera formats (`isRawMime`) plus HEIC/HEIF/AVIF. Everything else the
+ * pipeline treats as image/ (JPEG, PNG, WebP, GIF, BMP, TIFF, …) decodes from
+ * the original, so those keep the `previewKey ?? original` fallback.
+ */
+export function visionNeedsPreview(mimeType: string): boolean {
+  const m = mimeType.toLowerCase();
+  if (isRawMime(m)) return true;
+  return m === "image/heic" || m === "image/heif" || m === "image/avif";
+}
+
 export function extensionOf(filename: string): string {
   const idx = filename.lastIndexOf(".");
   if (idx < 0 || idx === filename.length - 1) return "";

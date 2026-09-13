@@ -27,6 +27,7 @@ import {
   maintenanceQueue,
   webhookDeliveryQueue,
   clipDedupCheckQueue,
+  clipEmbeddingQueue,
   extractEvidenceQueue,
   closeAllQueues,
 } from "@/lib/queue/queues";
@@ -157,6 +158,18 @@ const WEBHOOK_TIMEOUT_MS = Math.max(
 // default to avoid hammering it.
 const CLIP_EMBED_CONCURRENCY = Math.max(
   parseInt(process.env.CLIP_EMBED_CONCURRENCY ?? "4", 10),
+  2
+);
+// E4-M6 — self-re-enqueue delay for clip-embedding jobs that hit a
+// preview-required mime whose sharp-decoded preview hasn't landed yet. The
+// thumbnail worker produces the preview; this delay gives it time before the
+// job is retried. Same profile as the clip-dedup constants above.
+const CLIP_EMBED_PREVIEW_DELAY_MS = Math.max(
+  parseInt(process.env.CLIP_EMBED_PREVIEW_DELAY_MS ?? "30_000", 10),
+  1000
+);
+const CLIP_EMBED_PREVIEW_MAX_RETRIES = Math.max(
+  parseInt(process.env.CLIP_EMBED_PREVIEW_MAX_RETRIES ?? "20", 10),
   1
 );
 // Phase 5.1 — face detection + ArcFace embedding. Network-bound (POST to
@@ -931,6 +944,25 @@ function startClipEmbeddingWorker(): Worker<EmbedAssetJob> {
         workspaceId: data.workspaceId,
       });
       if (result.skipped) {
+        // E4-M6 — a preview-required mime whose quick-decoded preview hasn't
+        // landed yet is a transient condition, not a skip: re-enqueue with a
+        // delay (bounded) so the thumbnail worker can produce the preview and
+        // the vector still lands automatically — the operator never has to
+        // run `backfill:clip` for the upload path. Mirrors the clip-dedup
+        // worker's self-re-enqueue below. All other skip reasons are final.
+        if (
+          result.reason === "preview-not-ready" &&
+          (data.previewRetries ?? 0) < CLIP_EMBED_PREVIEW_MAX_RETRIES
+        ) {
+          const retries = (data.previewRetries ?? 0) + 1;
+          log.info({ retries, max: CLIP_EMBED_PREVIEW_MAX_RETRIES }, "preview not ready; re-enqueuing embed");
+          await clipEmbeddingQueue().add(
+            JobNames.EmbedAsset,
+            { assetId: data.assetId, workspaceId: data.workspaceId, previewRetries: retries },
+            { delay: CLIP_EMBED_PREVIEW_DELAY_MS }
+          );
+          return { skipped: true, reason: "preview-not-ready" };
+        }
         log.info({ reason: result.reason, modelId: result.modelId }, "embed job skipped");
       } else {
         log.info(
