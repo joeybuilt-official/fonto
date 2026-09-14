@@ -29,6 +29,7 @@ import {
   clipDedupCheckQueue,
   clipEmbeddingQueue,
   extractEvidenceQueue,
+  addAutoClusterFacesJob,
   closeAllQueues,
 } from "@/lib/queue/queues";
 import {
@@ -49,6 +50,7 @@ import {
   BackfillInferenceJobSchema,
   BackfillReconcileJobSchema,
   AutoClusterFacesJobSchema,
+  AutoClusterScanJobSchema,
   type AutoClusterFacesJob,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
@@ -245,6 +247,14 @@ const DIGEST_INTERVAL_MS = Math.max(
 // safe. Override via AUTO_STACK_INTERVAL_MS for "tick every 60s and watch".
 const AUTO_STACK_INTERVAL_MS = Math.max(
   parseInt(process.env.AUTO_STACK_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
+  1000
+);
+
+// M5a (O4) — nightly HNSW auto-cluster sweep. Default once per day at the
+// same cadence the NAS cron was meant to run. Override via
+// AUTO_CLUSTER_INTERVAL_MS for "tick every 60s and watch" during a rollout.
+const AUTO_CLUSTER_INTERVAL_MS = Math.max(
+  parseInt(process.env.AUTO_CLUSTER_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
   1000
 );
 
@@ -1720,6 +1730,31 @@ function startMaintenanceWorker(): Worker {
         log.info(result, "auto-cluster-faces complete");
         return result;
       }
+      if (job.name === JobNames.AutoClusterScan) {
+        // M5a (O4) — nightly sweep: enumerate every workspace with embedded,
+        // non-hidden faces and fan one AutoClusterFaces job out to each. Same
+        // enumeration the /api/v1/cron/auto-cluster route used (which relied
+        // on a NAS cron that never existed); now fully worker-side.
+        const parsed = AutoClusterScanJobSchema.safeParse(job.data ?? {});
+        if (!parsed.success) {
+          log.warn({ issues: parsed.error.issues }, "auto-cluster-scan bad payload — ignoring");
+          return null;
+        }
+        const workspaces = await db
+          .selectDistinct({ workspaceId: schema.faceInstances.workspaceId })
+          .from(schema.faceInstances)
+          .where(
+            sql`${schema.faceInstances.hidden} = false
+              AND ${schema.faceInstances.embedding} IS NOT NULL`
+          );
+        const enqueued: string[] = [];
+        for (const { workspaceId } of workspaces) {
+          const id = await addAutoClusterFacesJob({ workspaceId });
+          if (id) enqueued.push(workspaceId);
+        }
+        log.info({ workspaces: enqueued.length }, "auto-cluster-scan complete");
+        return { enqueued: enqueued.length };
+      }
       log.warn({ name: job.name }, "unknown maintenance job — ignoring");
       return null;
     },
@@ -1845,6 +1880,26 @@ async function ensureAutoStackSchedule(): Promise<void> {
   logger.info(
     { intervalMs: AUTO_STACK_INTERVAL_MS, jobName: JobNames.AutoStack },
     "auto-stack schedule registered"
+  );
+}
+
+/**
+ * M5a (O4) — register the nightly auto-cluster sweep on the maintenance
+ * queue. Same idempotent `upsertJobScheduler` pattern. The tick fans one
+ * AutoClusterFaces job out to every workspace with face data, so the nightly
+ * cluster run no longer depends on the NAS cron that never existed — this is
+ * the operator-facing equivalent of the removed `/api/v1/cron/auto-cluster`
+ * external trigger, worker-side.
+ */
+async function ensureAutoClusterSchedule(): Promise<void> {
+  await maintenanceQueue().upsertJobScheduler(
+    JobNames.AutoClusterScan,
+    { every: AUTO_CLUSTER_INTERVAL_MS },
+    { name: JobNames.AutoClusterScan }
+  );
+  logger.info(
+    { intervalMs: AUTO_CLUSTER_INTERVAL_MS, jobName: JobNames.AutoClusterScan },
+    "auto-cluster schedule registered"
   );
 }
 
@@ -2156,6 +2211,14 @@ async function main(): Promise<void> {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
       "failed to register auto-stack schedule — auto-stacking disabled until next boot"
+    );
+  }
+  try {
+    await ensureAutoClusterSchedule();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "failed to register auto-cluster schedule — auto-cluster disabled until next boot"
     );
   }
   try {

@@ -60,6 +60,14 @@ export type EmbedAssetJob = z.infer<typeof EmbedAssetJobSchema>;
 // row stuck in processing_state='processing' past the threshold. Payload is
 // empty — the reaper reads the world from Postgres on each tick.
 export const ReapStuckAssetsJobSchema = z.object({}).strict();
+
+// M5a (O4) — nightly auto-cluster sweep. Empty payload; the tick enumerates
+// every workspace with embedded, non-hidden faces and enqueues one
+// AutoClusterFaces job per workspace (the exact work the removed NAS-cron
+// route did). Registered as a BullMQ repeatable job so the nightly run no
+// longer depends on an external scheduler the operator must provision.
+export const AutoClusterScanJobSchema = z.object({}).strict();
+export type AutoClusterScanJob = z.infer<typeof AutoClusterScanJobSchema>;
 export type ReapStuckAssetsJob = z.infer<typeof ReapStuckAssetsJobSchema>;
 
 // Phase 3.2 — audit_log retention reaper. Empty payload; the reaper reads
@@ -324,6 +332,10 @@ export const JobNames = {
   // M15 closeout — nightly HNSW face auto-cluster for one workspace. No
   // embedding vectors loaded into Node; DB-side pgvector HNSW does the work.
   AutoClusterFaces: "auto-cluster-faces",
+  // M5a (O4) — nightly sweep that fans one AutoClusterFaces job out to every
+  // workspace with face data. Owns the workspace enumeration so the nightly
+  // run is fully worker-side (no external cron required).
+  AutoClusterScan: "auto-cluster-scan",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];
