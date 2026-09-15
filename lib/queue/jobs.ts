@@ -61,6 +61,24 @@ export type EmbedAssetJob = z.infer<typeof EmbedAssetJobSchema>;
 // empty — the reaper reads the world from Postgres on each tick.
 export const ReapStuckAssetsJobSchema = z.object({}).strict();
 
+// M5d — thumbnail backfill. Empty payload; the worker selects thumbnail-less
+// renderable rows (same predicate as scripts/backfill-thumbnails.ts) and
+// re-enqueues generate-thumbnails with retain-terminal-job reclaim. Idempotent
+// + resumable; bounded batch per tick.
+export const BackfillThumbnailsJobSchema = z.object({
+  batchSize: z.number().int().min(1).default(200).optional(),
+}).strict();
+export type BackfillThumbnailsJob = z.infer<typeof BackfillThumbnailsJobSchema>;
+
+// M5d — CLIP embedding backfill. Empty payload; the worker selects active
+// image rows with clip_vec IS NULL (same predicate as
+// scripts/backfill-clip-embeddings.ts) and re-enqueues embed-asset with
+// retain-terminal-job reclaim. Idempotent + resumable; bounded batch per tick.
+export const BackfillClipJobSchema = z.object({
+  batchSize: z.number().int().min(1).default(200).optional(),
+}).strict();
+export type BackfillClipJob = z.infer<typeof BackfillClipJobSchema>;
+
 // M5a (O4) — nightly auto-cluster sweep. Empty payload; the tick enumerates
 // every workspace with embedded, non-hidden faces and enqueues one
 // AutoClusterFaces job per workspace (the exact work the removed NAS-cron
@@ -336,6 +354,10 @@ export const JobNames = {
   // workspace with face data. Owns the workspace enumeration so the nightly
   // run is fully worker-side (no external cron required).
   AutoClusterScan: "auto-cluster-scan",
+  // M5d — on-demand thumbnail / CLIP backfills, triggered from
+  // /admin/reprocess. Worker-side equivalents of the backfill:* scripts.
+  BackfillThumbnails: "backfill-thumbnails",
+  BackfillClip: "backfill-clip",
 } as const;
 
 export type JobName = (typeof JobNames)[keyof typeof JobNames];

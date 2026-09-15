@@ -1616,6 +1616,34 @@ registry.registerPath({
   },
 });
 
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/admin/reprocess",
+  summary: "On-demand trigger for the recurring maintenance backfills",
+  description:
+    "Instance-admin only. Enqueues one maintenance-queue job from a fixed " +
+    "whitelist (thumbnails | clip | auto-cluster | evidence | inference | " +
+    "face-crops | reap-stuck); the worker performs the repair, so this route " +
+    "adds no duplicated predicate. Responds 400 for an unknown job name.",
+  tags: ["Admin"],
+  security: AUTH_SECURITY,
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({ job: z.string() }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: json(z.object({ enqueued: z.string() }), "The maintenance job enqueued."),
+    400: errorResponse("Unknown maintenance job."),
+    401: errorResponse("Not authenticated or not an instance admin."),
+  },
+});
+
 // ---------------------------------------------------------------------------
 // /api/v1/stacks (Phase 5.5 — manual stacks)
 // ---------------------------------------------------------------------------
@@ -2196,4 +2224,6 @@ export const REGISTERED_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/v1/stats",
   "POST /api/v1/cron/purge-trashed",
   "POST /api/v1/cron/ocr-backfill",
+  // M5d — owner-gated on-demand maintenance backfill trigger (see /admin/reprocess).
+  "POST /api/v1/admin/reprocess",
 ]);

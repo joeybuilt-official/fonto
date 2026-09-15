@@ -99,6 +99,22 @@ export default async function JobsAdminPage(): Promise<React.ReactElement> {
         BullMQ queues for asset processing. Restart-safe; retries on failure.
       </p>
 
+      <section className="mb-8 rounded-lg border p-4">
+        <h2 className="text-lg font-semibold mb-1">M5d — Reprocess / Backfill</h2>
+        <p className="text-sm text-muted-foreground mb-3">
+          Trigger the recurring maintenance backfills (thumbnails, CLIP,
+          auto-cluster, evidence, inference, face-crops, stuck reaper) from
+          the web instead of the <code className="font-mono">pnpm backfill:*</code>{" "}
+          SSH one-liners.
+        </p>
+        <Link
+          href="/admin/reprocess"
+          className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+        >
+          Open Reprocess / Backfill &rarr;
+        </Link>
+      </section>
+
       {bullBoardUrl ? (
         <section className="mb-8 rounded-lg border p-4">
           <h2 className="text-lg font-semibold mb-1">Open Bull-board</h2>

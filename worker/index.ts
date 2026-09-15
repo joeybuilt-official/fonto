@@ -51,6 +51,8 @@ import {
   BackfillReconcileJobSchema,
   AutoClusterFacesJobSchema,
   AutoClusterScanJobSchema,
+  BackfillThumbnailsJobSchema,
+  BackfillClipJobSchema,
   type AutoClusterFacesJob,
   type ProcessAssetJob,
   type GenerateThumbnailsJob,
@@ -79,6 +81,7 @@ import { clusterWorkspaceFaces, clusterWorkspaceFacesHNSW } from "@/lib/faces/cl
 import { pruneAuditLog } from "@/lib/maintenance/auditPrune";
 import { runDailyDigest } from "@/lib/notifications/runDailyDigest";
 import { transcodeVideoHls } from "@/lib/processing/transcodeVideoHls";
+import { backfillThumbnails, backfillClip } from "@/lib/processing/reprocessBackfill";
 import { runAutoStack } from "@/lib/stacks/autoStack";
 import { backfillStorageMirror } from "@/lib/storage/backfill";
 import { reconcileStorageMirror } from "@/lib/storage/reconcile";
@@ -1670,6 +1673,30 @@ function startMaintenanceWorker(): Worker {
         log.info({ batchSize }, "inference backfill tick start");
         const result = await backfillInference(batchSize);
         log.info(result, "inference backfill tick complete");
+        return result;
+      }
+      if (job.name === JobNames.BackfillThumbnails) {
+        // M5d — on-demand thumbnail backfill (the /admin/reprocess button).
+        // Same predicate + reclaim as scripts/backfill-thumbnails.ts, worker-side.
+        const parsed = BackfillThumbnailsJobSchema.safeParse(job.data ?? {});
+        const batchSize = parsed.success
+          ? parsed.data.batchSize ?? 200
+          : 200;
+        log.info({ batchSize }, "thumbnail backfill start");
+        const result = await backfillThumbnails(batchSize);
+        log.info(result, "thumbnail backfill complete");
+        return result;
+      }
+      if (job.name === JobNames.BackfillClip) {
+        // M5d — on-demand CLIP embedding backfill (the /admin/reprocess button).
+        // Same predicate + reclaim as scripts/backfill-clip-embeddings.ts, worker-side.
+        const parsed = BackfillClipJobSchema.safeParse(job.data ?? {});
+        const batchSize = parsed.success
+          ? parsed.data.batchSize ?? 200
+          : 200;
+        log.info({ batchSize }, "clip backfill start");
+        const result = await backfillClip(batchSize);
+        log.info(result, "clip backfill complete");
         return result;
       }
       if (job.name === JobNames.BackfillReconcile) {
