@@ -44,7 +44,8 @@ export interface EmbedAssetResult {
     | "no-r2-bucket"
     | "vision-not-configured"
     | "clip-column-missing"
-    | "preview-not-ready";
+    | "preview-not-ready"
+    | "preview-unavailable";
   modelId?: string;
   dimensions?: number;
 }
@@ -83,6 +84,7 @@ export async function embedAsset(
       filename: schema.assets.filename,
       mimeType: schema.assets.mimeType,
       previewKey: schema.assets.previewKey,
+      thumbnailState: schema.assets.thumbnailState,
     })
     .from(schema.assets)
     .where(eq(schema.assets.id, assetId))
@@ -98,18 +100,31 @@ export async function embedAsset(
     return { skipped: true, reason: "non-image" };
   }
 
-  // E4-M6 — if this container needs the sharp-decoded preview and the preview
-  // has not been generated yet, skip. The vision model cannot decode a RAW /
-  // HEIC / AVIF original, so there is no fallback worth attempting — the row
-  // is re-covered by `backfill:clip` once its thumbnail lands (the same
-  // accepted gap as the `skipped` thumbnail rows B2 measured). Decodable
-  // mimes (JPEG/PNG/…) keep the `previewKey ?? original` fallback.
+  // E4-M6 — preview-required mimes (RAW/HEIC/AVIF) cannot be embedded from the
+  // raw original (the vision model can't decode them), so they need the
+  // sharp-decoded preview. Two distinct cases:
+  //   - thumbnail_state is TERMINAL ('skipped'/'failed'): the preview will
+  //     NEVER arrive (the row is permanently un-thumbnailable — e.g. the
+  //     JPEG-XR DNG population B2 measured). Skip for good; re-enqueueing
+  //     would just churn. `backfill:clip` still covers these if a preview is
+  //     ever produced out-of-band.
+  //   - otherwise (idle/generating): the thumbnail worker is still working.
+  //     Return `preview-not-ready` so the clip worker re-enqueues with a
+  //     bounded delay and the vector lands once the preview exists.
+  // Decodable mimes (JPEG/PNG/…) keep the `previewKey ?? original` fallback.
   if (visionNeedsPreview(asset.mimeType) && !asset.previewKey) {
+    const terminal =
+      asset.thumbnailState === "skipped" || asset.thumbnailState === "failed";
     log.info(
-      { mimeType: asset.mimeType },
-      "preview-required mime without a generated preview — skipping embed"
+      { mimeType: asset.mimeType, thumbnailState: asset.thumbnailState },
+      terminal
+        ? "preview-required mime, thumbnail terminal — skipping embed for good"
+        : "preview-required mime, preview not ready — deferring embed"
     );
-    return { skipped: true, reason: "preview-not-ready" };
+    return {
+      skipped: true,
+      reason: terminal ? "preview-unavailable" : "preview-not-ready",
+    };
   }
 
   // Prefer preview (1080px WebP) — small, web-safe, already decoded by sharp.
