@@ -29,7 +29,11 @@
 # RULES
 #   R1 prod domains     myfonto.com / getfonto.com / fonto.app
 #   R2 host paths       /data/appdata, /data/_secrets, /data/backups,
-#                       /data/fonto-media, /mnt/user/, /opt/app/
+#                       /mnt/user/, /opt/app/
+#                       (NOT container mount points that this repo's own
+#                       compose file defines, e.g. /data/fonto-media inside a
+#                       named volume — those are the app's internal layout,
+#                       not the deploy box's, and every self-hoster gets them.)
 #   R3 ssh as root      `ssh root@…`
 #   R4 routable IPv4    any IPv4 literal that is not loopback / any / broadcast /
 #                       link-local / RFC1918 / RFC5737 documentation
@@ -65,7 +69,7 @@ done
 # negative lookahead; see scan_one().
 RULES=(
   'R1-prod-domain	(myfonto|getfonto)\.com|fonto\.app	Production hostname. Use <YOUR_APP_ORIGIN> or NEXT_PUBLIC_APP_URL supplied by the deployer — never a baked default.'
-  'R2-host-path	/data/(appdata|_secrets|backups|fonto-media)|/mnt/user/|/opt/app/	Deploy-box filesystem layout. Use <host-path>, or a path relative to the repo.'
+  'R2-host-path	/data/(appdata|_secrets|backups)|/mnt/user/|/opt/app/	Deploy-box filesystem layout. Use <host-path>, or a path relative to the repo.'
   'R3-ssh-root	ssh[[:space:]]+(-[^[:space:]]+[[:space:]]+)*root@	Remote-root access pattern. Use `ssh <server>` with a placeholder.'
   'R5-internal-dns	(https?|redis|rediss|amqp)://[a-z0-9._-]*(valkey|redis|plexo-vision|plexo-core|otel-collector|fonto-worker|fonto-db|minio|caddy|authentik|inngest)(:|[0-9])	Internal container DNS name. Legitimate inside compose/example files; elsewhere use localhost or <your-host>.'
   'R7-internal-hostname	hostname[^a-zA-Z]{0,4}[!=]=?\s*\"?NAS\b|expected NAS\b|deploy box|the NAS\b	Internal host identity (the deploy box names itself in a safety gate). Parameterize it, e.g. EXPECT_HOSTNAME.'
@@ -107,9 +111,18 @@ ALLOWLIST_PATHS=(
 ALLOW_R5_PATHS=(
   'docker-compose.yml'
   'docker-compose.override.example.yml'
+  # The compose env template documents each service's internal DNS name as the
+  # value a self-hoster running compose actually wants (redis://valkey:6379,
+  # http://minio:9000). Replacing these with <your-host> would make the shipped
+  # template wrong for its own compose stack.
+  'docker-compose.example.env'
   'ops/'
   '.env.example'
   'docs/self-hosting.md'
+  # Path-style resolution is decided BY the endpoint host: minio/ceph need
+  # forcePathStyle, R2/S3 must not. The test must therefore name those exact
+  # internal hosts as fixtures — that is the subject under test, not a leak.
+  'lib/r2PathStyle.test.ts'
   'scripts/scan-infra-identifiers.sh'
 )
 
