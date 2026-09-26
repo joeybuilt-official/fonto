@@ -16,7 +16,7 @@
 //     --source-root=/secondlib/photos/library \
 //     --owner-user=<uuid> --workspace=<uuid> \
 //     --files=/secondlib/.../a.MOV,/secondlib/.../b.MOV \
-//     --manifest=/data/fonto-media/_immich-manifests/import-secondlib-large.jsonl \
+//     --manifest=<LOCAL_STORAGE_ROOT>/_immich-manifests/import.jsonl \
 //     [--part-mib=128] [--dry-run]
 
 import fs from "node:fs";

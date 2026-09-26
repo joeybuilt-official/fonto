@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Edit, Write, Bash
 model: inherit
 ---
 
-You are the queue and operations expert for Fonto (myfonto.com).
+You are the queue and operations expert for Fonto.
 
 ## Scope (you own)
 - `lib/queue` — BullMQ queues on the platform Valkey (`docs/adr/0006-bullmq-on-platform-valkey.md`)

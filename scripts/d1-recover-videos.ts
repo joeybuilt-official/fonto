@@ -43,7 +43,9 @@ import { r2, localFs } from "@/lib/storage";
 import { isMissingObjectError } from "@/lib/storage/read";
 
 const STAGING_DIR = path.join(
-  process.env.LOCAL_STORAGE_ROOT ?? "/data/fonto-media",
+  // LOCAL_STORAGE_ROOT has no committed default: this is a one-off recovery
+  // script bound to the operator's own local-storage mount.
+  process.env.LOCAL_STORAGE_ROOT!,
   "_laptop-import-2026-07-05/Canon"
 );
 

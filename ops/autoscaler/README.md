@@ -53,14 +53,15 @@ fonto-autoscaler:
     dockerfile: ops/autoscaler/Dockerfile
   container_name: fonto-autoscaler
   restart: unless-stopped
-  networks: [service]
+  networks: [fonto]
   depends_on: [valkey]
   environment:
     REDIS_URL: redis://valkey:6379
     AUTOSCALER_DRY_RUN: "1"            # flip to 0 after verification
   volumes:
     - /var/run/docker.sock:/var/run/docker.sock
-    - /data/appdata/appdata/docker-compose.yml:/etc/fonto-compose/docker-compose.yml:ro
+    # AUTOSCALER_COMPOSE_FILE points here; mount YOUR infra compose file read-only.
+    - <host-path>/docker-compose.yml:/etc/fonto-compose/docker-compose.yml:ro
 ```
 
 `depends_on: [valkey]` keeps the first tick from spamming connection

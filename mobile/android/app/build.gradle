@@ -25,6 +25,18 @@ android {
         targetSdk = 35
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
+
+        // App Links host for the AndroidManifest intent-filter placeholder
+        // (${fontoAppLinkHost}). Injected at build time — precedence:
+        //   1. -PfontoAppLinkHost=...        (gradle property)
+        //   2. $FONTO_APP_LINK_HOST          (environment; what .pushd.yaml sets)
+        //   3. "localhost"                   (default → App Links simply do not
+        //                                     verify; the app still builds/runs)
+        // There is deliberately NO production hostname in the public repo.
+        def appLinkHost = (project.findProperty("fontoAppLinkHost")
+                           ?: System.getenv("FONTO_APP_LINK_HOST")
+                           ?: "localhost")
+        manifestPlaceholders = [fontoAppLinkHost: appLinkHost]
     }
 
     signingConfigs {

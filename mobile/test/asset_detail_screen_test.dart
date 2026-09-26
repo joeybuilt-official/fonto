@@ -13,7 +13,7 @@ void main() {
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({
       "fonto.pat": "test-pat",
-      "fonto.baseUrl": "https://myfonto.com",
+      "fonto.baseUrl": "https://fonto.example.com",
     });
   });
 

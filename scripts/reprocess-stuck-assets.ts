@@ -52,7 +52,7 @@ interface StuckRow {
 async function main(): Promise<void> {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) throw new Error("DATABASE_URL not set");
-  const redisUrl = process.env.REDIS_URL ?? "redis://valkey:6379";
+  const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 
   const workspaceFilter =
     typeof arg("workspace") === "string" ? (arg("workspace") as string) : null;

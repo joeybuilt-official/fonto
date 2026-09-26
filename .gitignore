@@ -24,6 +24,12 @@ node_modules
 .DS_Store
 *.pem
 
+# Agent session hand-off notes — never committed. They name real infrastructure
+# and reference machine-local paths that do not exist in the repo.
+next-session*.txt
+session-notes*.md
+*-findings*.md
+
 # debug
 npm-debug.log*
 yarn-debug.log*

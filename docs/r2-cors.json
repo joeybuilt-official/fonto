@@ -4,8 +4,7 @@
       "ID": "fonto-direct-upload",
       "AllowedOrigins": [
         "http://localhost:3500",
-        "https://app.getfonto.com",
-        "https://myfonto.com"
+        "<YOUR_APP_ORIGIN>"
       ],
       "AllowedMethods": ["PUT", "GET", "HEAD", "POST", "DELETE"],
       "AllowedHeaders": [

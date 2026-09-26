@@ -254,7 +254,7 @@ const AUTO_STACK_INTERVAL_MS = Math.max(
 );
 
 // M5a (O4) — nightly HNSW auto-cluster sweep. Default once per day at the
-// same cadence the NAS cron was meant to run. Override via
+// same cadence the host cron was meant to run. Override via
 // AUTO_CLUSTER_INTERVAL_MS for "tick every 60s and watch" during a rollout.
 const AUTO_CLUSTER_INTERVAL_MS = Math.max(
   parseInt(process.env.AUTO_CLUSTER_INTERVAL_MS ?? `${24 * 60 * 60 * 1000}`, 10),
@@ -1914,7 +1914,7 @@ async function ensureAutoStackSchedule(): Promise<void> {
  * M5a (O4) — register the nightly auto-cluster sweep on the maintenance
  * queue. Same idempotent `upsertJobScheduler` pattern. The tick fans one
  * AutoClusterFaces job out to every workspace with face data, so the nightly
- * cluster run no longer depends on the NAS cron that never existed — this is
+ * cluster run no longer depends on a host cron — this is
  * the operator-facing equivalent of the removed `/api/v1/cron/auto-cluster`
  * external trigger, worker-side.
  */
@@ -2168,7 +2168,7 @@ async function main(): Promise<void> {
       faceDetectConcurrency: FACE_DETECT_CONCURRENCY,
       importConcurrency: IMPORT_CONCURRENCY,
       metricsPort: METRICS_PORT,
-      redisUrl: (process.env.REDIS_URL ?? "redis://valkey:6379").replace(/\/\/[^@]*@/, "//***@"),
+      redisUrl: (process.env.REDIS_URL ?? "redis://localhost:6379").replace(/\/\/[^@]*@/, "//***@"),
     },
     "fonto worker starting"
   );

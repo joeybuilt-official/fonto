@@ -18,7 +18,7 @@
 //   pnpm tsx bullboard/index.ts
 //
 // Env:
-//   REDIS_URL                     defaults to redis://valkey:6379 (shared with worker)
+//   REDIS_URL                     defaults to redis://localhost:6379 (shared with worker)
 //   BULL_BOARD_PORT               defaults to 3300
 //   BULL_BOARD_BASIC_AUTH_USER    required
 //   BULL_BOARD_BASIC_AUTH_PASS    required
@@ -135,7 +135,7 @@ async function main(): Promise<void> {
       {
         port: PORT,
         queues: queues.map((q) => q.name),
-        redisUrl: (process.env.REDIS_URL ?? "redis://valkey:6379").replace(
+        redisUrl: (process.env.REDIS_URL ?? "redis://localhost:6379").replace(
           /\/\/[^@]*@/,
           "//***@"
         ),

@@ -17,7 +17,16 @@ class AuthStore {
 
   static const _kPat = "fonto.pat";
   static const _kBaseUrl = "fonto.baseUrl";
-  static const defaultBaseUrl = "https://myfonto.com";
+  /// Default instance the login form pre-fills.
+  ///
+  /// Supplied at BUILD time — `flutter build apk --dart-define=FONTO_BASE_URL=https://fonto.example.com`
+  /// (see .pushd.yaml / mobile/CI.md). There is deliberately no production
+  /// hostname compiled into the public repo: the fallback is localhost so an
+  /// unconfigured build points at a dev server rather than somebody else's.
+  static const defaultBaseUrl = String.fromEnvironment(
+    "FONTO_BASE_URL",
+    defaultValue: "http://localhost:3500",
+  );
 
   // Android Documents Provider auth bridge. Best-effort; ignores errors
   // on non-Android platforms and if the channel is not yet registered.

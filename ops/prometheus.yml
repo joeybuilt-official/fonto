@@ -21,4 +21,4 @@ scrape_configs:
 
   - job_name: fonto-worker
     static_configs:
-      - targets: ["fonto-worker:9090"]
+      - targets: ["fonto-worker:9464"]   # WORKER_METRICS_PORT default — keep in sync

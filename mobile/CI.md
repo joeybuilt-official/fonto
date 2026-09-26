@@ -19,7 +19,7 @@ git tag v1.0.17        # pick the next version
 git push origin v1.0.17
 ```
 
-After the green build, republish the APK to `myfonto.com/fonto.apk` per
+After the green build, republish the APK to `<YOUR_APP_ORIGIN>/fonto.apk` per
 the recipe in `docs/claude/platform/hive-deploy-runbook.md`. To go back to push-triggered,
 restore the `events: [push, pull_request]` + `changeset: mobile/**` block
 in `codemagic.yaml`.
@@ -34,7 +34,7 @@ Current keystore expires **2053-10-11** (alias: `fonto-upload`). To rotate:
      -keyalg RSA -keysize 2048 -validity 10000 \
      -alias fonto-upload
    ```
-2. Store at `/data/_secrets/fonto-keystore/fonto-upload.jks`.
+2. Store at `<host-path>/secrets/fonto-keystore/fonto-upload.jks` (`chmod 600`).
 3. In Codemagic → App Settings → Code signing → Android, upload the new `.jks` under the reference name `fonto_upload_keystore`.
 4. Update `CM_STORE_PASSWORD`, `CM_KEY_ALIAS`, `CM_KEY_PASSWORD` environment variables in Codemagic to match.
 5. Sign and publish a new release build to verify the chain before the old cert expires.

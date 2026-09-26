@@ -193,6 +193,11 @@ async function uploadOne(
   remoteDirPrefix: string
 ): Promise<{ assetId: string | null; deduplicated: boolean }> {
   const cfg = getConfig();
+  if (!cfg.baseUrl) {
+    throw new Error(
+      "No Fonto instance configured — run `fonto login --base-url <url> --pat <token>` first."
+    );
+  }
   if (!cfg.pat) throw new Error("No PAT — run `fonto login --pat <token>` first.");
 
   // Virtual remote path is <remotePrefix>/<rel-dir>, normalised so a
@@ -268,6 +273,11 @@ async function uploadOneTus(
   statePath: string
 ): Promise<{ assetId: string | null; deduplicated: boolean }> {
   const cfg = getConfig();
+  if (!cfg.baseUrl) {
+    throw new Error(
+      "No Fonto instance configured — run `fonto login --base-url <url> --pat <token>` first."
+    );
+  }
   if (!cfg.pat) throw new Error("No PAT — run `fonto login --pat <token>` first.");
   const auth = { Authorization: `Bearer ${cfg.pat}`, "Tus-Resumable": "1.0.0" };
   const filename = path.basename(file.abs);
@@ -543,6 +553,11 @@ async function runPull(
 ): Promise<void> {
   const { request } = await import("../api.js");
   const cfg = (await import("../config.js")).getConfig();
+  if (!cfg.baseUrl) {
+    throw new Error(
+      "No Fonto instance configured — run `fonto login --base-url <url> --pat <token>` first."
+    );
+  }
   if (!cfg.pat) throw new Error("No PAT — run `fonto login --pat <token>` first.");
 
   const spin = ora(`Pulling from cursor=${state.cursor}…`).start();

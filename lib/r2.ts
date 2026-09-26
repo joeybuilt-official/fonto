@@ -91,10 +91,49 @@ export function resolveR2Timeouts(): R2Timeouts {
   };
 }
 
+/**
+ * Path-style vs virtual-hosted-style addressing.
+ *
+ * Virtual-hosted style (`https://<bucket>.<endpoint-host>/key`) is what R2 and
+ * S3 use by default. Path style (`https://<endpoint-host>/<bucket>/key`) is what
+ * a self-hosted S3-compatible store needs: MinIO and Ceph do not serve wildcard
+ * DNS, so `<bucket>.minio` simply does not resolve — every request (and every
+ * presigned URL handed to the browser) fails.
+ *
+ * Resolution: S3_FORCE_PATH_STYLE wins when set ("true"/"1"/"false"/"0");
+ * otherwise it is inferred from the endpoint host, because that keeps
+ * Cloudflare R2 and AWS S3 on their existing behaviour with no configuration
+ * while making the compose/MinIO path work out of the box. Exported for tests.
+ */
+export function resolveForcePathStyle(endpoint: string | undefined): boolean {
+  const explicit = process.env.S3_FORCE_PATH_STYLE;
+  if (explicit !== undefined && explicit !== "") {
+    return /^(1|true|yes|on)$/i.test(explicit.trim());
+  }
+  if (!endpoint) return false;
+  let host: string;
+  try {
+    host = new URL(endpoint).hostname.toLowerCase();
+  } catch {
+    return false; // unparsable endpoint — leave the SDK default alone
+  }
+  // Hosted object stores do wildcard bucket DNS; everything else does not.
+  const VIRTUAL_HOSTED_OK = [
+    "r2.cloudflarestorage.com",
+    "amazonaws.com",
+    "scw.cloud",
+    "digitaloceanspaces.com",
+    "backblazeb2.com",
+  ];
+  return !VIRTUAL_HOSTED_OK.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
 function baseClientConfig() {
+  const endpoint = process.env.R2_ENDPOINT;
   return {
-    endpoint: process.env.R2_ENDPOINT,
+    endpoint,
     region: "auto" as const,
+    forcePathStyle: resolveForcePathStyle(endpoint),
     credentials: {
       accessKeyId: process.env.R2_ACCESS_KEY_ID!,
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,

@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: MIT
+# Caddyfile for the `selfhosted` profile in docker-compose.yml.
+#
+# Caddy obtains and renews a TLS certificate for PUBLIC_DOMAIN automatically
+# (HTTP-01/ALPN-01), which is why that profile publishes 80 + 443. Prerequisites:
+#   * PUBLIC_DOMAIN resolves to this host from the public internet
+#   * ports 80 and 443 are reachable (Let's Encrypt validation needs 80 or 443)
+#   * NEXT_PUBLIC_APP_URL is set to https://PUBLIC_DOMAIN and the `fonto` image
+#     was REBUILT after setting it (it is a build arg, inlined at compile time)
+#   * minio is reachable from the browser too, or uploads will fail — see the
+#     R2_ENDPOINT note in docker-compose.yml.
+#
+# Everything else (share links, presigned URLs, OAuth callbacks) inherits the
+# same origin, so one block is enough.
+
+{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+
+	# Fonto's standalone Next server listens on 3500 inside the compose network.
+	reverse_proxy fonto:3500 {
+		# Pass the real client scheme/host so publicOrigin() and the audit log
+		# see the public origin, not the container's bind address.
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+
+	# Large originals + tus resumable uploads stream through; Caddy's default
+	# timeouts are fine but be explicit so a slow 10 GiB upload is not cut off.
+	request_body {
+		max_size 0
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# Redirect any bare-HTTP hit on the apex/www variant to the canonical host.
+# Caddy handles this automatically for the site block above, so this only covers
+# the www alias if you use one — uncomment and set PUBLIC_DOMAIN accordingly.
+#
+# www.{$PUBLIC_DOMAIN} {
+# 	redir https://{$PUBLIC_DOMAIN}{uri} permanent
+# }

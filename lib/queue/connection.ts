@@ -5,16 +5,19 @@
 // `maxRetriesPerRequest: null` and `enableReadyCheck: false` is recommended for
 // workers/queues so they don't crash on transient blips.
 //
-// Default URL is `redis://valkey:6379` to line up with the platform's Valkey
-// instance.
+// Default URL is `redis://localhost:6379` so a bare-host dev setup (Postgres +
+// Valkey/Redis on localhost) works with no env at all. Inside the shipped
+// docker-compose.yml the Redis service is named `valkey`, so compose sets
+// REDIS_URL to that service name on port 6379 explicitly — a container DNS
+// name is never the code default, because it cannot resolve on a bare host.
 //
 // The connection is LAZY. `next build` imports every route module to collect
 // its metadata, and ~30 of them reach `lib/cache/valkey` -> here. With an
 // eager connection that import opened a TCP socket during the build, where
 // REDIS_URL is unset and the default host does not resolve; combined with
 // `maxRetriesPerRequest: null` (infinite retries, required by BullMQ) it
-// retried forever, wrote ~90k `ENOTFOUND valkey` lines into the build log and
-// held the event loop open so the build could not exit. Deferring the socket
+// retried forever, wrote ~90k `ENOTFOUND <redis-host>` lines into the build log
+// and held the event loop open so the build could not exit. Deferring the socket
 // to the first command costs nothing at runtime — every caller issues a
 // command immediately — and makes module import free.
 
@@ -23,7 +26,7 @@ import IORedis, { type RedisOptions } from "ioredis";
 let _connection: IORedis | null = null;
 
 export function getRedisUrl(): string {
-  return process.env.REDIS_URL ?? "redis://valkey:6379";
+  return process.env.REDIS_URL ?? "redis://localhost:6379";
 }
 
 export function getRedisConnection(): IORedis {

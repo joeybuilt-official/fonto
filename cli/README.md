@@ -7,7 +7,7 @@ access token (PAT).
 npm install -g @joeybuilt/fonto-cli   # once published
 
 # Mint a PAT in the web UI: /app/settings/tokens
-fonto login --pat <token> --base-url https://myfonto.com
+fonto login --base-url https://fonto.example.com --pat <token>
 
 fonto whoami           # verify the token + show workspace stats
 fonto ls               # list assets in the workspace

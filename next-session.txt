@@ -1,7 +1,0 @@
-Resume fonto. Read /workspace/fonto/plan.md + /workspace/fonto/checklist.md + /workspace/fonto/next-session-deploy.md.
-
-Phase 6.6b is DONE (Collections/Updates/Explore tabs + nav cleanups all live; build #18 / 1.0.18 republished to myfonto.com/fonto.apk; backend hasGeo param deployed to NAS).
-
-IMPORTANT WORKFLOW CHANGE: Codemagic is now TAG-GATED (codemagic.yaml). Plain pushes to main no longer build. Cut a build deliberately: `git tag v1.0.x && git push origin v1.0.x`, then republish the APK per next-session-deploy.md. (Runbook: mobile/CI.md.)
-
-Continuing Phase 6.7: Document scanner (ML Kit, PDF-only — decision locked). Next: add the scanner package to mobile/pubspec.yaml and wire a "Scan document" FAB action — see the 6.7 ENTRY POINTS block in checklist.md for exact file:line hooks (mobile scan→enqueue→upload path is reusable; backend needs poppler-utils in Dockerfile.worker + a page_count migration).

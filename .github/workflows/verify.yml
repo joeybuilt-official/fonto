@@ -47,4 +47,22 @@ jobs:
       - run: pnpm lint
       - run: pnpm arch
       - run: pnpm conformance
+      # Tests run before the build: `pnpm test` is fast and gives a precise
+      # failure, whereas a broken unit test would otherwise surface only as a
+      # failed 6 GiB `next build` ~15 minutes later.
+      - run: pnpm test
+      # Guards with self-tests. `scan:infra` blocks committed production
+      # hostnames / deploy paths / internal names; its --self-test plants a
+      # canary per rule first, so a clean run cannot be a vacuous one.
+      - run: pnpm scan:infra
+      - run: bash scripts/scan-infra-identifiers.sh --self-test
+      # Fails when .env.example drifts behind the variables the code reads.
+      - run: pnpm check:env-example
+      # NOTE: the docs landing gate (scripts/check-docs.sh) is deliberately NOT
+      # wired in here. It requires CHANGELOG.md to change in every code commit,
+      # and this repo has no history of maintaining one — enabling it would fail
+      # the very next push instead of preventing a regression. CHANGELOG.md now
+      # exists as the worklog target, so enabling this is a one-line change when
+      # the maintainer wants it:
+      #     - run: sh scripts/check-docs.sh --since HEAD~1
       - run: pnpm build

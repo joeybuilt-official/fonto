@@ -22,11 +22,22 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- App Links (Phase 6.5): the host is injected at build time via the
+                 `fontoAppLinkHost` manifest placeholder — see app/build.gradle
+                 (FONTO_APP_LINK_HOST env / gradle property) and mobile/CI.md.
+                 There is deliberately NO production hostname committed here.
+
+                 android:autoVerify requires the host to serve a matching
+                 /.well-known/assetlinks.json (fingerprint = ASSETLINKS_SHA256).
+                 With the placeholder left at its "localhost" default verification
+                 simply does not complete: the app still builds and runs, only
+                 browser-to-app hand-off is inactive. Set FONTO_APP_LINK_HOST to
+                 your own domain to enable it. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="https" android:host="myfonto.com"/>
+                <data android:scheme="https" android:host="${fontoAppLinkHost}"/>
             </intent-filter>
         </activity>
         <meta-data android:name="flutterEmbedding" android:value="2"/>

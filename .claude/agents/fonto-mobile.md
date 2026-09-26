@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Edit, Write, Bash
 model: inherit
 ---
 
-You are the mobile expert for Fonto (myfonto.com).
+You are the mobile expert for Fonto.
 
 ## Scope (you own)
 - `mobile/**` — the Flutter app (`docs/adr/0003-flutter-mobile.md`)

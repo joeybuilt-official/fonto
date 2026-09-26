@@ -7,8 +7,8 @@
 #   docker build -f Dockerfile.bullboard -t fonto-bullboard:dev .
 #
 # Run (dev):
-#   docker run --rm -p 3300:3300 \
-#     -e REDIS_URL=redis://valkey:6379 \
+#   docker run --rm -p 3300:3300 --add-host=host.docker.internal:host-gateway \
+#     -e REDIS_URL=redis://host.docker.internal:6379 \
 #     -e BULL_BOARD_BASIC_AUTH_USER=ops \
 #     -e BULL_BOARD_BASIC_AUTH_PASS=changeme \
 #     fonto-bullboard:dev

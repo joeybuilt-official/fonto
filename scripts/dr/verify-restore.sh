@@ -3,7 +3,8 @@
 # Copyright (C) 2026 Joeybuilt LLC
 #
 # M14 / ADR 0058 — restore DRILL. Decrypts the latest backup and restores it
-# into an ISOLATED throwaway DATABASE (never the live `pushd`/`fonto`), asserts
+# into an ISOLATED throwaway DATABASE (never the live production DB, which
+# holds the `fonto` schema), asserts
 # the data is present, then drops the throwaway DB. This is the gate that flips
 # ADR 0058 Proposed → Accepted: run once and confirm PASS.
 #
@@ -14,12 +15,12 @@
 set -euo pipefail
 
 KEY="${1:?usage: verify-restore.sh <age-private-key> [artifact]}"
-DEST="${DEST:-/data/backups/fonto}"
+DEST="${DEST:?DEST is required (backup directory)}"
 PG_CONTAINER="${PG_CONTAINER:-postgres}"
 TESTDB="fonto_restore_test"
 ART="${2:-$(ls -1 "$DEST"/fonto-*.pgdump.gz.age 2>/dev/null | sort | tail -1)}"
 
-[ "$(hostname)" = "NAS" ] || { echo "run on the host" >&2; exit 1; }
+[ -z "${EXPECT_HOSTNAME:-}" ] || [ "$(hostname)" = "$EXPECT_HOSTNAME" ] || { echo "run on the host (expected $EXPECT_HOSTNAME)" >&2; exit 1; }
 [ -f "$KEY" ] || { echo "missing private key $KEY" >&2; exit 1; }
 [ -n "$ART" ] && [ -f "$ART" ] || { echo "no artifact found" >&2; exit 1; }
 echo "[verify] artifact: $ART"
@@ -43,7 +44,7 @@ age -d -i "$KEY" "$ART" | gunzip > "$TMP"
 echo "[verify] decrypted $(stat -c%s "$TMP") bytes"
 
 # Isolated throwaway DB — the dump's `fonto` schema restores cleanly here with
-# zero possibility of touching the live pushd database.
+# zero possibility of touching the live production database.
 docker exec "$PG_CONTAINER" psql -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 \
   -c "DROP DATABASE IF EXISTS $TESTDB;" -c "CREATE DATABASE $TESTDB;"
 # The fonto schema has vector (pgvector) columns whose type lives in public;

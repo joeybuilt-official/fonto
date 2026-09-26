@@ -81,8 +81,8 @@ function applyRedirect(
 
 export function middleware(request: NextRequest) {
   // Canonical host. The auth client + session cookie are bound to the apex
-  // (NEXT_PUBLIC_APP_URL / BETTER_AUTH_URL = https://myfonto.com). A page
-  // loaded on www.myfonto.com makes the sign-in fetch CROSS-ORIGIN → blocked
+  // origin configured via NEXT_PUBLIC_APP_URL / BETTER_AUTH_URL. A page loaded
+  // on the www. variant makes the sign-in fetch CROSS-ORIGIN → blocked
   // by CORS → login throws "Couldn't sign in". Redirect www → apex (read the
   // public host from the forwarded header so it works behind the proxy).
   const fwdHost =

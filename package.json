@@ -8,11 +8,18 @@
     "start": "next start -p 3500",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "arch": "depcruise --config .dependency-cruiser.cjs lib app worker scripts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "bash scripts/db-migrate-refuses.sh",
+    "db:setup": "bash scripts/db-apply.sh",
+    "db:setup:dry-run": "bash scripts/db-apply.sh --dry-run",
+    "db:setup:adopt": "bash scripts/db-apply.sh --adopt",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
+    "scan:infra": "bash scripts/scan-infra-identifiers.sh",
+    "check:env-example": "bash scripts/check-env-example.sh",
     "backfill:exif": "tsx scripts/backfill-exif.ts",
     "backfill:thumbnails": "tsx scripts/backfill-thumbnails.ts",
     "backfill:thumbnail-state": "tsx scripts/backfill-thumbnail-state.ts",
@@ -40,8 +47,13 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "conformance": "node scripts/conformance-guard.mjs",
-    "verify": "pnpm typecheck && pnpm lint && pnpm arch && pnpm conformance"
+    "verify": "pnpm typecheck && pnpm lint && pnpm arch && pnpm conformance && pnpm test"
   },
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.4.1",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.1",
     "@asteasolutions/zod-to-openapi": "^8.5.0",
