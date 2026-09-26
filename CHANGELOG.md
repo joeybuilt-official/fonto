@@ -7,6 +7,33 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Changed — `verify` moved to GitHub-hosted runners and gained a PR gate
+
+`verify.yml` ran on `[self-hosted, hive]` with `push` + `workflow_dispatch`
+only. It now runs on `ubuntu-latest` and also on `pull_request`, so a PR reports
+a `verify` check that can be made **required** — previously fonto had no check
+that ran on PRs at all, and an open PR carried zero check runs.
+
+Two reasons the self-hosted pin no longer holds:
+
+- **The reason it moved there is gone.** The header recorded that hosted jobs
+  were rejected in Aug 2026 because the Free plan had burned its 2,000 included
+  minutes. That allowance meters *private* repos; for public repos standard
+  hosted runners are free and unlimited. fonto is public now.
+- **Hosted is the safer runner for a public repo, and also the bigger one.**
+  Public-repo `ubuntu-latest` is 4 vCPU / 16 GB, versus the 8 GiB the hive
+  runners are capped at, so the `--max-old-space-size=6144` heap has more
+  headroom than it did on self-hosted. And for a `pull_request` event GitHub
+  takes the workflow from the PR's *merge commit*, so the fork controls the job
+  body — acceptable on an ephemeral VM, unacceptable on a runner where the
+  `docker`-labelled peer is uid=0 with `/var/run/docker.sock` mounted.
+
+The header's INVARIANT block now records that this job must stay hosted, and why
+it must never grow a `secrets.*` dependency (fork PRs receive none, so one would
+fail every outside contribution). Steps are unchanged — 13 of them, byte-identical;
+only the header, triggers, and `runs-on` differ. nexalog's `verify.yml` is the
+proven precedent for the same trigger set on the same runner.
+
 ### Fixed — CI could not run at all
 
 Two independent things kept `verify.yml` from ever executing, both discovered
