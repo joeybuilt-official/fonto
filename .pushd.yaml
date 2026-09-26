@@ -25,6 +25,12 @@
 version: 1
 builds:
   android-release:
+    # TAG-ONLY (see the trigger note at the top of this file). Without this the
+    # entry ran on EVERY branch/PR push — the waste the `on:` support from pushd
+    # PR #25 exists to stop. Manual POST /builds bypasses `on:`, so on-demand
+    # APKs still work from any branch.
+    on:
+      tags: ["v*"]
     executor: docker
     type: android
     flavor: flutter
@@ -55,6 +61,12 @@ builds:
     deliver:
       - email
   android-publish:
+    # PUBLISH-ONLY. Explicitly restricted to release-v* tags: this entry pushes a
+    # Play internal draft, and pushd's own publish gate (`deliver: play`) already
+    # skips it on non-publish refs — this makes the intent explicit and survives
+    # any future change to that gate.
+    on:
+      tags: ["release-v*"]
     executor: docker
     type: android
     flavor: flutter
