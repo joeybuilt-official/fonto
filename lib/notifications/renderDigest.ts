@@ -20,7 +20,7 @@ export interface RenderInput {
   actorDisplayName: Map<string, string>;
   assetFilename: Map<string, string>;
   // Used to build per-asset deep links. Trailing slash is normalised off
-  // by the caller. e.g. "https://myfonto.com".
+  // by the caller. e.g. "https://fonto.example.com".
   webBaseUrl: string;
 }
 

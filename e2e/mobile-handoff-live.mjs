@@ -1,12 +1,13 @@
 import { chromium } from "@playwright/test";
 import { readFileSync } from "node:fs";
-const ORIGIN = "https://myfonto.com";
+const ORIGIN = (process.env.PLAYWRIGHT_BASE_URL ?? "").replace(/\/+$/, "");
+if (!ORIGIN) throw new Error("PLAYWRIGHT_BASE_URL is required (the live instance origin, e.g. https://fonto.example.com)");
 const state = JSON.parse(readFileSync(new URL("./.auth/user.json", import.meta.url), "utf8"));
 const sess = state.cookies.find((c) => c.name.includes("session_token"));
 const browser = await chromium.launch({ executablePath: "/usr/bin/chromium", args: ["--no-sandbox"] });
 
 const authed = await browser.newContext();
-await authed.addCookies([{ name: sess.name, value: sess.value, domain: "myfonto.com", path: "/", secure: true, httpOnly: true }]);
+await authed.addCookies([{ name: sess.name, value: sess.value, domain: new URL(ORIGIN).hostname, path: "/", secure: true, httpOnly: true }]);
 const p1 = await authed.newPage();
 await p1.goto(`${ORIGIN}/login`, { waitUntil: "domcontentloaded" });
 const mint = await p1.evaluate(async () => (await fetch("/api/auth/passkey/one-time-link", { method: "POST" })).json());

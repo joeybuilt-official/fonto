@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Local filesystem implementation of StorageBackend. Bytes live under
-// LOCAL_STORAGE_ROOT (a NAS Linux NAS share bind-mounted into fonto + fonto-worker
-// at /data/fonto-media — see Track B / Phase B0). The R2 key doubles as the
+// LOCAL_STORAGE_ROOT (any host directory bind-mounted into both fonto and
+// fonto-worker at the SAME path — see Track B / Phase B0). The R2 key doubles as the
 // relative path verbatim, so both backends share one key space.
 //
 // Local disk has NO presigned URLs (the load-bearing constraint in ADR 0001):

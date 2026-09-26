@@ -22,12 +22,26 @@
 
 | | Cloud | Self-Host |
 |---|---|---|
-| **Setup** | (coming soon at getfonto.com) | `docker compose up -d` |
+| **Setup** | Managed (not yet available) | `docker compose up -d` |
 | **Storage** | Managed R2 bucket | Bring your own R2 / S3-compatible |
 | **AI** | Managed Plexo Core | Bring your own Plexo deployment (or run standalone) |
 | **Best for** | Most users | Privacy-first, full data ownership |
 
 ## Quick Start (Self-Host)
+
+**Docker (recommended):**
+
+```bash
+git clone https://github.com/joeybuilt-official/fonto.git
+cd fonto
+cp docker-compose.example.env .env    # then fill in every required value
+docker compose up -d
+```
+
+Open [http://localhost:3500](http://localhost:3500). The one-shot `migrate`
+service creates the schema first; see [docs/self-hosting.md](docs/self-hosting.md).
+
+**Bare host (development):**
 
 ```bash
 git clone https://github.com/joeybuilt-official/fonto.git
@@ -35,11 +49,21 @@ cd fonto
 cp .env.example .env.local
 # Fill in DATABASE_URL, R2 keys, and (optionally) PLEXO_URL
 pnpm install
-pnpm db:migrate
+pnpm db:setup        # NOT `pnpm db:migrate` — see below
 pnpm dev
 ```
 
-Open [http://localhost:3500](http://localhost:3500).
+> **Use `pnpm db:setup`, not `pnpm db:migrate`.** `drizzle-kit migrate` cannot
+> work on this repository and fails *silently* — it exits 0 having applied
+> nothing, because there is no `drizzle/meta/_journal.json`, no baseline in the
+> numbered series, and it wraps `CREATE INDEX CONCURRENTLY` in a transaction.
+> `scripts/db-apply.sh` (exposed as `pnpm db:setup`) is the supported path and
+> applies the `auth` schema, the base tables, and every migration. Full
+> explanation: [docs/self-hosting.md](docs/self-hosting.md#why-not-pnpm-dbmigrate).
+
+Postgres with **pgvector** is required: migration `0017` runs
+`CREATE EXTENSION vector`, and the `fonto.assets.clip_vec` column is a
+`vector(512)`. The compose file uses `pgvector/pgvector:pg16`.
 
 ### Self-Hosting Notes
 
@@ -311,7 +335,10 @@ as BullMQ jobs against a Redis/Valkey instance. The Next.js API enqueues; a
 separate worker container drains. A restart no longer drops in-flight work.
 
 **Env vars:**
-- `REDIS_URL` — defaults to `redis://valkey:6379`
+- `REDIS_URL` — defaults to `redis://localhost:6379` (bare-host dev). The
+  shipped `docker-compose.yml` overrides it to the compose Redis service
+  (`valkey`) on port 6379; a container DNS name is never the code default,
+  since it cannot resolve outside compose.
 - `WORKER_CONCURRENCY` — worker only, defaults to `4`
 - `THUMBNAIL_WORKER_CONCURRENCY` — worker only, defaults to `2`. Concurrency
   for the Phase 1.1 thumbnails worker (sharp encode + R2 PUT). CPU-bound;
@@ -334,8 +361,12 @@ pnpm tsx worker/index.ts
 **Build + run the worker image:**
 ```bash
 docker build -f Dockerfile.worker -t fonto-worker:dev .
-docker run --rm \
-  -e REDIS_URL=redis://valkey:6379 \
+# Bare-host example: Redis/Postgres on the default bridge, reached via
+# host.docker.internal. If your Redis runs in a compose stack instead, point
+# REDIS_URL at that stack's service DNS name AND add --network <stack-net> —
+# a container DNS name never resolves from a bare `docker run`.
+docker run --rm --add-host=host.docker.internal:host-gateway \
+  -e REDIS_URL=redis://host.docker.internal:6379 \
   -e DATABASE_URL=$DATABASE_URL \
   -e R2_BUCKET=$R2_BUCKET -e R2_ACCESS_KEY_ID=... -e R2_SECRET_ACCESS_KEY=... \
   -e PLEXO_URL=... -e PLEXO_SERVICE_KEY=... \
@@ -426,8 +457,9 @@ pnpm tsx bullboard/index.ts
 **Build + run the sidecar image:**
 ```bash
 docker build -f Dockerfile.bullboard -t fonto-bullboard:dev .
-docker run --rm -p 3300:3300 \
-  -e REDIS_URL=redis://valkey:6379 \
+# Same network caveat as the worker example above.
+docker run --rm -p 3300:3300 --add-host=host.docker.internal:host-gateway \
+  -e REDIS_URL=redis://host.docker.internal:6379 \
   -e BULL_BOARD_BASIC_AUTH_USER=ops \
   -e BULL_BOARD_BASIC_AUTH_PASS=$(openssl rand -hex 24) \
   fonto-bullboard:dev
@@ -564,7 +596,10 @@ scrape_configs:
   `fonto_nodejs_*`).
 
 **OpenTelemetry:**
-Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318` (no trailing
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to your collector's OTLP/HTTP endpoint on
+port 4318 — inside a compose stack that is the collector's service name; from
+a bare host use `http://localhost:4318`
+(no trailing
 slash; the SDK appends `/v1/traces` and `/v1/metrics`). Service names default
 to `fonto-web` and `fonto-worker`; override with `OTEL_SERVICE_NAME`.
 Auto-instrumentation covers `http`, `pg`, `ioredis`, and `bullmq`.
@@ -1062,7 +1097,9 @@ exact-string lookups.
 ### Prerequisites
 
 - The Plexo vision sidecar (`apps/vision` in the platform repo) must be
-  reachable at `PLEXO_VISION_URL` (default `http://plexo-vision:7000`).
+  reachable at `PLEXO_VISION_URL` (required — there is **no** host default;
+  the client throws if it is unset, so semantic search stays visibly off
+  rather than silently dialling somebody else's box).
   Without it, the search route returns `{ results: [], unavailable: true }`
   and the embed worker no-ops — uploads still work; semantic search is
   simply absent.

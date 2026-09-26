@@ -6,7 +6,7 @@
 #   crontab -e
 #   # paste this whole file
 #
-# Environment file lives at /data/appdata/appdata/ops/.env
+# Environment file lives at <host-path>/ops/.env (your infra dir; not in the repo)
 # w/ RCLONE_REMOTE / PGUSER / PGPASSWORD / R2_RCLONE_REMOTE / R2_BUCKET /
 # PUSHGATEWAY_URL — chmod 600.
 
@@ -14,10 +14,10 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Nightly Postgres dump + offsite copy — 0300 UTC
-0 3 * * *  set -a; source /data/appdata/appdata/ops/.env; set +a; /workspace/fonto/ops/backup/pg-dump.sh   >> /var/log/fonto-backup.log 2>&1
+0 3 * * *  set -a; source <host-path>/ops/.env; set +a; <repo-path>/ops/backup/pg-dump.sh   >> /var/log/fonto-backup.log 2>&1
 
 # Nightly R2 → offsite sync — 0330 UTC (after pg-dump's window closes)
-30 3 * * * set -a; source /data/appdata/appdata/ops/.env; set +a; /workspace/fonto/ops/backup/r2-sync.sh   >> /var/log/fonto-backup.log 2>&1
+30 3 * * * set -a; source <host-path>/ops/.env; set +a; <repo-path>/ops/backup/r2-sync.sh   >> /var/log/fonto-backup.log 2>&1
 
 # Monthly restore drill — first Sunday of the month at 0500 UTC
-0 5 1-7 * 0 set -a; source /data/appdata/appdata/ops/.env; set +a; /workspace/fonto/ops/backup/restore-drill.sh >> /var/log/fonto-drill.log 2>&1
+0 5 1-7 * 0 set -a; source <host-path>/ops/.env; set +a; <repo-path>/ops/backup/restore-drill.sh >> /var/log/fonto-drill.log 2>&1

@@ -1,0 +1,547 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joeybuilt LLC
+#
+# Fonto — self-hosting compose file.
+#
+#   cp docker-compose.example.env .env      # then edit EVERY required value
+#   docker compose up -d                    # postgres, valkey, minio, web, worker
+#   docker compose logs -f fonto            # first boot
+#
+# WHAT YOU MUST SUPPLY (nothing here has a usable production default):
+#   POSTGRES_PASSWORD     database password
+#   AUTH_SECRET           session signing secret      (openssl rand -hex 32)
+#   SHARE_LINK_IP_SALT    share-link IP hash salt     (openssl rand -hex 32)
+#   NEXT_PUBLIC_APP_URL   your public origin — a BUILD arg, so change it and
+#                         re-run `docker compose build fonto`
+#   MINIO_ROOT_PASSWORD   object-store password (= R2_SECRET_ACCESS_KEY below)
+# See docker-compose.example.env and docs/self-hosting.md.
+#
+# PROFILES — optional services are opt-in so the default `up` stays small:
+#   bullboard       queue admin UI, LOOPBACK-ONLY (127.0.0.1:3300)
+#   autoscaler      queue-depth worker autoscaler; needs the docker socket, so
+#                   it stays opt-in and DRY-RUN by default
+#   observability   prometheus + alertmanager + grafana (see ops/README.md)
+#   selfhosted      Caddy for automatic TLS on a public host
+#   local-storage   mount a host directory as the local-mirror backend
+#
+#     docker compose --profile bullboard up -d
+#     docker compose --profile selfhosted --profile bullboard up -d
+#
+# SECURITY NOTES (all deliberate):
+#   * Postgres, Valkey and MinIO publish NO ports by default — they are reachable
+#     only on the internal `fonto` network. Uncomment a 127.0.0.1:… binding to
+#     debug, never 0.0.0.0.
+#   * bull-board refuses to boot without basic-auth credentials
+#     (bullboard/index.ts) and binds to loopback only.
+#   * `next build` needs a large heap: NODE_HEAP_MB defaults to 4096 and the
+#     Dockerfile honours it. Below ~4096 the build dies with exit 134.
+#   * No production hostname, host path or credential is baked in anywhere in
+#     this file. scripts/scan-infra-identifiers.sh enforces that in CI.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+# Environment shared by the app, the worker and bull-board. Anchored so the
+# three services cannot drift apart on a value that MUST match (the worker and
+# the web app share the same queues, database and bucket).
+x-fonto-env: &fonto-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://fonto:${POSTGRES_PASSWORD:?}@fonto-db:5432/${POSTGRES_DB:-fonto}
+  AUTH_DATABASE_URL: postgresql://fonto:${POSTGRES_PASSWORD:?}@fonto-db:5432/${POSTGRES_DB:-fonto}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@valkey:6379
+  # ── Object storage ────────────────────────────────────────────────────────
+  # The app's storage layer is S3-protocol (lib/r2.ts); the variable names are
+  # historical. Point them at MinIO for a cloud-free setup, or at Cloudflare R2 /
+  # any S3-compatible provider by overriding R2_ENDPOINT + keys.
+  #
+  # Path-style addressing is REQUIRED for MinIO (no wildcard bucket DNS).
+  # lib/r2.ts infers it from the endpoint host, so the internal endpoint below
+  # needs no extra flag; S3_FORCE_PATH_STYLE is set explicitly anyway so the
+  # intent survives an endpoint change.
+  R2_BUCKET: ${R2_BUCKET:-fonto-assets}
+  R2_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
+  R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-fonto}}
+  R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?}}
+  S3_FORCE_PATH_STYLE: "true"
+  #
+  # ⚠ READ THIS BEFORE EXPOSING FONTO TO OTHER MACHINES ⚠
+  # There is ONE endpoint variable and it is used BOTH server-side (worker/app
+  # PUT/GET) and to build the presigned URLs handed to the BROWSER
+  # (lib/storage/r2-backend.ts → getSignedUrl). So R2_ENDPOINT must be reachable
+  # from the user's browser, not just from inside the compose network.
+  #
+  # The `http://minio:9000` default therefore only works for a single-host
+  # install where you also reach the UI on localhost. For any browser on another
+  # machine, set R2_ENDPOINT to a browser-reachable address and publish minio:
+  #   R2_ENDPOINT=http://<host-ip-or-domain>:9000   in .env
+  #   and uncomment the minio `ports:` block below.
+  # See docs/self-hosting.md §"Object storage must be reachable by the browser".
+  # ── Identity / app ────────────────────────────────────────────────────────
+  AUTH_SECRET: ${AUTH_SECRET:?}
+  NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3500}
+  BETTER_AUTH_URL: ${BETTER_AUTH_URL:-${NEXT_PUBLIC_APP_URL:-http://localhost:3500}}
+  # Registration is INVITE-ONLY by default (lib/auth.ts). The very first user on
+  # a fresh instance is always allowed so you can bootstrap; after that, sign-up
+  # needs an invitation unless you set this to "true".
+  FONTO_ALLOW_OPEN_SIGNUP: ${FONTO_ALLOW_OPEN_SIGNUP:-false}
+  FONTO_INSTANCE_ADMINS: ${FONTO_INSTANCE_ADMINS:-}
+  # Required for /share/* in production — hashIp() THROWS without it (see
+  # lib/share-links/ip-hash.ts), and the constant fallback is public in this repo.
+  SHARE_LINK_IP_SALT: ${SHARE_LINK_IP_SALT:?}
+  # WebAuthn rpId. Derived from the origin env when unset (lib/auth/passkey.ts);
+  # set it explicitly if you serve passkeys from a dedicated domain. NOTE: the
+  # rpId is baked into every registered credential — changing it later forces
+  # all users to re-register.
+  PASSKEY_RP_ID: ${PASSKEY_RP_ID:-}
+  PASSKEY_ORIGIN: ${PASSKEY_ORIGIN:-${NEXT_PUBLIC_APP_URL:-http://localhost:3500}}
+  # ── Optional integrations (all unset ⇒ features degrade, app still works) ──
+  CRON_SECRET: ${CRON_SECRET:-}
+  METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
+  EMAIL_FROM: ${EMAIL_FROM:-}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
+  OIDC_PROVIDER_ID: ${OIDC_PROVIDER_ID:-sso}
+  GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+  GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+  # AI: FONTO_LLM_* is the only path that needs no Plexo deployment.
+  FONTO_LLM_KEY: ${FONTO_LLM_KEY:-}
+  FONTO_LLM_BASE_URL: ${FONTO_LLM_BASE_URL:-}
+  FONTO_VISION_URL: ${FONTO_VISION_URL:-}
+  PLEXO_URL: ${PLEXO_URL:-}
+  PLEXO_SERVICE_KEY: ${PLEXO_SERVICE_KEY:-}
+  PLEXO_VISION_URL: ${PLEXO_VISION_URL:-}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+  # ── Database (pgvector is mandatory: migration 0017 runs CREATE EXTENSION) ─
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: fonto-db
+    restart: unless-stopped
+    logging: *default-logging
+    # Unique hostname so this cannot collide with a `postgres` name on a shared
+    # docker network. Referenced as fonto-db by every service above.
+    hostname: fonto-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fonto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:-fonto}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - postgres-backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fonto} -d ${POSTGRES_DB:-fonto}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 1g
+    memswap_limit: 2g
+    # Loopback-only debug access. Leave commented: nothing outside this compose
+    # project needs the database.
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  # ── Queue / cache ──────────────────────────────────────────────────────────
+  # MUST be named `valkey`: the services above build REDIS_URL from that DNS
+  # name, and lib/queue/connection.ts defaults to redis://localhost:6379 for
+  # bare-host use (a container DNS name as a code default cannot resolve).
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: fonto-valkey
+    restart: unless-stopped
+    logging: *default-logging
+    command: >
+      valkey-server
+      --maxmemory 256mb
+      --maxmemory-policy noeviction
+      --requirepass ${REDIS_PASSWORD:?}
+    volumes:
+      - valkeydata:/data
+    healthcheck:
+      # BullMQ state must never be evicted, hence noeviction above and a real
+      # authenticated ping here (an unauthenticated PING succeeds even when the
+      # password is wrong).
+      test: ["CMD-SHELL", "valkey-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?}
+    mem_limit: 512m
+    memswap_limit: 768m
+
+  # ── Object storage (S3-compatible; no cloud account required) ──────────────
+  # Swap for Cloudflare R2 or any S3 provider by overriding R2_ENDPOINT and the
+  # keys — then set the `minio` profile off and leave this service unused.
+  minio:
+    image: minio/minio:latest
+    container_name: fonto-minio
+    restart: unless-stopped
+    logging: *default-logging
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-fonto}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    mem_limit: 512m
+    memswap_limit: 768m
+    # S3 API + console. Required whenever a browser reaches Fonto from another
+    # machine (see the R2_ENDPOINT note in x-fonto-env above). Bind to your LAN
+    # interface or a reverse-proxy host, never 0.0.0.0 without TLS in front.
+    # ports:
+    #   - "127.0.0.1:9000:9000"   # S3 API  → then set R2_ENDPOINT=http://127.0.0.1:9000
+    #   - "127.0.0.1:9001:9001"   # console UI, for one-off bucket inspection
+
+  # Creates the asset bucket once, then exits. Idempotent (mb -p ignores an
+  # existing bucket) and required: Fonto does not create its own bucket.
+  minio-init:
+    image: minio/mc:latest
+    restart: "no"
+    logging: *default-logging
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb -p "local/$$R2_BUCKET"
+        # Direct browser uploads need a CORS policy on the bucket (equivalent of
+        # docs/r2-cors.json). Without it the presigned PUT is blocked by the
+        # browser and every upload fails at the network layer.
+        cat > /tmp/cors.xml <<EOF
+        <CORSConfiguration>
+          <CORSRule>
+            <AllowedOrigin>$${NEXT_PUBLIC_APP_URL:-http://localhost:3500}</AllowedOrigin>
+            <AllowedMethod>PUT</AllowedMethod>
+            <AllowedMethod>GET</AllowedMethod>
+            <AllowedMethod>HEAD</AllowedMethod>
+            <AllowedMethod>POST</AllowedMethod>
+            <AllowedMethod>DELETE</AllowedMethod>
+            <AllowedHeader>*</AllowedHeader>
+            <ExposeHeader>ETag</ExposeHeader>
+            <MaxAgeSeconds>3600</MaxAgeSeconds>
+          </CORSRule>
+        </CORSConfiguration>
+        EOF
+        mc cors set /tmp/cors.xml "local/$$R2_BUCKET" || echo "[minio-init] CORS set failed (older mc?); apply docs/r2-cors.json manually"
+        echo "[minio-init] bucket $$R2_BUCKET ready"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-fonto}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      R2_BUCKET: ${R2_BUCKET:-fonto-assets}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3500}
+
+  # ── Migrations (one-shot; the web app waits for it) ────────────────────────
+  # Applies drizzle/baseline/0000_*.sql then every file in drizzle/migrations/
+  # in strict filename order, tracking state in fonto.__db_apply_log. Idempotent:
+  # a re-run skips everything already applied. This is the supported path —
+  # `drizzle-kit migrate` cannot work here (no journal, no baseline, and it wraps
+  # CREATE INDEX CONCURRENTLY in a transaction). See scripts/db-apply.sh.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    container_name: fonto-migrate
+    restart: "no"
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://fonto:${POSTGRES_PASSWORD:?}@fonto-db:5432/${POSTGRES_DB:-fonto}
+      PSQL_BIN: /usr/bin/psql
+
+  # ── Web app ────────────────────────────────────────────────────────────────
+  fonto:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # BUILD args are inlined by Next.js at compile time. Changing
+        # NEXT_PUBLIC_APP_URL requires a rebuild, not just a restart.
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3500}
+        NEXT_PUBLIC_OIDC_PROVIDER_ID: ${OIDC_PROVIDER_ID:-sso}
+        NODE_HEAP_MB: ${NODE_HEAP_MB:-4096}
+    container_name: fonto
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *fonto-env
+      # Local-mirror backend root (only meaningful with the local-storage profile
+      # mounting a host directory here). Unset ⇒ local-fs paths are skipped.
+      LOCAL_STORAGE_ROOT: ${LOCAL_STORAGE_ROOT:-}
+    # Makes host.docker.internal resolve on Linux, so R2_ENDPOINT can point at a
+    # minio port published on the host and still work from inside the container.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Bind loopback by default and terminate TLS in front (Caddy profile, or
+      # your own proxy). Change to "${FONTOWEB_BIND:-0.0.0.0}:${FONTOWEB_PORT:-3500}:3500"
+      # only if this box is intentionally public.
+      - "${FONTOWEB_BIND:-127.0.0.1}:${FONTOWEB_PORT:-3500}:3500"
+    healthcheck:
+      # The standalone image is Debian-based with node present but no curl/wget.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3500/api/health',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    mem_limit: 1g
+    memswap_limit: 1536m
+    volumes:
+      - local-storage:/data/fonto-media
+
+  # ── Worker (BullMQ consumer) ───────────────────────────────────────────────
+  # Dockerfile.worker installs the media toolchain the worker shells out to:
+  # libheif, libraw (dcraw_emu), exiftool, ffmpeg, imagemagick, poppler-utils.
+  # Running `pnpm tsx worker/index.ts` on a bare host WITHOUT those binaries
+  # degrades SILENTLY — HEIC/RAW/PDF/video assets record a thumbnail failure
+  # instead of crashing. Use this image, or install the same packages yourself.
+  fonto-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: fonto-worker
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *fonto-env
+      LOCAL_STORAGE_ROOT: ${LOCAL_STORAGE_ROOT:-}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      THUMBNAIL_WORKER_CONCURRENCY: ${THUMBNAIL_WORKER_CONCURRENCY:-2}
+      WORKER_METRICS_PORT: "9464"
+    # Same reason as `fonto`: lets R2_ENDPOINT target a host-published minio port.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - local-storage:/data/fonto-media
+    mem_limit: 2g
+    memswap_limit: 3g
+
+  # ── Queue admin UI — LOOPBACK ONLY ─────────────────────────────────────────
+  # bullboard/index.ts calls process.exit(1) unless BOTH basic-auth vars are set,
+  # so it cannot come up unauthenticated. The port binding below is pinned to
+  # 127.0.0.1: do not change it to 0.0.0.0 — put a TLS proxy in front instead.
+  bullboard:
+    profiles: ["bullboard"]
+    build:
+      context: .
+      dockerfile: Dockerfile.bullboard
+    container_name: fonto-bullboard
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      valkey:
+        condition: service_healthy
+    environment:
+      <<: *fonto-env
+      BULL_BOARD_BASIC_AUTH_USER: ${BULL_BOARD_BASIC_AUTH_USER:?}
+      BULL_BOARD_BASIC_AUTH_PASS: ${BULL_BOARD_BASIC_AUTH_PASS:?}
+      BULL_BOARD_PORT: "3300"
+    ports:
+      - "127.0.0.1:${BULL_BOARD_PORT:-3300}:3300"
+    mem_limit: 256m
+    memswap_limit: 384m
+
+  # ── Worker autoscaler — OPT-IN, DRY-RUN BY DEFAULT ─────────────────────────
+  # Mounts the docker socket, i.e. root-equivalent on this host. It therefore
+  # stays behind a profile AND starts in dry-run (AUTOSCALER_DRY_RUN=1), which
+  # logs decisions without touching compose. Flip it to 0 only after watching
+  # the logs on your own host.
+  autoscaler:
+    profiles: ["autoscaler"]
+    build:
+      context: .
+      dockerfile: ops/autoscaler/Dockerfile
+    container_name: fonto-autoscaler
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      valkey:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD:?}@valkey:6379
+      AUTOSCALER_DRY_RUN: ${AUTOSCALER_DRY_RUN:-1}
+      AUTOSCALER_COMPOSE_FILE: /etc/fonto-compose/docker-compose.yml
+      AUTOSCALER_WORKER_SERVICE: fonto-worker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-compose.yml:/etc/fonto-compose/docker-compose.yml:ro
+    mem_limit: 128m
+    memswap_limit: 192m
+
+  # ── Database backup sidecar ────────────────────────────────────────────────
+  # Plain-text pg_dump of the `fonto` schema into the postgres-backups volume on
+  # a fixed interval. For encrypted, offsite, retention-managed backups use
+  # scripts/dr/backup-fonto.sh + ops/backup/ instead — this sidecar is a floor,
+  # not a disaster-recovery strategy (see scripts/dr/restore-fonto.md).
+  postgres-backup:
+    profiles: ["backup"]
+    image: postgres:16-alpine
+    container_name: fonto-db-backup
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - postgres-backups:/backups
+    environment:
+      PGHOST: fonto-db
+      PGUSER: ${POSTGRES_USER:-fonto}
+      PGPASSWORD: ${PGPASSWORD:?}
+      PGDATABASE: ${POSTGRES_DB:-fonto}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    # pg_dumpall/pg_dump -Fc into a timestamped file, then prune. A shell loop
+    # keeps the image tiny (no cron dependency).
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "[backup] starting; interval $$BACKUP_INTERVAL_SECONDS s, retention $$BACKUP_RETENTION_DAYS d"
+        sleep 10
+        while true; do
+          ts=$$(date -u +%Y%m%dT%H%M%SZ)
+          if pg_dump -Fc --schema=fonto --no-owner --no-privileges \
+               -f "/backups/fonto-$$ts.pgdump"; then
+            gzip -f "/backups/fonto-$$ts.pgdump"
+            echo "[backup] wrote fonto-$$ts.pgdump.gz"
+          else
+            echo "[backup] FAILED for fonto-$$ts" >&2
+          fi
+          find /backups -name 'fonto-*.pgdump.gz' -mtime "+$$BACKUP_RETENTION_DAYS" -delete
+          sleep "$$BACKUP_INTERVAL_SECONDS"
+        done
+    mem_limit: 128m
+    memswap_limit: 256m
+
+  # ── TLS termination for a public host ──────────────────────────────────────
+  # Caddy issues and renews certificates automatically for PUBLIC_DOMAIN. Only
+  # enable this on a host with ports 80/443 reachable from the internet AND
+  # NEXT_PUBLIC_APP_URL set to the matching https:// origin (rebuild after
+  # changing it — it is a build arg).
+  caddy:
+    profiles: ["selfhosted"]
+    image: caddy:2-alpine
+    container_name: fonto-caddy
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - fonto
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?}
+    volumes:
+      - ./ops/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    mem_limit: 128m
+    memswap_limit: 192m
+
+  # ── Observability stack (mirrors ops/README.md) ────────────────────────────
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:latest
+    container_name: fonto-prometheus
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/alerts/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+    ports:
+      - "127.0.0.1:9090:9090"
+    mem_limit: 512m
+    memswap_limit: 768m
+
+  alertmanager:
+    profiles: ["observability"]
+    image: prom/alertmanager:latest
+    container_name: fonto-alertmanager
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - ./ops/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Your secret dir (Discord webhook, SMTP creds) — file-per-key, chmod 600.
+      # Point ALERTMANAGER_SECRETS_DIR at it; see ops/README.md.
+      - ${ALERTMANAGER_SECRETS_DIR:-./ops/secrets}:/etc/alertmanager/secrets:ro
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+    mem_limit: 128m
+    memswap_limit: 192m
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:latest
+    container_name: fonto-grafana
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - prometheus
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?}
+    ports:
+      - "127.0.0.1:3000:3000"
+    mem_limit: 512m
+    memswap_limit: 768m
+
+volumes:
+  pgdata:
+  valkeydata:
+  miniodata:
+  postgres-backups:
+  prometheus-data:
+  grafana-data:
+  caddy_data:
+  caddy_config:
+  # Only populated by the local-storage mirror path. Bind-mount a host directory
+  # instead of this volume to put originals on your own disk — see
+  # docs/self-hosting.md (LOCAL_STORAGE_ROOT).
+  local-storage:

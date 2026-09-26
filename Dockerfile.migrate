@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joeybuilt LLC
+#
+# Migration runner image for docker-compose.yml's one-shot `migrate` service.
+#
+# Deliberately tiny: bash + a Postgres 16 client + the repo's SQL. It does NOT
+# need node_modules — scripts/db-apply.sh drives psql directly.
+#
+# Build/run through compose:
+#   docker compose up migrate          # applies baseline + every migration once
+#   docker compose run --rm migrate bash scripts/db-apply.sh --dry-run
+#
+# Standalone:
+#   docker build -f Dockerfile.migrate -t fonto-migrate:dev .
+#   docker run --rm -e DATABASE_URL=postgresql://... fonto-migrate:dev
+#
+# NOTE: Debian bookworm ships postgresql-client-15, which is one major behind the
+# pgvector/pgvector:pg16 server. That is supported — libpq speaks the wire
+# protocol of newer servers, and db-apply.sh uses only psql basics (-c, -f,
+# -tA, ON_ERROR_STOP). If you need exact parity, bump the base image to one that
+# carries the pgdg apt repo and install postgresql-client-16.
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      bash \
+      ca-certificates \
+      coreutils \
+      findutils \
+      postgresql-client-15 \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Only what the applier needs: the script + the SQL it walks. Keeping the image
+# free of application code means a migration run cannot be affected by (or
+# accidentally import) app changes.
+COPY scripts/db-apply.sh /app/scripts/db-apply.sh
+COPY drizzle/baseline /app/drizzle/baseline
+COPY drizzle/migrations /app/drizzle/migrations
+
+RUN chmod +x /app/scripts/db-apply.sh
+
+# Run as a non-root user: migrations only need to reach the database over TCP.
+RUN useradd --system --uid 1001 migrator \
+ && chown -R migrator:migrator /app
+USER migrator
+
+ENV PSQL_BIN=/usr/bin/psql
+
+CMD ["bash", "scripts/db-apply.sh"]

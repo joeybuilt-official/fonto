@@ -111,10 +111,21 @@ export const auth = betterAuth({
       "/sign-up/email": { window: 60, max: 10 },
     },
   },
+  // Trusted origins are CONFIGURED, never hardcoded: this repo is public, so a
+  // baked production hostname here would both leak infrastructure and, worse,
+  // make every self-hosted deploy trust an origin it does not control. Better
+  // Auth always trusts its own `baseURL`, so setting BETTER_AUTH_URL is
+  // sufficient for the normal single-origin case.
   trustedOrigins: [
     process.env.BETTER_AUTH_URL,
     process.env.OIDC_REDIRECT_BASE_URL,
-    "https://myfonto.com",
+    process.env.NEXT_PUBLIC_APP_URL,
+    // Comma-separated extras for multi-origin deploys (e.g. a separate
+    // marketing apex redirecting into the app origin).
+    ...(process.env.EXTRA_TRUSTED_ORIGINS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
   ].filter((url): url is string => !!url),
   secret: process.env.AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,

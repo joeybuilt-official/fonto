@@ -150,7 +150,7 @@ export function ipv4ToSlash24(ip: string): string | null {
  *
  * Example: 2001:db8:1234:5678::1 → 2001:db8:1234::/48
  *
- * Handles `::` shorthand and IPv4-mapped (`::ffff:1.2.3.4`) by delegating
+ * Handles `::` shorthand and IPv4-mapped (`::ffff:203.0.113.1`) by delegating
  * the latter to ipv4ToSlash24 after stripping the mapping prefix. Returns
  * null if the input doesn't look like IPv6.
  */

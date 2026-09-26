@@ -7,11 +7,17 @@
 # Build:
 #   docker build -f Dockerfile.worker -t fonto-worker:dev .
 #
-# Run:
-#   docker run --rm -e REDIS_URL=redis://valkey:6379 \
+# Run (bare host — Redis reachable via host.docker.internal):
+#   docker run --rm --add-host=host.docker.internal:host-gateway \
+#              -e REDIS_URL=redis://host.docker.internal:6379 \
 #              -e DATABASE_URL=$DATABASE_URL \
 #              -e R2_BUCKET=$R2_BUCKET ... \
 #              fonto-worker:dev
+#
+# Inside docker-compose.yml the Redis service is named `valkey`, and compose
+# sets REDIS_URL to that service on port 6379 — the name resolves only on the
+# compose network. A container DNS name is never the code default, because it
+# cannot resolve on a bare host (see lib/queue/connection.ts).
 
 FROM node:22-alpine AS base
 

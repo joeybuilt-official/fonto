@@ -29,9 +29,12 @@ receivers:
 
   - name: default-email
     email_configs:
-      - to: dustin@joeybuilt.local
-        from: alerts@myfonto.com
-        smarthost: smtp.personal-vps:587
+      # Replace with your own alert routing. These are placeholders — the real
+      # recipient, From domain and SMTP relay are deployment-specific and must
+      # NOT be committed to a public repo.
+      - to: alerts@example.com
+        from: fonto-alerts@example.com
+        smarthost: smtp.example.com:587
         require_tls: true
         auth_username_file: /etc/alertmanager/secrets/smtp-username
         auth_password_file: /etc/alertmanager/secrets/smtp-password

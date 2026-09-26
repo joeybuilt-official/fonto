@@ -35,6 +35,13 @@ export async function request<T>(
   init: RequestInit = {}
 ): Promise<T> {
   const cfg = getConfig();
+  if (!cfg.baseUrl) {
+    throw new Error(
+      "No Fonto instance configured. Run `fonto login --base-url <url> --pat <token>` " +
+        "(or set FONTO_BASE_URL / FONTO_PAT) — e.g. " +
+        "`fonto login --base-url https://fonto.example.com --pat fonto_pat_...`."
+    );
+  }
   if (!cfg.pat) {
     throw new Error(
       "No PAT configured. Run `fonto login --pat <token>` (mint one at /app/settings/tokens)."

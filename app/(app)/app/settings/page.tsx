@@ -601,7 +601,7 @@ export default function SettingsPage() {
                 </div>
               )}
               {/* Phase B6 — storage-placement policy. R2-only (default) or
-                  mirror to the NAS local disk + R2. local_only is deferred. */}
+                  mirror to a host-mounted local disk + R2. local_only is deferred. */}
               {storage.policy != null && (
                 <div className="pt-[var(--ft-space-3)] border-t border-[var(--ft-color-outline-variant)] space-y-[var(--ft-space-3)]">
                   <div className="flex items-center justify-between gap-[var(--ft-space-3)]">

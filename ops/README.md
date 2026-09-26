@@ -19,19 +19,24 @@ ops/
       api-latency.json
 ```
 
-## Compose wiring (NAS)
+## Compose wiring
 
-The Fonto compose file at `/data/appdata/appdata/docker-compose.yml` needs three services added (mount this `ops/` dir read-only into each):
+Add these three services to YOUR Fonto compose file (the shipped
+`docker-compose.yml` defines an `observability` profile with the same shape —
+enable it with `docker compose --profile observability up -d`, or copy the block
+below into your own infra compose file). Mount this `ops/` dir read-only into
+each service. `<host-path>` and `<repo-path>` stand for your own directories:
+nothing here should name the maintainer's host layout.
 
 ```yaml
 prometheus:
   image: prom/prometheus:latest
-  container_name: service
+  container_name: fonto-prometheus
   restart: unless-stopped
-  networks: [service]
+  networks: [fonto]
   volumes:
-    - /path/to/repo/ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    - /path/to/repo/ops/alerts/rules.yml:/etc/prometheus/rules.yml:ro
+    - <repo-path>/ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    - <repo-path>/ops/alerts/rules.yml:/etc/prometheus/rules.yml:ro
     - prometheus-data:/prometheus
   command:
     - --config.file=/etc/prometheus/prometheus.yml
@@ -40,23 +45,23 @@ prometheus:
 
 alertmanager:
   image: prom/alertmanager:latest
-  container_name: alertmanager
+  container_name: fonto-alertmanager
   restart: unless-stopped
-  networks: [service]
+  networks: [fonto]
   volumes:
-    - /path/to/repo/ops/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-    - /data/appdata/appdata/secrets/alertmanager:/etc/alertmanager/secrets:ro
+    - <repo-path>/ops/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    - <host-path>/secrets/alertmanager:/etc/alertmanager/secrets:ro
   command:
     - --config.file=/etc/alertmanager/alertmanager.yml
 
 grafana:
   image: grafana/grafana:latest
-  container_name: service
+  container_name: fonto-grafana
   restart: unless-stopped
-  networks: [service]
+  networks: [fonto]
   volumes:
-    - /path/to/repo/ops/grafana/provisioning:/etc/grafana/provisioning:ro
-    - /path/to/repo/ops/grafana/dashboards:/etc/grafana/dashboards:ro
+    - <repo-path>/ops/grafana/provisioning:/etc/grafana/provisioning:ro
+    - <repo-path>/ops/grafana/dashboards:/etc/grafana/dashboards:ro
     - grafana-data:/var/lib/grafana
   environment:
     GF_AUTH_ANONYMOUS_ENABLED: "false"
@@ -68,8 +73,8 @@ volumes:
   grafana-data:
 ```
 
-Secrets (Discord webhook URL, SMTP creds) go in
-`/data/appdata/appdata/secrets/alertmanager/` — `chmod 600`,
+Secrets (Discord webhook URL, SMTP creds) go in your own
+`<host-path>/secrets/alertmanager/` — `chmod 600`,
 file-per-key (not env vars b/c alertmanager wants `_file` indirection).
 
 ## Verifying alerts
@@ -77,14 +82,18 @@ file-per-key (not env vars b/c alertmanager wants `_file` indirection).
 Pull-power test (verifies the rule + routing both work):
 
 ```bash
-# Force a 5xx by hitting a known-broken route, ~10 times in 30s
-ssh <server> 'for i in {1..10}; do curl -sS https://myfonto.com/api/v1/no-such-route; done'
+# Force a 5xx by hitting a known-broken route on YOUR instance, ~10 times in 30s
+ssh <server> 'for i in {1..10}; do curl -sS https://<YOUR_APP_ORIGIN>/api/v1/no-such-route; done'
 
 # Watch the alert fire (typically within 60s of `for: 5m` expiring)
-ssh <server> 'docker logs alertmanager 2>&1 | tail -20'
+ssh <server> 'docker logs fonto-alertmanager 2>&1 | tail -20'
 ```
 
 ## Worker prom listener
 
-The worker container exposes `:9090/metrics` (see `worker/index.ts`).
-Already wired into the scrape config above.
+The worker container exposes its Prometheus metrics on `WORKER_METRICS_PORT`,
+which defaults to **9464** (the OTel community default for Prom HTTP exposers) —
+see `worker/index.ts`. `ops/prometheus.yml` scrapes `fonto-worker:9464` to match.
+If you override `WORKER_METRICS_PORT`, update the scrape target in lockstep or
+the worker job silently scrapes nothing (Prometheus reports it as `down`, not as
+an error).

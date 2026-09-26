@@ -2,8 +2,12 @@
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Passkey registration + authentication flows (ADR-004).
-// Uses @simplewebauthn/server. rpId = myfonto.com. residentKey: required.
+// Uses @simplewebauthn/server. residentKey: required.
 // Credentials stored in fonto.passkey_credentials via raw SQL.
+//
+// rpId resolution (see rpId() below): PASSKEY_RP_ID if set, else the host of
+// PASSKEY_ORIGIN / BETTER_AUTH_URL / NEXT_PUBLIC_APP_URL, else "localhost".
+// There is deliberately NO hardcoded production hostname — this repo is public.
 
 import {
   generateRegistrationOptions,
@@ -19,7 +23,48 @@ import type {
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 
-const RP_ID = process.env.PASSKEY_RP_ID ?? "myfonto.com";
+/**
+ * The WebAuthn relying-party id — the registrable domain a credential is bound
+ * to. This is LOAD-BEARING and effectively permanent: the rpId is stored inside
+ * every registered credential, so changing it invalidates all existing passkeys
+ * for the instance (users must re-register).
+ *
+ * Resolution order:
+ *   1. PASSKEY_RP_ID           — explicit, always wins. Set this in production.
+ *   2. host of PASSKEY_ORIGIN / BETTER_AUTH_URL / NEXT_PUBLIC_APP_URL
+ *   3. "localhost"             — dev fallback (WebAuthn allows localhost)
+ *
+ * Falling back to "localhost" rather than a real domain means a misconfigured
+ * production deploy cannot silently mint credentials bound to somebody else's
+ * hostname, and it cannot bind them to a domain the deployer does not control.
+ * It does mean an operator who sets no origin env at all gets a
+ * localhost-scoped rpId — which fails closed (passkeys unusable outside dev)
+ * rather than insecurely.
+ */
+function rpId(): string {
+  const explicit = process.env.PASSKEY_RP_ID;
+  if (explicit) return explicit;
+  for (const raw of [
+    process.env.PASSKEY_ORIGIN,
+    process.env.BETTER_AUTH_URL,
+    process.env.NEXT_PUBLIC_APP_URL,
+  ]) {
+    if (!raw) continue;
+    try {
+      return new URL(raw).hostname;
+    } catch {
+      // A bare host ("fonto.example.com") is a legal rpId even though it is not
+      // a parseable URL. Accept it; reject anything with a path/scheme we
+      // cannot reason about.
+      if (/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$/.test(raw)) {
+        return raw;
+      }
+    }
+  }
+  return "localhost";
+}
+
+const RP_ID = rpId();
 const RP_NAME = process.env.PASSKEY_RP_NAME ?? "Fonto";
 const ORIGIN = process.env.PASSKEY_ORIGIN ?? `https://${RP_ID}`;
 

@@ -9,11 +9,11 @@
 
 set -euo pipefail
 
-DEST="${DEST:-/data/backups/fonto}"
+DEST="${DEST:?DEST is required (backup directory)}"
 DRY=0
 [ "${1:-}" = "--dry" ] && DRY=1
 
-[ "$(hostname)" = "NAS" ] || { echo "refusing to run on $(hostname)" >&2; exit 1; }
+[ -z "${EXPECT_HOSTNAME:-}" ] || [ "$(hostname)" = "$EXPECT_HOSTNAME" ] || { echo "refusing to run on $(hostname) (expected $EXPECT_HOSTNAME)" >&2; exit 1; }
 cd "$DEST" 2>/dev/null || { echo "no backup dir $DEST"; exit 0; }
 
 # Artifacts are fonto-YYYYMMDDThhmmssZ.pgdump.gz.age — lexical sort == chrono.

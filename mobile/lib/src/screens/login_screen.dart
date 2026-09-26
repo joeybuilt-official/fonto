@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// First-run login. Two fields: base URL (defaulted to myfonto.com) and
+// First-run login. Two fields: base URL (build-time default, see
+// AuthStore.defaultBaseUrl) and
 // PAT. On submit we save tentatively, ping /api/v1/stats to confirm the
 // PAT, then bounce up so the app can flip to HomeScreen. On failure
 // we wipe the saved creds so the form stays on screen.
@@ -46,7 +47,7 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _error = "Enter your Fonto URL first.");
       return;
     }
-    // Normalize a bare domain ("myfonto.com") to an absolute https URL so
+    // Normalize a bare domain ("fonto.example.com") to an absolute https URL so
     // Uri.parse doesn't yield a relative URI that launchUrl silently drops.
     if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
       baseUrl = "https://$baseUrl";
@@ -106,7 +107,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 controller: _baseUrlCtrl,
                 decoration: const InputDecoration(
                   labelText: "Base URL",
-                  hintText: "https://myfonto.com",
+                  hintText: "https://fonto.example.com",
                 ),
                 keyboardType: TextInputType.url,
                 autocorrect: false,

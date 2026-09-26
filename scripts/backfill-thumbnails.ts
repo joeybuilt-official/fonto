@@ -45,7 +45,7 @@ interface AssetRow {
 async function main(): Promise<void> {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) throw new Error("DATABASE_URL not set");
-  const redisUrl = process.env.REDIS_URL ?? "redis://valkey:6379";
+  const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 
   const batchSize = Math.max(parseInt(String(arg("batch") ?? "200"), 10), 1);
   const dryRun = !!arg("dry-run");
