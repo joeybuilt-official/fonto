@@ -7,6 +7,34 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Changed — README rewritten and reconciled with the working install path
+
+PR #3 rewrote `README.md` (1207 → 309 lines) from a cut at `cfc85d29`, before
+the install-path fix landed on `main`. Merging the two left `README.md` as the
+only conflicting file; it is resolved by hand against the merged tree, keeping
+the rewrite's structure and honest tone while documenting the path that
+actually works.
+
+The Quick start now leads with `docker compose up -d` and the six `${VAR:?}`
+values compose refuses to start without, and the bare-host path uses
+`pnpm db:setup` — not `pnpm db:migrate` — with the three reasons
+`drizzle-kit migrate` cannot drive this series stated inline. The compose
+profiles, `Dockerfile.migrate`, `drizzle/baseline/` and
+`docs/self-hosting.md` are all documented, and `pnpm db:push` is named as the
+banned destructive command `AGENTS.md` already forbids.
+
+Claims the rewrite carried from the pre-fix tree are corrected: the
+`docker-compose.yml` and the migration runner now exist (it said neither did),
+`REDIS_URL` defaults to loopback rather than a container DNS name (those two
+literals were also the branch's only `scan-infra` R5 hits), there are five
+Dockerfiles rather than four, CI runs on GitHub-hosted `ubuntu-latest` with a
+`pull_request` trigger and does run `pnpm test`, and `PASSKEY_RP_ID` falls back
+to `localhost` rather than to a production domain. Counts were re-verified
+against the merged tree: 137 `/api/v1` route handlers, 62 numbered migrations
+plus 2 baselines, 18 non-mobile `*.test.ts` (15 matched by `vitest.config.ts`),
+136 allowlisted untested handlers, 11 middleware redirects, 6 unconditional and
+6 opt-in repeatable jobs.
+
 ### Changed — `verify` moved to GitHub-hosted runners and gained a PR gate
 
 `verify.yml` ran on `[self-hosted, hive]` with `push` + `workflow_dispatch`
