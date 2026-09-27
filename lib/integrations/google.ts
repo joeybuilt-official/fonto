@@ -22,14 +22,22 @@ import { eq } from "drizzle-orm";
 import { decryptToken } from "./tokenCrypto";
 
 /**
- * Registered redirect URI (must match the Google Cloud console exactly). The
- * base origin is configurable via NEXT_PUBLIC_APP_URL so non-prod environments
- * can point at their own callback; it defaults to the production origin, which
- * is the URI registered with Google.
+ * Registered redirect URI — must match the Google Cloud console entry exactly.
+ * The base origin comes from NEXT_PUBLIC_APP_URL (falling back to
+ * BETTER_AUTH_URL). There is NO hardcoded production origin: this repo is
+ * public, so the deployer supplies their own, and the Google integration stays
+ * unconfigured until they do. Register
+ * `<NEXT_PUBLIC_APP_URL>/api/v1/integrations/google/callback` in the console.
  */
-export const GOOGLE_REDIRECT_URI = `${
-  (process.env.NEXT_PUBLIC_APP_URL ?? "https://myfonto.com").replace(/\/+$/, "")
-}/api/v1/integrations/google/callback`;
+const GOOGLE_ORIGIN = (
+  process.env.NEXT_PUBLIC_APP_URL ??
+  process.env.BETTER_AUTH_URL ??
+  ""
+).replace(/\/+$/, "");
+
+export const GOOGLE_REDIRECT_URI = GOOGLE_ORIGIN
+  ? `${GOOGLE_ORIGIN}/api/v1/integrations/google/callback`
+  : "";
 
 /**
  * Requested OAuth scopes (least-privilege, read-only):
@@ -68,6 +76,13 @@ function requireOAuthEnv(): { clientId: string; clientSecret: string } {
   if (!clientId || !clientSecret) {
     throw new Error(
       "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are not set"
+    );
+  }
+  if (!GOOGLE_REDIRECT_URI) {
+    throw new Error(
+      "Google OAuth redirect URI is not configured: set NEXT_PUBLIC_APP_URL " +
+        "(or BETTER_AUTH_URL) to this deployment's public origin, then register " +
+        "<origin>/api/v1/integrations/google/callback in the Google Cloud console."
     );
   }
   return { clientId, clientSecret };

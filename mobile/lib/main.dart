@@ -5,7 +5,9 @@
 // for a stored PAT + base URL. Auth state lives in SharedPreferences
 // via AuthStore; screen swapping is just a Navigator replacement.
 //
-// Phase 6.5: AppLinks listener intercepts https://myfonto.com URIs:
+// Phase 6.5: AppLinks listener intercepts https://<your-fonto-host> URIs
+// (the host is injected at build time — see android/app/build.gradle
+// manifestPlaceholders and mobile/CI.md):
 //   /app/library?lb=<id>  → fetch asset by id → open AssetDetailScreen
 //   /share/<token>        → resolve share → fetch asset → open AssetDetailScreen
 // Ignored when user is not authenticated or asset is inaccessible.

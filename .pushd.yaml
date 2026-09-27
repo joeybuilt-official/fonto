@@ -41,6 +41,8 @@ builds:
       - CM_STORE_PASSWORD
       - CM_KEY_ALIAS
       - CM_KEY_PASSWORD
+      - FONTO_BASE_URL
+      - FONTO_APP_LINK_HOST
     commands:
       - git clone --depth 1 --branch main https://x-access-token:$GITHUB_TOKEN@github.com/joeybuilt-official/fonto.git .
       # The public cirruslabs flutter:stable image ships JDK 21 only; some
@@ -50,12 +52,19 @@ builds:
       # on minSdk 21). Remove once a pinned JDK17 builder image is used.
       - printf '\nkotlin.jvm.target.validation.mode=warning\n' >> mobile/android/gradle.properties
       - printf '%s' "$CM_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > /tmp/fonto-upload.jks
+      - export FONTO_APP_LINK_HOST="${FONTO_APP_LINK_HOST:-localhost}"
       - cd mobile && flutter pub get
       # versionCode = unix seconds (monotonic, < the 2.1e9 int ceiling) so every
       # Pushd build outranks any prior install and updates in place. Was unset
       # -> fell back to pubspec 0.1.0+1 (versionCode 1), which Android refused to
       # install over higher-numbered legacy Codemagic builds.
-      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release --build-name=0.2.1 --build-number=$(date +%s)
+      # FONTO_BASE_URL / FONTO_APP_LINK_HOST are deployment identifiers and are
+      # NOT committed to the repo (it is public). Supply both as pushd secrets:
+      #   FONTO_BASE_URL      https://your-fonto.example.com   (login form default)
+      #   FONTO_APP_LINK_HOST your-fonto.example.com           (App Links intent-filter host)
+      # Unset, the app builds and runs but defaults to http://localhost:3500 and
+      # App Links verification simply does not complete.
+      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release --build-name=0.2.1 --build-number=$(date +%s) --dart-define=FONTO_BASE_URL="$FONTO_BASE_URL"
     artifacts:
       - mobile/build/app/outputs/flutter-apk/app-release.apk
     deliver:
@@ -78,17 +87,26 @@ builds:
       - CM_KEY_ALIAS
       - CM_KEY_PASSWORD
       - GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+      - FONTO_BASE_URL
+      - FONTO_APP_LINK_HOST
     commands:
       - git clone --depth 1 --branch main https://x-access-token:$GITHUB_TOKEN@github.com/joeybuilt-official/fonto.git .
       - printf '\nkotlin.jvm.target.validation.mode=warning\n' >> mobile/android/gradle.properties
       - printf '%s' "$CM_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > /tmp/fonto-upload.jks
+      - export FONTO_APP_LINK_HOST="${FONTO_APP_LINK_HOST:-localhost}"
       - cd mobile && flutter pub get
       # versionCode = unix seconds (monotonic, < the 2.1e9 int ceiling) so every
       # Pushd build outranks any prior install and updates in place. Was unset
       # -> fell back to pubspec 0.1.0+1 (versionCode 1), which Android refused to
       # install over higher-numbered legacy Codemagic builds.
-      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release --build-name=0.2.1 --build-number=$(date +%s)
-      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build appbundle --release --build-name=0.2.1 --build-number=$(date +%s)
+      # FONTO_BASE_URL / FONTO_APP_LINK_HOST are deployment identifiers and are
+      # NOT committed to the repo (it is public). Supply both as pushd secrets:
+      #   FONTO_BASE_URL      https://your-fonto.example.com   (login form default)
+      #   FONTO_APP_LINK_HOST your-fonto.example.com           (App Links intent-filter host)
+      # Unset, the app builds and runs but defaults to http://localhost:3500 and
+      # App Links verification simply does not complete.
+      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build apk --release --build-name=0.2.1 --build-number=$(date +%s) --dart-define=FONTO_BASE_URL="$FONTO_BASE_URL"
+      - cd mobile && CM_KEYSTORE_PATH=/tmp/fonto-upload.jks flutter build appbundle --release --build-name=0.2.1 --build-number=$(date +%s) --dart-define=FONTO_BASE_URL="$FONTO_BASE_URL"
     artifacts:
       - mobile/build/app/outputs/flutter-apk/app-release.apk
       - mobile/build/app/outputs/bundle/release/app-release.aab

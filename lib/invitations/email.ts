@@ -16,8 +16,10 @@
 //
 // Required env for real delivery:
 //   RESEND_API_KEY   — Resend API key (re_...)
-//   EMAIL_FROM       — From header, e.g. "Fonto <noreply@myfonto.com>"
-//                      (defaults to noreply@myfonto.com when unset)
+//   EMAIL_FROM       — From header, e.g. "Fonto <noreply@your-domain.example>"
+//                      Set this: Resend rejects a From address on a domain you
+//                      have not verified, so leaving it unset means delivery
+//                      fails (logged as email.send_failed) rather than working.
 import { logger } from "@/lib/logger";
 
 export interface InvitationEmailPayload {
@@ -47,7 +49,20 @@ function esc(raw: string): string {
 }
 
 function fromAddress(): string {
-  return process.env.EMAIL_FROM ?? "Fonto <noreply@myfonto.com>";
+  // No hardcoded production domain — this repo is public. Derive the From host
+  // from the deployment's own origin so an unconfigured EMAIL_FROM still
+  // produces a plausible address, and so it can never name somebody else's.
+  const explicit = process.env.EMAIL_FROM;
+  if (explicit) return explicit;
+  const origin =
+    process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL ?? "";
+  let host = "localhost";
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    if (origin) host = origin.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  }
+  return `Fonto <noreply@${host}>`;
 }
 
 /**

@@ -30,7 +30,7 @@ program
   .command("login")
   .description("save PAT + base URL (PATs are minted in the web UI at /app/settings/tokens)")
   .option("--pat <token>", "personal access token")
-  .option("--base-url <url>", "fonto base URL (default https://myfonto.com)")
+  .option("--base-url <url>", "fonto instance base URL (required once; also settable via FONTO_BASE_URL)")
   .action(async (opts) => {
     await login(opts);
   });

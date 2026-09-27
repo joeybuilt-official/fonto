@@ -28,7 +28,7 @@ void main() {
     // EditableText value and the (hidden) hint. Assert the controller
     // value directly to stay unambiguous.
     final urlField = tester.widget<TextField>(find.byType(TextField).first);
-    expect(urlField.controller?.text, "https://myfonto.com");
+    expect(urlField.controller?.text, AuthStore.defaultBaseUrl);
   });
 
   testWidgets("shows error on empty submit", (tester) async {

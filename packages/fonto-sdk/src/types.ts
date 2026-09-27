@@ -42,7 +42,7 @@ export interface AssetLibraryFilters {
 
 export interface AssetLibraryOptions extends AssetLibraryFilters {
     /**
-     * Fonto API base URL — e.g. "https://fonto.app" or "" for same-origin.
+     * Fonto API base URL — e.g. "https://fonto.example.com" or "" for same-origin.
      * Trailing slash trimmed automatically.
      */
     baseUrl: string;

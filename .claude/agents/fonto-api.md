@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Edit, Write, Bash
 model: inherit
 ---
 
-You are the HTTP API expert for Fonto (myfonto.com).
+You are the HTTP API expert for Fonto.
 
 ## Scope (you own)
 - `app/api/**` — especially the public `app/api/v1` surface; also `admin`, `export`, `health`, `metrics`, `plexo` routes

@@ -14,7 +14,7 @@ function getDb(): Db {
     if (!url) throw new Error("DATABASE_URL environment variable is not set");
     // T1.6 (perf audit 2026-06-15): cap the pool. postgres-js defaults to an
     // unbounded pool, which under spike load (e.g. 3 worker replicas + Next
-    // server all hammering pushd) lets connections balloon past pushd's own
+    // server all hammering one shared database) lets connections balloon past its own
     // limits. 20 is well under the postgres ceiling (per the
     // Better-auth pool which is already max:10), still ample for steady
     // traffic. Override via FONTO_PG_POOL_MAX if needed.

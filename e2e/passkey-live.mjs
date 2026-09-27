@@ -1,17 +1,18 @@
-// Live WebAuthn register -> login e2e against prod myfonto.com using a CDP
+// Live WebAuthn register -> login e2e against a live instance (PLAYWRIGHT_BASE_URL) using a CDP
 // virtual authenticator. Run from /workspace/fonto: node e2e/passkey-live.mjs
 // Requires e2e/.auth/user.json (authed session for the register step).
 import { chromium } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
-const ORIGIN = "https://myfonto.com";
+const ORIGIN = (process.env.PLAYWRIGHT_BASE_URL ?? "").replace(/\/+$/, "");
+if (!ORIGIN) throw new Error("PLAYWRIGHT_BASE_URL is required (the live instance origin, e.g. https://fonto.example.com)");
 const state = JSON.parse(readFileSync(new URL("./.auth/user.json", import.meta.url), "utf8"));
 const sess = state.cookies.find((c) => c.name.includes("session_token"));
 if (!sess) throw new Error("no session cookie in e2e/.auth/user.json");
 
 const browser = await chromium.launch({ executablePath: "/usr/bin/chromium", args: ["--no-sandbox"] });
 const context = await browser.newContext();
-await context.addCookies([{ name: sess.name, value: sess.value, domain: "myfonto.com", path: "/", secure: true, httpOnly: true }]);
+await context.addCookies([{ name: sess.name, value: sess.value, domain: new URL(ORIGIN).hostname, path: "/", secure: true, httpOnly: true }]);
 const page = await context.newPage();
 
 const client = await context.newCDPSession(page);

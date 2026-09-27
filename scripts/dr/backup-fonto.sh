@@ -4,8 +4,8 @@
 #
 # M14 / ADR 0058 — scheduled encrypted backup of the fonto schema.
 #
-# pg_dump (custom format) of ONLY the `fonto` schema inside the shared `pushd`
-# DB, gzipped and age-encrypted, written to the NAS array. The dump includes
+# pg_dump (custom format) of ONLY the `$SCHEMA` schema inside the database named
+# by $DB, gzipped and age-encrypted, written to $DEST. The dump includes
 # __drizzle_migrations so a restore self-identifies its migration head. R2
 # originals are already durable (dual-backend) and are NOT in this dump.
 #
@@ -13,18 +13,22 @@
 # Linux NAS). Schedule: daily 03:30. Fails closed + alerts on any error.
 #
 # Operator setup (one-time):
-#   age-keygen -o /data/_secrets/fonto-backup/key.txt   # PRIVATE — move OFFLINE
-#   grep 'public key' /data/_secrets/fonto-backup/key.txt | awk '{print $NF}' \
-#     > /data/_secrets/fonto-backup/recipient.txt        # public recipient stays on-box
-#   echo '<ntfy/glitchtip webhook>' > /data/_secrets/fonto-backup/alert_url
+#   SECRETS=/your/infra/dir/fonto-backup   # pick your own secret dir
+#   age-keygen -o "$SECRETS/key.txt"       # PRIVATE — move OFFLINE
+#   grep 'public key' "$SECRETS/key.txt" | awk '{print $NF}' > "$SECRETS/recipient.txt"
+#   echo '<ntfy/glitchtip webhook>' > "$SECRETS/alert_url"
 
 set -euo pipefail
 
 PG_CONTAINER="${PG_CONTAINER:-postgres}"
-DB="${DB:-pushd}"
 SCHEMA="${SCHEMA:-fonto}"
-DEST="${DEST:-/data/backups/fonto}"
-SECRETS="${SECRETS:-/data/_secrets/fonto-backup}"
+# DB / DEST / SECRETS are REQUIRED — there are deliberately no committed
+# defaults, because this repo is public and a baked default would name the
+# maintainer's database and host paths. Validated below, after _alert is
+# defined, so the failure message can reach the alert webhook.
+DB="${DB:-}"
+DEST="${DEST:-}"
+SECRETS="${SECRETS:-}"
 AGE_RECIPIENT_FILE="${AGE_RECIPIENT_FILE:-$SECRETS/recipient.txt}"
 ALERT_URL_FILE="${ALERT_URL_FILE:-$SECRETS/alert_url}"
 
@@ -37,9 +41,15 @@ _alert() {
 }
 trap '_alert "unexpected error at line $LINENO"' ERR
 
-# NAS identity gate — fail closed before touching anything (wrong-host safety).
-if [ "$(hostname)" != "NAS" ]; then
-  _alert "refusing to run on host $(hostname) (expected NAS)"
+[ -n "$DB" ] || { _alert "DB is not set (the database holding the '$SCHEMA' schema)"; exit 1; }
+[ -n "$DEST" ] || { _alert "DEST is not set (backup output directory)"; exit 1; }
+[ -n "$SECRETS" ] || { _alert "SECRETS is not set (age key / recipient / alert_url directory)"; exit 1; }
+
+# Host identity gate — fail closed before touching anything (wrong-host safety).
+# Set EXPECT_HOSTNAME to the box this is allowed to run on; unset disables the
+# gate (useful in CI / a fresh deploy).
+if [ -n "${EXPECT_HOSTNAME:-}" ] && [ "$(hostname)" != "$EXPECT_HOSTNAME" ]; then
+  _alert "refusing to run on host $(hostname) (expected $EXPECT_HOSTNAME)"
   exit 1
 fi
 

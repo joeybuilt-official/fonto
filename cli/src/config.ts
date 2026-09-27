@@ -22,8 +22,12 @@ const store = new Conf<Schema>({
   // owner so other local users can't read the credential (conf defaults
   // to 0o666, i.e. world/group-readable after umask).
   configFileMode: 0o600,
+  // baseUrl has NO default: this repo is public, so a baked production
+  // hostname would silently point every third-party install at an instance they
+  // do not own. `fonto login --base-url <url>` (or FONTO_BASE_URL) is required;
+  // request() fails with an actionable message until it is set.
   defaults: {
-    baseUrl: "https://myfonto.com",
+    baseUrl: "",
     pat: "",
   },
 });
@@ -45,7 +49,7 @@ export function getConfig(): CliConfig {
 
 export function setBaseUrl(url: string): void {
   const trimmed = url.trim();
-  // Prepend a scheme when the user gives a bare host (e.g. `myfonto.com`)
+  // Prepend a scheme when the user gives a bare host (e.g. `fonto.example.com`)
   // so every later `fetch()` gets a parseable absolute URL.
   const withScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)
     ? trimmed

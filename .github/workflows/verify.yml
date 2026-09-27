@@ -1,43 +1,52 @@
-# Pre-merge gate. Runs on the self-hosted `hive` runner pool, NOT on
-# GitHub-hosted runners.
+# Pre-merge gate. Runs on GitHub-hosted `ubuntu-latest`.
+#
+# INVARIANT: this job must stay on a GitHub-hosted runner. This repo is PUBLIC,
+# so any fork can open a PR, and for a `pull_request` event GitHub takes the
+# workflow file from the PR's *merge commit* — meaning the fork's code controls
+# the job body below, including `runs-on` and every `run:` step. On an ephemeral
+# hosted VM that is contained; on our self-hosted pool it is not, because the
+# runner carrying the `docker` label runs as uid=0 with /var/run/docker.sock
+# mounted rw, which is host-root-equivalent. Moving this workflow back to
+# `[self-hosted, hive]` would hand an untrusted fork's shell to the host.
+#
+# Corollary: fork PRs receive no `secrets.*`, so this workflow must never grow
+# a dependency on a secret or it will fail on every outside contribution.
 #
 # History: this workflow was disabled on 2026-08-30 because every run failed in
-# ~2 seconds with zero steps executed — the joeybuilt-official org is on the
-# GitHub Free plan and had burned its 2,000 included Actions minutes, so
-# `ubuntu-latest` jobs were rejected before they started ("recent account
-# payments have failed or your spending limit needs to be increased"). That was
-# a billing problem, not a code problem.
+# ~2 seconds with zero steps executed — the org is on the GitHub Free plan and
+# had burned its 2,000 included Actions minutes, so `ubuntu-latest` jobs were
+# rejected before they started. It was then moved to `[self-hosted, hive]` to
+# escape metered minutes.
 #
-# Moving to `[self-hosted, hive]` takes this workflow off metered minutes
-# entirely — self-hosted runners do not consume the included-minutes quota — so
-# the push/pull_request triggers are restored here.
-#
-# Runner pool note: runner-pool are interchangeable for this job. Only
-# runner-docker mounts a docker socket (it alone carries the extra `docker` label),
-# so do NOT add a `services:` block or a `docker run` step to this workflow
-# without also targeting that label — otherwise the job lands on a
-# docker-less runner ~3 times in 4, at random.
+# That reason is gone. The 2,000-minute allowance meters PRIVATE repos only; for
+# public repos standard hosted runners are free and unlimited. The repo is public
+# now, and hosted `ubuntu-latest` for public repos is 4 vCPU / 16 GB RAM — double
+# the 8 GiB the hive runners are capped at — so the heap ceiling below has MORE
+# headroom than it did on self-hosted, not less. See nexalog's verify.yml for the
+# same pattern, proven green on PR events.
 name: verify
 
 on:
+  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
 
 jobs:
   verify:
-    runs-on: [self-hosted, hive]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       # `next build` on this app exceeds Node's ~2 GB default heap and dies with
-      # exit 134 ("Ineffective mark-compacts near heap limit"). The runners are
-      # capped at 8 GiB, so 6 GiB is the headroom-preserving ceiling.
+      # exit 134 ("Ineffective mark-compacts near heap limit"). 6 GiB was chosen
+      # against the 8 GiB hive cap; on a 16 GB hosted runner it is comfortable.
       NODE_OPTIONS: --max-old-space-size=6144
     steps:
       - uses: actions/checkout@v4
+      # No `version:` input — action-setup v4 reads `packageManager` from
+      # package.json. Specifying BOTH is a hard error ("Multiple versions of
+      # pnpm specified"), which is what killed every run after #2 added the pin.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -47,4 +56,22 @@ jobs:
       - run: pnpm lint
       - run: pnpm arch
       - run: pnpm conformance
+      # Tests run before the build: `pnpm test` is fast and gives a precise
+      # failure, whereas a broken unit test would otherwise surface only as a
+      # failed 6 GiB `next build` ~15 minutes later.
+      - run: pnpm test
+      # Guards with self-tests. `scan:infra` blocks committed production
+      # hostnames / deploy paths / internal names; its --self-test plants a
+      # canary per rule first, so a clean run cannot be a vacuous one.
+      - run: pnpm scan:infra
+      - run: bash scripts/scan-infra-identifiers.sh --self-test
+      # Fails when .env.example drifts behind the variables the code reads.
+      - run: pnpm check:env-example
+      # NOTE: the docs landing gate (scripts/check-docs.sh) is deliberately NOT
+      # wired in here. It requires CHANGELOG.md to change in every code commit,
+      # and this repo has no history of maintaining one — enabling it would fail
+      # the very next push instead of preventing a regression. CHANGELOG.md now
+      # exists as the worklog target, so enabling this is a one-line change when
+      # the maintainer wants it:
+      #     - run: sh scripts/check-docs.sh --since HEAD~1
       - run: pnpm build

@@ -5,8 +5,9 @@
 // (`instrumentation.ts`) and the worker (`worker/index.ts`).
 //
 // Configuration:
-//   OTEL_EXPORTER_OTLP_ENDPOINT — collector OTLP/HTTP endpoint
-//                                 (e.g. http://otel-collector:4318)
+//   OTEL_EXPORTER_OTLP_ENDPOINT — collector OTLP/HTTP endpoint, port 4318.
+//                                 Under compose point it at the collector
+//                                 service name; on a bare host use localhost.
 //   OTEL_SERVICE_NAME           — overrides the default service name
 //
 // If `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, this function returns without

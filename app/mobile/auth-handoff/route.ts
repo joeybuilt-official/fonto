@@ -21,12 +21,23 @@ export const dynamic = "force-dynamic";
 
 const MOBILE_KEY_NAME = "mobile";
 
-function appBase(): string {
-  return (
+/**
+ * The origin the deep-link and the /login bounce are built against.
+ *
+ * Order: OIDC_REDIRECT_BASE_URL (explicit proxy-facing override), then
+ * BETTER_AUTH_URL / NEXT_PUBLIC_APP_URL (the configured public origin), then the
+ * actual request origin. There is deliberately NO hardcoded production
+ * hostname — the request origin is a safe last resort because this route only
+ * ever redirects the CALLER's own browser back to the origin it already came
+ * from.
+ */
+function appBase(req: Request): string {
+  const configured =
     process.env.OIDC_REDIRECT_BASE_URL ??
     process.env.BETTER_AUTH_URL ??
-    "https://myfonto.com"
-  ).replace(/\/$/, "");
+    process.env.NEXT_PUBLIC_APP_URL;
+  if (configured) return configured.replace(/\/$/, "");
+  return new URL(req.url).origin;
 }
 
 export async function GET(req: Request) {
@@ -44,7 +55,7 @@ export async function GET(req: Request) {
   const user = await getAuthUser();
   if (!user) {
     // Not signed in yet — bounce to the (mobile) login which offers SSO.
-    return NextResponse.redirect(`${appBase()}/login?mobile=1`);
+    return NextResponse.redirect(`${appBase(req)}/login?mobile=1`);
   }
 
   // Replace-in-place: revoke any prior `mobile` keys for this user before
@@ -68,9 +79,9 @@ export async function GET(req: Request) {
     scopes: ["read", "write"],
   });
 
-  // Deep-link the freshly-minted PAT back into the native app. The myfonto.com
-  // https intent-filter already routes /mobile/auth-callback to the app.
+  // Deep-link the freshly-minted PAT back into the native app. The instance's
+  // https App Links intent-filter (see mobile/android) routes /mobile/auth-callback to the app.
   return NextResponse.redirect(
-    `${appBase()}/mobile/auth-callback?pat=${encodeURIComponent(key.token)}`
+    `${appBase(req)}/mobile/auth-callback?pat=${encodeURIComponent(key.token)}`
   );
 }
