@@ -25,7 +25,7 @@
 // Env:
 //   S3_IMPORT_ACCESS_KEY_ID, S3_IMPORT_SECRET_ACCESS_KEY  — source creds
 //   (kept distinct from R2_* to avoid mixing up source / destination).
-//   DATABASE_URL, REDIS_URL, R2_*, PLEXO_* — same env createAssetRow needs.
+//   DATABASE_URL, REDIS_URL, R2_* — same env createAssetRow needs.
 //
 // Resume log at /tmp/import-from-s3-<runId>.jsonl. One line per object:
 //   {"s3Key":"...","status":"uploaded"|"deduplicated"|"skipped"|"error",

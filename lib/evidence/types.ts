@@ -33,7 +33,7 @@ export interface EvidenceInput {
   sourceDetail: Record<string, unknown>;
   /**
    * Producing model/rule version. A bump re-extracts ONLY this evidence_type's
-   * rows for affected assets (ADR-0006). Perception-backed types carry the Plexo
+   * rows for affected assets (ADR-0006). Perception-backed types carry the label
    * model id; Fonto-local rules carry a rule-version string ("exif@1").
    */
   modelVersion: string;

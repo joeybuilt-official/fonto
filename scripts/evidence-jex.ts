@@ -35,7 +35,7 @@ async function runPort<A, E>(name: string, effect: Effect.Effect<A, E, never>): 
 }
 
 async function main() {
-  const tierName = process.env.PLEXO_URL ? "federated (tier 200)" : "embedded (tier 100)";
+  const tierName = "embedded (tier 100)";
   console.log(`Jex evidence run — tier: ${tierName}\n`);
 
   const layer = resolveIntelligenceLayer();

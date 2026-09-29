@@ -1,0 +1,125 @@
+{
+  "$schema": "https://joeybuilt.com/schemas/jex-manifest.json",
+  "protocol": "jex",
+  "protocolVersion": 1,
+  "appId": "fonto",
+  "displayName": "Fonto",
+  "schemaNamespace": "fonto",
+  "description": "Self-hosted photo and document library with an app-owned, user-configurable AI tier.",
+  "healthEndpoint": "/api/health",
+  "apiBasePath": "/api/peer/v1",
+  "docsPath": "/api/peer/v1",
+  "auth": {
+    "scheme": "bearer",
+    "envKey": "FONTO_SERVICE_KEY",
+    "rotationEnvKey": "FONTO_SERVICE_KEY_V2",
+    "eventSignatureHeader": "x-fonto-signature",
+    "eventSignatureAlg": "hmac-sha256",
+    "notes": "Inbound only. Fonto holds no credential on any peer's behalf; a peer that wants Fonto's data calls this surface."
+  },
+  "tiers": {
+    "embedded": {
+      "id": "embedded",
+      "priority": 100,
+      "alwaysOn": true,
+      "capabilities": ["complete", "classify", "describe", "suggest-tags", "ocr", "embed-image", "embed-text", "label-image", "detect-faces", "memory-store", "memory-search"],
+      "connection": {
+        "kind": "user-configurable",
+        "storage": "fonto.ai_connections (api key AES-256-GCM encrypted)",
+        "resolution": ["named connection", "user default", "deployment default (env AI_BASE_URL/AI_API_KEY/AI_MODEL, legacy FONTO_LLM_* honored)"],
+        "api": {
+          "list": "GET /api/ai/connections",
+          "save": "POST /api/ai/connections",
+          "setDefault": "PATCH /api/ai/connections",
+          "remove": "DELETE /api/ai/connections?id=<uuid>"
+        }
+      },
+      "notes": "Ships with the app. A user configures label, base URL, API key and model in Settings → Integrations; the key is encrypted at rest and never returned by any read API (masked last-4 only). The vision tier (OCR/embeddings/labels/faces) is a separate optional endpoint at FONTO_VISION_URL."
+    },
+    "federated": {
+      "id": "federated",
+      "priority": 200,
+      "alwaysOn": false,
+      "capabilities": ["complete"],
+      "configuredWhen": ["JEX_FEDERATED_BASE_URL", "JEX_FEDERATED_API_KEY"],
+      "killSwitch": "JEX_FEDERATION_OFF",
+      "notes": "OPTIONAL remote peer speaking the OpenAI-compatible chat-completions shape. Unset configuration means the tier does not exist — a supported state, never an error. Not wired in this release; the embedded tier is the terminal floor."
+    }
+  },
+  "capabilities": [
+    {
+      "id": "assets.read",
+      "method": "GET",
+      "path": "/api/peer/v1/data?entity=asset",
+      "params": { "userId": "required", "id": "uuid (single asset)", "subtype": "classification filter", "collectionId": "uuid", "tagId": "uuid", "limit": "1-100" },
+      "returns": "{ asset } | { assets: [...], total }"
+    },
+    {
+      "id": "assets.search",
+      "method": "GET",
+      "path": "/api/peer/v1/data?entity=asset_search",
+      "params": { "userId": "required", "q": "required", "limit": "1-50" },
+      "returns": "{ assets: [...], total }"
+    },
+    {
+      "id": "collections.read",
+      "method": "GET",
+      "path": "/api/peer/v1/data?entity=collection",
+      "params": { "userId": "required", "id": "uuid" },
+      "returns": "{ collection } | { collections: [...], total }"
+    },
+    {
+      "id": "tags.read",
+      "method": "GET",
+      "path": "/api/peer/v1/data?entity=tag",
+      "params": { "userId": "required" },
+      "returns": "{ tags: [...], total }"
+    },
+    {
+      "id": "tags.write",
+      "method": "POST",
+      "path": "/api/peer/v1/data",
+      "body": { "entity": "tag", "action": "create|update|delete", "userId": "required", "name": "required for create", "id": "required for update/delete" },
+      "returns": "{ tag } | { deleted: true }"
+    },
+    {
+      "id": "collections.write",
+      "method": "POST",
+      "path": "/api/peer/v1/data",
+      "body": { "entity": "collection", "action": "create|update|delete|add_asset|remove_asset", "userId": "required", "id": "uuid", "assetId": "uuid" },
+      "returns": "{ collection } | { deleted: true }"
+    },
+    {
+      "id": "assets.tag",
+      "method": "POST",
+      "path": "/api/peer/v1/data",
+      "body": { "entity": "asset", "action": "tag|untag|delete", "userId": "required", "assetId": "uuid", "tagId": "uuid for tag/untag", "id": "uuid for delete" },
+      "returns": "{ ok: true } | { deleted: true }"
+    },
+    {
+      "id": "events.inbound",
+      "method": "POST",
+      "path": "/api/peer/v1/events",
+      "body": { "event": "fonto.asset.uploaded|fonto.asset.processed|fonto.asset.classified|fonto.asset.deleted|fonto.asset.purged|fonto.tag.created", "assetId": "uuid", "workspaceId": "uuid", "timestamp": "required" },
+      "signature": "HMAC-SHA256 over the raw body in x-fonto-signature, keyed by FONTO_SERVICE_KEY",
+      "returns": "{ ok: true }"
+    }
+  ],
+  "eventContracts": [
+    "fonto.asset.uploaded",
+    "fonto.asset.processed",
+    "fonto.asset.classified",
+    "fonto.asset.deleted",
+    "fonto.asset.purged",
+    "fonto.tag.created"
+  ],
+  "identity": {
+    "workspaceModel": "app-owned",
+    "table": "fonto.workspaces",
+    "notes": "Fonto resolves its own workspace per user (`fonto.workspaces` + `fonto.workspace_memberships`). It never mints or resolves identity in another app."
+  },
+  "standalone": {
+    "requiresPeer": false,
+    "degradation": "Every AI-backed capability degrades per-capability when its tier is unconfigured: classification falls back to the CLIP argmax floor, captions/tags are skipped, OCR records `failed`, semantic search returns unranked results. Core flows (upload, library, tags, collections, sharing, sync) never depend on AI being configured and never return 503 for an absent optional capability."
+  }
+}

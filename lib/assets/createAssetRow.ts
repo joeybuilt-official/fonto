@@ -2,9 +2,9 @@
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Shared asset row creation: dedup check + EXIF + perceptual hash + insert +
-// queue enqueue + plexo publish. Both the legacy multipart POST and the new
-// /complete (presigned PUT) route call into this so we never drift on the
-// per-upload bookkeeping.
+// queue enqueue + webhook/activity emit. Both the legacy multipart POST and
+// the new /complete (presigned PUT) route call into this so we never drift
+// on the per-upload bookkeeping.
 //
 // What this helper does NOT do:
 // - It does not handle R2 storage. The legacy route uploads a buffer to R2
@@ -17,7 +17,6 @@
 import { createHash } from "crypto";
 import { eq, and, sql, getTableColumns } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { plexoPublishEvent } from "@/lib/plexo";
 import {
   computePHash,
   extractPalette,
@@ -659,16 +658,6 @@ export async function createAssetRow(input: CreateAssetInput): Promise<CreateAss
       directoryPath,
     })
     .returning();
-
-  // ext.fonto.asset.uploaded (fire-and-forget).
-  void plexoPublishEvent("ext.fonto.asset.uploaded", {
-    assetId: asset.id,
-    filename,
-    mimeType,
-    sizeBytes,
-    sha256,
-    source,
-  });
 
   // Phase 7a — workspace activity feed (asset.uploaded). Fire-and-forget;
   // emitActivity swallows its own failures. targetType/targetId let the

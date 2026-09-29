@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Intelligence Core — Phase 3. Map Plexo VLM scene labels to a year-agnostic
+// Intelligence Core — Phase 3. Map VLM scene labels to a year-agnostic
 // monthly mask. Pure + DB-free so it is unit-testable in isolation.
 //
 // A scene-season signal is "near-useless alone, strong × a year bound"

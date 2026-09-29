@@ -52,9 +52,11 @@ const runCompletion = () =>
 async function main() {
   // A) Non-cascade (embedded, no infra): each port must fail as ITS OWN port,
   //    never borrowing the Completion adapter's failure (the original bug).
-  delete process.env.PLEXO_URL;
   delete process.env.FONTO_VISION_URL;
-  delete process.env.PLEXO_VISION_URL;
+  delete process.env.AI_BASE_URL;
+  delete process.env.AI_API_KEY;
+  delete process.env.FONTO_LLM_KEY;
+  delete process.env.FONTO_LLM_BASE_URL;
 
   const ieA = failErr(await runImage());
   check(
@@ -69,16 +71,16 @@ async function main() {
     `port=${cA?.port} reason=${cA?.reason}`,
   );
 
-  // B) Fallback (federated on, Plexo + vision unreachable): the surfaced failure
-  //    must be the EMBEDDED reason, proving federated fell through to embedded.
-  process.env.PLEXO_URL = "http://127.0.0.1:1"; // enable federated tier, unreachable
+  // B) A CONFIGURED tier still surfaces its own failure honestly when the
+  //    endpoint is unreachable — the reason must reach the caller.
+  process.env.FONTO_VISION_URL = "http://127.0.0.1:1"; // unreachable vision tier
   const ieB = failErr(await runImage());
   check(
-    "B: federated → embedded fallback (embedded reason surfaced)",
-    /FONTO_VISION_URL/.test(ieB?.reason ?? ""),
+    "B: unreachable vision tier surfaces its own reason",
+    /vision-sidecar|fetch|ECONNREFUSED|Failed/.test(ieB?.reason ?? ""),
     `reason=${ieB?.reason}`,
   );
-  delete process.env.PLEXO_URL;
+  delete process.env.FONTO_VISION_URL;
 
   // C) Positive paths via fake Layers + the exported resolver.
   class Probe extends Context.Tag("test/Probe")<

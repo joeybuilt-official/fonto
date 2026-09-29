@@ -50,7 +50,7 @@ type SmartQuery = {
   subClassification?: string;
   classifyMethod?: "clip" | "llm-fallback";
   // Phase 5.4 — ML-enriched facets.
-  //   clipText: free-text CLIP query. Embeds the text via plexo-vision
+  //   clipText: free-text CLIP query. Embeds the text via the vision sidecar
   //     (cached per-process for 1 h), runs a pgvector kNN against
   //     `assets.clip_vec`, and ANDs the resulting asset IDs into the
   //     predicate. If vision is unconfigured or the embed fails, the

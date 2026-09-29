@@ -10,19 +10,12 @@ import { assetStorageKey, assetStorageKeyLegacy } from "@/lib/r2";
 import { storage } from "@/lib/storage";
 import { isStoragePolicy } from "@/lib/storage/policy";
 import { isShootStage } from "@/lib/scope";
-import { plexoPublishEvent } from "@/lib/plexo";
 import { nextSeq } from "@/lib/db/seq";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { normalizeDirectoryPath } from "@/lib/folders/normalize";
 import { recordAuditEvent, AuditAction } from "@/lib/audit";
 import { cacheInvalidate } from "@/lib/cache/valkey";
 import { parseJson } from "@/app/api/v1/_lib/parseJson";
-
-const LIFECYCLE_EVENTS: Record<string, string> = {
-  archivable: "ext.fonto.asset.archivable",
-  archived: "ext.fonto.asset.archived",
-  purged: "ext.fonto.asset.purged",
-};
 
 export async function GET(
   _req: NextRequest,
@@ -84,7 +77,6 @@ export async function PATCH(
   const body = parsed.data;
 
   const updates: Record<string, unknown> = {};
-  let emitEvent: string | null = null;
 
   if (body.trash) {
     updates.lifecycleState = "trashed";
@@ -104,7 +96,6 @@ export async function PATCH(
     if (body.lifecycleState === "purged") {
       updates.purgedAt = new Date();
     }
-    emitEvent = LIFECYCLE_EVENTS[body.lifecycleState] ?? null;
   }
 
   // Phase 3.4 — favorites + 0..5 star ratings. Either or both can come in
@@ -249,15 +240,6 @@ export async function PATCH(
     })();
   }
 
-  if (emitEvent) {
-    void plexoPublishEvent(emitEvent, {
-      assetId: id,
-      filename: updated.filename,
-      mimeType: updated.mimeType,
-      lifecycleState: updated.lifecycleState,
-    });
-  }
-
   // Phase 3.2 — audit. Pick the most specific action verb so the admin
   // viewer's filter dropdown is useful (restore/archive/delete are distinct
   // from a generic update).
@@ -336,13 +318,6 @@ export async function DELETE(
     .update(schema.workspaces)
     .set({ usageBytes: sql`GREATEST(0, ${schema.workspaces.usageBytes} - ${asset.sizeBytes})` })
     .where(eq(schema.workspaces.id, asset.workspaceId));
-
-  void plexoPublishEvent("ext.fonto.asset.purged", {
-    assetId: id,
-    filename: asset.filename,
-    mimeType: asset.mimeType,
-    reason: "hard-delete",
-  });
 
   void recordAuditEvent({
     workspaceId: asset.workspaceId,

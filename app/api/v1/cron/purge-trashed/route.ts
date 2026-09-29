@@ -12,7 +12,6 @@ import {
   hlsSegmentKeyPrefix,
 } from "@/lib/r2";
 import { storage, localFs } from "@/lib/storage";
-import { plexoPublishEvent } from "@/lib/plexo";
 
 /**
  * Phase 8b — delete every R2 object under fonto/{ws}/{asset}/hls/.
@@ -89,12 +88,6 @@ export async function POST(request: NextRequest) {
         .update(schema.assets)
         .set({ lifecycleState: "purged", purgedAt: new Date() })
         .where(eq(schema.assets.id, asset.id));
-
-      void plexoPublishEvent("ext.fonto.asset.purged", {
-        assetId: asset.id,
-        filename: asset.filename,
-        reason: "grace-period-expired",
-      });
 
       purged++;
     } catch (err) {

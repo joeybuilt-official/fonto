@@ -21,7 +21,6 @@ export type ProcessAssetJob = z.infer<typeof ProcessAssetJobSchema>;
 
 export const OcrJobSchema = z.object({
   assetId: z.string().uuid(),
-  plexoWorkspaceId: z.string(),
 });
 export type OcrJob = z.infer<typeof OcrJobSchema>;
 
@@ -40,8 +39,8 @@ export const GenerateThumbnailsJobSchema = ThumbnailJobSchema;
 export type GenerateThumbnailsJob = z.infer<typeof GenerateThumbnailsJobSchema>;
 
 // Phase 4.2 — CLIP image embedding job. The worker downloads the asset's
-// preview derivative (or original if preview missing), POSTs to the Plexo
-// vision service, and writes the returned 512-dim float vector to
+// preview derivative (or original if preview missing), POSTs to the vision
+// sidecar, and writes the returned 512-dim float vector to
 // `assets.clip_vec` (lands with the 4.3 pgvector migration). Payload stays
 // tiny — the worker rehydrates everything else from Postgres.
 export const EmbedAssetJobSchema = z.object({
@@ -123,7 +122,7 @@ export type WebhookDeliveryJob = z.infer<typeof WebhookDeliveryJobSchema>;
 
 // Phase 5.1 — face detection + ArcFace embedding job. Payload is tiny: the
 // worker reads the asset (and its thumbnail derivative) from Postgres/R2 at
-// run time, posts to the Plexo vision sidecar, and inserts
+// run time, posts to the vision sidecar, and inserts
 // `fonto.face_instances` rows.
 export const FaceDetectJobSchema = z.object({
   assetId: z.string().uuid(),
@@ -206,7 +205,7 @@ export type StorageSyncJob = z.infer<typeof StorageSyncJobSchema>;
 
 // Intelligence Core — Phase 3 (extract-evidence). Tiny payload: the worker reads
 // the asset (+ faces/persons/exif/ocr) from Postgres and optionally presigns the
-// preview for the Plexo scene-label call. Writes `fonto.image_date_evidence`.
+// preview for the vision-label call. Writes `fonto.image_date_evidence`.
 export const ExtractEvidenceJobSchema = z.object({
   assetId: z.string().uuid(),
   workspaceId: z.string().uuid(),

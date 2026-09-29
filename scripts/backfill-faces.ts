@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // Phase 5.1 — backfill face detection + ArcFace embedding for image assets
-// uploaded before plexo-vision's `apps/vision` shipped (Phase 4.2 deploy),
+// uploaded before the vision sidecar shipped (Phase 4.2 deploy),
 // or for any row that has no `face_instances` rows yet.
 //
 // Behaviour: enqueues `face-detect` jobs on the BullMQ `face-detect` queue

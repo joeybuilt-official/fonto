@@ -11,7 +11,8 @@
 //   node scripts/backfill-perceptual.mjs --all        # both
 //   node scripts/backfill-perceptual.mjs --batch=50 --all
 //
-// Reads DATABASE_URL, R2_*, PLEXO_URL, PLEXO_SERVICE_KEY from env.
+// Reads DATABASE_URL, R2_*, FONTO_VISION_URL (and optional FONTO_VISION_KEY)
+// from env.
 // Idempotent: skips rows that already have the relevant column populated.
 
 import postgres from "postgres";
@@ -129,7 +130,7 @@ async function extractPalette(buffer) {
   return palette;
 }
 
-/* ─── R2 + Plexo helpers ─────────────────────────────────────────────── */
+/* ─── R2 + vision-sidecar helpers ────────────────────────────────────── */
 
 function s3() {
   return new S3Client({
@@ -153,42 +154,21 @@ async function presignFor(bucket, key) {
   return getSignedUrl(s3(), new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: 300 });
 }
 
-async function plexoVisionOcr(workspaceId, imageUrl) {
-  const url = (process.env.PLEXO_URL || "").replace(/\/$/, "");
-  const key = process.env.PLEXO_SERVICE_KEY || "";
-  if (!url || !key) return null;
-  const res = await fetch(`${url}/api/v1/vision/ocr`, {
+async function visionOcr(imageUrl) {
+  const base = (process.env.FONTO_VISION_URL || "").replace(/\/+$/, "");
+  if (!base) return null;
+  const key = process.env.FONTO_VISION_KEY || "";
+  const res = await fetch(`${base}/vision/ocr`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-      "X-App-Id": "fonto",
+      ...(key ? { Authorization: `Bearer ${key}` } : {}),
     },
-    body: JSON.stringify({ workspaceId, imageUrl }),
+    body: JSON.stringify({ imageUrl }),
     signal: AbortSignal.timeout(60000),
   });
   if (!res.ok) return null;
   return res.json();
-}
-
-async function plexoEnsureWorkspace(userId, email) {
-  const url = (process.env.PLEXO_URL || "").replace(/\/$/, "");
-  const key = process.env.PLEXO_SERVICE_KEY || "";
-  if (!url || !key) return null;
-  const res = await fetch(`${url}/api/v1/auth/workspace/ensure`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-      "X-App-Id": "fonto",
-      "X-User-Id": userId,
-    },
-    body: JSON.stringify({ userId, name: "Fonto", email }),
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) return null;
-  const data = await res.json();
-  return data.workspaceId;
 }
 
 /* ─── Driver ────────────────────────────────────────────────────────── */
@@ -281,7 +261,6 @@ async function main() {
   /* OCR backfill */
   if (ocrMode) {
     console.log("[backfill] OCR: starting");
-    // Map fonto workspace -> plexo workspace once per pass.
     const wsCache = new Map();
     while (true) {
       const rows = await sql`
@@ -298,19 +277,9 @@ async function main() {
       for (const r of rows) {
         stats.ocr.tried++;
         try {
-          let plexoWs = wsCache.get(r.workspace_id);
-          if (!plexoWs) {
-            plexoWs = await plexoEnsureWorkspace(r.user_id, undefined);
-            if (plexoWs) wsCache.set(r.workspace_id, plexoWs);
-          }
-          if (!plexoWs) {
-            await sql`UPDATE fonto.assets SET ocr_state = 'failed' WHERE id = ${r.id}`;
-            stats.ocr.fail++;
-            continue;
-          }
           const key = `fonto/${r.workspace_id}/${r.id}/${r.filename}`;
           const url = await presignFor(bucket, key);
-          const result = await plexoVisionOcr(plexoWs, url);
+          const result = await visionOcr(url);
           if (!result) {
             await sql`UPDATE fonto.assets SET ocr_state = 'failed' WHERE id = ${r.id}`;
             stats.ocr.fail++;

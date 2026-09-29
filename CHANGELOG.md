@@ -7,6 +7,78 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Changed — fleet decoupling: Fonto is standalone (zero sibling-app coupling)
+
+Fonto no longer depends on any sibling Joeybuilt app. The internal coupling —
+the `@joeybuilt/plexo-sdk` facade, the boot-time app registration, the Plexo
+vision client, a federated intelligence tier, two inbound routes a sibling
+called, a health probe and a dashboard status badge — is gone, along with every
+`PLEXO_*` environment variable. Pairing with a peer now happens through Fonto's
+own PUBLISHED surface, and the AI tier is app-owned and user-configurable.
+
+**Removed** (files deleted, dependencies dropped):
+
+| Removed | Was |
+|---|---|
+| `@joeybuilt/plexo-sdk` | the sibling SDK — gone from `package.json` AND `pnpm-lock.yaml` |
+| `lib/plexo.ts` | the SDK facade + deploy-shaped prompts |
+| `lib/plexo-registration.ts` | app-profile registration at boot |
+| `lib/plexo-vision.ts` | CLIP/OCR/face client bound to the sibling's URL + key |
+| `lib/intelligence/adapters/plexo-{federated,unified}.ts` | the federated tier and the unified analyze-image client |
+| `app/api/plexo/{data,events}`, `app/api/health/plexo` | inbound routes + health probe |
+| `components/plexo*/**` | the peer status UI cluster |
+
+**What replaced it:**
+
+- **AI, stand-alone and user-configurable** — `fonto.ai_connections`
+  (migration 0063) + `lib/ai/connections.ts`: per-user **label, base URL,
+  model, API key**. The key is AES-256-GCM encrypted via the new single home
+  `lib/crypto/secret-box.ts` (which `lib/integrations/tokenCrypto.ts` now
+  delegates to, so existing Google-token ciphertext is untouched). Resolution
+  per call: named connection → user default → deployment default
+  (`AI_BASE_URL`/`AI_API_KEY`/`AI_MODEL`; the legacy `FONTO_LLM_*` names are
+  honored). No read path ever returns the key — masked last-4 only. Editable at
+  **Settings → Integrations**.
+- **Prompts are app-owned** — `lib/intelligence/prompts.ts` (classify,
+  describe image/document, suggest tags), each taking the owning userId so the
+  user's own connection serves the call.
+- **Vision tier, own URL** — `lib/intelligence/adapters/vision-sidecar.ts`
+  now reads only `FONTO_VISION_URL` (+ optional `FONTO_VISION_KEY`); unset
+  means the capability is not advertised and callers degrade.
+- **Semantic memory, app-owned** — `intelligence.storeMemory` /
+  `searchMemory` against `fonto.intelligence_memory`; the search route's
+  semantic re-rank embeds the query with the vision tier and ranks locally.
+- **Published API** — `/api/peer/v1/data` (GET/POST) and `/api/peer/v1/events`
+  (HMAC-SHA256 signed), authenticated by the deployment's own
+  `FONTO_SERVICE_KEY`/`_V2` (`lib/peer/service-keys.ts`). Unconfigured ⇒ 503
+  FEATURE_DISABLED, which is a supported state.
+- **Jex manifest** — `public/.well-known/jex.manifest.json` plus an api route
+  importing the same file, so the two can never diverge.
+
+**The 503 anti-pattern is forbidden — nothing optional can kill a core flow.**
+The pipeline lost its eager workspace resolution and its peer-first branch
+entirely; a missing AI connection degrades to the CLIP argmax floor, a
+skipped caption, or a typed `unavailable` — uploads, library, tags,
+collections, sharing and sync never depend on AI.
+
+**Also in this change:**
+
+- `scripts/conformance-guard.mjs` is INVERTED: it now forbids the sibling SDKs
+  (and re-pinned provider packages), forbids the removed `@/lib/plexo*`
+  imports, and scans for `PLEXO_*` env reads — while keeping the asset LIST
+  projection whitelist rule intact. It runs in `verify.yml` before typecheck.
+- `.dependency-cruiser.cjs` encodes the app-owned boundary: the provider SDK
+  lives only in `lib/intelligence/adapters/`, adapters are reached only via the
+  intelligence facade, and `lib/crypto/secret-box.ts` is the single home for
+  credential encryption.
+- `.env.example` / `docker-compose.example.env` / `docker-compose.yml` document
+  `AI_*`, `FONTO_VISION_URL`, `FONTO_SERVICE_KEY(_V2)` and drop every `PLEXO_*`
+  variable; `scripts/provision-ai-default.mjs` seeds the operator's per-user
+  default connection from the deployment env.
+- The obsolete unified-analyze test was replaced with coverage for the new
+  modules (secret box round-trip/tamper/format; peer service-key auth).
+
+
 ### Changed — retire the last Codemagic references; signing secrets renamed
 
 Codemagic was already gone from the build path — `.pushd.yaml` has been the CI

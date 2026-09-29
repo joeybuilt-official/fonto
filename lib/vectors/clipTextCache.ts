@@ -5,7 +5,7 @@
 // smart-collection `clipText` predicates.
 //
 // Why a cache: every smart-collection refresh that contains a `clipText`
-// clause currently triggers a round-trip to the Plexo vision sidecar to
+// clause currently triggers a round-trip to the vision sidecar to
 // embed the same phrase. Saved searches are rarely re-edited, so the
 // embedding is stable for the lifetime of the saved query; caching the
 // result for an hour cuts vision-sidecar load on smart-collection refresh
@@ -69,7 +69,7 @@ function evictIfNeeded(): void {
 
 /**
  * Returns the CLIP text embedding for `text`, cached per
- * `(workspaceId, text)`. On cache miss, embeds via the Plexo vision client
+ * `(workspaceId, text)`. On cache miss, embeds via the vision client
  * and stores the result. Stale entries (older than the TTL) are evicted on
  * access. Returns null if the embedding call throws — callers should treat
  * this as "vision unavailable" and skip the clipText predicate gracefully.

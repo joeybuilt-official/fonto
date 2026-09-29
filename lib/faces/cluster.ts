@@ -48,11 +48,11 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { pgArray } from "@/lib/db/sql-helpers";
 import { logger } from "@/lib/logger";
-import { neighborsViaGPU } from "@/lib/plexo-vision";
+import { neighborsViaGPU } from "@/lib/intelligence/adapters/vision-sidecar";
 
 /**
  * Threshold above which we delegate neighbour computation to the
- * plexo-vision GPU endpoint. Below this, HTTP round-trip overhead
+ * vision sidecar's GPU endpoint. Below this, HTTP round-trip overhead
  * dominates the O(N²) JS scan — the in-process path wins.
  */
 const GPU_CLUSTER_MIN_N = 2000;
@@ -162,7 +162,7 @@ function dbscan(
 
 /**
  * DBSCAN cluster assignment from a pre-computed neighbour graph. The
- * plexo-vision GPU endpoint returns (edges, deg) over the same eps the
+ * vision sidecar GPU endpoint returns (edges, deg) over the same eps the
  * caller would have used in-process; this function maps that to the
  * familiar `labels[]` shape (`-1` = noise, `0..k-1` = cluster id) without
  * ever touching the embedding vectors.
@@ -296,7 +296,7 @@ export async function clusterWorkspaceFaces(
     (r) => Array.isArray(r.embedding) && r.embedding.length > 0
   );
 
-  // Single-pass cap. The GPU edge-builder (plexo-vision /v1/faces/cluster)
+  // Single-pass cap. The GPU edge-builder (vision sidecar /v1/faces/cluster)
   // rejects N > VISION_CLUSTER_MAX_N (50k) and bodies > 512MB, and a JSON body
   // for ~90k+ faces exceeds V8's ~512MB max string length — which used to throw
   // "Invalid string length" and kill the whole pass SILENTLY (logged warn, no

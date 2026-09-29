@@ -24,7 +24,7 @@
 //     [--mime-prefix=image/] \
 //     [--dry-run]
 //
-// Env: DATABASE_URL, REDIS_URL, R2_*, PLEXO_* — same env createAssetRow needs.
+// Env: DATABASE_URL, REDIS_URL, R2_* — same env createAssetRow needs.
 //
 // Resume log at /tmp/import-from-dir-<runId>.jsonl. One line per file:
 //   {"path":"<rel>","status":"uploaded"|"deduplicated"|"skipped"|"error",

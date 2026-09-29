@@ -106,7 +106,7 @@ Team-shared context lives in `docs/claude/` and is committed to git. Read these 
 
 ## Project-Specific Rules
 
-- `PlexoConnectionStatus` lives only in the dashboard layout; never add it to individual pages.
+- AI credentials are encrypted at rest through `lib/crypto/secret-box.ts`; never store or log a plaintext key. AI connection settings live in Settings → Integrations.
 - Every `/api/v1` route change updates `lib/openapi/routes.ts` and passes the OpenAPI registration check.
 - Database changes use generated Drizzle migrations. Never use `pnpm db:push` against a live database.
 - Preserve unrelated worktree changes. This setup task never changes application source, tests, manifests, CI, schemas, or existing docs outside `docs/claude/`.

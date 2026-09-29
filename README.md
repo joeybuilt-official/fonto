@@ -4,7 +4,6 @@
   <p>Photos, documents, scans, RAW files and video in one library — auto-tagged, OCR'd, deduped by perceptual hash, and searchable across every file type. Self-host on your own S3-compatible bucket and Postgres.</p>
 
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
-  <a href="https://getplexo.com"><img src="https://img.shields.io/badge/Built%20on-Plexo-purple" alt="Built on Plexo" /></a>
 </div>
 
 Fonto ingests a large mixed media library and derives the organization for you: dates, places, faces, duplicates, variants and classifications are computed by a background pipeline instead of typed in by hand. Everything stays in your own Postgres and your own object storage.
@@ -154,7 +153,7 @@ Required at boot:
 | `SHARE_LINK_IP_SALT` | `lib/share-links/ip-hash.ts` **throws in production** without it; the dev fallback is a constant that is public in this repo, so every instance that skipped it would hash visitor IPs identically |
 | `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` | Object storage; uploads fail without a bucket. `R2_ENDPOINT` also builds the presigned URLs handed to the **browser**, so it must be browser-reachable, not merely reachable inside compose |
 
-Optional and documented there too: `REDIS_URL`, `CRON_SECRET`, `METRICS_BEARER_TOKEN`, `BULL_BOARD_BASIC_AUTH_USER` / `_PASS` (the bullboard sidecar refuses to boot without them), `RESEND_API_KEY` (invitation and reset email), `PLEXO_URL` / `PLEXO_SERVICE_KEY`, `PLEXO_VISION_URL`, `FONTO_LLM_KEY` / `FONTO_LLM_BASE_URL` / `FONTO_VISION_URL`, `FONTO_ALLOW_OPEN_SIGNUP`, `FONTO_INSTANCE_ADMINS`, `LOCAL_STORAGE_ROOT`, `PASSKEY_RP_ID`, `OIDC_*`, `GOOGLE_OAUTH_CLIENT_ID` / `_SECRET`, `FIREBASE_SERVICE_ACCOUNT_JSON`, `NEXT_PUBLIC_DIRECT_UPLOAD`, `STRIPE_SECRET_KEY`, `AUDIT_RETENTION_DAYS`.
+Optional and documented there too: `REDIS_URL`, `CRON_SECRET`, `METRICS_BEARER_TOKEN`, `BULL_BOARD_BASIC_AUTH_USER` / `_PASS` (the bullboard sidecar refuses to boot without them), `RESEND_API_KEY` (invitation and reset email), `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` (the deployment-default AI connection), `FONTO_VISION_URL` / `FONTO_VISION_KEY` (the optional vision sidecar), `FONTO_SERVICE_KEY` / `FONTO_SERVICE_KEY_V2` (the published `/api/peer/v1` surface), `FONTO_ALLOW_OPEN_SIGNUP`, `FONTO_INSTANCE_ADMINS`, `LOCAL_STORAGE_ROOT`, `PASSKEY_RP_ID`, `OIDC_*`, `GOOGLE_OAUTH_CLIENT_ID` / `_SECRET`, `FIREBASE_SERVICE_ACCOUNT_JSON`, `NEXT_PUBLIC_DIRECT_UPLOAD`, `STRIPE_SECRET_KEY`, `AUDIT_RETENTION_DAYS`.
 
 A few things that are easy to trip over:
 
@@ -169,16 +168,15 @@ A few things that are easy to trip over:
 
 ## AI enrichment is optional
 
-Classification, captioning, OCR, CLIP semantic search, face detection and CLIP-based duplicate detection all call an **external** intelligence service over HTTP. Fonto does not bundle a model server, and there is no vision sidecar in this repository or in the public Plexo repository.
+Classification, captioning, OCR, CLIP semantic search, face detection and CLIP-based duplicate detection all call an **external** intelligence tier over HTTP. Fonto does not bundle a model server, and it holds no credential on any other app's behalf.
 
-Point Fonto at whatever serves those endpoints:
+The AI tier is **app-owned and user-configurable**. Each user points Fonto at a provider of their choosing in **Settings → Integrations** (label, base URL, model, API key — the key is AES-256-GCM encrypted at rest and never readable back), and the deployment may supply a default for users who have none:
 
-- `PLEXO_URL` + `PLEXO_SERVICE_KEY` — a [Plexo](https://getplexo.com) instance, which provides the model gateway, fallback chains and persistent memory.
-- `PLEXO_VISION_URL` — a CLIP / face / OCR vision service. There is **no** host default: `lib/plexo-vision.ts` throws when it is unset, so semantic search stays visibly off rather than silently dialling somebody else's box.
-- `FONTO_VISION_URL` — the URL `lib/intelligence/adapters/vision-sidecar.ts` prefers, with `PLEXO_VISION_URL` as fallback.
-- `FONTO_LLM_KEY` + `FONTO_LLM_BASE_URL` — a standalone Anthropic-compatible endpoint used when no Plexo deployment is configured (`lib/intelligence/adapters/anthropic.ts`).
+- `AI_BASE_URL` + `AI_API_KEY` + `AI_MODEL` — the deployment-default AI connection (any Anthropic-compatible endpoint; a LiteLLM gateway is a common choice). The legacy `FONTO_LLM_BASE_URL` / `FONTO_LLM_KEY` names are still honored. This is the app's own credential, read by `lib/ai/connections.ts`.
+- `FONTO_VISION_URL` (+ optional `FONTO_VISION_KEY`) — a CLIP / face / OCR vision service. There is **no** host default, so semantic search stays visibly off rather than silently dialling somebody else's box.
+- `FONTO_SERVICE_KEY` — the inbound key for Fonto's published API (`/api/peer/v1/*`; see `public/.well-known/jex.manifest.json`). Unset means that optional surface answers 503 FEATURE_DISABLED.
 
-Without any of them, Fonto still runs: uploads, EXIF, thumbnails, video derivatives, pHash duplicate detection, search, collections, shares and sync all work. The AI-dependent features degrade to a mime-type heuristic or return an explicit `unavailable` response instead of failing the asset.
+Without any of them, Fonto still runs: uploads, EXIF, thumbnails, video derivatives, pHash duplicate detection, search, collections, shares and sync all work. The AI-dependent features degrade per capability — CLIP argmax classification, skipped captions/tags, OCR recorded as `failed`, unranked search — instead of failing the asset or blocking a core flow.
 
 ## Features
 
@@ -257,7 +255,7 @@ Postgres (Drizzle, `fonto` + `auth` schemas, pgvector)   Redis/Valkey (BullMQ)  
 | `ops/` | Prometheus, Grafana, Alertmanager, Caddy, worker autoscaler |
 | `e2e/` | Playwright specs |
 
-Layering follows the map in `.claude/rules/clean-architecture.md` as a target, not a finished state: date-fusion is genuinely pure (`lib/fusion/{fuse,combine,likelihoods,grid}.ts`) and storage sits behind `lib/storage/interface.ts`, but `lib/processing/`, `lib/evidence/` and several `lib/fusion/` backfill helpers import Drizzle and the queue directly, and route handlers contain inline queries. `.dependency-cruiser.cjs` currently enforces only the intelligence boundary (the Plexo SDK is importable solely from `lib/intelligence/adapters/`, `lib/plexo.ts` and `lib/plexo-registration.ts`).
+Layering follows the map in `.claude/rules/clean-architecture.md` as a target, not a finished state: date-fusion is genuinely pure (`lib/fusion/{fuse,combine,likelihoods,grid}.ts`) and storage sits behind `lib/storage/interface.ts`, but `lib/processing/`, `lib/evidence/` and several `lib/fusion/` backfill helpers import Drizzle and the queue directly, and route handlers contain inline queries. `.dependency-cruiser.cjs` enforces the intelligence boundary (the Anthropic SDK lives only in `lib/intelligence/adapters/`, adapters are reached only via `lib/intelligence/client`) and the single home for credential encryption (`lib/crypto/secret-box.ts`).
 
 ## API
 
@@ -365,4 +363,4 @@ Issues and pull requests are welcome. Before opening a PR:
 
 You may use, modify, distribute and self-host Fonto freely, including commercially, provided the copyright and permission notices are retained. There is no copyleft or network-use obligation.
 
-Built on [Plexo](https://getplexo.com) for its intelligence layer. A Joeybuilt product.
+A Joeybuilt product.

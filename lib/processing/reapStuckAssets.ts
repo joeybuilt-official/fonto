@@ -65,7 +65,7 @@ export const REAPER_MAX_ATTEMPTS = 5;
  * Configurable threshold (minutes) after which a row in `processing` state is
  * considered stuck. A worker that died mid-job will leave the row in this
  * state forever otherwise. Defaults to 60 minutes — generous enough that a
- * legitimately slow processAsset run (image decoding + Plexo classification +
+ * legitimately slow processAsset run (image decoding + AI classification +
  * OCR) is well clear of it.
  */
 export function getStuckThresholdMinutes(): number {

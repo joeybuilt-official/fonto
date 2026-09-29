@@ -1234,7 +1234,7 @@ export const personGroupMembers = fontoSchema.table(
 //
 // Dates are partial: `*_date` normalised to first-of-period + a precision tag
 // (matches persons.birth_precision). `location_label` is a free-text place the
-// operator typed — NOT landmark recognition (absent in Plexo, ADR-0001 D5).
+// operator typed — NOT landmark recognition (absent from the model, ADR-0001 D5).
 // `person_ids` is a uuid[] of the persons the fact involves (who was on the
 // trip). Soft FKs throughout, matching the rest of the schema.
 export const temporalFacts = fontoSchema.table(
@@ -1302,7 +1302,7 @@ export const imageDateEvidence = fontoSchema.table(
     // The structured raw signal the adapter extracted; the Phase 4 likelihood
     // fns read this. Shape is per evidence_type (see lib/evidence/adapters/*).
     sourceDetail: jsonb("source_detail").notNull(),
-    // Producing model/rule version. Perception-backed types carry the Plexo
+    // Producing model/rule version. Perception-backed types carry the label
     // model id; Fonto-local rules carry a rule version string ("exif@1").
     modelVersion: text("model_version").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -1792,5 +1792,49 @@ export const importJobs = fontoSchema.table(
   (table) => [
     // "List this workspace's active/recent imports" — the progress page query.
     index("import_jobs_workspace_status_idx").on(table.workspaceId, table.status),
+  ]
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fleet decoupling (2026-09) — app-owned, user-configurable AI connections.
+//
+// Each user configures their OWN AI provider connection — label, base URL,
+// model, API key — in Settings → Integrations. This replaces routing AI
+// through a sibling app: the credential belongs to the user (or to the
+// deployment as a fallback), and Fonto resolves it locally.
+//
+// The API key is AES-256-GCM encrypted before it touches the database
+// (`lib/crypto/secret-box.ts`). No read path ever returns the plaintext key —
+// the settings UI shows a masked last-4 only.
+//
+// A user may have several connections; exactly one may be their default
+// (enforced by the partial unique index in migration 0063, so a race cannot
+// leave two rows claiming `is_default`).
+// ─────────────────────────────────────────────────────────────────────────────
+export const aiConnections = fontoSchema.table(
+  "ai_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    // Matches Better Auth `user.id` (text). Cross-schema; FK enforced in SQL.
+    userId: text("user_id").notNull(),
+    label: text("label").notNull(),
+    // OpenAI-compatible base URL, no trailing slash (normalised on write).
+    baseUrl: text("base_url").notNull(),
+    model: text("model").notNull(),
+    // `v1:<ivB64>:<tagB64>:<ctB64>` ciphertext — never plaintext.
+    encryptedApiKey: text("encrypted_api_key").notNull(),
+    // Resolution uses the user's default when a caller does not name one.
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // "Which connections does this user have?" — the settings list + resolver.
+    index("ai_connections_user_idx").on(table.userId),
+    // At most ONE default per user. The database enforces it so concurrent
+    // saves converge instead of silently leaving non-deterministic routing.
+    uniqueIndex("ai_connections_user_default_idx")
+      .on(table.userId)
+      .where(sql`${table.isDefault}`),
   ]
 );

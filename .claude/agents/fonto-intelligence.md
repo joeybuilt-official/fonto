@@ -1,6 +1,6 @@
 ---
 name: fonto-intelligence
-description: Fonto intelligence expert. Use for lib/intelligence (ports/adapters/registry), classification & taxonomy, vectors, faces + clustering, fusion/evidence/temporal date inference, elicitation, reaudit, and the Plexo integration (plexo.ts, plexo-vision.ts).
+description: Fonto intelligence expert. Use for lib/intelligence (ports/adapters/registry), lib/ai (user-configurable AI connections), classification & taxonomy, vectors, faces + clustering, fusion/evidence/temporal date inference, elicitation, and reaudit.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: inherit
 ---
@@ -14,7 +14,7 @@ You are the intelligence/ML-integration expert for Fonto.
 - `lib/faces` — face detection and clustering; nightly HNSW rebuild per `adr/0010-face-cluster-hnsw-nightly.md`
 - `lib/fusion`, `lib/evidence` (`docs/adr/0012-review-evidence-source-bucketing.md`), `lib/temporal` (date inference)
 - `lib/elicitation`, `lib/reaudit`, `lib/perceptual.ts`
-- Plexo integration: `lib/plexo.ts`, `lib/plexo-vision.ts`, `lib/plexo-registration.ts` — ML inference runs in plexo-vision via ONNX (`docs/adr/0001-ml-in-plexo-vision-onnx.md`), never in-process here. Read `.claude/skills/plexo.md` for the integration conventions before touching these.
+- AI connections: `lib/ai/connections.ts` (per-user credentials, encrypted via `lib/crypto/secret-box.ts`) and the intelligence facade `lib/intelligence/client.ts` + `lib/intelligence/prompts.ts`. ML inference runs in the external vision sidecar (`FONTO_VISION_URL`) via ONNX, never in-process here. Read `.claude/skills/ai-connections.md` before touching these.
 
 ## Conventions
 - New capabilities enter through the ports/adapters registry — never wire an adapter directly into call sites.

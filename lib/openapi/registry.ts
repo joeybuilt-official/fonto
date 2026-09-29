@@ -499,7 +499,7 @@ export const AssetEnvelopeSchema = z.object({ asset: AssetSchema });
 export const AssetsEnvelopeSchema = z.object({ assets: z.array(AssetSchema) });
 
 // M2.5 — GET /api/v1/search cursor pagination. Only plain-text/FTS search
-// pages; the color-ΔE filter and the Plexo semantic re-rank both reshape the
+// pages; the color-ΔE filter and the semantic re-rank both reshape the
 // result set in-process after the SQL cut, so they always return
 // `cursor: null` and signal cutoff via `truncated` instead.
 export const SearchEnvelopeSchema = AssetsEnvelopeSchema.extend({

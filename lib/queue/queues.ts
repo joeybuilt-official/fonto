@@ -39,7 +39,7 @@ export const QueueNames = {
   // application level (we re-enqueue with `delay` based on attempt number)
   // so we use a low BullMQ-level `attempts` value.
   WebhookDelivery: "webhook-delivery",
-  // Phase 4.2 — CLIP image embedding. Network-bound (POST to plexo-vision).
+  // Phase 4.2 — CLIP image embedding. Network-bound (POST to the vision sidecar).
   // Separate queue so vision-service outages don't backlog the asset
   // processing pipeline.
   ClipEmbedding: "clip-embedding",
@@ -62,7 +62,7 @@ export const QueueNames = {
   // so a large-file mirror never backlogs asset-processing.
   StorageSync: "storage-sync",
   // Intelligence Core (Phase 3) — per-asset date-evidence extraction. Mostly
-  // Postgres-bound + one optional Plexo label call; own queue so a vision
+  // Postgres-bound + one optional vision label call; own queue so a vision
   // hiccup doesn't backlog the main pipeline.
   ExtractEvidence: "extract-evidence",
   // Intelligence Core (Phase 4) — per-asset date fusion. Pure CPU + 2 small
@@ -212,7 +212,7 @@ export function clipDedupCheckQueue(): Queue<ClipDedupCheckJob> {
 
 /**
  * Phase 5.1 — face detection + ArcFace embedding queue. Network-bound (POST
- * to plexo-vision /v1/faces/detect). Concurrency is controlled by the
+ * to the vision sidecar /v1/faces/detect). Concurrency is controlled by the
  * worker via FACE_DETECT_CONCURRENCY env (default 2).
  *
  * Jobs include both the detection pass (RetinaFace or equivalent) and the

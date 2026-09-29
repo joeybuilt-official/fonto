@@ -4,7 +4,7 @@
 // Bulk user-triggered re-scan: re-runs the full recognition pipeline
 // (classify + describe + OCR + CLIP + vision labels + faces) across every
 // matching asset in the caller's workspace. Editor+ only — this enqueues a
-// burst of work against the local plexo-vision/Ollama box.
+// burst of work against the local vision sidecar.
 //
 //   POST /api/v1/workspace/reprocess
 //     Body: { scope?: 'all' | 'images' | 'failed' }   (default 'all')

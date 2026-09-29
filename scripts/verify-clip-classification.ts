@@ -62,7 +62,7 @@ async function main(): Promise<void> {
     if (!cache) {
       console.error(
         "[verify-clip] FAIL — loadTaxonomyVectors() returned null " +
-          "(plexo-vision unreachable or no disk cache)"
+          "(vision sidecar unreachable or no disk cache)"
       );
       process.exit(1);
     }

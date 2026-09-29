@@ -4,7 +4,7 @@
 // Pure classification override helpers — shared by the live processAsset
 // pipeline and the one-shot classify-only backfill script. Lives in its own
 // module (rather than processAsset.ts) so scripts can import the helpers
-// without dragging in the Plexo SDK + S3 client + sharp + webhook + memory
+// without dragging in the S3 client + sharp + webhook + memory
 // modules that processAsset.ts pulls at top-level.
 
 // Screenshots were being mislabeled as documents/scans by the classifier.

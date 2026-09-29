@@ -14,7 +14,7 @@ import {
   changeEmail,
 } from "@/lib/auth/client";
 import Link from "next/link";
-import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
+import { AiConnectionsSection } from "@/components/settings/ai-connections-section";
 import { ConfirmButton } from "@/components/confirm-button";
 import { cn } from "@/lib/utils";
 import {
@@ -706,16 +706,18 @@ export default function SettingsPage() {
       </Card>
 
       <Card variant="outlined" className={tabClass("integrations")}>
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle className="text-[length:var(--ft-type-title-medium-size)] leading-[var(--ft-type-title-medium-line)]">
-            Plexo AI
+            AI
           </CardTitle>
-          <PlexoConnectionStatus />
         </CardHeader>
         <CardContent className="space-y-[var(--ft-space-3)]">
           <p className="text-[length:var(--ft-type-body-small-size)] leading-[var(--ft-type-body-small-line)] text-[var(--ft-color-on-surface-variant)]">
-            Plexo powers AI classification, auto-tagging, and cross-app intelligence for your assets.
+            Your own AI connection (label, base URL, model, API key) powers
+            classification, captions and auto-tagging for your assets. The key is
+            encrypted at rest and never shown again after saving.
           </p>
+          <AiConnectionsSection />
           {/* Google Photos (Takeout) — real connect/reconnect flow (Phase 4). */}
           <div className="flex items-center justify-between gap-[var(--ft-space-3)]">
             <div>

@@ -20,7 +20,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 <!-- END:nextjs-agent-rules -->
 
 ## Hard rules
-- PlexoConnectionStatus is in the dashboard layout — never add it to individual pages
+- AI credentials are encrypted at rest through `lib/crypto/secret-box.ts` — never store or log a plaintext key
 
 ## Start here — onboarding contract (read in this order, before writing anything)
 
@@ -267,9 +267,10 @@ in required CI**: a client-side pre-commit hook is skippable with `--no-verify` 
 may never run it, so CI is the plane that actually holds.
 
 - **The tool here:** dependency-cruiser (`forbidden` rules), configured in `.dependency-cruiser.cjs`.
-  It currently encodes the Plexo-intelligence boundary (only `lib/intelligence/adapters/` may import
-  the SDK or vision facade; adapters are reached only via `lib/intelligence/client`) — it does **not**
-  yet encode the four-layer map above. Extend it as the map solidifies.
+  It encodes the intelligence boundary (only `lib/intelligence/adapters/` may import the provider SDK
+  or the vision-client module; adapters are reached only via `lib/intelligence/client`) and the single
+  home for credential encryption (`lib/crypto/secret-box.ts`) — it does **not** yet encode the
+  four-layer map above. Extend it as the map solidifies.
 - **When it runs:** `pnpm arch` runs in the pre-commit gate beside typecheck and test
   (`git-workflow.md`) and — the binding copy — as a **required** CI check
   (`scripts/templates/ci-verify.yml`). Green is the only passing score; no agent may merge past it red.

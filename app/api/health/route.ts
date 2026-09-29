@@ -43,8 +43,15 @@ export async function GET(req: Request) {
     ok: true,
     appId: "fonto",
     schemaNamespace: process.env.APP_SCHEMA_NAMESPACE ?? null,
-    plexoConnected: !!process.env.PLEXO_URL,
-    plexoUrl: process.env.PLEXO_URL ?? null,
+    // The app's OWN intelligence tiers, reported honestly. `complete` is
+    // available when a user connection or the deployment env supplies one;
+    // `vision` when a vision sidecar URL is configured. Neither is required
+    // for the app to be healthy — absent is a supported state.
+    intelligence: {
+      complete: !!(process.env.AI_BASE_URL || process.env.AI_API_KEY || process.env.FONTO_LLM_KEY),
+      vision: !!process.env.FONTO_VISION_URL,
+      userConnections: true,
+    },
     stripeConfigured: !!process.env.STRIPE_SECRET_KEY,
     emailConfigured: !!process.env.RESEND_API_KEY,
     timestamp: new Date().toISOString(),

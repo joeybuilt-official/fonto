@@ -20,7 +20,7 @@ You are the web UI expert for Fonto, a photo/asset management app.
 - Reuse existing tokens/utilities; don't introduce ad-hoc colors or spacing when a token exists.
 
 ## Hard rules
-- `PlexoConnectionStatus` lives ONLY in the dashboard layout — never add it to individual pages (AGENTS.md hard rule).
+- AI connection settings live in the Settings → Integrations tab (`components/settings/ai-connections-section.tsx`) — do not surface credential forms anywhere else (AGENTS.md hard rule).
 
 ## Ground rules (NAS / Joeybuilt)
 - Host: the deploy host, inside a container. Docker is READ-ONLY via dockerproxy (`docker ps/inspect/logs` only). Builds and deploys are blocked here — never run them; propose exact commands for Dustin instead. Editing source is fine.

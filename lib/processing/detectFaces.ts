@@ -3,8 +3,8 @@
 //
 // Phase 5.1 — face detection + ArcFace embedding for a single asset.
 //
-// Loads the asset's 1080px preview derivative from R2, POSTs to the Plexo
-// vision sidecar's `POST {PLEXO_VISION_URL}/v1/faces/detect`, and inserts
+// Loads the asset's 1080px preview derivative from R2, POSTs to the
+// vision sidecar's `POST {FONTO_VISION_URL}/v1/faces/detect`, and inserts
 // one `fonto.face_instances` row per detection.
 //
 // The sidecar is expected to return:
