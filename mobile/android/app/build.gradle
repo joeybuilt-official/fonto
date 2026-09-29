@@ -41,19 +41,19 @@ android {
 
     signingConfigs {
         release {
-            def keystorePath = System.getenv("CM_KEYSTORE_PATH")
+            def keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
             if (keystorePath) {
                 storeFile file(keystorePath)
-                storePassword System.getenv("CM_STORE_PASSWORD")
-                keyAlias System.getenv("CM_KEY_ALIAS")
-                keyPassword System.getenv("CM_KEY_PASSWORD")
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
             }
         }
     }
 
     buildTypes {
         release {
-            def keystorePath = System.getenv("CM_KEYSTORE_PATH")
+            def keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
             signingConfig keystorePath ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             shrinkResources false
