@@ -7,6 +7,44 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Changed — retire the last Codemagic references; signing secrets renamed
+
+Codemagic was already gone from the build path — `.pushd.yaml` has been the CI
+plane for a while — but stale names remained: `.pushd.yaml`, `mobile/CI.md`,
+`mobile/README.md` and `.claude/agents/fonto-mobile.md` all still pointed at
+`codemagic.yaml`, and the signing env vars kept their Codemagic-derived `CM_*`
+names even though pushd reads them. This removes every remaining reference and
+moves the secrets onto pushd's own android-schema names.
+
+Renames, applied end to end (`.pushd.yaml`, `mobile/android/app/build.gradle`):
+
+| was | is |
+|---|---|
+| `CM_KEYSTORE_BASE64` | `ANDROID_KEYSTORE_BASE64` |
+| `CM_STORE_PASSWORD` | `ANDROID_KEYSTORE_PASSWORD` |
+| `CM_KEY_ALIAS` | `ANDROID_KEY_ALIAS` |
+| `CM_KEY_PASSWORD` | `ANDROID_KEY_PASSWORD` |
+| `CM_KEYSTORE_PATH` | `ANDROID_KEYSTORE_PATH` |
+
+The four `ANDROID_*` secrets are the names pushd's android schema already
+expects (`ANDROID_KEYSTORE_SECRETS` in `packages/build/src/schema/android.ts`),
+so a hand-written `secrets:` list and the auto-generated signing commands now
+agree — previously the hand-written list drove the `CM_*` path while pushd's own
+generator would have injected `ANDROID_*`. Both entries (`android-release` on
+`v*`, `android-publish` on `release-v*`) keep their triggers unchanged.
+
+`mobile/CI.md` is rewritten against pushd: the two entry names and their tag
+gates, the Docker/Flutter builder image, keystore rotation through the pushd
+project secret store instead of Codemagic's UI, and a triage table keyed on the
+new names. `mobile/README.md` drops the "Codemagic or GitHub macOS runner" lines
+to "GitHub macOS runner" (Android already builds on pushd). The `fonto-mobile`
+agent's scope line names `.pushd.yaml` rather than the removed `codemagic.yaml`,
+and its "builds run in Codemagic" rule now says pushd.
+
+Deployment side: the pushd project store for `fonto` must carry the four
+`ANDROID_*` keys before the next `v*` tag, or the release build falls back to
+debug signing.
+
 ### Changed — README rewritten and reconciled with the working install path
 
 PR #3 rewrote `README.md` (1207 → 309 lines) from a cut at `cfc85d29`, before

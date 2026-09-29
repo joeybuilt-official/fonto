@@ -68,9 +68,8 @@ mobile/
   lifecycle behaviour.
 - **Asset detail view** — tile tap is a no-op today.
 - **Search pagination** — `/api/v1/search` doesn't cursor yet.
-- **CI on real devices** — separate session; needs Codemagic or
-  GitHub Actions w/ macOS runners for iOS, plus signing certs +
-  provisioning profiles set up out-of-band.
+- **CI on real devices** — separate session; needs a macOS runner for
+  iOS, plus signing certs + provisioning profiles set up out-of-band.
 - **Theme + branding** — using the Material 3 default seed.
 - **Tests** — `flutter_test` is in dev deps but no specs yet.
 
@@ -91,5 +90,6 @@ Each of these is independently shippable:
    trash / favorite actions.
 3. **Search pagination** — needs `/api/v1/search` to grow a cursor;
    trivial server change once it does.
-4. **iOS / Android CI** — Codemagic or GitHub macOS runner; needs
-   signing certs + provisioning profiles set up out-of-band.
+4. **iOS / Android CI** — GitHub macOS runner; needs signing certs +
+   provisioning profiles set up out-of-band. Android already builds on
+   pushd (`.pushd.yaml`).
