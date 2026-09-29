@@ -97,8 +97,8 @@ interface LlmFallback {
 /**
  * Classify an asset from its CLIP embedding. If CLIP confidence is low
  * (or vectors aren't available), defer to the supplied `llmFallback`
- * callback. The callback wraps the existing `plexoClassifyAsset` call
- * so this module stays free of Plexo-SDK plumbing.
+ * callback. The callback wraps the app-owned `classifyAssetWithAi` call
+ * so this module stays free of SDK plumbing.
  */
 export async function classifyAsset(
   clipVec: number[] | null | undefined,

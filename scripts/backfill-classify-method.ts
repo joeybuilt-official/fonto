@@ -12,7 +12,7 @@
 //   pnpm backfill:classify-method -- --dry-run
 //   pnpm backfill:classify-method -- --limit=200
 //
-// Throttle: 200ms gap between enqueues so the Plexo authLimiter doesn't
+// Throttle: 200ms gap between enqueues so the provider rate limiter doesn't
 // see a burst from the worker waking up on all of them at once.
 
 import postgres from "postgres";

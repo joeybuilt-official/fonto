@@ -196,7 +196,7 @@ t("ocrDateEvidence: wraps matches / null on none", () => {
   assert.equal(ocrDateEvidence("nothing here"), null);
 });
 
-t("sceneSeasonEvidence: stamps plexo model into version", () => {
+t("sceneSeasonEvidence: stamps the label model into version", () => {
   const ev = sceneSeasonEvidence(["snow"], "vlm-qwen2.5");
   assert.ok(ev);
   assert.equal(ev.evidenceType, "scene_season");

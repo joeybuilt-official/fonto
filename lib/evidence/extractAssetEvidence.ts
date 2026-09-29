@@ -3,7 +3,7 @@
 //
 // Intelligence Core — Phase 3. Orchestrate the evidence adapters for ONE asset
 // and write the resulting rows to `fonto.image_date_evidence`. This is the only
-// I/O-bearing piece (DB reads + one optional Plexo label call); the adapters it
+// I/O-bearing piece (DB reads + one optional vision label call); the adapters it
 // calls are pure.
 //
 // Idempotency vs append-only: the ledger is append-only ACROSS model versions
@@ -113,7 +113,7 @@ async function writeEvidence(assetId: string, inputs: EvidenceInput[]): Promise<
 /**
  * Extract + persist all available date evidence for an asset. Never throws on a
  * silent source: a missing EXIF date, no faces, no OCR text simply yield fewer
- * rows. A Plexo label failure is caught + reported in `sceneSeasonSkipped`, not
+ * rows. A vision label failure is caught + reported in `sceneSeasonSkipped`, not
  * fatal. Returns the evidence types written.
  */
 export async function extractAssetEvidence(assetId: string): Promise<ExtractResult> {
@@ -158,7 +158,7 @@ export async function extractAssetEvidence(assetId: string): Promise<ExtractResu
   const ocr = ocrDateEvidence(asset.ocrText);
   if (ocr) inputs.push(ocr);
 
-  // --- Plexo perception adapter (scene_season), gated + non-fatal ---
+  // --- vision perception adapter (scene_season), gated + non-fatal ---
   let sceneSeasonSkipped: string | undefined;
   if (intelligence.available("label") && asset.mimeType.startsWith("image/")) {
     try {

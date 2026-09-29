@@ -115,7 +115,7 @@ async function main(): Promise<void> {
   `) as Array<{ id: string; user_id: string }>;
   const wsUser = new Map(wsRows.map((w) => [w.id, w.user_id]));
 
-  // Per-invocation suffix so re-running after a Plexo 429 / rate-limit
+  // Per-invocation suffix so re-running after a provider 429 / rate-limit
   // wave actually re-enqueues. BullMQ dedupes by `jobId`, and a failed
   // job lingers in the queue's failed set — repeating the same jobId
   // silently no-ops. The runId makes each invocation unique.

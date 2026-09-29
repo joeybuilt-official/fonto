@@ -52,10 +52,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The fleet-decoupling guard runs FIRST among the checks: it is pure Node,
+      # zero-dependency, and fails fast on a re-introduced sibling dependency,
+      # import, or PLEXO_* env read (see scripts/conformance-guard.mjs).
+      - run: pnpm conformance
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm arch
-      - run: pnpm conformance
       # Tests run before the build: `pnpm test` is fast and gives a precise
       # failure, whereas a broken unit test would otherwise surface only as a
       # failed 6 GiB `next build` ~15 minutes later.

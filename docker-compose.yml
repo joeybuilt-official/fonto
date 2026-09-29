@@ -108,13 +108,25 @@ x-fonto-env: &fonto-env
   OIDC_PROVIDER_ID: ${OIDC_PROVIDER_ID:-sso}
   GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
   GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
-  # AI: FONTO_LLM_* is the only path that needs no Plexo deployment.
+  # ── AI (app-owned) ────────────────────────────────────────────────────────
+  # The deployment-default AI connection (used when a user has none of their
+  # own). A LiteLLM gateway is a common choice. Unset ⇒ AI degrades per
+  # capability; nothing here blocks a core flow.
+  AI_BASE_URL: ${AI_BASE_URL:-}
+  AI_API_KEY: ${AI_API_KEY:-}
+  AI_MODEL: ${AI_MODEL:-auto}
+  AI_LABEL: ${AI_LABEL:-LiteLLM Auto}
+  # Legacy aliases, still honored (AI_* wins when both are set).
   FONTO_LLM_KEY: ${FONTO_LLM_KEY:-}
   FONTO_LLM_BASE_URL: ${FONTO_LLM_BASE_URL:-}
+  # Optional vision sidecar (OCR / CLIP embeddings / face detection).
   FONTO_VISION_URL: ${FONTO_VISION_URL:-}
-  PLEXO_URL: ${PLEXO_URL:-}
-  PLEXO_SERVICE_KEY: ${PLEXO_SERVICE_KEY:-}
-  PLEXO_VISION_URL: ${PLEXO_VISION_URL:-}
+  FONTO_VISION_KEY: ${FONTO_VISION_KEY:-}
+  # ── Published API surface (optional) ─────────────────────────────────────
+  # Inbound service key for /api/peer/v1/*. Unset ⇒ that surface answers
+  # 503 FEATURE_DISABLED, which is a supported state.
+  FONTO_SERVICE_KEY: ${FONTO_SERVICE_KEY:-}
+  FONTO_SERVICE_KEY_V2: ${FONTO_SERVICE_KEY_V2:-}
   LOG_LEVEL: ${LOG_LEVEL:-info}
 
 services:

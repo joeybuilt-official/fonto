@@ -34,6 +34,25 @@ export class CapabilityUnavailableError extends Data.TaggedError(
 // Port 1: Completion
 // ---------------------------------------------------------------------------
 
+/**
+ * A resolved provider connection handed to the Completion adapter.
+ *
+ * The adapter is PURE inference: it never reads a database, never resolves who
+ * the caller is, and never reaches for a credential. The orchestration layer
+ * (`lib/ai/client.ts` + `lib/ai/connections.ts`) resolves the connection — the
+ * user's own configured connection, or the deployment default — and passes it
+ * in. That is what makes "which provider serves this call" a user-configurable
+ * input rather than a hardcoded property of the app.
+ */
+export interface ConnectionSpec {
+  /** Where the Anthropic-compatible endpoint lives (no `/v1` suffix needed). */
+  readonly baseUrl: string;
+  /** Bearer credential for that endpoint. */
+  readonly apiKey: string;
+  /** Model id the connection should be called with. */
+  readonly model: string;
+}
+
 export interface CompletionRequest {
   readonly messages: ReadonlyArray<{
     readonly role: "user" | "assistant" | "system";
@@ -41,10 +60,12 @@ export interface CompletionRequest {
   }>;
   readonly model?: string;
   readonly maxTokens?: number;
-  readonly providerHint?: { readonly type: "anthropic"; readonly model: string };
-  // Tenant context for the federated (Plexo) adapter — Plexo's aiComplete is
-  // workspace-scoped. Ignored by the embedded (direct-provider) adapter.
-  readonly workspaceId?: string;
+  /**
+   * The provider connection to use. Optional at the type level so the adapter
+   * can fall back to the deployment's own environment config; the orchestration
+   * layer always supplies one when a user/connection exists.
+   */
+  readonly connection?: ConnectionSpec;
 }
 
 export interface CompletionResponse {

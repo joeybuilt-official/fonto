@@ -4,7 +4,7 @@
 // Webhook event taxonomy. Each enumerated event has a Zod schema that
 // describes the body shape Fonto delivers to subscriber endpoints. The shape
 // is part of the public contract — clients pin against it, so we evolve
-// these conservatively. Plexo's `ext.fonto.*` event bus shares some names
+// these conservatively. The retired sibling event bus shared some names
 // (e.g. `asset.uploaded`) but is internal-only and changes more freely.
 
 import { z } from "zod";

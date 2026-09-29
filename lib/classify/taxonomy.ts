@@ -5,7 +5,7 @@
 //
 // A static three-tier taxonomy: top-level → sub-level → tag-suggestions.
 // Each leaf carries a short natural-language prompt that gets embedded as
-// text via the Plexo vision service at boot. Classification is then a
+// text via the vision sidecar at boot. Classification is then a
 // straight cosine-similarity argmax over the image's CLIP embedding.
 //
 // Top-level keys are intentionally the same strings the rest of the

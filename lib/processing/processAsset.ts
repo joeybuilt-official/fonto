@@ -17,15 +17,11 @@ import { describeError } from "@/lib/errors/describeError";
 import { EnrichmentSource } from "./enrichmentSource";
 import { tryGenerative } from "./tryGenerative";
 import {
-  plexoEnsureWorkspace,
-  plexoClassifyAsset,
-  plexoDescribeImage,
-  plexoDescribeDocument,
-  plexoPublishEvent,
-  plexoStoreMemory,
-  plexoSuggestTags,
-  type PlexoVisionOcrResult,
-} from "@/lib/plexo";
+  classifyAssetWithAi,
+  describeImageWithAi,
+  describeDocumentWithAi,
+  suggestTagsWithAi,
+} from "@/lib/intelligence/prompts";
 import { assetProcessingDurationSeconds } from "@/lib/metrics";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { classifyAsset, classifyAssetArgmax } from "@/lib/classify/classify";
@@ -33,11 +29,7 @@ import { deriveKind, classifyTextCodeByMime } from "@/lib/classify/kind";
 import { visionNeedsPreview } from "@/lib/mime";
 import { tryEnqueueFaceDetect } from "@/lib/assets/createAssetRow";
 import { extractDocumentText } from "@/lib/processing/extractDocumentText";
-import {
-  intelligence,
-  CapabilityUnavailableError,
-  type AnalyzeImageResult,
-} from "@/lib/intelligence/client";
+import { intelligence, storeAssetMemory } from "@/lib/intelligence/client";
 import { isJunkLabel } from "@/lib/processing/labelStoplist";
 import { cacheInvalidate } from "@/lib/cache/valkey";
 
@@ -55,8 +47,8 @@ const DOCUMENT_TRIGGER_MIME = ["application/pdf", "text/", "image/tiff"];
 // Override helpers (isScreenshot, hasRealCameraSignals, isDocumentByOcr,
 // ocrLooksLikePaperDocument, CameraEvidence) live in classifyHelpers.ts so
 // the one-shot classify-only-rerun script can import them without dragging
-// in the Plexo SDK + sharp + S3 client + webhook stack that this file
-// pulls at top-level. Re-exported here so existing import sites keep working.
+// in sharp + the S3 client + the webhook stack that this file pulls at
+// top-level. Re-exported here so existing import sites keep working.
 export {
   isScreenshot,
   hasRealCameraSignals,
@@ -122,7 +114,10 @@ async function processAssetInner(
   let classifyConfidence: number | null = null;
   let clipSuggestedTags: string[] = [];
   let description: string | null = null;
-  let plexoWorkspaceId: string | null = null;
+  // The pipeline's completion calls (classify / describe / suggest-tags) run
+  // through the OWNER's own AI connection when they have one, else the
+  // deployment default. `ProcessAssetParams.userId` carries the uploader.
+  const aiUserId = userId;
   // Phase 6.x — document text (PDF text layer / OCR / plain text), extracted
   // in the non-image branch below and persisted as ocr_text further down.
   let docText: string | null = null;
@@ -139,15 +134,7 @@ async function processAssetInner(
   // Provenance for this row's generative fields. Set ONLY when a tier actually
   // produced (or failed to produce) them; NULL keeps its documented meaning.
   let enrichmentSource: EnrichmentSource | null = null;
-  // ADR 0002 — unified analyze-image result, hoisted so the suggested-tags
-  // block at the end can use the unified call's tags instead of an extra
-  // plexoSuggestTags round-trip. null when the unified path didn't run
-  // (flag off OR non-image OR the unified call failed mid-flight).
-  let unifiedResultTopLevel: AnalyzeImageResult | null = null;
-
   if (intelligence.available("complete")) {
-    plexoWorkspaceId = await plexoEnsureWorkspace(userId, email);
-
     if (mimeType.startsWith("image/")) {
       // Phase 4.6 — try zero-shot CLIP first; fall back to vision-LLM
       // classification if confidence is too low (or CLIP is unavailable).
@@ -157,12 +144,12 @@ async function processAssetInner(
       // have landed the vector — a fresh upload enqueues process-asset and
       // clip-embed from the same upload handler, so the poll usually missed
       // and just stalled a worker slot. `classifyAsset` already handles a
-      // null vec by deferring to the unified/LLM tier, which is the
-      // authoritative classifier in the today-configuration; there is nothing
+      // null vec by deferring to the completion tier, which is the
+      // authoritative classifier when CLIP is not decisive; there is nothing
       // worth waiting for.
 
       // Read EXIF + dimensions row ONCE upfront — needed for both the
-      // legacy and unified paths (camera-evidence + hints + screenshot
+      // pre-describe + screenshot
       // override). Also carries `clip_vec` in the same trip so M4 adds no
       // query.
       const [dims] = await db
@@ -191,40 +178,18 @@ async function processAssetInner(
       };
       const looksLikeCameraCapture = looksLikeCameraPhoto(filename, mimeType, cameraEvidence);
 
-      // ADR 0002 — unified analyze-image path. ONE multimodal call replaces
-      // the legacy chain (classify-LLM-fallback + label + OCR + describe +
-      // suggest-tags). Gated by USE_UNIFIED_ANALYZE so the rollout is a
-      // pure env-flag flip — no code redeploy needed to roll back.
-      //
-      // CLIP still runs first; it produces the curated `clipSuggestedTags`
-      // from the taxonomy AND a soft hint for the unified call. The unified
-      // call's classification overrides CLIP's when CLIP confidence is low
-      // (matching the legacy LLM-fallback behaviour), and gets the final
-      // word on subClassification + description + OCR + labels + tags.
+      // CLIP runs first; it produces the curated `clipSuggestedTags` from
+      // the taxonomy. When CLIP is not decisive it defers to the completion
+      // tier (the user's own connection, or the deployment default) — the
+      // app-owned classifier.
       let preDescribeLabels: string[] = [];
       let preDescribeOcrText: string | null = null;
-      // Local alias for the hoisted function-scope variable. Assigning
-      // through this alias keeps the existing in-block reads readable
-      // while making the result visible to the suggested-tags block at
-      // the bottom of the pipeline.
-      let unifiedResult: AnalyzeImageResult | null = null;
-      const useUnified = intelligence.analyzeConfigured();
 
-      // CLIP-only classify pass (no LLM fallback when unified is on — the
-      // unified call itself IS our LLM fallback, with vision context).
-      const workspaceIdForLlm = plexoWorkspaceId;
       const clipResult = await classifyAsset(clipVec, {
         classify: async () => {
-          if (useUnified) {
-            // Defer LLM classification to the unified call below. Return
-            // a placeholder so classifyAsset records method=llm-fallback;
-            // we'll overwrite classification + subClassification from the
-            // unified result before downstream heuristics run.
-            return { topLevel: "photo" };
-          }
           const attempt = await tryGenerative(() =>
-            plexoClassifyAsset(
-              workspaceIdForLlm,
+            classifyAssetWithAi(
+              aiUserId,
               filename,
               mimeType,
               extractedText ?? undefined,
@@ -250,148 +215,9 @@ async function processAssetInner(
       clipSuggestedTags = clipResult.suggestedTags;
       ctx.classifyMethod = clipResult.method;
 
-      if (useUnified) {
-        // Sign the preview URL once and call the unified endpoint. Mirrors
-        // the legacy `visionKey` derivation so HEIC/RAW originals route via
-        // the decoded preview (the VLM can't decode them).
-        try {
-          const [imgRow] = await db
-            .select({
-              workspaceId: schema.assets.workspaceId,
-              previewKey: schema.assets.previewKey,
-            })
-            .from(schema.assets)
-            .where(eq(schema.assets.id, assetId))
-            .limit(1);
-          if (imgRow) {
-            // E4-M6 — for preview-required mimes (RAW/HEIC/AVIF) the VLM
-            // cannot decode the raw original; feeding it made it confabulate
-            // a generic scene. When the sharp-decoded preview hasn't landed
-            // yet, skip the unified call entirely — `unifiedResult` stays
-            // null and the else-branch below takes the CLIP-argmax degrade
-            // already in place, so the row never stalls. Decodable mimes
-            // keep the `previewKey ?? original` fallback.
-            if (visionNeedsPreview(mimeType) && !imgRow.previewKey) {
-              console.warn(
-                "[fonto] unified analyze skipped (preview-required mime, no preview yet) for",
-                assetId,
-                mimeType,
-              );
-            } else {
-              const visionKey =
-                imgRow.previewKey ??
-                assetStorageKey(imgRow.workspaceId, assetId, filename);
-              const signedUrl = await storage().presignGet(visionKey, { expiresIn: 300 });
-              const unifiedStartedAt = Date.now();
-              unifiedResult = await intelligence.analyzeImage({
-                workspaceId: plexoWorkspaceId,
-                imageUrl: signedUrl,
-                mimeType,
-                filename,
-                hints: {
-                  topClipClass: clipResult.method === "clip" ? clipResult.taxonomyTopKey : undefined,
-                  clipConfidence: clipResult.confidence,
-                  cameraMake: dims?.cameraMake ?? undefined,
-                  hasExposureExif:
-                    cameraEvidence.exposureTime != null ||
-                    cameraEvidence.fNumber != null ||
-                    cameraEvidence.iso != null ||
-                    cameraEvidence.focalLength != null,
-                  widthPx: dims?.widthPx ?? undefined,
-                  heightPx: dims?.heightPx ?? undefined,
-                },
-              });
-              console.log(
-                `[fonto] analyzeImage timing assetId=${assetId} unified=1 model=${unifiedResult.model} latencyMs=${Date.now() - unifiedStartedAt} serverLatencyMs=${unifiedResult.latencyMs}`,
-              );
-            }
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          // Any Plexo HTTP response error is permanent for THIS image: retrying will
-          // reproduce the same MODEL_PARSE_ERROR / INTERNAL_ERROR / 4xx / 5xx. We
-          // must NOT keep the row stuck at 'captured' — CLIP fallback + defaults
-          // still drive it to 'ready' so the "Processing N items" counter drains.
-          // Pure network failures (fetch failed / ECONNREFUSED / socket closed) do
-          // NOT start with "plexo analyze-image HTTP" — rethrow those so BullMQ
-          // retries when Plexo is back up. CapabilityUnavailableError means the
-          // unified path isn't enabled/configured — same as the flag-off case,
-          // so fall to the legacy chain rather than retrying.
-          if (err instanceof CapabilityUnavailableError) {
-            console.warn("[fonto] analyze-image capability unavailable — skipping unified for", assetId, msg);
-          } else if (msg.startsWith("plexo analyze-image HTTP")) {
-            console.warn("[fonto] analyze-image response error — skipping unified for", assetId, msg);
-          } else {
-            console.warn("[fonto] unified analyze-image transport failed for", assetId, err);
-            throw err;
-          }
-        }
-      }
-
-      if (unifiedResult) {
-        // Map unified → existing variables that the downstream heuristics
-        // and DB writes consume. CLIP's classification only wins when the
-        // CLIP path was decisive (method='clip'); otherwise the unified
-        // model's classification + sub-class wins (matches the legacy
-        // LLM-fallback path's authority).
-        if (clipResult.method === "llm-fallback") {
-          classification = unifiedResult.classification;
-          subClassification = unifiedResult.subClassification;
-          classifyMethodLabel = "llm-fallback";
-        }
-        preDescribeLabels = unifiedResult.labels;
-        preDescribeOcrText = unifiedResult.ocrText;
-        imageOcrText = unifiedResult.ocrText;
-        description = unifiedResult.description;
-
-        // Persist OCR text to the DB right here so the downstream document-
-        // override + deriveKind read the same string. Mirrors what
-        // runOcrForAsset() writes; we just skip the per-line bbox column
-        // because the unified VLM doesn't return boxes.
-        const hadOcrText = (unifiedResult.ocrText ?? "").length > 0;
-        await db
-          .update(schema.assets)
-          .set({
-            ocrText: unifiedResult.ocrText ?? null,
-            ocrState: hadOcrText ? "ready" : "empty",
-            ocrBoxes: null,
-          })
-          .where(eq(schema.assets.id, assetId));
-        if (hadOcrText) {
-          void plexoPublishEvent("ext.fonto.asset.ocr_extracted", {
-            assetId,
-            filename,
-            textLength: unifiedResult.ocrText!.length,
-            model: unifiedResult.model,
-            lineCount: 0,
-          });
-        }
-        // Hoist into function scope so the suggested-tags block below
-        // skips the extra plexoSuggestTags call.
-        unifiedResultTopLevel = unifiedResult;
-      } else {
-        // Legacy chain — flag off OR unified call failed mid-flight.
-        //
-        // B1 — when `useUnified` is on, `classify()` above (line ~211)
-        // returned the `{topLevel:"photo"}` placeholder on the assumption
-        // THIS branch's unified call would overwrite it. It just failed, so
-        // nothing has classified this asset yet — take the CLIP argmax
-        // instead of leaving the placeholder looking like a real answer.
-        // Same degrade convention as the other three sites in this file.
-        if (useUnified && clipResult.method === "llm-fallback") {
-          const argmax = await classifyAssetArgmax(clipVec);
-          classification = argmax.topLevel ?? "photo";
-          subClassification = argmax.subLevel;
-          clipSuggestedTags = argmax.suggestedTags;
-          enrichmentSource = EnrichmentSource.ClipArgmax;
-          console.warn(
-            "[fonto] classify degraded to CLIP argmax after unified failure for",
-            assetId,
-          );
-        }
-        // Image-grounded signals BEFORE description so the caption can quote
-        // real OCR text and reference the objects/scene the vision model saw.
-        if (intelligence.available("label")) {
+      // Image-grounded signals BEFORE description so the caption can quote
+      // real OCR text and reference the objects/scene the vision model saw.
+      if (intelligence.available("label")) {
           try {
             const [imgRow] = await db
               .select({
@@ -437,7 +263,7 @@ async function processAssetInner(
         // OCR runs before describe too — receipt totals, sign text, slide
         // headings, etc. become grounded inputs to the caption prompt instead
         // of being persisted after the caption is already wrong.
-        await runOcrForAsset(assetId, plexoWorkspaceId).catch((err) => {
+        await runOcrForAsset(assetId).catch((err) => {
           console.warn("[fonto] OCR (pre-describe) failed for asset", assetId, err);
         });
         const [ocrRow] = await db
@@ -448,20 +274,12 @@ async function processAssetInner(
         preDescribeOcrText = ocrRow?.ocrText ?? null;
         imageOcrText = preDescribeOcrText;
 
-        // Capture before the closure: `plexoWorkspaceId` is a mutable `let`, so
-        // narrowing does not survive into a deferred callback.
-        const workspaceIdForDescribe = plexoWorkspaceId;
         const described = await tryGenerative(() =>
-          plexoDescribeImage(
-            workspaceIdForDescribe,
-            filename,
-            mimeType,
-            {
-              classification,
-              labels: preDescribeLabels,
-              ocrText: preDescribeOcrText,
-            }
-          )
+          describeImageWithAi(aiUserId, filename, mimeType, {
+            classification,
+            labels: preDescribeLabels,
+            ocrText: preDescribeOcrText,
+          })
         );
         if (described.ok) {
           description = described.value;
@@ -477,11 +295,10 @@ async function processAssetInner(
             described.reason,
           );
         }
-      }
 
       // Force screenshots — the classifier otherwise tends to file text-heavy
-      // screenshots as documents/scans. Runs AFTER the LLM (legacy or
-      // unified) so the heuristic always has the final word.
+      // screenshots as documents/scans. Runs AFTER the completion tier so the
+      // heuristic always has the final word.
       //
       // Spec 2026-06-10: the FILENAME signal ("Screenshot...") is trusted and
       // always wins. The aspect-ratio-only signal (shape ≠ content) must NOT
@@ -525,8 +342,8 @@ async function processAssetInner(
       }
     } else if (mimeType.startsWith("video/")) {
       // Phase 8a — video classification is deterministic by mime, no
-      // round-trip to Plexo. (A future revision could ask Plexo to
-      // describe the keyframe; for v1 the filename is enough metadata.)
+      // round-trip to a model. (A future revision could describe the
+      // keyframe; for v1 the filename is enough metadata.)
       classification = "video";
       classifyMethodLabel = "llm-fallback";
       ctx.classifyMethod = "llm-fallback";
@@ -562,10 +379,9 @@ async function processAssetInner(
         classifyMethodLabel = null;
         ctx.classifyMethod = "skip";
       } else {
-        const workspaceIdForDoc = plexoWorkspaceId;
         const docClass = await tryGenerative(() =>
-          plexoClassifyAsset(
-            workspaceIdForDoc,
+          classifyAssetWithAi(
+            aiUserId,
             filename,
             mimeType,
             docText ?? extractedText ?? undefined,
@@ -577,7 +393,7 @@ async function processAssetInner(
           ctx.classifyMethod = "llm-fallback";
         } else {
           // Documents have no CLIP vector to fall back on, so take the same
-          // mime-derived default plexoClassifyAsset itself uses when the model
+          // mime-derived default classifyAssetWithAi itself uses when the model
           // returns something outside the taxonomy. Honest and non-blocking.
           classification = "document";
           classifyMethodLabel = null;
@@ -591,8 +407,8 @@ async function processAssetInner(
         }
       }
 
-      description = await plexoDescribeDocument(
-        plexoWorkspaceId,
+      description = await describeDocumentWithAi(
+        aiUserId,
         filename,
         mimeType,
         docText ?? "",
@@ -728,16 +544,6 @@ async function processAssetInner(
       .where(eq(schema.assets.id, assetId));
   }
 
-  const assetPayload = {
-    assetId,
-    filename,
-    mimeType,
-    classification,
-    description,
-  };
-
-  void plexoPublishEvent("ext.fonto.asset.processed", assetPayload);
-
   // Phase 2.4 — outbound webhook (asset.processed). We look up workspaceId
   // here rather than threading it through ProcessAssetParams to keep this
   // edit additive vs. parallel worktrees that touch the same param shape.
@@ -762,22 +568,10 @@ async function processAssetInner(
     console.warn("[fonto-webhooks] asset.processed emit failed:", err);
   }
 
-  const isDocClassification = DOCUMENT_CLASSIFICATIONS.has(classification);
-  const isDocMime = DOCUMENT_TRIGGER_MIME.some((p) => mimeType.startsWith(p));
-  if (isDocClassification || isDocMime) {
-    void plexoPublishEvent("ext.fonto.document.processed", assetPayload);
-  }
-
   const effectiveText = extractedText ?? docText;
 
-  if (classification === "receipt") {
-    void plexoPublishEvent("ext.fonto.receipt.detected", {
-      ...assetPayload,
-      extractedText: effectiveText?.slice(0, 500) ?? null,
-    });
-  }
-
-  if (plexoWorkspaceId) {
+  // Post-classification enrichment: semantic memory + model-authored tags.
+  {
     const memContent = [
       `[Fonto asset] ${filename}`,
       `Type: ${mimeType} | Classification: ${classification}`,
@@ -787,27 +581,19 @@ async function processAssetInner(
       .filter(Boolean)
       .join("\n");
 
-    void plexoStoreMemory(plexoWorkspaceId, memContent, {
+    // Semantic memory (app-owned, pgvector). Non-fatal: skipped when the
+    // embedding tier is unconfigured, so search re-ranking degrades rather
+    // than blocking the pipeline.
+    void storeAssetMemory(assetId, memContent, {
       source: "fonto",
       assetId,
       classification,
       mimeType,
     });
 
-    // ADR 0002 — unified path's `suggestedTags` is already a curated list,
-    // so skip the extra plexoSuggestTags round-trip. Legacy path still
-    // calls plexoSuggestTags because its description was produced without
-    // tag-suggestion context.
-    const suggested = unifiedResultTopLevel
-      ? ({ ok: true, value: unifiedResultTopLevel.suggestedTags } as const)
-      : await tryGenerative(() =>
-          plexoSuggestTags(
-            plexoWorkspaceId,
-            filename,
-            classification,
-            description,
-          ),
-        );
+    const suggested = await tryGenerative(() =>
+      suggestTagsWithAi(aiUserId, filename, classification, description),
+    );
     if (!suggested.ok) {
       enrichmentSource = EnrichmentSource.ClipArgmax;
       console.warn(
@@ -928,14 +714,13 @@ async function processAssetInner(
 }
 
 /**
- * Run OCR on an image asset via Plexo's vision endpoint and persist the
- * result. Marks the asset's `ocrState` accordingly. Used both inline (after
- * upload, via the worker's processAsset) and by the nightly backfill cron.
+ * Run OCR on an image asset via the vision sidecar (FONTO_VISION_URL) and
+ * persist the result. Marks the asset's `ocrState` accordingly. Used both
+ * inline (after upload, via the worker's processAsset) and by the nightly
+ * backfill cron. Non-fatal throughout: a failed OCR pass records `failed` and
+ * returns — it never throws into the caller's pipeline.
  */
-export async function runOcrForAsset(
-  assetId: string,
-  plexoWorkspaceId: string
-): Promise<void> {
+export async function runOcrForAsset(assetId: string): Promise<void> {
   const [asset] = await db
     .select()
     .from(schema.assets)
@@ -972,7 +757,12 @@ export async function runOcrForAsset(
   // and is the only place that records the OCR sub-step (used both inline
   // by the worker and by the nightly backfill cron).
   const endTimer = assetProcessingDurationSeconds.startTimer();
-  let result: PlexoVisionOcrResult | null;
+  interface OcrResultShape {
+    text: string;
+    model: string;
+    lines: Array<{ text: string; bbox: [number, number, number, number]; confidence: number }>;
+  }
+  let result: OcrResultShape | null;
   try {
     const r = await intelligence.ocr({ imageUrl: signedUrl });
     result = {
@@ -1040,12 +830,5 @@ export async function runOcrForAsset(
     // nightly backfill cron that calls runOcrForAsset() directly. Fire-and-
     // forget so a Valkey blip never fails the OCR pass.
     void cacheInvalidate(`ws:${asset.workspaceId}:assets`);
-    void plexoPublishEvent("ext.fonto.asset.ocr_extracted", {
-      assetId,
-      filename: asset.filename,
-      textLength: result.text.length,
-      model: result.model,
-      lineCount: result.lines.length,
-    });
   }
 }

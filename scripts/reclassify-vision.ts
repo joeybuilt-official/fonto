@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// One-shot — force the vision-LLM (Plexo unified analyze-image) to RE-CLASSIFY
+// One-shot — force the AI tier to RE-CLASSIFY
 // a targeted bucket of "suspect" assets and re-derive their KIND.
 //
 // Purpose: CLIP mislabeled EXIF-stripped screenshots / graphics as "photo",
 // which deriveKind then routed into kind='moment' (the Moments lens). This
-// pulls each suspect's preview through the multimodal vision model — which CAN
-// actually look at the pixels — to get an authoritative classification, then
-// re-derives KIND so they leave Moments for Screenshots / Graphics / Documents.
+// pulls each suspect through the app-owned AI tier — vision labels + OCR from
+// the sidecar, then the completion tier (the owner's own connection) for an
+// authoritative classification — then re-derives KIND so they leave Moments for
+// Screenshots / Graphics / Documents.
 //
 // Unlike classify-only-rerun.ts (which re-runs the cheap CLIP-only path on the
 // stored clip_vec), this script makes a real GPU vision call per asset. It is
@@ -31,6 +32,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getS3Client, assetStorageKey } from "@/lib/r2";
 import { intelligence } from "@/lib/intelligence/client";
+import { classifyAssetWithAi } from "@/lib/intelligence/prompts";
 import { deriveKind } from "@/lib/classify/kind";
 
 function arg(name: string): string | true | null {
@@ -45,6 +47,7 @@ function arg(name: string): string | true | null {
 interface Row {
   id: string;
   workspace_id: string;
+  user_id: string;
   filename: string;
   mime_type: string;
   classification: string | null;
@@ -64,9 +67,9 @@ async function main(): Promise<void> {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) throw new Error("DATABASE_URL not set");
 
-  if (!intelligence.analyzeConfigured()) {
+  if (!intelligence.available("label") && !intelligence.available("complete")) {
     throw new Error(
-      "unified analyze not configured: set USE_UNIFIED_ANALYZE=1 + PLEXO_URL + PLEXO_SERVICE_KEY",
+      "no AI tier configured: set FONTO_VISION_URL (vision) and/or AI_BASE_URL/AI_API_KEY (completion)",
     );
   }
 
@@ -105,6 +108,7 @@ async function main(): Promise<void> {
     SELECT
       id,
       workspace_id,
+      w.user_id,
       filename,
       mime_type,
       classification,
@@ -118,19 +122,20 @@ async function main(): Promise<void> {
       focal_length,
       lens_model,
       ocr_text
-    FROM fonto.assets
-    WHERE workspace_id = ${workspaceId}
-      AND lifecycle_state = 'active'
-      AND kind = 'moment'
-      AND classification = 'photo'
-      AND (classify_method IS NULL OR classify_method = 'clip')
-      AND exif->>'FNumber' IS NULL
-      AND exif->>'ISO' IS NULL
-      AND exif->>'ExposureTime' IS NULL
-      AND exif->>'FocalLength' IS NULL
-      AND mime_type LIKE 'image/%'
-      AND filename IS NOT NULL
-    ORDER BY created_at DESC
+    FROM fonto.assets a
+    JOIN fonto.workspaces w ON w.id = a.workspace_id
+    WHERE a.workspace_id = ${workspaceId}
+      AND a.lifecycle_state = 'active'
+      AND a.kind = 'moment'
+      AND a.classification = 'photo'
+      AND (a.classify_method IS NULL OR a.classify_method = 'clip')
+      AND a.exif->>'FNumber' IS NULL
+      AND a.exif->>'ISO' IS NULL
+      AND a.exif->>'ExposureTime' IS NULL
+      AND a.exif->>'FocalLength' IS NULL
+      AND a.mime_type LIKE 'image/%'
+      AND a.filename IS NOT NULL
+    ORDER BY a.created_at DESC
     LIMIT ${limit === Number.POSITIVE_INFINITY ? 100_000_000 : limit}
   `) as unknown as Row[];
 
@@ -168,22 +173,39 @@ async function main(): Promise<void> {
         { expiresIn: 300 },
       );
 
-      const result = await intelligence.analyzeImage({
-        workspaceId: row.workspace_id,
-        imageUrl: signedUrl,
-        mimeType: row.mime_type,
-        filename: row.filename,
-        hints: {},
-      });
+      // Vision signals first: OCR (the sidecar fetches the URL itself) and
+      // labels (fed the decoded preview bytes).
+      const ocrFromVision = await intelligence
+        .ocr({ imageUrl: signedUrl })
+        .then((r) => r.spans.map((sp) => sp.text).join("\n"))
+        .catch(() => null);
+      let labels: string[] = [];
+      try {
+        const previewBytes = Buffer.from(
+          await (await fetch(signedUrl)).arrayBuffer(),
+        ).toString("base64");
+        labels = (await intelligence.label(previewBytes)).labels.map((l) => l.label);
+      } catch {
+        // Labels are advisory; proceed with OCR + filename only.
+      }
 
-      const classification = result.classification;
-      const subClassification = result.subClassification;
+      // classifyConfidence/model stay 0/"ai" — the app-owned tier does not
+      // return a calibrated score, and inventing one would be fiction.
+      const classifyConfidence = 0;
+      const classifyModel = "ai-tier";
+      const classification = await classifyAssetWithAi(
+        row.user_id,
+        row.filename,
+        row.mime_type,
+        ocrFromVision ?? row.ocr_text ?? labels.join(", "),
+      );
+      const subClassification: string | null = null;
       // Only fill OCR when the row has none — never clobber existing OCR.
       const existingOcr =
         row.ocr_text && row.ocr_text.length > 0 ? row.ocr_text : null;
-      const ocrToPersist = existingOcr ?? result.ocrText ?? null;
+      const ocrToPersist = existingOcr ?? ocrFromVision ?? null;
       // deriveKind reads the OCR we'll actually store.
-      const ocrForKind = existingOcr ?? result.ocrText ?? null;
+      const ocrForKind = existingOcr ?? ocrFromVision ?? null;
 
       const newKind = deriveKind({
         mimeType: row.mime_type,
@@ -214,7 +236,7 @@ async function main(): Promise<void> {
             `  ${row.id} ${row.filename} | ` +
               `class: ${row.classification ?? "null"} → ${classification} | ` +
               `kind: ${row.kind ?? "null"} → ${newKind} | ` +
-              `conf=${result.confidence.toFixed(3)} model=${result.model}`,
+              `model=${classifyModel}`,
           );
         }
       } else {
@@ -224,7 +246,7 @@ async function main(): Promise<void> {
               sub_classification = ${subClassification},
               kind = ${newKind},
               classify_method = 'llm-vision-rerun',
-              classify_confidence = ${result.confidence},
+              classify_confidence = ${classifyConfidence},
               ocr_text = ${ocrToPersist},
               updated_at = now()
           WHERE id = ${row.id}

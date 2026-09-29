@@ -3,7 +3,7 @@
 //
 // Intelligence Core — Phase 3. The evidence adapters: each turns one signal
 // source into an `EvidenceInput` (or null when the source is silent). Kept thin
-// + mostly pure — the heavy parsing lives in season.ts / ocrDates.ts; the Plexo
+// + mostly pure — the heavy parsing lives in season.ts / ocrDates.ts; the model
 // I/O lives in the orchestrator (extractAssetEvidence.ts). The orchestrator owns
 // the provenance stamping of perception-backed model versions.
 
@@ -14,14 +14,14 @@ import { parseOcrDates } from "./ocrDates";
 import { seasonMaskFromLabels } from "./season";
 
 // Fonto-local rule versions. Bumping one re-extracts ONLY that evidence type
-// (ADR-0006). Perception-backed types (scene_season) version off the Plexo
+// (ADR-0006). Perception-backed types (scene_season) version off the label
 // model id instead — see SCENE_SEASON_RULE below.
 export const IDENTITY_MODEL_VERSION = "identity-bound@1";
 export const OCR_DATE_MODEL_VERSION = "ocr-date@1";
 export const EXIF_MODEL_VERSION = "exif@1";
 export const FILENAME_MODEL_VERSION = "filename@1";
 export const FS_MTIME_MODEL_VERSION = "fs-mtime@1";
-/** Rule prefix; the full model_version is `${SCENE_SEASON_RULE}/${plexoModelId}`. */
+/** Rule prefix; the full model_version is `${SCENE_SEASON_RULE}/${labelModelId}`. */
 export const SCENE_SEASON_RULE = "scene-season@1";
 
 export interface PersonDateBounds {
@@ -65,19 +65,19 @@ export function identityEvidence(persons: PersonDateBounds[]): EvidenceInput | n
 }
 
 /**
- * Scene-season: VLM labels → a year-agnostic monthly mask. `plexoModelId` is the
+ * Scene-season: VLM labels → a year-agnostic monthly mask. `labelModelId` is the
  * label model's id (provenance — a model swap re-extracts this type). Emits
  * nothing when no label was seasonal.
  */
 export function sceneSeasonEvidence(
   labels: string[],
-  plexoModelId: string
+  labelModelId: string
 ): EvidenceInput | null {
   const mask = seasonMaskFromLabels(labels);
   if (mask.months.length === 0) return null;
   return {
     evidenceType: "scene_season",
-    modelVersion: `${SCENE_SEASON_RULE}/${plexoModelId || "unknown"}`,
+    modelVersion: `${SCENE_SEASON_RULE}/${labelModelId || "unknown"}`,
     sourceDetail: {
       seasons: mask.seasons,
       months: mask.months,

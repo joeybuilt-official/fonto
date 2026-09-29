@@ -23,11 +23,11 @@ import postgres from "postgres";
 import { classifyAsset } from "@/lib/classify/classify";
 import { deriveKind } from "@/lib/classify/kind";
 import { intelligence } from "@/lib/intelligence/client";
+import { classifyAssetWithAi } from "@/lib/intelligence/prompts";
 // Helpers live in classifyHelpers.ts (NOT processAsset.ts) so this script
-// doesn't transitively load the Plexo SDK + sharp + S3 + webhook stack at
-// top-level. The Plexo SDK has an ESM-only subpath ("./connect") that tsx's
-// CJS loader trips on for scripts (worker entrypoint somehow skirts this);
-// we pull plexo.ts via dynamic import in main() when actually needed.
+// doesn't transitively load sharp + the S3 client + the webhook stack at
+// top-level; the app-owned classifier is called in main() only when the LLM
+// fallback is actually enabled.
 import {
   isScreenshotByName,
   isScreenshotByAspect,
@@ -74,9 +74,9 @@ interface DecisionResult {
   kind: ReturnType<typeof deriveKind>;
 }
 
-interface PlexoFns {
+interface ClassifyFns {
   classify: (
-    workspaceId: string,
+    userId: string,
     filename: string,
     mimeType: string,
     text?: string,
@@ -85,8 +85,8 @@ interface PlexoFns {
 
 async function decideForRow(
   row: Row,
-  plexoWorkspaceId: string | null,
-  plexo: PlexoFns | null,
+  aiUserId: string | null,
+  classify: ClassifyFns | null,
   enableLlmFallback: boolean,
 ): Promise<DecisionResult> {
   const exif: CameraEvidence = {
@@ -98,19 +98,18 @@ async function decideForRow(
   };
 
   // 1. CLIP classify. LLM fallback is OFF by default for bulk reprocess —
-  // it triggers a Plexo HTTP per uncertain row, which a) blows the auth
-  // rate-limit (10/min) and b) makes 200 rows take 8 minutes instead of 8
-  // seconds. When CLIP is uncertain we keep the row's existing
+  // it is one HTTP call per uncertain row, which makes 200 rows take minutes
+  // instead of seconds. When CLIP is uncertain we keep the row's existing
   // classification (we only act on confident CLIP signals).
   const CLIP_UNCERTAIN_SENTINEL = "__clip_uncertain__";
   const result = await classifyAsset(row.clip_vec, {
     classify: async () => {
-      if (!enableLlmFallback || !plexoWorkspaceId || !plexo) {
+      if (!enableLlmFallback || !classify) {
         // Return a sentinel; caller falls back to "keep existing".
         return { topLevel: CLIP_UNCERTAIN_SENTINEL };
       }
-      const topLevel = await plexo.classify(
-        plexoWorkspaceId,
+      const topLevel = await classify.classify(
+        aiUserId ?? "",
         row.filename,
         row.mime_type,
         row.ocr_text ?? undefined,
@@ -264,41 +263,29 @@ async function main(): Promise<void> {
     `[classify-rerun] workspace=${workspaceId} scope=${scope} dryRun=${dryRun} llmFallback=${enableLlmFallback} limit=${limit === Number.POSITIVE_INFINITY ? "all" : limit}`,
   );
 
-  // Lazy-load plexo.ts via dynamic import. Top-level import fails under tsx
-  // CJS resolution for the SDK's ESM-only "./connect" subpath; dynamic import
-  // forces the ESM loader and works. Skipped entirely when LLM fallback is
-  // off — saves an HTTP round-trip to Plexo's auth-limited /workspaces.
-  let plexoWorkspaceId: string | null = null;
-  let plexo: PlexoFns | null = null;
-  if (enableLlmFallback) try {
-    const plexoMod = (await import("@/lib/plexo")) as typeof import("@/lib/plexo");
+  // Resolve the workspace OWNER so the completion tier can use their own AI
+  // connection (else the deployment default). Skipped entirely when the LLM
+  // fallback is off — the CLIP-only path touches no network.
+  let aiUserId: string | null = null;
+  let classifyFns: ClassifyFns | null = null;
+  if (enableLlmFallback) {
     if (intelligence.available("complete")) {
       // better-auth's user table lives in the `auth` schema (DATABASE_URL's
       // search_path is fonto,public — auth is NOT on it). Reference explicitly.
       const [wsRow] = (await sql`
-        SELECT u.id AS user_id, u.email AS email
+        SELECT u.id AS user_id
         FROM fonto.workspaces w
         JOIN auth."user" u ON u.id = w.user_id
         WHERE w.id = ${workspaceId}
-      `) as Array<{ user_id: string; email: string | null }>;
+      `) as Array<{ user_id: string }>;
       if (wsRow) {
-        plexoWorkspaceId = await plexoMod.plexoEnsureWorkspace(
-          wsRow.user_id,
-          wsRow.email ?? undefined,
-        );
-        plexo = { classify: plexoMod.plexoClassifyAsset };
-        console.log(
-          `[classify-rerun] plexo workspace resolved: ${plexoWorkspaceId}`,
-        );
+        aiUserId = wsRow.user_id;
+        classifyFns = { classify: classifyAssetWithAi };
+        console.log(`[classify-rerun] AI connection owner resolved: ${aiUserId}`);
       }
     } else {
-      console.log("[classify-rerun] plexo unavailable — CLIP-only path");
+      console.log("[classify-rerun] no completion tier — CLIP-only path");
     }
-  } catch (err) {
-    console.warn(
-      "[classify-rerun] plexo load failed — proceeding CLIP-only:",
-      err,
-    );
   }
 
   // Build the candidate query. clip_vec column is pgvector; postgres-js
@@ -381,15 +368,15 @@ async function main(): Promise<void> {
   try {
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);
-      // Process serially within the batch to keep Plexo authLimiter happy
-      // and the log readable. CLIP-only path is in-memory + cheap so this
-      // is still fast (no network per row when CLIP is decisive).
+      // Process serially within the batch: keeps the log readable and bounds
+      // concurrent model calls. The CLIP-only path is in-memory + cheap, so
+      // this is still fast when CLIP is decisive.
       for (const row of batch) {
         try {
           const decision = await decideForRow(
             row,
-            plexoWorkspaceId,
-            plexo,
+            aiUserId,
+            classifyFns,
             enableLlmFallback,
           );
           processed++;

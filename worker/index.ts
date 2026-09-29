@@ -158,7 +158,7 @@ const WEBHOOK_TIMEOUT_MS = Math.max(
   parseInt(process.env.WEBHOOK_TIMEOUT_MS ?? "10000", 10),
   1000
 );
-// Phase 4.2 — CLIP embedding worker. Network-bound (POST to plexo-vision)
+// Phase 4.2 — CLIP embedding worker. Network-bound (POST to the vision sidecar)
 // but the vision service is itself CPU-bound, so we keep concurrency low by
 // default to avoid hammering it.
 const CLIP_EMBED_CONCURRENCY = Math.max(
@@ -178,7 +178,7 @@ const CLIP_EMBED_PREVIEW_MAX_RETRIES = Math.max(
   1
 );
 // Phase 5.1 — face detection + ArcFace embedding. Network-bound (POST to
-// plexo-vision /v1/faces/detect). Conservative default; the sidecar pins a
+// the vision sidecar /v1/faces/detect). Conservative default; the sidecar pins a
 // dedicated GPU/CPU pool and we don't want to swamp it.
 const FACE_DETECT_CONCURRENCY = Math.max(
   parseInt(process.env.FACE_DETECT_CONCURRENCY ?? "2", 10),
@@ -297,7 +297,7 @@ const BACKFILL_FACE_CROPS_BATCH_SIZE = Math.max(
 );
 
 // Intelligence Core (Phase 3) — extract-evidence worker concurrency. Mostly
-// Postgres-bound + one optional Plexo label call, so a few in flight is fine.
+// Postgres-bound + one optional vision label call, so a few in flight is fine.
 const EVIDENCE_EXTRACT_CONCURRENCY = Math.max(
   parseInt(process.env.EVIDENCE_EXTRACT_CONCURRENCY ?? "3", 10),
   1
@@ -542,7 +542,7 @@ function startAssetProcessingWorker(): Worker<ProcessAssetJob> {
  * thumbnails queue, downloads the original from R2, encodes 256px + 1080px
  * WebP derivatives via sharp, uploads them under `derivatives/`, and stamps
  * the keys onto the assets row. Independent of the asset-processing worker
- * so a slow Plexo classify call doesn't delay grid thumbnails.
+ * so a slow vision classify call doesn't delay grid thumbnails.
  */
 function startThumbnailWorker(): Worker<GenerateThumbnailsJob> {
   const w = new Worker<GenerateThumbnailsJob>(
@@ -926,7 +926,7 @@ function startWebhookDeliveryWorker(): Worker<WebhookDeliveryJob> {
 /**
  * Phase 4.2 — CLIP image embedding worker. Drains the `clip-embedding` queue:
  * downloads an asset's preview derivative (or original if preview missing)
- * from R2, POSTs to plexo-vision's `/vision/clip/image`, and writes the
+ * from R2, POSTs to the vision sidecar's `/vision/clip/image`, and writes the
  * returned 512-dim vector to `assets.clip_vec`.
  *
  * Skips non-image MIME types silently (returns success — BullMQ won't retry).
@@ -1139,7 +1139,7 @@ function startClipDedupCheckWorker(): Worker<ClipDedupCheckJob> {
 /**
  * Phase 5.1 — face detection + ArcFace embedding worker. Drains the
  * `face-detect` queue: downloads the asset's preview from R2, POSTs to
- * `{PLEXO_VISION_URL}/v1/faces/detect`, and inserts one
+ * `{FONTO_VISION_URL}/v1/faces/detect`, and inserts one
  * `fonto.face_instances` row per detection.
  *
  * `detectFacesForAsset()` swallows soft failures (sidecar unconfigured,
@@ -1242,7 +1242,7 @@ function startFaceDetectWorker(): Worker<FaceDetectJob> {
 /**
  * Intelligence Core (Phase 3) — per-asset evidence extraction worker. Runs the
  * Fonto-local adapters (identity bound, EXIF, filename, fs-mtime, OCR-date) plus
- * the optional Plexo scene-label adapter for one asset, and writes
+ * the optional vision scene-label adapter for one asset, and writes
  * `fonto.image_date_evidence` rows idempotently. No fusion here — that is Phase
  * 4. Deterministic + idempotent, so a retry re-derives the same rows.
  */

@@ -3,30 +3,29 @@
 //
 // Jex intelligence registry (ADR-001 §invariants, ADR-003 §resolution).
 //
-// resolveIntelligenceLayer() returns a Layer providing all 7 ports where EACH
-// PORT resolves its winning adapter PER CALL against an ordered tier list:
-//   federated (rank 200, when PLEXO_URL set) → embedded (rank 100, always).
+// `resolveIntelligenceLayer()` returns a Layer providing all 7 ports where EACH
+// PORT resolves its winning adapter PER CALL against an ordered tier list.
+//
+// ONE MANDATORY TIER, ONE OPTIONAL:
+//   - embedded (rank 100, ALWAYS) — the app's own adapters: a Completion call
+//     through the connection the caller supplied (the user's own, or the
+//     deployment default), and the vision sidecar at FONTO_VISION_URL for the
+//     vision ports. Ships with the app; needs no peer.
+//   - federated (rank 200, ONLY when the deployment configures a remote peer
+//     AND has not pinned it off) — an optional OpenAI-compatible endpoint.
+//     Unset configuration means the tier does not exist, which is a normal
+//     state: resolution simply never selects it.
+//
 // A tier that fails on a given call falls through to the next lower tier for
 // that call only (ADR-001 inv 5). The embedded tier is the permanent floor
 // (inv 6). Every resolved call logs the tier that served it (ADR-001 risk
 // mitigation: per-capability attribution).
 //
-// ponytail: liveness here is env-presence of PLEXO_URL, not the connection-
-// stream liveness ADR-003 specifies for the full Jex mesh. That is a pilot
-// simplification — the fallback path (federated throws → embedded serves) is
-// real and per-call; upgrade to stream liveness lands with the Jex SDK.
+// Nothing here blocks on a peer and nothing throws when one is missing — that
+// absence is exactly the case the embedded floor exists to cover.
 
 import { Cause, Context, Effect, Exit, Layer, Option } from "effect";
 import { describeError } from "@/lib/errors/describeError";
-import {
-  PlexoFederatedCompletionLayer,
-  PlexoFederatedImageEmbeddingLayer,
-  PlexoFederatedTextEmbeddingLayer,
-  PlexoFederatedOcrLayer,
-  PlexoFederatedFaceDetectionLayer,
-  PlexoFederatedImageLabelingLayer,
-  PlexoFederatedMemoryLayer,
-} from "./adapters/plexo-federated";
 import { AnthropicCompletionLayer } from "./adapters/anthropic";
 import {
   VisionSidecarImageEmbeddingLayer,
@@ -34,6 +33,7 @@ import {
   VisionSidecarOcrLayer,
   VisionSidecarFaceDetectionLayer,
   VisionSidecarImageLabelingLayer,
+  visionSidecarUrl,
 } from "./adapters/vision-sidecar";
 import { PgvectorMemoryLayer } from "./adapters/pgvector";
 import {
@@ -56,21 +56,23 @@ export type IntelligencePorts =
   | ImageLabeling
   | Memory;
 
-const federatedEnabled = (): boolean => !!process.env.PLEXO_URL;
+/**
+ * Kill-switch read, checked per resolve so a flip applies without a restart.
+ * `JEX_FEDERATION_OFF=1` pins resolution to the embedded tier.
+ */
+export function isFederationOff(): boolean {
+  const v = process.env.JEX_FEDERATION_OFF;
+  return v === "1" || v === "true";
+}
 
 interface Tier<T> {
   readonly tier: string;
   readonly layer: Layer.Layer<T>;
 }
 
-/** Ordered tiers for a port: federated first (if enabled) then embedded. */
-function tiersFor<T>(embedded: Layer.Layer<T>, federated: Layer.Layer<T>): ReadonlyArray<Tier<T>> {
-  return federatedEnabled()
-    ? [
-        { tier: "federated", layer: federated },
-        { tier: "embedded", layer: embedded },
-      ]
-    : [{ tier: "embedded", layer: embedded }];
+/** Ordered tiers for a port: the app's own adapter, always present. */
+function tiersFor<T>(embedded: Layer.Layer<T>): ReadonlyArray<Tier<T>> {
+  return [{ tier: "embedded", layer: embedded }];
 }
 
 /**
@@ -79,11 +81,11 @@ function tiersFor<T>(embedded: Layer.Layer<T>, federated: Layer.Layer<T>): Reado
  *
  * When EVERY tier fails, the reason from every tier is preserved, not just the
  * last one. Surfacing only the last cause is how a real outage got misreported
- * on 2026-09-04: the federated tier failed with Plexo's actual explanation
- * ("no providers configured for workspace"), the embedded tier then failed with
- * an empty-message CapabilityUnavailableError, and only that second, emptier
- * error reached the caller — so the pipeline recorded nothing usable and the
- * true cause took a Redis-and-container-log excavation to recover.
+ * on 2026-09-04: the preferred tier failed with its actual explanation, the
+ * embedded tier then failed with an empty-message CapabilityUnavailableError,
+ * and only that second, emptier error reached the caller — so the pipeline
+ * recorded nothing usable and the true cause took a Redis-and-container-log
+ * excavation to recover.
  *
  * A typed non-capability error (e.g. RateLimitError) is still surfaced
  * unchanged, because callers match on its type to decide whether to retry.
@@ -155,40 +157,40 @@ export const IntelligenceLive: Layer.Layer<IntelligencePorts> = Layer.mergeAll(
   Layer.succeed(Completion, {
     complete: (req) =>
       resolve(Completion, "jex/Completion", (s) => s.complete(req),
-        tiersFor(AnthropicCompletionLayer, PlexoFederatedCompletionLayer)),
+        tiersFor(AnthropicCompletionLayer)),
   }),
   Layer.succeed(ImageEmbedding, {
     embed: (req) =>
       resolve(ImageEmbedding, "jex/ImageEmbedding", (s) => s.embed(req),
-        tiersFor(VisionSidecarImageEmbeddingLayer, PlexoFederatedImageEmbeddingLayer)),
+        tiersFor(VisionSidecarImageEmbeddingLayer)),
   }),
   Layer.succeed(TextEmbedding, {
     embed: (req) =>
       resolve(TextEmbedding, "jex/TextEmbedding", (s) => s.embed(req),
-        tiersFor(VisionSidecarTextEmbeddingLayer, PlexoFederatedTextEmbeddingLayer)),
+        tiersFor(VisionSidecarTextEmbeddingLayer)),
   }),
   Layer.succeed(Ocr, {
     ocr: (req) =>
       resolve(Ocr, "jex/Ocr", (s) => s.ocr(req),
-        tiersFor(VisionSidecarOcrLayer, PlexoFederatedOcrLayer)),
+        tiersFor(VisionSidecarOcrLayer)),
   }),
   Layer.succeed(FaceDetection, {
     detect: (req) =>
       resolve(FaceDetection, "jex/FaceDetection", (s) => s.detect(req),
-        tiersFor(VisionSidecarFaceDetectionLayer, PlexoFederatedFaceDetectionLayer)),
+        tiersFor(VisionSidecarFaceDetectionLayer)),
   }),
   Layer.succeed(ImageLabeling, {
     label: (req) =>
       resolve(ImageLabeling, "jex/ImageLabeling", (s) => s.label(req),
-        tiersFor(VisionSidecarImageLabelingLayer, PlexoFederatedImageLabelingLayer)),
+        tiersFor(VisionSidecarImageLabelingLayer)),
   }),
   Layer.succeed(Memory, {
     store: (record) =>
       resolve(Memory, "jex/Memory", (s) => s.store(record),
-        tiersFor(PgvectorMemoryLayer, PlexoFederatedMemoryLayer)),
+        tiersFor(PgvectorMemoryLayer)),
     search: (req) =>
       resolve(Memory, "jex/Memory", (s) => s.search(req),
-        tiersFor(PgvectorMemoryLayer, PlexoFederatedMemoryLayer)),
+        tiersFor(PgvectorMemoryLayer)),
   }),
 );
 
@@ -207,12 +209,12 @@ export type FacadeCapability =
 
 // Config-presence probe, zero network. Answers "is SOME tier plausibly
 // configured", not "will the call succeed". Vision capabilities require an
-// actual vision URL — BOTH vision adapters (sidecar and federated) call one,
-// so a PLEXO_URL-only env must report vision as unconfigured or callers'
-// soft-skip gates would pass and every tier would then throw, churning
-// BullMQ retries where the old visionConfigured() gate skipped cleanly.
+// actual vision URL — the sidecar adapter calls one, so an AI-only env must
+// report vision as unconfigured or callers' soft-skip gates would pass and
+// every tier would then throw, churning BullMQ retries where the old
+// visionConfigured() gate skipped cleanly.
 export function capabilityConfigured(name: FacadeCapability): boolean {
   return name === "complete"
-    ? !!(process.env.PLEXO_URL || process.env.FONTO_LLM_KEY)
-    : !!(process.env.FONTO_VISION_URL || process.env.PLEXO_VISION_URL);
+    ? !!(process.env.AI_BASE_URL || process.env.AI_API_KEY || process.env.FONTO_LLM_KEY)
+    : !!visionSidecarUrl();
 }

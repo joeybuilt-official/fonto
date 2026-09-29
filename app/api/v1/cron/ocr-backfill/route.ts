@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Nightly OCR backfill. Picks up `ocr_state='pending'` rows in batches and
-// pushes them through the Plexo vision sidecar (PaddleOCR PP-OCRv5 since
-// Phase 4.4) — or, if OCR_LLM_FALLBACK=true and the vision service is down,
-// through the legacy LLM-based path. Idempotent — failed rows are marked
-// `failed` so a future run can manually retry by resetting them to
-// `pending`. Rows that ran successfully but found no text are marked
-// `empty` (distinct from `failed`).
+// pushes them through the app-owned vision sidecar (FONTO_VISION_URL,
+// PaddleOCR PP-OCRv5). Idempotent — failed rows are marked `failed` so a
+// future run can manually retry by resetting them to `pending`. Rows that ran
+// successfully but found no text are marked `empty` (distinct from `failed`).
 //
 // Batch size defaults to OCR_BACKFILL_BATCH_SIZE (50) — Phase 4.4 raised
 // this from the original 50/page LLM-limited cap because PaddleOCR is an
@@ -19,7 +17,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, schema } from "@/lib/db";
 import { eq, and, isNotNull } from "drizzle-orm";
 import { runOcrForAsset } from "@/lib/processing";
-import { plexoEnsureWorkspace } from "@/lib/plexo";
 import { intelligence } from "@/lib/intelligence/client";
 
 const DEFAULT_BATCH_SIZE = (() => {
@@ -35,7 +32,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!intelligence.available("ocr")) {
-    return NextResponse.json({ skipped: true, reason: "plexo_unavailable" });
+    return NextResponse.json({ skipped: true, reason: "vision_unconfigured" });
   }
 
   const url = new URL(request.url);
@@ -44,8 +41,7 @@ export async function POST(request: NextRequest) {
     MAX_BATCH_SIZE
   );
 
-  // Pick up pending image assets. Join workspaces to fish out the user_id
-  // we need for plexoEnsureWorkspace.
+  // Pick up pending image assets.
   const rows = await db
     .select({
       assetId: schema.assets.id,
@@ -67,7 +63,6 @@ export async function POST(request: NextRequest) {
 
   let ok = 0;
   let fail = 0;
-  const wsCache = new Map<string, string>();
 
   for (const r of rows) {
     if (!r.mimeType.startsWith("image/")) {
@@ -81,16 +76,7 @@ export async function POST(request: NextRequest) {
       continue;
     }
     try {
-      let plexoWs = wsCache.get(r.fontoWorkspaceId);
-      if (!plexoWs) {
-        plexoWs = await plexoEnsureWorkspace(r.userId, undefined);
-        if (plexoWs) wsCache.set(r.fontoWorkspaceId, plexoWs);
-      }
-      if (!plexoWs) {
-        fail++;
-        continue;
-      }
-      await runOcrForAsset(r.assetId, plexoWs);
+      await runOcrForAsset(r.assetId);
       // runOcrForAsset transitions ocr_state to 'ready', 'empty', or
       // 'failed' itself. 'empty' counts as success — PaddleOCR ran and
       // honestly returned no text (e.g. solid-colour photo).

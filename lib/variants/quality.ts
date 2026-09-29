@@ -4,7 +4,7 @@
 // Intelligence Core — Phase 5 (ADR-0004). Deterministic, Fonto-local quality
 // scoring used to pick the CANONICAL of a variant group. Resolution is a
 // TIEBREAK ONLY, never the primary signal (a 24 MP blurry re-save must not beat
-// a sharp 12 MP original). A Plexo no-reference IQA Tool is an OPTIONAL future
+// a sharp 12 MP original). A no-reference IQA tool is an OPTIONAL future
 // escalation only if these deterministic metrics prove insufficient — not a
 // dependency.
 //

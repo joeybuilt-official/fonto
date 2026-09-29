@@ -1310,7 +1310,7 @@ registry.registerPath({
       dateTo: z.string().datetime().optional(),
       semantic: z.enum(["true", "false"]).optional().openapi({
         description:
-          "`true` re-ranks via Plexo semantic search (requires `q`); disables cursor pagination.",
+          "`true` re-ranks via semantic memory search (requires `q`); disables cursor pagination.",
       }),
       ocrOnly: z.enum(["true", "false"]).optional().openapi({
         description: "`true` restricts matches to assets with extracted OCR text.",
@@ -1462,7 +1462,7 @@ registry.registerPath({
   path: "/api/v1/search/clip",
   summary: "Semantic image search via CLIP text-to-image embeddings",
   description:
-    "Phase 4.2 — embeds the query text via the Plexo vision service and " +
+    "Phase 4.2 — embeds the query text via the vision sidecar and " +
     "runs a pgvector nearest-neighbour scan against `assets.clip_vec`. " +
     "Results are sorted by cosine similarity descending. When the vision " +
     "service is not configured or unreachable the route degrades to " +

@@ -8,7 +8,6 @@ import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppMobileBottomBar } from "@/components/app-mobile-bottom-bar";
 import { AppMobileAvatarMenu } from "@/components/app-mobile-avatar-menu";
-import { PlexoConnectionStatus } from "@/components/plexo-connection-status";
 import { ReviewNudge } from "@/components/review-nudge";
 import { ReviewQueueCountProvider } from "@/components/review-queue-count";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -61,8 +60,8 @@ export function AppShell({
       {/* Content area */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile header — hamburger (sidebar drawer for Home + the
-            still-extant legacy entries), brand, plexo status, avatar
-            menu (UX-C6 Settings demotion target). */}
+            still-extant legacy entries), brand, avatar menu
+            (UX-C6 Settings demotion target). */}
         <header className="flex h-14 shrink-0 items-center gap-[var(--ft-space-3)] border-b border-[var(--ft-color-outline-variant)] bg-[var(--ft-color-surface-container-low)] px-[var(--ft-space-4)] md:hidden">
           <button
             onClick={() => setOpen(true)}
@@ -77,7 +76,6 @@ export function AppShell({
             <span className="text-[var(--ft-color-primary)]">_</span>fonto
           </Link>
           <div className="ml-auto flex items-center gap-[var(--ft-space-2)]">
-            <PlexoConnectionStatus />
             <AppMobileAvatarMenu user={user} />
           </div>
         </header>

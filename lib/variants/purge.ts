@@ -30,7 +30,6 @@ import {
   assetDerivativeKey,
   hlsSegmentKeyPrefix,
 } from "@/lib/r2";
-import { plexoPublishEvent } from "@/lib/plexo";
 import { logger } from "@/lib/logger";
 import { structuralSimilarity, SSIM_VARIANT_GATE } from "./structuralVerify";
 
@@ -173,12 +172,6 @@ export async function purgeConsolidatedVariant(
     .update(schema.assets)
     .set({ lifecycleState: "purged", purgedAt: new Date() })
     .where(eq(schema.assets.id, assetId));
-
-  void plexoPublishEvent("ext.fonto.asset.purged", {
-    assetId,
-    filename: asset.filename,
-    reason: "variant-consolidation",
-  });
 
   log.info({ canonical: evalResult.canonicalAssetId }, "variant purged");
   return { assetId, purged: true, dryRun, reason: "purged" };

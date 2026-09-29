@@ -5,7 +5,7 @@
 // pipeline. Use for nudge-tests + ad-hoc reprocessing.
 //
 // Unlike POST /api/v1/assets/:id/reprocess (which inlines a lightweight
-// classify+describe call against Plexo), this script enqueues the full
+// classify+describe call against the AI tier), this script enqueues the full
 // asset-processing job that runs the worker's processAsset — so all the
 // downstream side effects fire: classify_method, sub_classification,
 // face detection, CLIP embedding, OCR, etc.

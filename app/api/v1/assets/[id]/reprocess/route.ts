@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Joeybuilt LLC
 //
 // User-triggered re-scan of a single asset: re-runs the FULL recognition
-// pipeline (classify + describe + OCR via the local plexo-vision/Ollama
+// pipeline (classify + describe + OCR via the local vision sidecar
 // path, plus CLIP embedding, vision "things" labels, and face detection) —
 // the same work the upload path enqueues. Reachable from the web lightbox
 // and the mobile asset detail screen.

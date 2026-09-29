@@ -19,7 +19,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { assetStorageKey } from "@/lib/r2";
 import { storage } from "@/lib/storage";
-import { plexoVisionOcr } from "@/lib/plexo";
+import { intelligence } from "@/lib/intelligence/client";
 import { pdfExtractText } from "@/lib/processing/renderPdfFirstPage";
 
 // Cap raw text reads so a multi-MB log/code file can't blow up memory or the
@@ -70,9 +70,12 @@ export async function extractDocumentText(params: {
       // Image-only scan: OCR the rendered preview derivative if it exists.
       if (previewKey) {
         const url = await storage().presignGet(previewKey, { expiresIn: 300 });
-        const ocr = await plexoVisionOcr(workspaceId, url).catch(() => null);
-        if (ocr && ocr.text.trim()) {
-          return { text: ocr.text.trim(), method: "pdf-ocr" };
+        const ocrText = await intelligence
+          .ocr({ imageUrl: url })
+          .then((r) => r.spans.map((s) => s.text).join("\n"))
+          .catch(() => null);
+        if (ocrText && ocrText.trim()) {
+          return { text: ocrText.trim(), method: "pdf-ocr" };
         }
       }
       return { text: "", method: "none" };

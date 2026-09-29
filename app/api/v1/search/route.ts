@@ -9,7 +9,7 @@ import { getUserWorkspaces } from "@/lib/workspace";
 import { db, schema } from "@/lib/db";
 import { eq, and, or, asc, ilike, inArray, gte, lte, isNull, sql, getTableColumns } from "drizzle-orm";
 import { logger } from "@/lib/logger";
-import { plexoMemorySearch } from "@/lib/plexo";
+import { intelligence } from "@/lib/intelligence/client";
 import { serializeAsset } from "@/lib/assets/createAssetRow";
 import { deltaE76, parseHex, rgbToLab, type PaletteColor } from "@/lib/perceptual";
 import { parseScopeParam, scopeCond } from "@/lib/scope";
@@ -76,7 +76,7 @@ type CachedSearchResponse = {
 // ONE axis (createdAt ASC), so `s` is a literal here; sharing the /assets
 // helper would mean lifting its 5-value SortAxis union out of that route,
 // which is a bigger change than a decode function. Only plain/FTS search
-// pages — the color-ΔE filter and the Plexo semantic re-rank both mutate the
+// pages — the color-ΔE filter and the semantic re-rank both mutate the
 // result set after the SQL cut, so a keyset walked across them would skip and
 // duplicate rows.
 type SearchCursor = { s: "created"; b: string; i: string };
@@ -359,11 +359,17 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Semantic re-ranking via Plexo if requested and query given
+  // Semantic re-ranking via the app-owned memory tier (embed the query
+  // locally, search the pgvector memory rows) when requested and a query is
+  // given. Degrades to unranked results when the embedding tier is absent.
   if (semantic && q && assets.length > 0) {
     try {
-      const semanticResults = await plexoMemorySearch(workspaceIds[0], q);
-      const semanticIds = new Set(semanticResults.map((r) => r.id));
+      const { vector } = await intelligence.embedText(q);
+      const semanticResults = await intelligence.searchMemory({
+        queryVector: [...vector],
+        topK: 100,
+      });
+      const semanticIds = new Set(semanticResults.map((r) => r.record.id));
       // Surface semantic matches first, then rest
       const scored = assets.sort((a, b) => {
         const aScore = semanticIds.has(a.id) ? 1 : 0;

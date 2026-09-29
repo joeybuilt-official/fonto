@@ -6,7 +6,7 @@
 //   GET  /api/v1/search/clip?q=dog+on+beach&limit=50
 //   POST /api/v1/search/clip   { q, limit, workspaceId? }
 //
-// Embeds the query text via the Plexo vision service, runs a pgvector
+// Embeds the query text via the vision sidecar, runs a pgvector
 // nearest-neighbour search against `assets.clip_vec`, and returns the
 // matching assets sorted by cosine similarity descending.
 //
@@ -86,7 +86,7 @@ async function handle(request: NextRequest): Promise<NextResponse> {
   }
 
   // Short-circuit when the vision service isn't configured. This is the
-  // common "running fonto without the optional Plexo vision sidecar" case.
+  // common "running fonto without the optional vision sidecar" case.
   if (!intelligence.available("embedText")) {
     return NextResponse.json({
       results: [],

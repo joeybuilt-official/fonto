@@ -1,21 +1,39 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
+//
+// GET/POST /api/peer/v1/data — Fonto's PUBLISHED data API.
+//
+// This is Fonto's own contract, served over the wire to any authorized peer or
+// agent. It replaces an internal route that a specific sibling app called: the
+// endpoint, its auth and its shape now belong to Fonto, and a peer that wants
+// this data pairs against this surface (auth: `Authorization: Bearer
+// <FONTO_SERVICE_KEY>`) instead of Fonto reaching into anyone else's API.
+//
+// Scoping is explicit — every request names the `userId` it acts for, and the
+// handler scopes every query to that user's workspace. The caller is
+// responsible for only asking about users it is authorized to act for; the
+// service key is the deployment's inbound credential, documented in
+// `jex.manifest.json`.
+//
+// An unconfigured key returns 503 FEATURE_DISABLED (this optional surface is
+// off — a configuration state, not an outage of a core flow).
 export const dynamic = "force-dynamic"
 
 import { NextRequest, NextResponse } from "next/server"
-import { timingSafeEqual } from "node:crypto"
 import { z } from "zod"
 import { db, schema } from "@/lib/db"
 import { and, desc, eq, ilike, isNull, or } from "drizzle-orm"
 import { bumpCollectionSeq } from "@/lib/db/seq"
+import { authorizeServiceKey } from "@/lib/peer/service-keys"
 
-function isServiceKeyRequest(req: NextRequest): boolean {
-  const svcKey = process.env.PLEXO_SERVICE_KEY
-  const rawToken = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "")
-  if (!svcKey || !rawToken) return false
-  const a = Buffer.from(rawToken)
-  const b = Buffer.from(svcKey)
-  return a.length === b.length && timingSafeEqual(a, b)
+/** Translate the peer-auth result into the response, or null when authorized. */
+function peerAuthResponse(request: NextRequest): NextResponse | null {
+  const auth = authorizeServiceKey(request)
+  if (auth.ok) return null
+  return NextResponse.json(
+    { error: auth.message ?? "Unauthorized", code: auth.code },
+    { status: auth.status ?? 401 },
+  )
 }
 
 // Guarded limit parse: a present-but-non-numeric ?limit (e.g. ?limit=abc) makes
@@ -36,9 +54,8 @@ async function resolveWorkspaceId(userId: string): Promise<string | null> {
 }
 
 export async function GET(request: NextRequest) {
-  if (!isServiceKeyRequest(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
+  const denied = peerAuthResponse(request)
+  if (denied) return denied
 
   const { searchParams } = new URL(request.url)
   const entity = searchParams.get("entity")
@@ -279,9 +296,8 @@ const tagDeleteSchema = z.object({
 })
 
 export async function POST(request: NextRequest) {
-  if (!isServiceKeyRequest(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
+  const denied = peerAuthResponse(request)
+  if (denied) return denied
 
   let body: Record<string, unknown>
   try { body = await request.json() } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }) }

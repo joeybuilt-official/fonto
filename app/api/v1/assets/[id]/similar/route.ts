@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // "More like this" — visual similarity via the asset's own CLIP embedding
 // (pgvector kNN over fonto.assets.clip_vec). Falls back to same-classification
-// when the asset has no embedding yet. The previous implementation ran a Plexo
+// when the asset has no embedding yet. The previous implementation ran a
 // TEXT memory search over description+OCR+filename, which gave shallow results
 // for text-less photos and ignored the CLIP vectors already stored.
 export const dynamic = "force-dynamic";

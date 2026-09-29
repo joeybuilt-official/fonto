@@ -449,7 +449,7 @@ export async function sync(dir: string, opts: SyncOpts): Promise<void> {
   let dedupe = 0;
   let fail = 0;
   // Sequential upload — keeps the request budget predictable and avoids
-  // hammering the Plexo classifier on a fresh seed. A future flag can
+  // hammering the AI classifier on a fresh seed. A future flag can
   // bump this; the simplest correct shape ships first.
   for (let i = 0; i < upload.length; i++) {
     const f = upload[i];

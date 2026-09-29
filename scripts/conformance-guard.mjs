@@ -1,19 +1,33 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 /**
- * Plexo Connection & Profile Standard — conformance drift-guard.
+ * Fleet-decoupling conformance guard.
  *
- * Fails (exit 1) if this app drifts from the standard:
- *   1. A forbidden AI-provider package appears in package.json deps/devDeps.
- *      Apps must route ALL AI through Plexo Core via @joeybuilt/plexo-sdk —
- *      never pin a provider/model locally.
- *   2. A source file imports a Plexo core internal (`@plexo/*`). Only the
- *      public SDK `@joeybuilt/plexo-sdk` is allowed.
- *   3. The asset LIST projection (assetGridColumns) selects a column that is
- *      not on the reviewed whitelist — every extra column ships on every row
- *      of every library page.
+ * Fails (exit 1) if Fonto re-acquires an internal dependency on a sibling
+ * Joeybuilt app. Three families of violation are caught:
  *
- * Plain Node ESM, zero dependencies — runs standalone in CI without install.
+ *   1. A sibling SDK appears as a dependency in package.json, or a pinned
+ *      AI-provider package the app is not allowed to carry.
+ *   2. A source file imports a removed Fonto-internal bridge to a sibling app,
+ *      or a sibling's published package.
+ *   3. A source file references a sibling app's environment variables — the
+ *      tell-tale of a hidden runtime coupling that no import map reveals.
+ *
+ * WHAT IS ALLOWED, deliberately: reaching a peer over the wire. A URL, a
+ * hostname, or an HTTP call to a peer's PUBLIC API is the whole point of the
+ * decoupling — Fonto pairs through published interfaces (see
+ * `public/.well-known/jex.manifest.json`). This guard blocks internal
+ * coupling, not integration.
+ *
+ * `@anthropic-ai/sdk` stays ALLOWED: it is the embedded Completion tier floor
+ * (`lib/intelligence/adapters/anthropic.ts`), reached with the deployment's or
+ * the user's own key — never a sibling app's credential.
+ *
+ * Rule 4 (asset LIST projection whitelist) is unchanged and still enforced.
+ *
+ * Plain Node ESM, zero dependencies — runs standalone in CI before any install.
+ *
+ * Usage:  node scripts/conformance-guard.mjs
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname, extname } from "node:path";
@@ -21,13 +35,18 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-// ── Forbidden provider/AI packages (exact names or scope/prefix globs) ───────
-// NOTE: @anthropic-ai/sdk is intentionally ALLOWED in Fonto as the embedded
-// Completion tier floor (lib/intelligence/adapters/anthropic.ts via
-// FONTO_LLM_KEY) with federated Plexo as preferred. See ADR-002 + lib/intelligence/registry.ts.
+// ── (1) Forbidden packages (exact names or scope/prefix globs) ───────────────
+// Sibling-app SDKs, plus AI-provider packages that would re-introduce a pinned
+// model/provider coupling. `@anthropic-ai/sdk` is deliberately absent — it is
+// the embedded tier floor, configured per deployment/user, not a sibling path.
 const FORBIDDEN_PKGS = [
+  "@joeybuilt/plexo-sdk",
+  "@joeybuilt/fylo-sdk",
+  "@joeybuilt/levio-sdk",
+  "@joeybuilt/depona-sdk",
+  "@joeybuilt/nexalog-sdk",
   "openai",
-  "anthropic",
+  "anthropic", // bare name; @anthropic-ai/sdk is the allowed embedded floor
   "ai", // Vercel AI SDK
   "@ai-sdk/*",
   "ollama",
@@ -37,6 +56,23 @@ const FORBIDDEN_PKGS = [
   "tesseract.js",
   "@supabase/*",
 ];
+
+// ── (2) Forbidden import specifiers ──────────────────────────────────────────
+// Modules that used to bridge into a sibling app. They were deleted; an import
+// of one means a half-migration reintroduced a local coupling.
+const FORBIDDEN_IMPORTS = [
+  "@/lib/plexo",
+  "@/lib/plexo-registration",
+  "@/lib/plexo-vision",
+  "@/lib/intelligence/adapters/plexo-unified",
+  "@/lib/intelligence/adapters/plexo-federated",
+  "@joeybuilt/plexo-sdk",
+];
+
+// ── (3) Forbidden env var names ──────────────────────────────────────────────
+// A sibling app's server-side credentials/config. Fonto owns its own keys
+// (FONTO_*) and its own AI connection config (AI_*/FONTO_LLM_*).
+const FORBIDDEN_ENV_RE = /\bPLEXO_[A-Z0-9_]+/g;
 
 function matchesPattern(name, pattern) {
   if (pattern.endsWith("/*")) return name.startsWith(pattern.slice(0, -1));
@@ -58,35 +94,55 @@ if (existsSync(pkgPath)) {
     for (const pattern of FORBIDDEN_PKGS) {
       if (matchesPattern(name, pattern)) {
         violations.push(
-          `package.json: forbidden dependency "${name}" (matched "${pattern}") — route AI through @joeybuilt/plexo-sdk, not a pinned provider`,
+          `package.json: forbidden dependency "${name}" (matched "${pattern}") — route AI through the app-owned tiers, never a sibling SDK or a pinned provider`,
         );
       }
     }
   }
 }
 
-// ── (2) source import scan ───────────────────────────────────────────────────
-const SCAN_DIRS = ["app", "lib", "src"];
-const SOURCE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
-const IMPORT_RE = /(?:from\s+|import\s*\(?\s*|require\s*\(\s*)["']([^"']+)["']/g;
+// ── (2) source scan for sibling imports / env references ─────────────────────
+const SCAN_DIRS = ["app", "lib", "worker", "scripts", "cli", "packages", "components", "ops"];
+const SOURCE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts"]);
+const IMPORT_RE = /(?:from\s+|import\s*\(?\s*|require\s*\(\s*)[\"']([^\"']+)[\"']/g;
 
 function walk(dir) {
   for (const entry of readdirSync(dir)) {
-    if (entry === "node_modules" || entry === ".next") continue;
+    if (
+      entry === "node_modules" ||
+      entry === ".next" ||
+      entry === "dist" ||
+      entry === "coverage"
+    ) {
+      continue;
+    }
     const full = join(dir, entry);
     const st = statSync(full);
     if (st.isDirectory()) {
+      // Drizzle snapshots are immutable history — never rewritten, never flagged.
+      if (full.includes(`${join("drizzle", "meta")}`)) continue;
       walk(full);
     } else if (SOURCE_EXT.has(extname(full))) {
+      // Skip this guard itself — it names the forbidden strings in order to
+      // ban them and must not flag its own enforcement text.
+      if (full === fileURLToPath(import.meta.url)) continue;
       const src = readFileSync(full, "utf8");
       let m;
       while ((m = IMPORT_RE.exec(src)) !== null) {
         const spec = m[1];
-        if (spec === "@plexo" || spec.startsWith("@plexo/")) {
-          violations.push(
-            `${full.slice(ROOT.length + 1)}: imports core internal "${spec}" — only @joeybuilt/plexo-sdk is allowed`,
-          );
+        for (const forbidden of FORBIDDEN_IMPORTS) {
+          if (spec === forbidden || spec.startsWith(`${forbidden}/`)) {
+            violations.push(
+              `${full.slice(ROOT.length + 1)}: imports removed sibling module "${spec}" — pair over the published API/MCP surface instead`,
+            );
+          }
         }
+      }
+      const envMatches = src.match(FORBIDDEN_ENV_RE);
+      if (envMatches) {
+        violations.push(
+          `${full.slice(ROOT.length + 1)}: references sibling env var(s) ${[...new Set(envMatches)].join(", ")} — an app owns its own config`,
+        );
       }
     }
   }
@@ -227,12 +283,12 @@ if (existsSync(schemaPath) && existsSync(projectionPath)) {
 
 // ── Report ───────────────────────────────────────────────────────────────────
 if (violations.length > 0) {
-  console.error("Plexo conformance guard FAILED:");
+  console.error("Fleet-decoupling conformance guard FAILED:");
   for (const v of violations) console.error(`  - ${v}`);
   process.exit(1);
 }
 
 console.log(
-  "Plexo conformance guard OK — no provider deps, no core-internal imports, asset list projection within whitelist.",
+  "Fleet-decoupling conformance guard OK — no sibling deps, no sibling imports, no sibling env, asset list projection within whitelist.",
 );
 process.exit(0);
