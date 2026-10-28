@@ -7,6 +7,32 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Changed — the architecture gate now checks the map it claims
+
+`pnpm arch` was a bare `depcruise` run whose config held four containment rules about the
+intelligence adapters and the credential secret-box. It enforced none of the four-layer map that
+`.claude/rules/clean-architecture.md` commits to, and it asserted nothing about its own coverage —
+a missing root `typescript` or a broadened `options.exclude.path` makes dependency-cruiser cruise
+~0 modules and still print "no dependency violations found" with exit 0.
+
+Now `scripts/check-architecture.mjs` is the gate. It refuses to run until it can prove it saw the
+source: `typescript` resolves, the tsconfig exists, ≥90% of tracked `lib app worker scripts`
+sources were cruised, and 100% of policed `lib/` sources were cruised **without** the config's
+excludes applied. Then the map itself:
+
+- `error` (0 violations today, blocking): `lib-no-ui`, `drivers-no-upward`, `no-circular`.
+- `warn` (counted backlog, promoted to blocking at zero): `domain-stays-pure` 46 in 15 files,
+  `application-no-drivers` 24 in 13, `adapters-no-drivers` 172 in 132 — 242 warnings over 627
+  modules, printed every run.
+
+One real cycle was fixed rather than baselined: `lib/storage/index.ts` re-exported `read.ts`,
+which imported the barrel back for the backend singletons. The singletons moved to
+`lib/storage/backends.ts`; both sides now point there and the public surface is unchanged.
+
+Detection proven, not assumed: a planted `lib/ -> components/` import, a planted
+`lib/db/ -> lib/processing/` import, and a planted barrel cycle each fail the gate and name their
+rule; hiding `node_modules/typescript` makes the gate refuse rather than report success.
+
 ### Changed — Next.js 16.4.2 and sharp 0.35.5 (security)
 
 `next` **16.2.1 → 16.4.2**, `eslint-config-next` in lockstep, `sharp`

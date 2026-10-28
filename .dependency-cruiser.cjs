@@ -68,6 +68,64 @@ module.exports = {
       },
       to: { path: "^lib/crypto/secret-box" },
     },
+    // ---------------------------------------------------------------------------------------
+    // The four-layer map, from `.claude/rules/clean-architecture.md` -> "This project's layers".
+    // Measured 2026-10-28 over 627 modules: the three rules marked `error` are clean today, so they
+    // block from day one. The three marked `warn` carry a real backlog (46 / 24 / 172 violations)
+    // and are the report-only ramp the doctrine prescribes: visible in every run, counted, and
+    // promoted to `error` the moment their count reaches zero. Nothing here is a claim that the
+    // tree conforms — the counts say exactly how far it does not.
+    // ---------------------------------------------------------------------------------------
+    {
+      // The UI may reach lib/; lib/ may never reach the UI — a hook or component imported from a
+      // feature module drags React and the router into code that must run in a worker and a script.
+      name: "lib-no-ui",
+      severity: "error",
+      from: { path: "^lib/" },
+      to: { path: "^(components|app)/" },
+    },
+    {
+      // Drivers never depend on the layers above them. db/queue/storage importing a feature module
+      // inverts the arrow: the driver would then change when the business changes.
+      name: "drivers-no-upward",
+      severity: "error",
+      from: { path: "^lib/(db|queue|storage)/" },
+      to: { path: "^lib/(processing|fusion|evidence|temporal|stacks|classify|faces)/" },
+    },
+    {
+      // A cycle means no layer ordering exists at all. This rule found one real cycle when it
+      // landed (`lib/storage/index.ts -> read.ts -> index.ts`) and it is fixed, not baselined.
+      name: "no-circular",
+      severity: "error",
+      from: {},
+      to: { circular: true },
+    },
+    {
+      // Domain purity, written as a path exclusion rather than a dependencyTypes list: a type list
+      // is silently incomplete (a devDependency classifies as `npm-dev`), a path rule is not.
+      // Backlog: 46 violations in 15 files, the largest being drizzle-orm and node:fs imports in
+      // lib/fusion/, lib/evidence/ and lib/classify/.
+      name: "domain-stays-pure",
+      severity: "warn",
+      from: { path: "^lib/(fusion|evidence|temporal|stacks|classify|faces)/" },
+      to: { pathNot: "^lib/(fusion|evidence|temporal|stacks|classify|faces)/" },
+    },
+    {
+      // Use cases reach persistence and the queue through ports, not by importing the driver.
+      // Backlog: 24 violations in 13 files, all `@/lib/db`, `@/lib/queue/*` and `@/lib/storage`.
+      name: "application-no-drivers",
+      severity: "warn",
+      from: { path: "^lib/processing/" },
+      to: { path: "^lib/(db|storage|queue|intelligence/adapters)/" },
+    },
+    {
+      // Route handlers translate transport; they own authz and DTOs, not queries. Backlog: 172
+      // violations in 132 of 161 route files — the largest gap in the map and the next ratchet.
+      name: "adapters-no-drivers",
+      severity: "warn",
+      from: { path: "^(app/api|lib/openapi)/" },
+      to: { path: "^lib/(db|storage|queue)/" },
+    },
   ],
   options: {
     doNotFollow: { path: "node_modules" },
