@@ -25,7 +25,7 @@
 //      reach.
 //   4. Key areas present: at least one cruised module from each cruise root — a direct check that
 //      the roots resolve at all.
-//   5. THE MODULE RATCHET (scripts/arch-module-baseline.json): the exact sorted list of repo-owned
+//   5. THE MODULE RATCHET (scripts/arch-baseline.json → `repo_modules`): the exact sorted list of repo-owned
 //      module paths, written by `pnpm arch:baseline`. Every listed path must still be cruised.
 //      This is a path list and not a number for a measured reason: `totalCruised` is not a file
 //      count — 627 = 557 repo sources + 70 `node_modules/.pnpm` entries on 2026-10-28 — and
@@ -77,7 +77,7 @@ const BASELINE = '.dependency-cruiser-known-violations.json'
  * `pnpm arch:baseline` and enforced as a floor. See "the module ratchet" in the header for why this
  * is a path list and not a number.
  */
-const MODULE_BASELINE = 'scripts/arch-module-baseline.json'
+const MODULE_BASELINE = 'scripts/arch-baseline.json'
 const DEPCRUISE_BIN = path.join(ROOT, 'node_modules', '.bin', 'depcruise')
 const WRITE_BASELINE = process.argv.includes('--write-baseline')
 
@@ -153,7 +153,7 @@ if (!WRITE_BASELINE && !existsSync(path.join(ROOT, MODULE_BASELINE))) {
   } catch (error) {
     fail(`the module ratchet ${MODULE_BASELINE} is not valid JSON`, [String(error.message)])
   }
-  if (moduleBaseline && !Array.isArray(moduleBaseline.modules)) {
+  if (moduleBaseline && !Array.isArray(moduleBaseline.repo_modules)) {
     fail(`the module ratchet ${MODULE_BASELINE} has no \`modules\` array`, [
       'it is written by `pnpm arch:baseline`; a hand-edited shape cannot be enforced.',
     ])
@@ -295,7 +295,7 @@ if (cruise) {
       `known (baselined) ${cruise.summary?.ignore ?? 0} ignored · ` +
       `retired by exclude.path ${excludeRetired.length} · ` +
       `repo-owned modules ${repoModules.length} · internal edges ${internalEdges} · ` +
-      `module ratchet ${moduleBaseline ? moduleBaseline.modules.length : 'n/a'} · ` +
+      `repo modules ${repoModules.length} (baseline ${moduleBaseline ? moduleBaseline.repo_modules.length : 'n/a'}) · ` +
       `baseline ${HEALTHY_BASELINE.modules}/${HEALTHY_BASELINE.dependencies}`,
   )
 
@@ -364,7 +364,7 @@ if (cruise) {
   }
 
   if (moduleBaseline) {
-    const listed = moduleBaseline.modules
+    const listed = moduleBaseline.repo_modules
     const foreign = listed.filter((entry) => typeof entry !== 'string' || entry.startsWith('node_modules/'))
     if (foreign.length > 0) {
       fail(`${MODULE_BASELINE} lists ${foreign.length} entry/entries that are not repo-owned paths`, [
@@ -383,7 +383,7 @@ if (cruise) {
           [
             'this is the alias/rename failure a coverage ratio cannot see: the file exists, the module',
             'count can even rise, and yet the rules that used to act on it are dead.',
-            ...stillTracked.slice(0, 20).map((entry) => `  - no longer cruised: ${entry}`),
+            ...stillTracked.slice(0, 20).map((entry) => `  - baseline module ${entry} is no longer cruised`),
             stillTracked.length > 20 ? `  - … and ${stillTracked.length - 20} more` : null,
           ].filter(Boolean),
         )
@@ -394,7 +394,7 @@ if (cruise) {
           [
             'a path leaves this list only in the PR that deletes the file, so the deletion is visible',
             'in review. Re-record deliberately with: pnpm arch:baseline',
-            ...vanished.slice(0, 20).map((entry) => `  - gone: ${entry}`),
+            ...vanished.slice(0, 20).map((entry) => `  - baseline module ${entry} is gone from the tree`),
             vanished.length > 20 ? `  - … and ${vanished.length - 20} more` : null,
           ].filter(Boolean),
         )
@@ -464,8 +464,9 @@ if (problems.length === 0 && WRITE_BASELINE && cruise) {
       {
         // Written by `pnpm arch:baseline`. A FLOOR of repo-owned module paths: every one of these
         // must still be cruised, and a path leaves only in the PR that deletes the file.
-        ref: head,
-        modules: repoModules,
+
+        measured_at: head,
+        repo_modules: repoModules,
       },
       null,
       2,

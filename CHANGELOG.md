@@ -23,7 +23,7 @@ numbers that go quiet when the resolver stops working. Measured on this tree tod
 
 A ratio floor cannot see that. Three assertions now do:
 
-- **The module ratchet — `scripts/arch-module-baseline.json`.** The exact sorted list of
+- **The module ratchet — `scripts/arch-baseline.json`.** The exact sorted list of
   **557 repo-owned module paths** the cruise saw, written by `pnpm arch:baseline`. Every listed
   path must still be cruised; a path leaves the list only in the PR that deletes the file. It is a
   path list and not a number on purpose: `totalCruised` is not a file count — 627 = 557 repo
