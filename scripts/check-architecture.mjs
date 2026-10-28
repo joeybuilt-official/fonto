@@ -25,8 +25,8 @@
 //      reach.
 //   4. Key areas present: at least one cruised module from each cruise root — a direct check that
 //      the roots resolve at all.
-//   5. THE MODULE RATCHET (scripts/arch-baseline.json → `repo_modules`): the exact sorted list of repo-owned
-//      module paths, written by `pnpm arch:baseline`. Every listed path must still be cruised.
+//   5. THE MODULE RATCHET (scripts/arch-baseline.json → `repo_modules`): the exact sorted list of
+//      module paths that `git ls-files` reports, written by `pnpm arch:baseline`. Every listed path must still be cruised.
 //      This is a path list and not a number for a measured reason: `totalCruised` is not a file
 //      count — 627 = 557 repo sources + 70 `node_modules/.pnpm` entries on 2026-10-28 — and
 //      breaking one `@/*` alias moved it 627 -> 748 with no file added, while 1,199 internal edges
@@ -37,8 +37,9 @@
 //      `couldNotResolve` and, by default, still reports no violation. Every such import is an edge
 //      the rules cannot see, so any of them fails the gate.
 //   7. INTERNAL-EDGE FLOOR (MIN_INTERNAL_EDGES). Files can be cruised while their imports stop
-//      becoming edges; the coverage ratio reads 100% in exactly that state. Measured 1724, floored
-//      at ~90%.
+//      becoming edges; the coverage ratio reads 100% in exactly that state. Measured 1,563 after
+//      builtins stopped counting as internal edges (they were 161 of the old 1,724), floored at
+//      ~90%.
 //
 // THE LAYER RULES, AND THE HONEST LADDER (measured 2026-10-28, 620 modules cruised)
 //   `error` — clean today, so blocking from day one:
@@ -90,7 +91,7 @@ const MIN_COVERAGE = 0.9
  * 100% while the rules police almost nothing. Raise this constant only in a PR that shows the
  * higher measured count.
  */
-const MIN_INTERNAL_EDGES = 1550
+const MIN_INTERNAL_EDGES = 1400
 /** Below this, source discovery itself is broken (no git, wrong roots) — fail rather than divide by ~0. */
 const MIN_EXPECTED_SOURCES = 50
 /** Path prefixes whose tracked sources the rules act on: all must be cruised. */
@@ -240,6 +241,19 @@ if (cruise) {
     .filter(Boolean)
     .filter((file) => /\.tsx?$/.test(file))
 
+  // EVERY path git knows about, unfiltered. The module ratchet is a list of paths *in this
+  // repository*, and `git ls-files` is the only config-independent definition of that. Filtering by
+  // "does not start with node_modules/" was not enough: dependency-cruiser reports a Node builtin
+  // under its bare specifier (`fs`, `child_process`, `path`), so that filter wrote 13 builtins into
+  // the ratchet — entries that would fail the gate the day the last import of them was deleted,
+  // over files that never existed.
+  const trackedAll = new Set(
+    execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
+  )
+
   const cruised = new Set((cruise.modules ?? []).map((module) => module.source))
   const covered = trackedSources.filter((file) => cruised.has(file))
   const missed = trackedSources.filter((file) => !cruised.has(file))
@@ -269,8 +283,8 @@ if (cruise) {
   // being cruised takes every rule that acts on it out of the gate's reach.
   const repoModules = (cruise.modules ?? [])
     .map((module) => module.source)
-    .filter((source) => !source.startsWith('node_modules/'))
-  const repoTrackedByGit = new Set(trackedSources)
+    .filter((source) => trackedAll.has(source))
+  const repoTrackedByGit = trackedAll
   const repoModuleSet = new Set(repoModules)
   const internalEdges = (cruise.modules ?? []).reduce(
     (total, module) =>
@@ -365,11 +379,12 @@ if (cruise) {
 
   if (moduleBaseline) {
     const listed = moduleBaseline.repo_modules
-    const foreign = listed.filter((entry) => typeof entry !== 'string' || entry.startsWith('node_modules/'))
+    const foreign = listed.filter((entry) => typeof entry !== 'string' || !trackedAll.has(entry))
     if (foreign.length > 0) {
-      fail(`${MODULE_BASELINE} lists ${foreign.length} entry/entries that are not repo-owned paths`, [
-        'the ratchet is about the repository\'s own modules; `node_modules/.pnpm/...` moves with the',
-        'lockfile and cannot be a bound.',
+      fail(`${MODULE_BASELINE} lists ${foreign.length} entry/entries that are not paths in this repository`, [
+        'every entry must come from `git ls-files`. `node_modules/.pnpm/...` moves with the lockfile',
+        'and cannot be a bound; a Node builtin (`fs`, `child_process`) is not a file at all and would',
+        'fail the gate the day its last import was deleted, naming a file that never existed.',
         ...foreign.slice(0, 10).map((entry) => `  - ${String(entry)}`),
       ])
     } else {
@@ -447,9 +462,15 @@ if (problems.length === 0 && WRITE_BASELINE && cruise) {
   const rendered = await format(cruise, { outputType: 'baseline' })
   writeFileSync(path.join(ROOT, BASELINE), String(rendered.output ?? ''))
 
+  const trackedAllSet = new Set(
+    execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
+  )
   const repoModules = (cruise.modules ?? [])
     .map((module) => module.source)
-    .filter((source) => !source.startsWith('node_modules/'))
+    .filter((source) => trackedAllSet.has(source))
     .sort()
   const head = (() => {
     try {
