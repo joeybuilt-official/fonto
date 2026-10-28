@@ -93,7 +93,7 @@
     "kdbush": "^4.0.2",
     "lucide-react": "^1.7.0",
     "maplibre-gl": "^4.7.1",
-    "next": "16.2.1",
+    "next": "16.4.2",
     "pg": "^8.20.0",
     "pino": "^10.3.1",
     "postgres": "^3.4.8",
@@ -102,7 +102,7 @@
     "react-dom": "19.2.4",
     "react-image-crop": "^11.0.10",
     "shadcn": "^4.1.2",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.5",
     "supercluster": "^8.0.1",
     "tailwind-merge": "^3.5.0",
     "tus-js-client": "^4.3.1",
@@ -125,10 +125,15 @@
     "dependency-cruiser": "^18.0.0",
     "drizzle-kit": "^0.31.0",
     "eslint": "^9",
-    "eslint-config-next": "16.2.1",
+    "eslint-config-next": "16.4.2",
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
     "typescript": "^5",
     "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "eslint-plugin-react-hooks": "7.0.1"
+    }
   }
 }
