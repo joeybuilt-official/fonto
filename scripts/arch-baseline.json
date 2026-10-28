@@ -1,5 +1,5 @@
 {
-  "measured_at": "d4f527b",
+  "measured_at": "11ecd9a",
   "repo_modules": [
     "app/(app)/app/_components/asset-ask-panel.tsx",
     "app/(app)/app/_components/asset-grid.tsx",
@@ -262,9 +262,6 @@
     "app/not-found.tsx",
     "app/page.tsx",
     "app/share/[token]/page.tsx",
-    "assert/strict",
-    "buffer",
-    "child_process",
     "components/app-mobile-avatar-menu.tsx",
     "components/app-mobile-bottom-bar.tsx",
     "components/app-shell.tsx",
@@ -292,10 +289,6 @@
     "components/ui/snackbar.tsx",
     "components/ui/switch.tsx",
     "components/ui/text-field.tsx",
-    "crypto",
-    "fs",
-    "fs/promises",
-    "http",
     "lib/activity/emit.ts",
     "lib/ai/connections.ts",
     "lib/assets/access.ts",
@@ -484,9 +477,6 @@
     "lib/webhooks/emit.ts",
     "lib/webhooks/events.ts",
     "lib/workspace.ts",
-    "module",
-    "os",
-    "path",
     "public/.well-known/jex.manifest.json",
     "scripts/_scope/deriveScope.test.ts",
     "scripts/_scope/exclusion.integration.ts",
@@ -554,9 +544,6 @@
     "scripts/verify-clip-classification.ts",
     "scripts/verify-immich-batch.mts",
     "scripts/verify-immich-batch.ts",
-    "stream",
-    "stream/promises",
-    "url",
     "worker/index.ts"
   ]
 }

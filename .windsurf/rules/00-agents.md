@@ -156,10 +156,12 @@ may never run it, so CI is the plane that actually holds.
   sources were cruised *without* the config's excludes applied. A degraded cruise fails loudly
   instead of reporting success.
 - **The module ratchet is a coverage floor, not an allowlist:** `scripts/arch-baseline.json`
-  records the exact list of repo-owned module paths the cruise saw (557 today), and every one must
-  still be cruised — a path leaves the list only in the PR that deletes the file. It grandfathers no
+  records the exact list of module paths `git ls-files` reports (544 today), and every one must
+  still be cruised — a path leaves the list only in the PR that deletes the file. Membership is
+  defined by git, not by a `node_modules/` prefix test: a Node builtin is not a file, and recording
+  one would fail the gate over a path that never existed. It grandfathers no
   violation; it proves the rules can still see the code. Any import dependency-cruiser could not
-  resolve fails the gate outright, and `MIN_INTERNAL_EDGES` (1,724 measured, floor 1,550) fails a run
+  resolve fails the gate outright, and `MIN_INTERNAL_EDGES` (1,563 measured, floor 1,400) fails a run
   whose graph has lost its wiring.
 - **When it runs:** `pnpm arch` runs in the pre-commit gate beside typecheck and test
   (`git-workflow.md`) and — the binding copy — as a **required** CI check

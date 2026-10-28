@@ -24,7 +24,12 @@ numbers that go quiet when the resolver stops working. Measured on this tree tod
 A ratio floor cannot see that. Three assertions now do:
 
 - **The module ratchet — `scripts/arch-baseline.json`.** The exact sorted list of
-  **557 repo-owned module paths** the cruise saw, written by `pnpm arch:baseline`. Every listed
+  **544 module paths `git ls-files` reports**, written by `pnpm arch:baseline`. Only tracked paths
+  may enter it: an earlier cut filtered on "does not start with `node_modules/`", and because
+  dependency-cruiser reports a Node builtin under its bare specifier, 13 builtins (`fs`,
+  `child_process`, `path`, …) were recorded as if they were files — entries that would have failed
+  the gate the day their last import was deleted, naming a file that never existed. Membership is
+  now defined by `git ls-files`, and a baseline entry outside it fails the gate by name. Every listed
   path must still be cruised; a path leaves the list only in the PR that deletes the file. It is a
   path list and not a number on purpose: `totalCruised` is not a file count — 627 = 557 repo
   sources + 70 `node_modules/.pnpm` entries — and one broken alias moved it 627 → 748 with no file
