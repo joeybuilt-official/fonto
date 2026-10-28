@@ -169,7 +169,11 @@ may never run it, so CI is the plane that actually holds.
   growth; it does not stop silent shrinkage, which stays visible in the diff and in the
   existence check above. The base count is over *every* tracked source, not just the cruise roots,
   because the ratchet's entries come from all of `git ls-files` — a narrower denominator would fail a
-  correct baseline.
+  correct baseline. **A base ref that is required must also be required to exist:** CI passes
+  `--require-base` on `pull_request`, so a failed fetch exits non-zero instead of printing a skip.
+  A skip is right on a push or a local shallow clone, where there is no base; it is wrong on a pull
+  request, where it would leave the required check green with the ratchet switched off — the log
+  reader would see the skip, the merge button would not.
 - **When it runs:** `pnpm arch` runs in the pre-commit gate beside typecheck and test
   (`git-workflow.md`) and — the binding copy — as a **required** CI check
   (`scripts/templates/ci-verify.yml`). Green is the only passing score; no agent may merge past it red.
