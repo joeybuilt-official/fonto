@@ -7,7 +7,23 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
-### Fixed — the ratchet can no longer be raised to make a red gate green
+### Fixed — the ratchet can no longer be raised to make a red gate green, or skipped to make it green
+
+Two follow-up defects, both in the gate itself:
+
+- **One number, two stories.** The header said the internal-edge measurement was 1,563 (after the
+  builtin fix) and the constant's own comment said 1,724 (before it), then called 1,400 "~90%" of
+  that — which is 81.2%. A maintainer reading the constant would believe a tolerance the gate does
+  not have, or raise the floor against the wrong base. Both comments now state 1,563, the floor is
+  1,400 = 89.6%, and the gate **computes** the percentage for its log line so the prose cannot
+  drift from the constants again.
+- **A skip that looked green to the merge button.** On a pull request a failed `git fetch` of the
+  base ref made `assertBaselineFloor()` print its SKIP and return `null`, and the gate exited 0.
+  The skip is visible in the log and invisible to branch protection, which reads only the required
+  `verify` conclusion — so the ratchet could be switched off and the check still pass. The CI
+  `pull_request` step now passes `--require-base`, which turns a missing or unfetchable base ref
+  into a named failure. Push and local runs still skip, with a printed line, because there is no
+  base there.
 
 `pnpm arch:baseline` was one command away from erasing any deletion the module ratchet was meant to
 make visible: when the gate went red, re-recording the baseline was the cheap way out. On a pull
@@ -57,8 +73,9 @@ A ratio floor cannot see that. Three assertions now do:
 - **Zero unresolvable imports.** dependency-cruiser marks an import it could not resolve with
   `couldNotResolve` and still reports no violation. Each one is a dependency the rules cannot see,
   so any of them fails the gate with the `file -> specifier` line.
-- **Internal-edge floor (`MIN_INTERNAL_EDGES = 1550`).** Measured **1,724** internal edges today,
-  floored at ~90%, because files can be cruised while their imports stop becoming edges.
+- **Internal-edge floor (`MIN_INTERNAL_EDGES = 1400`).** Measured **1,563** internal edges today,
+  and 1,400 is **89.6%** of that — a ratio the gate now computes and prints rather than a number a
+  comment asserts, because files can be cruised while their imports stop becoming edges.
 
 Canaried against this tree, each restored clean afterwards:
 

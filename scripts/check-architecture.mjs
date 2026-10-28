@@ -37,9 +37,9 @@
 //      `couldNotResolve` and, by default, still reports no violation. Every such import is an edge
 //      the rules cannot see, so any of them fails the gate.
 //   7. INTERNAL-EDGE FLOOR (MIN_INTERNAL_EDGES). Files can be cruised while their imports stop
-//      becoming edges; the coverage ratio reads 100% in exactly that state. Measured 1,563 after
-//      builtins stopped counting as internal edges (they were 161 of the old 1,724), floored at
-//      ~90%.
+//      becoming edges; the coverage ratio reads 100% in exactly that state. Measured **1,563**
+//      after builtins stopped counting as internal edges (they were 161 of the old 1,724). The
+//      floor is 1,400, which is **89.6%** of today's count.
 //
 // THE LAYER RULES, AND THE HONEST LADDER (measured 2026-10-28, 620 modules cruised)
 //   `error` — clean today, so blocking from day one:
@@ -58,8 +58,14 @@
 // `depcruise` run produced. Real violations still fail; warnings still don't.
 //
 // USAGE
-//   node scripts/check-architecture.mjs                  # the gate (`pnpm arch`)
-//   node scripts/check-architecture.mjs --write-baseline # re-record BOTH ratchets (reviewed!)
+//   node scripts/check-architecture.mjs                      # the gate (`pnpm arch`)
+//   node scripts/check-architecture.mjs --base origin/main   # + the BENCH-10 baseline floor
+//   node scripts/check-architecture.mjs --base origin/main --require-base   # CI pull_request path
+//   node scripts/check-architecture.mjs --write-baseline     # re-record BOTH ratchets (reviewed!)
+//
+// `--require-base` turns a missing or unfetchable base ref into an ERROR instead of a printed SKIP.
+// CI passes it on `pull_request`, where the event supplies a base and a silent skip would leave the
+// required `verify` check green with the ratchet switched off.
 //
 // POSIX-friendly, no runtime deps beyond depcruise's own. Node 22 (CI) / 26 (local).
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -85,13 +91,26 @@ const WRITE_BASELINE = process.argv.includes('--write-baseline')
 /** Minimum fraction of tracked in-scope sources the cruise must have seen. */
 const MIN_COVERAGE = 0.9
 /**
- * Internal-edge floor — measured 1724 on main 2026-10-28, floored at ~90%. A count that is printed
- * and never asserted is a log line, not a check: if the resolver stops producing edges (a broken
- * `paths` alias turns 1,199 of them into unresolvable stubs) the coverage ratio above can still read
- * 100% while the rules police almost nothing. Raise this constant only in a PR that shows the
- * higher measured count.
+ * Internal-edge floor — measured **1,563** on main 2026-10-28, after the builtin fix removed 161
+ * "edges" that were never edges (the older figure, 1,724, counted them). The floor is
+ * **1,400 = 89.6%** of that measurement. A count that is printed and never asserted is a log line,
+ * not a check: if the resolver stops producing edges (a broken `paths` alias turns 1,199 of them
+ * into unresolvable stubs) the coverage ratio above can still read 100% while the rules police
+ * almost nothing. Raise this constant only in a PR that shows the higher measured count, and keep
+ * the percentage beside it true.
  */
 const MIN_INTERNAL_EDGES = 1400
+/** The measurement the floor above is a fraction of — change one, change both. */
+const MEASURED_INTERNAL_EDGES = 1563
+/**
+ * The percentage the prose quotes, derived rather than typed.
+ *
+ * The previous revision of this file claimed "1,724 measured, floored at ~90%" beside a constant of
+ * 1,400 — 81.2%, not 90%, against a measurement that had itself been corrected to 1,563 in the
+ * header. Two comments disagreed about what one number meant. Computing it here means the ratio in
+ * the log cannot drift from the constants, and any prose that contradicts it is visibly wrong.
+ */
+const floorPercent = () => ((MIN_INTERNAL_EDGES / MEASURED_INTERNAL_EDGES) * 100).toFixed(1)
 /** Below this, source discovery itself is broken (no git, wrong roots) — fail rather than divide by ~0. */
 const MIN_EXPECTED_SOURCES = 50
 /** Path prefixes whose tracked sources the rules act on: all must be cruised. */
@@ -125,6 +144,17 @@ const BASE_REF = (() => {
   if (inline) return inline.slice('--base='.length)
   return null
 })()
+
+/**
+ * Set by CI on the `pull_request` path, where the event already supplies a base ref.
+ *
+ * Without it, a missing ref is a printed SKIP and exit 0 — correct for a push or a local shallow
+ * clone, where there is genuinely no base to compare against. On a pull request that same SKIP is
+ * invisible to branch protection: `verify` is fonto's required context, so a failed `git fetch`
+ * would switch the ratchet off and still paint the check green. The script was never mistaken; the
+ * merge button was, and the merge button is the reader that matters.
+ */
+const REQUIRE_BASE = process.argv.includes('--require-base')
 
 // ---------------------------------------------------------------------------------------------
 // Preconditions: the inputs whose absence degrades depcruise silently.
@@ -195,7 +225,25 @@ if (!WRITE_BASELINE && !existsSync(path.join(ROOT, MODULE_BASELINE))) {
  * which mixes two measurements and moves on a dependency change alone.
  */
 function assertBaselineFloor() {
-  if (WRITE_BASELINE || !moduleBaseline || !BASE_REF) return null
+  if (WRITE_BASELINE || !moduleBaseline) return null
+  if (!BASE_REF) {
+    if (REQUIRE_BASE) {
+      return {
+        headline:
+          '`--require-base` was passed but no base ref was given — the ratchet cannot be checked',
+        details: [
+          'pass `--base <ref>` (CI passes `origin/<base>` on pull_request), or drop `--require-base`.',
+          'this fails rather than skipping because on a pull request a skip leaves the required',
+          'check green with the ratchet unenforced, which is the failure this rule exists for.',
+        ],
+      }
+    }
+    console.log(
+      'arch-gate: baseline floor NOT checked — no `--base <ref>` given (local run, or a push event ' +
+        'where there is no base). Pass `--base origin/<branch>` to compare against a base commit.',
+    )
+    return null
+  }
   const countSources = (args) =>
     execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
       .split('\n')
@@ -207,6 +255,17 @@ function assertBaselineFloor() {
     baseCount = countSources(['ls-tree', '-r', '--name-only', BASE_REF])
   } catch (error) {
     const reason = String(error.stderr ?? error.message ?? error).split('\n')[0].trim()
+    if (REQUIRE_BASE) {
+      return {
+        headline:
+          `base ref \`${BASE_REF}\` is not available in this checkout (${reason}) — required on this path`,
+        details: [
+          'the base ref was required, so this is a failure and not a skip: an unchecked ratchet must',
+          'never leave a required check green. Fetch the ref (`git fetch origin <base>`) or fix the',
+          'ref name CI passes.',
+        ],
+      }
+    }
     console.log(
       `arch-gate: SKIP — baseline floor NOT checked: base ref \`${BASE_REF}\` is not available ` +
         `in this checkout (${reason}).`,
@@ -389,7 +448,8 @@ if (cruise) {
       `new violations ${cruise.summary?.error ?? 0} errors / ${cruise.summary?.warn ?? 0} warnings · ` +
       `known (baselined) ${cruise.summary?.ignore ?? 0} ignored · ` +
       `retired by exclude.path ${excludeRetired.length} · ` +
-      `repo-owned modules ${repoModules.length} · internal edges ${internalEdges} · ` +
+      `repo-owned modules ${repoModules.length} · internal edges ${internalEdges} ` +
+      `(floor ${MIN_INTERNAL_EDGES} = ${floorPercent()}% of the ${MEASURED_INTERNAL_EDGES} measured) · ` +
       `repo modules ${repoModules.length} (baseline ${moduleBaseline ? moduleBaseline.repo_modules.length : 'n/a'}) · ` +
       `baseline ${HEALTHY_BASELINE.modules}/${HEALTHY_BASELINE.dependencies}`,
   )
@@ -538,7 +598,10 @@ if (problems.length > 0) {
 }
 
 if (problems.length === 0 && !WRITE_BASELINE && floorFailure) {
-  console.error('\narch-gate: FAIL — the baseline ratchet grew above its floor.\n')
+  // No fixed prefix: the two ways to get here are "the baseline grew" and "the base ref was
+  // required and missing", and a headline that names the first for both would be the same defect
+  // this file was just repaired for — a label that reads as a checked fact.
+  console.error('\narch-gate: FAIL — the baseline floor could not be satisfied.\n')
   console.error(`  ✖ ${floorFailure.headline}\n`)
   for (const line of floorFailure.details) console.error(`      ${line}`)
   console.error('')
