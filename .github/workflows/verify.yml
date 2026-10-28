@@ -58,7 +58,20 @@ jobs:
       - run: pnpm conformance
       - run: pnpm typecheck
       - run: pnpm lint
-      - run: pnpm arch
+      # BENCH-10: the ratchet may never be raised above the module count at the PR's base commit,
+      # so on a pull_request the gate gets the base ref and compares. `--depth=1` on the checkout
+      # means `origin/<base>` usually has to be fetched first; a failed fetch is not fatal — the
+      # gate prints its own SKIP line saying the floor was not checked, which is visible in the log
+      # rather than mistaken for a pass. On a push there is no base and it skips for the same reason.
+      - name: Architecture boundaries and baseline floor
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin \
+              "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}" || true
+            node scripts/check-architecture.mjs --base "origin/${{ github.base_ref }}"
+          else
+            pnpm arch
+          fi
       # Tests run before the build: `pnpm test` is fast and gives a precise
       # failure, whereas a broken unit test would otherwise surface only as a
       # failed 6 GiB `next build` ~15 minutes later.
