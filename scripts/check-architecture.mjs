@@ -108,6 +108,24 @@ const HEALTHY_BASELINE = { modules: 620, dependencies: 2566, known: 0 }
 const problems = []
 const fail = (headline, details) => problems.push({ headline, details })
 
+/**
+ * The ref this run is compared against — the base branch of a pull request.
+ *
+ * Passed explicitly, and only explicitly: `--base <ref>` or `--base=<ref>`. An environment fallback
+ * was the first draft and it was wrong for two reasons — it put a second, invisible input into a
+ * gate whose whole justification is that it says what it checked, and it made the gate read two
+ * variables that are CI-provided rather than configuration, which `check:env-example` correctly
+ * refuses to let `.env.example` lie about. CI passes `--base origin/<base>`; a run without it (a
+ * push, a local `pnpm arch`) has no base to compare against and the floor check does not apply.
+ */
+const BASE_REF = (() => {
+  const index = process.argv.indexOf('--base')
+  if (index >= 0 && process.argv[index + 1]) return process.argv[index + 1]
+  const inline = process.argv.find((arg) => arg.startsWith('--base='))
+  if (inline) return inline.slice('--base='.length)
+  return null
+})()
+
 // ---------------------------------------------------------------------------------------------
 // Preconditions: the inputs whose absence degrades depcruise silently.
 // ---------------------------------------------------------------------------------------------
@@ -161,6 +179,69 @@ if (!WRITE_BASELINE && !existsSync(path.join(ROOT, MODULE_BASELINE))) {
     moduleBaseline = null
   }
 }
+/**
+ * The baseline may never exceed the module count at the base commit (BENCH-10).
+ *
+ * A ratchet that can be raised whenever the gate goes red is not a ratchet: the cheap way out of a
+ * failure becomes "regenerate the baseline", which erases the very deletions it was meant to make
+ * visible. Requiring `baseline <= base` means lowering the baseline is only possible from a tree
+ * that already earned the smaller number, so the exit from a red gate is deleting code or fixing
+ * the import — not re-recording.
+ *
+ * Both sides are counted the same way, from git, over the same set: every tracked `.ts`/`.tsx` in
+ * the repository — not just the cruise roots, because the ratchet's entries come from all of
+ * `git ls-files` and a narrower denominator would fail the gate on a correct baseline. That is
+ * deliberate: the alternative is comparing depcruise's head count against a git count of the base,
+ * which mixes two measurements and moves on a dependency change alone.
+ */
+function assertBaselineFloor() {
+  if (WRITE_BASELINE || !moduleBaseline || !BASE_REF) return null
+  const countSources = (args) =>
+    execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((file) => /\.tsx?$/.test(file)).length
+  let baseCount
+  try {
+    baseCount = countSources(['ls-tree', '-r', '--name-only', BASE_REF])
+  } catch (error) {
+    const reason = String(error.stderr ?? error.message ?? error).split('\n')[0].trim()
+    console.log(
+      `arch-gate: SKIP — baseline floor NOT checked: base ref \`${BASE_REF}\` is not available ` +
+        `in this checkout (${reason}).`,
+    )
+    console.log(
+      'arch-gate: a skip is printed rather than assumed; fetch the ref (`git fetch origin ' +
+        '<base>`) or pass `--base <ref>` to check it.',
+    )
+    return null
+  }
+  const headCount = countSources(['ls-files'])
+  const listed = moduleBaseline.repo_modules.length
+  console.log(
+    `arch-gate: baseline floor — base ${baseCount} · head ${headCount} · baseline ${listed} ` +
+      `(against \`${BASE_REF}\`)`,
+  )
+  if (listed > baseCount) {
+    return {
+      headline:
+        `the module ratchet lists ${listed} paths but the base commit \`${BASE_REF}\` only had ` +
+        `${baseCount} — the baseline grew above its own floor`,
+      details: [
+        `base ${baseCount} · head ${headCount} · baseline ${listed}`,
+        'a baseline may shrink in the PR that deletes files; it may never grow. Re-recording is',
+        'the escape this rule removes: if the ratchet is red, delete code or repair the import.',
+        'if this PR genuinely adds modules, the baseline stays where it was — it is a floor of',
+        'paths that must keep being cruised, not a census of the tree.',
+      ],
+    }
+  }
+  return null
+}
+
+const floorFailure = assertBaselineFloor()
+
 if (!WRITE_BASELINE && !existsSync(path.join(ROOT, BASELINE))) {
   fail(`the known-violations baseline ${BASELINE} is missing`, [
     'the ratchet cannot be applied, so every grandfathered violation would fail the gate at once.',
@@ -456,6 +537,13 @@ if (problems.length > 0) {
   )
 }
 
+if (problems.length === 0 && !WRITE_BASELINE && floorFailure) {
+  console.error('\narch-gate: FAIL — the baseline ratchet grew above its floor.\n')
+  console.error(`  ✖ ${floorFailure.headline}\n`)
+  for (const line of floorFailure.details) console.error(`      ${line}`)
+  console.error('')
+}
+
 if (problems.length === 0 && WRITE_BASELINE && cruise) {
   // Only reachable with a full-coverage cruise, so a degraded run can never record a baseline.
   const { format } = await import('dependency-cruiser')
@@ -502,4 +590,5 @@ if (problems.length === 0 && WRITE_BASELINE && cruise) {
 
 if (violationExitCode !== 0) process.exitCode = violationExitCode
 else if (problems.length > 0) process.exitCode = 1
+else if (floorFailure) process.exitCode = 1
 else if (!WRITE_BASELINE) console.log('arch-gate: OK — violation report above; coverage asserted.')

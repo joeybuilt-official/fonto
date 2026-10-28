@@ -7,6 +7,24 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Fixed — the ratchet can no longer be raised to make a red gate green
+
+`pnpm arch:baseline` was one command away from erasing any deletion the module ratchet was meant to
+make visible: when the gate went red, re-recording the baseline was the cheap way out. On a pull
+request the gate now counts tracked `.ts`/`.tsx` at `origin/<base>` and at HEAD with the same filter,
+prints `base N · head M · baseline K`, and fails when the baseline exceeds the base — so lowering the
+baseline is only possible from a tree that already earned the smaller number.
+
+Both sides are counted from git, not from dependency-cruiser: comparing a cruise count at HEAD
+against a git count at the base would mix two measurements and move when a dependency changed.
+
+    arch-gate: baseline floor — base 559 · head 559 · baseline 544 (against `origin/main`)
+
+When the base ref is not in the checkout the gate prints a `SKIP` line naming the ref and the reason
+and does not pretend it checked. On a push there is no base, so the floor is a pull-request check by
+design. It stops a baseline from growing; silent shrinkage is still caught by the existence check
+that fails when a listed path leaves the tree, and is visible in the diff.
+
 ### Fixed — the gate counted modules and edges it never checked
 
 Two numbers the gate already computed were printed and never asserted, and both are exactly the

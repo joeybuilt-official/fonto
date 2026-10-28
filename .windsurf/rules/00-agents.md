@@ -163,6 +163,16 @@ may never run it, so CI is the plane that actually holds.
   violation; it proves the rules can still see the code. Any import dependency-cruiser could not
   resolve fails the gate outright, and `MIN_INTERNAL_EDGES` (1,563 measured, floor 1,400) fails a run
   whose graph has lost its wiring.
+- **The ratchet may never be raised (BENCH-10):** on a pull request the gate counts tracked
+  `.ts`/`.tsx` at `origin/<base>` and at HEAD the same way — `git ls-tree` and `git ls-files`, one
+  filter — prints `base N · head M · baseline K`, and fails when the baseline exceeds the base. Without
+  it, the cheap exit from a red gate is `pnpm arch:baseline`, which erases the deletions the ratchet
+  exists to make visible. With it, shrinking the baseline is only possible from a tree that already
+  earned the smaller number, so the exit from red is deleting code or repairing the import. It stops
+  growth; it does not stop silent shrinkage, which stays visible in the diff and in the
+  existence check above. The base count is over *every* tracked source, not just the cruise roots,
+  because the ratchet's entries come from all of `git ls-files` — a narrower denominator would fail a
+  correct baseline.
 - **When it runs:** `pnpm arch` runs in the pre-commit gate beside typecheck and test
   (`git-workflow.md`) and — the binding copy — as a **required** CI check
   (`scripts/templates/ci-verify.yml`). Green is the only passing score; no agent may merge past it red.
