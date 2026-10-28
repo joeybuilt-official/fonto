@@ -7,6 +7,39 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Changed — Next.js 16.4.2 and sharp 0.35.5 (security)
+
+`next` **16.2.1 → 16.4.2**, `eslint-config-next` in lockstep, `sharp`
+**^0.34.5 → ^0.35.5**. OSV, queried against the two exact package versions:
+**16.2.1 carries 34 advisories, 16.4.2 carries 0.** The 34 include both
+unauthenticated RCEs fixed in 16.3.6 and 16.3.8, the `next/og` RCE, the
+image-optimizer SSRF, the App Router middleware bypass, and the Server Actions
+DoS (CVE-2026-94482).
+
+Reachability as configured — checked, not assumed: `cacheComponents` is not
+enabled, so the `use cache` typed-array path never executes, and no SVG image
+optimization is enabled, so the optimizer RCE path is closed at configuration.
+The DoS needs no precondition; that is the one this bump actually closes.
+
+`sharp` is a resolved-path question, not a manifest one. The copy that matters
+is the one `next` resolves from its own directory, and the version bump alone
+would have left **0.34.5** there. `sharp` is a direct dependency now, and read
+from inside `next` the resolved path is `sharp@0.35.5` — with the **musl**
+prebuilds present in the lock, because the image is `node:22-alpine`.
+
+`eslint-plugin-react-hooks` is pinned to **7.0.1** with a `pnpm.overrides` entry.
+`eslint-config-next@16.4.2` asks for `^7.1.0`, and 7.1 turns
+`react-hooks/set-state-in-effect` into 80 hard errors across this tree — none of
+them new code. The pin keeps the lint gate behaving exactly as it does on
+`main` (0 errors, 63 warnings) instead of smuggling a rule change into a
+security bump.
+
+Gates on this branch: `typecheck` clean · `arch` clean (623 modules, 2572
+dependencies, no violations) · `conformance` clean · `build` clean with the full
+route table and a written `BUILD_ID` · `lint` **0 errors**, 63 pre-existing
+warnings. The Alpine image build was not exercised locally, and this repo has no
+deploy-on-merge, so landing this does not move production by itself.
+
 ### Changed — fleet decoupling: Fonto is standalone (zero sibling-app coupling)
 
 Fonto no longer depends on any sibling Joeybuilt app. The internal coupling —
