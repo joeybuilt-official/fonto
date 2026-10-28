@@ -37,9 +37,10 @@
 //      `couldNotResolve` and, by default, still reports no violation. Every such import is an edge
 //      the rules cannot see, so any of them fails the gate.
 //   7. INTERNAL-EDGE FLOOR (MIN_INTERNAL_EDGES). Files can be cruised while their imports stop
-//      becoming edges; the coverage ratio reads 100% in exactly that state. Measured **1,563**
-//      after builtins stopped counting as internal edges (they were 161 of the old 1,724). The
-//      floor is 1,400, which is **89.6%** of today's count.
+//      becoming edges; the coverage ratio reads 100% in exactly that state. The floor is a fraction
+//      of MEASURED_INTERNAL_EDGES, and that fraction is COMPUTED — read it off the run line
+//      (`floor 1400 = N% of the M measured`), never off a comment. A typed percentage is a second
+//      copy of the arithmetic and goes stale the first time either constant moves.
 //
 // THE LAYER RULES, AND THE HONEST LADDER (measured 2026-10-28, 620 modules cruised)
 //   `error` — clean today, so blocking from day one:
@@ -91,13 +92,12 @@ const WRITE_BASELINE = process.argv.includes('--write-baseline')
 /** Minimum fraction of tracked in-scope sources the cruise must have seen. */
 const MIN_COVERAGE = 0.9
 /**
- * Internal-edge floor — measured **1,563** on main 2026-10-28, after the builtin fix removed 161
- * "edges" that were never edges (the older figure, 1,724, counted them). The floor is
- * **1,400 = 89.6%** of that measurement. A count that is printed and never asserted is a log line,
- * not a check: if the resolver stops producing edges (a broken `paths` alias turns 1,199 of them
- * into unresolvable stubs) the coverage ratio above can still read 100% while the rules police
- * almost nothing. Raise this constant only in a PR that shows the higher measured count, and keep
- * the percentage beside it true.
+ * Internal-edge floor — a fraction of MEASURED_INTERNAL_EDGES below, never a typed percentage: the
+ * ratio is `floorPercent()`, printed on every run. A count that is printed and never asserted is a
+ * log line, not a check: if the resolver stops producing edges (a broken `paths` alias turns 1,199
+ * of them into unresolvable stubs) the coverage ratio above can still read 100% while the rules
+ * police almost nothing. Raise this constant only in a PR that shows the higher measured edge count
+ * — and read the resulting percentage off the run line rather than writing it into this comment.
  */
 const MIN_INTERNAL_EDGES = 1400
 /** The measurement the floor above is a fraction of — change one, change both. */

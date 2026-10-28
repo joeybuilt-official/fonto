@@ -14,9 +14,9 @@ Two follow-up defects, both in the gate itself:
 - **One number, two stories.** The header said the internal-edge measurement was 1,563 (after the
   builtin fix) and the constant's own comment said 1,724 (before it), then called 1,400 "~90%" of
   that — which is 81.2%. A maintainer reading the constant would believe a tolerance the gate does
-  not have, or raise the floor against the wrong base. Both comments now state 1,563, the floor is
-  1,400 = 89.6%, and the gate **computes** the percentage for its log line so the prose cannot
-  drift from the constants again.
+  not have, or raise the floor against the wrong base. Both comments now carry no percentage at
+  all — the floor and its measurement are two constants, and the gate **computes** the ratio for its
+  log line, so no comment can drift from the arithmetic.
 - **A skip that looked green to the merge button.** On a pull request a failed `git fetch` of the
   base ref made `assertBaselineFloor()` print its SKIP and return `null`, and the gate exited 0.
   The skip is visible in the log and invisible to branch protection, which reads only the required
@@ -74,7 +74,7 @@ A ratio floor cannot see that. Three assertions now do:
   `couldNotResolve` and still reports no violation. Each one is a dependency the rules cannot see,
   so any of them fails the gate with the `file -> specifier` line.
 - **Internal-edge floor (`MIN_INTERNAL_EDGES = 1400`).** Measured **1,563** internal edges today,
-  and 1,400 is **89.6%** of that — a ratio the gate now computes and prints rather than a number a
+  and the floor sits just under it — a ratio the gate computes and prints rather than a number a
   comment asserts, because files can be cruised while their imports stop becoming edges.
 
 Canaried against this tree, each restored clean afterwards:
@@ -87,7 +87,9 @@ Canaried against this tree, each restored clean afterwards:
 - one baseline module retired by a temporarily broadened `options.exclude.path` → exit 1,
   *1 module in the ratchet is still in the tree but was NOT cruised*.
 
-Restoring each returns `arch-gate: OK` at 557 modules / 1,724 internal edges.
+Restoring each returns `arch-gate: OK` at 557 modules / 1,724 internal edges — the counts as they
+stood then; 161 of those "edges" were Node builtins and were removed later, and the numbers in this
+entry predate the builtin fix, the module ratchet and the internal-edge floor.
 
 ### Changed — the architecture gate now checks the map it claims
 
