@@ -109,19 +109,20 @@ const problems = []
 const fail = (headline, details) => problems.push({ headline, details })
 
 /**
- * The ref this run is compared against — the merge base's branch on a pull request.
+ * The ref this run is compared against — the base branch of a pull request.
  *
- * `--base <ref>` wins, then `ARCH_BASE_REF`, then the `GITHUB_BASE_REF` GitHub sets on `pull_request`
- * events. On a `push` there is no base and the floor check is skipped with a printed SKIP, never
- * silently: a check that cannot say it ran is indistinguishable from one that did.
+ * Passed explicitly, and only explicitly: `--base <ref>` or `--base=<ref>`. An environment fallback
+ * was the first draft and it was wrong for two reasons — it put a second, invisible input into a
+ * gate whose whole justification is that it says what it checked, and it made the gate read two
+ * variables that are CI-provided rather than configuration, which `check:env-example` correctly
+ * refuses to let `.env.example` lie about. CI passes `--base origin/<base>`; a run without it (a
+ * push, a local `pnpm arch`) has no base to compare against and the floor check does not apply.
  */
 const BASE_REF = (() => {
   const index = process.argv.indexOf('--base')
   if (index >= 0 && process.argv[index + 1]) return process.argv[index + 1]
   const inline = process.argv.find((arg) => arg.startsWith('--base='))
   if (inline) return inline.slice('--base='.length)
-  if (process.env.ARCH_BASE_REF) return process.env.ARCH_BASE_REF
-  if (process.env.GITHUB_BASE_REF) return `origin/${process.env.GITHUB_BASE_REF}`
   return null
 })()
 
