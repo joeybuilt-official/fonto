@@ -5,28 +5,13 @@
 // per-workspace / per-asset policy resolver (Phase B2+) will return a
 // policy-appropriate backend from here without touching call sites.
 
-import { R2Backend } from "./r2-backend";
-import { LocalFsBackend } from "./local-fs-backend";
 import type { StorageBackend } from "./interface";
+import { r2 } from "./backends";
 
 export * from "./interface";
 export * from "./policy";
 export * from "./read";
-
-let _r2: StorageBackend | null = null;
-let _local: StorageBackend | null = null;
-
-/** The R2 backend singleton. */
-export function r2(): StorageBackend {
-  if (!_r2) _r2 = new R2Backend();
-  return _r2;
-}
-
-/** The local-filesystem backend singleton (LOCAL_STORAGE_ROOT). */
-export function localFs(): StorageBackend {
-  if (!_local) _local = new LocalFsBackend();
-  return _local;
-}
+export { r2, localFs } from "./backends";
 
 /**
  * Resolve the storage backend for a key. Phase 1: always R2. Later phases pass

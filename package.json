@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "arch": "depcruise --config .dependency-cruiser.cjs lib app worker scripts",
+    "arch": "node scripts/check-architecture.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bash scripts/db-migrate-refuses.sh",
     "db:setup": "bash scripts/db-apply.sh",
@@ -47,7 +47,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "conformance": "node scripts/conformance-guard.mjs",
-    "verify": "pnpm typecheck && pnpm lint && pnpm arch && pnpm conformance && pnpm test"
+    "verify": "pnpm typecheck && pnpm lint && pnpm arch && pnpm conformance && pnpm test",
+    "arch:baseline": "node scripts/check-architecture.mjs --write-baseline"
   },
   "engines": {
     "node": ">=22",

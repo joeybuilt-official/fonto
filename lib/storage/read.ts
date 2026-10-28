@@ -16,7 +16,7 @@
 // only ever falls back for ORIGINAL keys.
 
 import { logger } from "@/lib/logger";
-import { r2, localFs } from "@/lib/storage";
+import { r2, localFs } from "./backends";
 import type { GetOptions, StreamResult } from "./interface";
 
 /**

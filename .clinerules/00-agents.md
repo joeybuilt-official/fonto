@@ -136,17 +136,29 @@ that binds every contributor equally — a human, or any AI agent in any tool �
 in required CI**: a client-side pre-commit hook is skippable with `--no-verify` and a non-Claude agent
 may never run it, so CI is the plane that actually holds.
 
-- **The tool here:** dependency-cruiser (`forbidden` rules), configured in `.dependency-cruiser.cjs`.
-  It encodes the intelligence boundary (only `lib/intelligence/adapters/` may import the provider SDK
-  or the vision-client module; adapters are reached only via `lib/intelligence/client`) and the single
-  home for credential encryption (`lib/crypto/secret-box.ts`) — it does **not** yet encode the
-  four-layer map above. Extend it as the map solidifies.
+- **The tool here:** dependency-cruiser (`forbidden` rules), configured in `.dependency-cruiser.cjs`,
+  run through `scripts/check-architecture.mjs`. It encodes the intelligence boundary (only
+  `lib/intelligence/adapters/` may import the provider SDK or the vision-client module; adapters are
+  reached only via `lib/intelligence/client`), the single home for credential encryption
+  (`lib/crypto/secret-box.ts`), **and the four-layer map above** — `lib-no-ui`, `drivers-no-upward`
+  and `no-circular` as blocking `error` rules, `domain-stays-pure`, `application-no-drivers` and
+  `adapters-no-drivers` as `warn` rules carrying a counted backlog. Measured 2026-10-28 over 627
+  modules: 0 errors, 242 warnings (172 of them `adapters-no-drivers`, 46 `domain-stays-pure`, 24
+  `application-no-drivers`). A `warn` rule moves to `error` the day its count reaches zero; nothing
+  is grandfathered into a baseline file.
+- **The wrapper is not ceremony:** `pnpm arch` used to be a bare `depcruise`, which printed
+  "no violations found" and exit 0 whether or not it had cruised anything. `scripts/check-architecture.mjs`
+  now asserts its own coverage first — `typescript` resolves, the tsconfig the config names exists,
+  ≥90% of `git ls-files lib app worker scripts` sources were cruised, and 100% of policed `lib/`
+  sources were cruised *without* the config's excludes applied. A degraded cruise fails loudly
+  instead of reporting success.
 - **When it runs:** `pnpm arch` runs in the pre-commit gate beside typecheck and test
   (`git-workflow.md`) and — the binding copy — as a **required** CI check
   (`scripts/templates/ci-verify.yml`). Green is the only passing score; no agent may merge past it red.
 - **Report-only ramp for a non-conforming repo:** if the layer map still has `target:` rows (business
   logic in controllers, ORM models imported inward), start the linter in **report-only** mode so the
   violation count is visible without blocking, then flip it to blocking once the count reaches zero.
+  This repo is on that ramp today: the three `warn` rules above are a real, counted backlog.
   This is exactly where the check earns its keep — do not skip it on the messy repos that need it most.
 - **Wiring:** the kit NAMES this gate and CHECKS for it (`/audit-claude-setup` Check 6); it does not
   generate a layout-coupled config for you. Use the `arch-enforce` skill to encode the filled layer
