@@ -25,6 +25,20 @@
 //      reach.
 //   4. Key areas present: at least one cruised module from each cruise root — a direct check that
 //      the roots resolve at all.
+//   5. THE MODULE RATCHET (scripts/arch-module-baseline.json): the exact sorted list of repo-owned
+//      module paths, written by `pnpm arch:baseline`. Every listed path must still be cruised.
+//      This is a path list and not a number for a measured reason: `totalCruised` is not a file
+//      count — 627 = 557 repo sources + 70 `node_modules/.pnpm` entries on 2026-10-28 — and
+//      breaking one `@/*` alias moved it 627 -> 748 with no file added, while 1,199 internal edges
+//      turned into stubs. Arithmetic on that number measures the resolver, not the tree. A path
+//      fails by name (`no longer cruised: lib/x.ts`), needs no merge-base and no `git diff`, and
+//      works in a shallow clone. The count is printed as a derived value; it is never the bound.
+//   6. ZERO UNRESOLVABLE IMPORTS. dependency-cruiser marks an import it could not resolve with
+//      `couldNotResolve` and, by default, still reports no violation. Every such import is an edge
+//      the rules cannot see, so any of them fails the gate.
+//   7. INTERNAL-EDGE FLOOR (MIN_INTERNAL_EDGES). Files can be cruised while their imports stop
+//      becoming edges; the coverage ratio reads 100% in exactly that state. Measured 1724, floored
+//      at ~90%.
 //
 // THE LAYER RULES, AND THE HONEST LADDER (measured 2026-10-28, 620 modules cruised)
 //   `error` — clean today, so blocking from day one:
@@ -44,11 +58,11 @@
 //
 // USAGE
 //   node scripts/check-architecture.mjs                  # the gate (`pnpm arch`)
-//   node scripts/check-architecture.mjs --write-baseline # re-record the ratchet (reviewed!)
+//   node scripts/check-architecture.mjs --write-baseline # re-record BOTH ratchets (reviewed!)
 //
 // POSIX-friendly, no runtime deps beyond depcruise's own. Node 22 (CI) / 26 (local).
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -58,11 +72,25 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ROOTS = ['lib', 'app', 'worker', 'scripts']
 const CONFIG = '.dependency-cruiser.cjs'
 const BASELINE = '.dependency-cruiser-known-violations.json'
+/**
+ * The module ratchet: the exact sorted list of REPO-OWNED module paths the cruise saw, recorded by
+ * `pnpm arch:baseline` and enforced as a floor. See "the module ratchet" in the header for why this
+ * is a path list and not a number.
+ */
+const MODULE_BASELINE = 'scripts/arch-module-baseline.json'
 const DEPCRUISE_BIN = path.join(ROOT, 'node_modules', '.bin', 'depcruise')
 const WRITE_BASELINE = process.argv.includes('--write-baseline')
 
 /** Minimum fraction of tracked in-scope sources the cruise must have seen. */
 const MIN_COVERAGE = 0.9
+/**
+ * Internal-edge floor — measured 1724 on main 2026-10-28, floored at ~90%. A count that is printed
+ * and never asserted is a log line, not a check: if the resolver stops producing edges (a broken
+ * `paths` alias turns 1,199 of them into unresolvable stubs) the coverage ratio above can still read
+ * 100% while the rules police almost nothing. Raise this constant only in a PR that shows the
+ * higher measured count.
+ */
+const MIN_INTERNAL_EDGES = 1550
 /** Below this, source discovery itself is broken (no git, wrong roots) — fail rather than divide by ~0. */
 const MIN_EXPECTED_SOURCES = 50
 /** Path prefixes whose tracked sources the rules act on: all must be cruised. */
@@ -111,6 +139,26 @@ if (!existsSync(path.join(ROOT, CONFIG))) {
   fail(`${CONFIG} is missing`, [
     'the architecture rules live there; without the config there is no gate to run.',
   ])
+}
+let moduleBaseline = null
+if (!WRITE_BASELINE && !existsSync(path.join(ROOT, MODULE_BASELINE))) {
+  fail(`the module ratchet ${MODULE_BASELINE} is missing`, [
+    'without it the gate can only assert a ratio, and a ratio is exactly what an alias break',
+    'defeats: the module count RISES while the edges the rules act on disappear.',
+    'record it once, deliberately, with: pnpm arch:baseline',
+  ])
+} else if (!WRITE_BASELINE) {
+  try {
+    moduleBaseline = JSON.parse(readFileSync(path.join(ROOT, MODULE_BASELINE), 'utf8'))
+  } catch (error) {
+    fail(`the module ratchet ${MODULE_BASELINE} is not valid JSON`, [String(error.message)])
+  }
+  if (moduleBaseline && !Array.isArray(moduleBaseline.modules)) {
+    fail(`the module ratchet ${MODULE_BASELINE} has no \`modules\` array`, [
+      'it is written by `pnpm arch:baseline`; a hand-edited shape cannot be enforced.',
+    ])
+    moduleBaseline = null
+  }
 }
 if (!WRITE_BASELINE && !existsSync(path.join(ROOT, BASELINE))) {
   fail(`the known-violations baseline ${BASELINE} is missing`, [
@@ -215,6 +263,29 @@ if (cruise) {
   const dependencyCount = cruise.summary?.totalDependenciesCruised ?? 0
   const ratio = trackedSources.length > 0 ? covered.length / trackedSources.length : 0
 
+  // ---- the module ratchet and the two counts a ratio cannot see ----
+  // Repo-owned means "a path in this repository", not `node_modules/.pnpm/...`. The module list is
+  // a ratchet: a path recorded at baseline may not stop being cruised, because a module that stops
+  // being cruised takes every rule that acts on it out of the gate's reach.
+  const repoModules = (cruise.modules ?? [])
+    .map((module) => module.source)
+    .filter((source) => !source.startsWith('node_modules/'))
+  const repoTrackedByGit = new Set(trackedSources)
+  const repoModuleSet = new Set(repoModules)
+  const internalEdges = (cruise.modules ?? []).reduce(
+    (total, module) =>
+      total +
+      module.dependencies.filter(
+        (dependency) => typeof dependency.resolved === 'string' && repoModuleSet.has(dependency.resolved),
+      ).length,
+    0,
+  )
+  const unresolvable = (cruise.modules ?? []).flatMap((module) =>
+    module.dependencies
+      .filter((dependency) => dependency.couldNotResolve)
+      .map((dependency) => `${module.source} -> ${dependency.module}`),
+  )
+
   const pct = (value) => `${(value * 100).toFixed(1)}%`
   console.log(
     `arch-gate: ${moduleCount} modules / ${dependencyCount} dependencies cruised · ` +
@@ -223,6 +294,8 @@ if (cruise) {
       `new violations ${cruise.summary?.error ?? 0} errors / ${cruise.summary?.warn ?? 0} warnings · ` +
       `known (baselined) ${cruise.summary?.ignore ?? 0} ignored · ` +
       `retired by exclude.path ${excludeRetired.length} · ` +
+      `repo-owned modules ${repoModules.length} · internal edges ${internalEdges} · ` +
+      `module ratchet ${moduleBaseline ? moduleBaseline.modules.length : 'n/a'} · ` +
       `baseline ${HEALTHY_BASELINE.modules}/${HEALTHY_BASELINE.dependencies}`,
   )
 
@@ -262,6 +335,73 @@ if (cruise) {
     )
   }
 
+  if (unresolvable.length > 0) {
+    fail(
+      `${unresolvable.length} import(s) did not resolve — the rules cannot see a dependency that ` +
+        'is not there',
+      [
+        'each line below is an import that LOOKS internal and resolves to nothing: a renamed',
+        'directory, a broken `paths` alias, or a dependency that is not installed. Every edge it',
+        'would have made is missing from the graph, so the rules silently stop covering it.',
+        ...unresolvable.slice(0, 20).map((line) => `  - ${line}`),
+        unresolvable.length > 20 ? `  - … and ${unresolvable.length - 20} more` : null,
+        'fix the import or delete it — do not allow-list it: the rule it hides is the reason this',
+        'gate exists.',
+      ].filter(Boolean),
+    )
+  }
+
+  if (internalEdges < MIN_INTERNAL_EDGES) {
+    fail(
+      `only ${internalEdges} internal edges resolved (floor ${MIN_INTERNAL_EDGES}) — the graph is ` +
+        'missing its wiring',
+      [
+        'files were cruised but their imports did not become edges, so the layer rules ran against a',
+        'skeleton. The coverage ratio above can read 100% in exactly this state, which is why the',
+        'edge count is asserted and not merely printed.',
+      ],
+    )
+  }
+
+  if (moduleBaseline) {
+    const listed = moduleBaseline.modules
+    const foreign = listed.filter((entry) => typeof entry !== 'string' || entry.startsWith('node_modules/'))
+    if (foreign.length > 0) {
+      fail(`${MODULE_BASELINE} lists ${foreign.length} entry/entries that are not repo-owned paths`, [
+        'the ratchet is about the repository\'s own modules; `node_modules/.pnpm/...` moves with the',
+        'lockfile and cannot be a bound.',
+        ...foreign.slice(0, 10).map((entry) => `  - ${String(entry)}`),
+      ])
+    } else {
+      const cruisedNow = new Set(repoModules)
+      const stillTracked = listed.filter((entry) => !cruisedNow.has(entry) && repoTrackedByGit.has(entry))
+      const vanished = listed.filter((entry) => !cruisedNow.has(entry) && !repoTrackedByGit.has(entry))
+      if (stillTracked.length > 0) {
+        fail(
+          `${stillTracked.length} module(s) in the ratchet are still in the tree but were NOT cruised — ` +
+            'the rules no longer reach them',
+          [
+            'this is the alias/rename failure a coverage ratio cannot see: the file exists, the module',
+            'count can even rise, and yet the rules that used to act on it are dead.',
+            ...stillTracked.slice(0, 20).map((entry) => `  - no longer cruised: ${entry}`),
+            stillTracked.length > 20 ? `  - … and ${stillTracked.length - 20} more` : null,
+          ].filter(Boolean),
+        )
+      }
+      if (vanished.length > 0) {
+        fail(
+          `${vanished.length} module(s) in the ratchet no longer exist in the tree`,
+          [
+            'a path leaves this list only in the PR that deletes the file, so the deletion is visible',
+            'in review. Re-record deliberately with: pnpm arch:baseline',
+            ...vanished.slice(0, 20).map((entry) => `  - gone: ${entry}`),
+            vanished.length > 20 ? `  - … and ${vanished.length - 20} more` : null,
+          ].filter(Boolean),
+        )
+      }
+    }
+  }
+
   const absentAreas = KEY_AREAS.filter(
     (area) => !(cruise.modules ?? []).some((module) => module.source.startsWith(area)),
   )
@@ -292,7 +432,7 @@ if (problems.length > 0) {
       `    3. cruise roots wrong (\`${ROOTS.join(' ')}\`) or ${CONFIG} → \`options.exclude.path\``,
       '       too broad: every exclude entry is an unanchored regex matched against the whole',
       '       path, so `build` also excludes `lib/build-prompt.ts`. Anchor with (^|/)…(/|$).',
-      `    4. \`${BASELINE}\` missing — record it once with \`pnpm arch:baseline\`.`,
+      `    4. \`${BASELINE}\` or \`${MODULE_BASELINE}\` missing — record both with \`pnpm arch:baseline\`.`,
       '',
       '  the gate itself lives in scripts/check-architecture.mjs; the rules in .dependency-cruiser.cjs;',
       '  the layer map is .claude/rules/clean-architecture.md; the ratchet is this file header.',
@@ -306,9 +446,35 @@ if (problems.length === 0 && WRITE_BASELINE && cruise) {
   const { format } = await import('dependency-cruiser')
   const rendered = await format(cruise, { outputType: 'baseline' })
   writeFileSync(path.join(ROOT, BASELINE), String(rendered.output ?? ''))
+
+  const repoModules = (cruise.modules ?? [])
+    .map((module) => module.source)
+    .filter((source) => !source.startsWith('node_modules/'))
+    .sort()
+  const head = (() => {
+    try {
+      return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim()
+    } catch {
+      return 'unknown'
+    }
+  })()
+  writeFileSync(
+    path.join(ROOT, MODULE_BASELINE),
+    `${JSON.stringify(
+      {
+        // Written by `pnpm arch:baseline`. A FLOOR of repo-owned module paths: every one of these
+        // must still be cruised, and a path leaves only in the PR that deletes the file.
+        ref: head,
+        modules: repoModules,
+      },
+      null,
+      2,
+    )}\n`,
+  )
   console.log(
-    `arch-gate: wrote ${BASELINE} (${cruise.summary?.violations?.length ?? 0} entries) — ` +
-      'review the diff before committing; this is a ratchet, not an allowlist.',
+    `arch-gate: wrote ${BASELINE} (${cruise.summary?.violations?.length ?? 0} entries) and ` +
+      `${MODULE_BASELINE} (${repoModules.length} repo-owned module paths) — ` +
+      'review the diff before committing; both are ratchets, not allowlists.',
   )
 }
 

@@ -152,6 +152,12 @@ may never run it, so CI is the plane that actually holds.
   ≥90% of `git ls-files lib app worker scripts` sources were cruised, and 100% of policed `lib/`
   sources were cruised *without* the config's excludes applied. A degraded cruise fails loudly
   instead of reporting success.
+- **The module ratchet is a coverage floor, not an allowlist:** `scripts/arch-module-baseline.json`
+  records the exact list of repo-owned module paths the cruise saw (557 today), and every one must
+  still be cruised — a path leaves the list only in the PR that deletes the file. It grandfathers no
+  violation; it proves the rules can still see the code. Any import dependency-cruiser could not
+  resolve fails the gate outright, and `MIN_INTERNAL_EDGES` (1,724 measured, floor 1,550) fails a run
+  whose graph has lost its wiring.
 - **When it runs:** `pnpm arch` runs in the pre-commit gate beside typecheck and test
   (`git-workflow.md`) and — the binding copy — as a **required** CI check
   (`scripts/templates/ci-verify.yml`). Green is the only passing score; no agent may merge past it red.

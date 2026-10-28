@@ -7,6 +7,48 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Fixed — the gate counted modules and edges it never checked
+
+Two numbers the gate already computed were printed and never asserted, and both are exactly the
+numbers that go quiet when the resolver stops working. Measured on this tree today, by breaking the
+`@/*` alias and running it:
+
+| | healthy | alias broken | old gate's verdict |
+|---|---|---|---|
+| modules cruised (`totalCruised`) | 627 | **748** | fine — it went *up* |
+| coverage ratio | 100.0% | **100.0%** | fine |
+| policed layers cruised | 188/188 | **188/188** | fine |
+| rule warnings | 242 | **51** | 79% of the enforcement gone, unreported |
+| unresolvable imports | 0 | **1,267** | unreported |
+
+A ratio floor cannot see that. Three assertions now do:
+
+- **The module ratchet — `scripts/arch-module-baseline.json`.** The exact sorted list of
+  **557 repo-owned module paths** the cruise saw, written by `pnpm arch:baseline`. Every listed
+  path must still be cruised; a path leaves the list only in the PR that deletes the file. It is a
+  path list and not a number on purpose: `totalCruised` is not a file count — 627 = 557 repo
+  sources + 70 `node_modules/.pnpm` entries — and one broken alias moved it 627 → 748 with no file
+  added or deleted, so any delta computed from it measures the resolver, not the tree. A path fails
+  by name (`no longer cruised: lib/x.ts`), needs no merge-base and no `git diff`, and survives a
+  shallow clone.
+- **Zero unresolvable imports.** dependency-cruiser marks an import it could not resolve with
+  `couldNotResolve` and still reports no violation. Each one is a dependency the rules cannot see,
+  so any of them fails the gate with the `file -> specifier` line.
+- **Internal-edge floor (`MIN_INTERNAL_EDGES = 1550`).** Measured **1,724** internal edges today,
+  floored at ~90%, because files can be cruised while their imports stop becoming edges.
+
+Canaried against this tree, each restored clean afterwards:
+
+- `paths` deleted from `tsconfig.json` → exit 1, *1,267 imports did not resolve* plus *27 modules in
+  the ratchet no longer exist in the tree*, while modules rose 627 → 748 and coverage still read
+  100%. The old gate passed that state.
+- one baseline module renamed out of the tree → exit 1, *1 module in the ratchet no longer exist in
+  the tree — gone: lib/workspace.ts*.
+- one baseline module retired by a temporarily broadened `options.exclude.path` → exit 1,
+  *1 module in the ratchet is still in the tree but was NOT cruised*.
+
+Restoring each returns `arch-gate: OK` at 557 modules / 1,724 internal edges.
+
 ### Changed — the architecture gate now checks the map it claims
 
 `pnpm arch` was a bare `depcruise` run whose config held four containment rules about the
