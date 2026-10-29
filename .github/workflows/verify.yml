@@ -69,6 +69,11 @@ jobs:
       # base ref cannot be obtained; the fetch keeps `|| true` so the failure arrives as the gate's
       # own named error rather than a bare shell exit. On a push there is no base, and `pnpm arch`
       # still skips the floor with a printed line, which is correct there.
+      # The gate's own checks can rot the way it was built to catch: a "cleanup" that makes the
+      # baseline-integrity assertions match nothing would leave a green gate over a dead baseline.
+      # Ten cases, six expected to fail, run before the gate — the same shape as scan:infra's
+      # --self-test step below.
+      - run: pnpm arch:self-test
       - name: Architecture boundaries and baseline floor
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then

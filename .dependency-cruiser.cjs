@@ -103,26 +103,29 @@ module.exports = {
     {
       // Domain purity, written as a path exclusion rather than a dependencyTypes list: a type list
       // is silently incomplete (a devDependency classifies as `npm-dev`), a path rule is not.
-      // Backlog: 46 violations in 15 files, the largest being drizzle-orm and node:fs imports in
-      // lib/fusion/, lib/evidence/ and lib/classify/.
+      // Backlog: 46 violations in 15 files, the largest being drizzle-orm imports in lib/fusion/,
+      // lib/evidence/ and lib/classify/ — recorded in .dependency-cruiser-known-violations.json when
+      // this rule was promoted from `warn`. Anything not in that file fails the gate.
       name: "domain-stays-pure",
-      severity: "warn",
+      severity: "error",
       from: { path: "^lib/(fusion|evidence|temporal|stacks|classify|faces)/" },
       to: { pathNot: "^lib/(fusion|evidence|temporal|stacks|classify|faces)/" },
     },
     {
       // Use cases reach persistence and the queue through ports, not by importing the driver.
-      // Backlog: 24 violations in 13 files, all `@/lib/db`, `@/lib/queue/*` and `@/lib/storage`.
+      // Backlog: 24 violations in 13 files, all `@/lib/db`, `@/lib/queue/*` and `@/lib/storage`,
+      // recorded in .dependency-cruiser-known-violations.json when this rule was promoted from `warn`.
       name: "application-no-drivers",
-      severity: "warn",
+      severity: "error",
       from: { path: "^lib/processing/" },
       to: { path: "^lib/(db|storage|queue|intelligence/adapters)/" },
     },
     {
       // Route handlers translate transport; they own authz and DTOs, not queries. Backlog: 172
       // violations in 132 of 161 route files — the largest gap in the map and the next ratchet.
+      // Recorded in .dependency-cruiser-known-violations.json when this rule was promoted from `warn`.
       name: "adapters-no-drivers",
-      severity: "warn",
+      severity: "error",
       from: { path: "^(app/api|lib/openapi)/" },
       to: { path: "^lib/(db|storage|queue)/" },
     },

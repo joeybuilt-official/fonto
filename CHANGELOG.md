@@ -7,6 +7,39 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Changed — every layer rule blocks now, and the backlog it grandfathers can only shrink
+
+The gate that landed yesterday encoded the four-layer map but held three of its ten rules at `warn`:
+`domain-stays-pure`, `application-no-drivers`, `adapters-no-drivers`. A `warn` rule is a rule nobody
+can fail — it printed 242 violations on every run and blocked none of them, which is the same shape as
+the defect the gate was built to remove. All ten rules are now `error`.
+
+**The 242 violations are not fixed, and this entry does not pretend they are.** They are recorded in
+`.dependency-cruiser-known-violations.json` (172 `adapters-no-drivers`, 46 `domain-stays-pure`, 24
+`application-no-drivers`), generated from the tree after the promotion so every entry carries the
+severity the config now declares. What changes is the 243rd: it fails. The baseline may only shrink,
+one entry per fixed violation, in the PR that fixes it.
+
+Two ways that file can stop describing the tree are now checked on every run, because both used to be
+silent:
+
+- **`(rule name, severity)` set equality.** A rule renamed, or its severity moved, leaves baseline
+  entries that match nothing while the run line still counts them as known. A mismatch fails by name.
+- **No dead entries.** A baselined file that is deleted or renamed leaves an entry that can never
+  fire again, inflating "known" forever. Every entry's repo-side `from`/`to` must still be cruised.
+
+`pnpm arch:self-test` drives both checks with ten cases, six of them expected to fail, and runs in
+`verify` before the gate. Verified end-to-end on the real tree with seven probes (each restored): a
+new `lib/fusion/` → `@/lib/db` import fails naming `domain-stays-pure`; the same shape in
+`lib/processing/` and `app/api/**/route.ts` fails naming its rule; a renamed rule fails as undeclared;
+a hand-edited severity fails as drift; a baselined `from` pointed at a removed file fails as dead; and
+an unresolvable import still fails outright. Clean tree: exit 0, `242 known violations ignored`.
+
+`HEALTHY_BASELINE` is deleted. It printed `baseline 620/2566` beside `repo modules 544 (baseline 544)`
+— two different quantities, both called "baseline", the first of which asserted nothing and was
+already stale against the 627 modules / 2,580 dependencies the same run measured. The run line now
+prints the measured length of the file that exists.
+
 ### Fixed — the ratchet can no longer be raised to make a red gate green, or skipped to make it green
 
 Two follow-up defects, both in the gate itself:

@@ -41,22 +41,34 @@
 //      of MEASURED_INTERNAL_EDGES, and that fraction is COMPUTED — read it off the run line
 //      (`floor 1400 = N% of the M measured`), never off a comment. A typed percentage is a second
 //      copy of the arithmetic and goes stale the first time either constant moves.
+//   8. BASELINE INTEGRITY (20261028-1a). A known-violations file stops describing the tree in two
+//      ways, and both used to be silent. A rule is renamed or its severity moves, and the baseline
+//      keeps matching a name the config no longer declares that way. A baselined violation's file is
+//      deleted or renamed, and the entry can never fire again while the count still claims it is
+//      known. Checked here:
+//        - (name, severity) SET EQUALITY: every distinct pair in the baseline must be declared in
+//          `.dependency-cruiser.cjs` at exactly that severity — so a rename, a demotion, or an entry
+//          for a rule that no longer exists fails by name.
+//        - NO DEAD ENTRIES: every baselined `from`/`to` naming a repo path must still be a cruised
+//          module. External targets (`node_modules/...`) are exempt: they are not modules of this repo.
+//      `--self-test` runs ten cases over these two checks, six of them expected to fail, so a future
+//      simplification that makes either check vacuous breaks the suite instead of the gate going quiet.
 //
-// THE LAYER RULES, AND THE HONEST LADDER (measured 2026-10-28, 620 modules cruised)
-//   `error` — clean today, so blocking from day one:
-//     lib-no-ui            lib/ -> components/ or app/                       0 violations
-//     drivers-no-upward    lib/{db,queue,storage} -> any inner layer        0 violations
-//     no-circular          any cycle                                        1, fixed in this change
-//   `warn` — a real backlog this change makes VISIBLE, counted every run, not fixed by fiat:
-//     domain-stays-pure      lib/{fusion,evidence,temporal,stacks,classify,faces} -> outside  46 / 15 files
-//     application-no-drivers lib/processing -> db/storage/queue/adapters                        24 / 13 files
-//     adapters-no-drivers    app/api + lib/openapi -> db/storage/queue                        172 / 132 files
-//   The `warn` rules are the report-only ramp the doctrine prescribes for a non-conforming repo.
-//   They print every run; the moment a rule reaches zero it moves to `error` and starts blocking.
+// THE LAYER RULES — ALL TEN BLOCK (20261028-1a)
+//   Every rule in the config is `error`. The three that used to be `warn` were promoted once their
+//   backlog was recorded in `.dependency-cruiser-known-violations.json`: the difference between "a new
+//   violation of this rule" and "a violation we already had" is now the BASELINE, not the severity.
+//   A `warn` severity is a rule nobody can fail — it prints on every run forever. A baseline fails on
+//   anything new and can only shrink.
+//     domain-stays-pure      lib/{fusion,evidence,temporal,stacks,classify,faces} -> outside  46 / 15 files, baselined
+//     application-no-drivers lib/processing -> db/storage/queue/adapters                        24 / 13 files, baselined
+//     adapters-no-drivers    app/api + lib/openapi -> db/storage/queue                        172 / 132 files, baselined
+//   Measured 2026-10-28: 242 baselined, 0 new. Re-recording is a reviewed act (`pnpm arch:baseline`),
+//   not the way out of a red gate.
 //
 // GATE SEMANTICS. The violation report and exit code come from dependency-cruiser's own `err`
 // reporter (`format()`), so the CI log and the pass/fail semantics are exactly what a bare
-// `depcruise` run produced. Real violations still fail; warnings still don't.
+// `depcruise` run produced. A new violation fails; a baselined one is counted and named as known.
 //
 // USAGE
 //   node scripts/check-architecture.mjs                      # the gate (`pnpm arch`)
@@ -74,6 +86,161 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+// ---------------------------------------------------------------------------------------------
+// 20261028-1a — the baseline's two honesty checks, written as pure functions so `--self-test` can
+// drive them without a tree, a cruise, or a mutation. The gate calls the same code on real data.
+// ---------------------------------------------------------------------------------------------
+/** rule name -> the severity `.dependency-cruiser.cjs` declares for it. */
+function configRuleSeverities(config) {
+  const map = new Map()
+  for (const rule of config?.forbidden ?? []) {
+    if (typeof rule?.name === 'string') map.set(rule.name, rule.severity ?? 'error')
+  }
+  return map
+}
+
+/**
+ * A baseline target counts as ours only if it names a path in this repository. depcruise records an
+ * external target as `node_modules/.pnpm/<pkg>/...`, which is not a module of this repo and must not
+ * be judged stale — the package is installed, it is simply not crawled.
+ */
+const isRepoPath = (value) =>
+  typeof value === 'string' && /^(lib|app|worker|scripts|components)\//.test(value)
+
+/**
+ * The two ways a known-violations baseline stops describing the tree: a rule's identity changed, or a
+ * baselined violation can no longer fire. Returns one entry per broken check — never throws, so the
+ * self-test can drive it with garbage.
+ */
+function assertBaselineIntegrity({ baseline, config, cruisedModules }) {
+  const problems = []
+  if (!Array.isArray(baseline)) {
+    return [
+      {
+        headline: 'the known-violations baseline is not an array of violations',
+        details: [
+          'it is written by `pnpm arch:baseline`; a hand-edited or truncated file cannot be enforced.',
+          'with no baseline every grandfathered violation would fail the gate at once.',
+        ],
+      },
+    ]
+  }
+
+  const pairs = new Map()
+  for (const row of baseline) {
+    const name = row?.rule?.name
+    const severity = row?.rule?.severity
+    if (typeof name !== 'string' || typeof severity !== 'string') {
+      return [
+        {
+          headline: 'a known-violations entry has no `rule.name` / `rule.severity`',
+          details: [
+            'every entry must name the rule and the severity it was recorded at, or the set check',
+            'below compares against nothing and passes.',
+          ],
+        },
+      ]
+    }
+    const key = `${name}\u0000${severity}`
+    pairs.set(key, (pairs.get(key) ?? 0) + 1)
+  }
+
+  const severities = configRuleSeverities(config)
+  const undeclared = []
+  const drifted = []
+  for (const key of pairs.keys()) {
+    const [name, severity] = key.split('\u0000')
+    if (!severities.has(name)) undeclared.push(name)
+    else if (severities.get(name) !== severity) {
+      drifted.push(`${name} (baseline \`${severity}\`, config \`${severities.get(name)}\`)`)
+    }
+  }
+  if (undeclared.length > 0) {
+    problems.push({
+      headline:
+        `${undeclared.length} rule name(s) in the baseline are not declared in .dependency-cruiser.cjs`,
+      details: [
+        'a renamed or deleted rule can never fire again, so its entries grandfather nothing while the',
+        'run line still counts them as known. Re-record deliberately: `pnpm arch:baseline`.',
+        ...[...new Set(undeclared)].slice(0, 10).map((name) => `  - baseline rule \`${name}\` is not in the config`),
+      ],
+    })
+  }
+  if (drifted.length > 0) {
+    problems.push({
+      headline: `${drifted.length} rule(s) changed severity without the baseline being re-recorded`,
+      details: [
+        'the baseline is matched on (name, severity). A rule promoted or demoted under a stale entry is',
+        'silently unenforced: the entry matches nothing, and the rule it names no longer exists that way.',
+        ...drifted.slice(0, 10).map((line) => `  - ${line}`),
+      ],
+    })
+  }
+
+  const cruised = new Set(cruisedModules)
+  const deadEntries = baseline
+    .filter((row) => isRepoPath(row?.from) && !cruised.has(row.from))
+    .map((row) => `${row.rule?.name}: ${row.from} is no longer cruised`)
+    .concat(
+      baseline
+        .filter((row) => isRepoPath(row?.to) && !cruised.has(row.to))
+        .map((row) => `${row.rule?.name}: ${row.from} -> ${row.to} is no longer cruised`),
+    )
+  if (deadEntries.length > 0) {
+    problems.push({
+      headline: `${deadEntries.length} baselined violation(s) can no longer fire — the entry is dead`,
+      details: [
+        'a baselined file was deleted or renamed, so this entry grandfathers nothing and the count on',
+        'the run line overstates the debt. Delete the entry in the PR that moves the file.',
+        ...deadEntries.slice(0, 10).map((line) => `  - ${line}`),
+      ],
+    })
+  }
+
+  return problems
+}
+
+/** Ten cases over the two checks above — six expected to fail. Exit 2 on any mismatch. */
+function runSelfTest() {
+  const rule = (name, severity) => ({ name, severity })
+  const config = { forbidden: [rule('r-a', 'error'), rule('r-b', 'error'), rule('r-c', 'error')] }
+  const entry = (name, severity, from, to) => ({ rule: rule(name, severity), from, to })
+  const cruised = ['lib/a.ts', 'lib/b.ts', 'app/api/x/route.ts']
+  const external = 'node_modules/.pnpm/drizzle-orm@0.45.2/node_modules/drizzle-orm/index.d.ts'
+  const cases = [
+    ['empty baseline, every rule declared', [], config, 0],
+    ['a matching (name, severity) pair', [entry('r-a', 'error', 'lib/a.ts', 'lib/b.ts')], config, 0],
+    ['a rule name the config no longer declares', [entry('r-gone', 'error', 'lib/a.ts', 'lib/b.ts')], config, 1],
+    ['a rule whose severity moved', [entry('r-a', 'warn', 'lib/a.ts', 'lib/b.ts')], config, 1],
+    ['a baselined `from` that is no longer cruised', [entry('r-a', 'error', 'lib/gone.ts', 'lib/b.ts')], config, 1],
+    ['a baselined `to` that is no longer cruised', [entry('r-a', 'error', 'lib/a.ts', 'lib/gone.ts')], config, 1],
+    ['an external `to` is not stale', [entry('r-a', 'error', 'lib/a.ts', external)], config, 0],
+    ['a baseline that is not an array', { nope: true }, config, 1],
+    ['duplicate rows collapse to one pair', [
+      entry('r-a', 'error', 'lib/a.ts', 'lib/b.ts'),
+      entry('r-a', 'error', 'lib/a.ts', 'lib/b.ts'),
+    ], config, 0],
+    ['an entry with no rule identity', [{ from: 'lib/a.ts', to: 'lib/b.ts' }], config, 1],
+  ]
+  let failed = 0
+  for (const [label, baseline, cfg, expected] of cases) {
+    const got = assertBaselineIntegrity({ baseline, config: cfg, cruisedModules: cruised }).length
+    const ok = got === expected
+    if (!ok) failed++
+    console.log(`${ok ? 'PASS' : 'FAIL'}  ${label} — ${got} problem(s), expected ${expected}`)
+  }
+  console.log(
+    failed === 0
+      ? `arch-gate self-test: OK — ${cases.length} cases, ${cases.filter((c) => c[3] > 0).length} of them negative.`
+      : `arch-gate self-test: FAIL — ${failed}/${cases.length} case(s) did not match expectation.`,
+  )
+  return failed === 0
+}
+
+if (process.argv.includes('--self-test')) {
+  process.exit(runSelfTest() ? 0 : 2)
+}
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 /** Cruise roots — kept identical to the old script's arguments. */
@@ -119,10 +286,10 @@ const POLICED_PREFIXES = [
 ]
 /** Cruise roots that must each contribute at least one cruised module. */
 const KEY_AREAS = ['lib/', 'app/']
-/**
- * Observed on main 2026-10-28, for context in the counts line only. Not asserted — see the header.
- */
-const HEALTHY_BASELINE = { modules: 620, dependencies: 2566, known: 0 }
+// No typed "healthy" module/dependency pair lives here any more. It was printed as `baseline 620/2566`
+// beside `repo modules 544 (baseline 544)` — two different quantities both called "baseline", the
+// first of which asserted nothing and had been stale since the last dependency change. A number this
+// file prints must be derived from the run it is printing (20261028-005).
 
 const problems = []
 const fail = (headline, details) => problems.push({ headline, details })
@@ -301,11 +468,18 @@ function assertBaselineFloor() {
 
 const floorFailure = assertBaselineFloor()
 
+let knownBaseline = null
 if (!WRITE_BASELINE && !existsSync(path.join(ROOT, BASELINE))) {
   fail(`the known-violations baseline ${BASELINE} is missing`, [
     'the ratchet cannot be applied, so every grandfathered violation would fail the gate at once.',
     `record it once, deliberately, with: pnpm arch:baseline`,
   ])
+} else if (!WRITE_BASELINE) {
+  try {
+    knownBaseline = JSON.parse(readFileSync(path.join(ROOT, BASELINE), 'utf8'))
+  } catch (error) {
+    fail(`the known-violations baseline ${BASELINE} is not valid JSON`, [String(error.message)])
+  }
 }
 
 // The tsconfig the cruise actually reads, taken from the config itself so the two cannot drift.
@@ -451,7 +625,7 @@ if (cruise) {
       `repo-owned modules ${repoModules.length} · internal edges ${internalEdges} ` +
       `(floor ${MIN_INTERNAL_EDGES} = ${floorPercent()}% of the ${MEASURED_INTERNAL_EDGES} measured) · ` +
       `repo modules ${repoModules.length} (baseline ${moduleBaseline ? moduleBaseline.repo_modules.length : 'n/a'}) · ` +
-      `baseline ${HEALTHY_BASELINE.modules}/${HEALTHY_BASELINE.dependencies}`,
+      `known-violations baseline ${Array.isArray(knownBaseline) ? knownBaseline.length : 'n/a'} entries`,
   )
 
   if (trackedSources.length < MIN_EXPECTED_SOURCES) {
@@ -558,6 +732,16 @@ if (cruise) {
     }
   }
 
+  // 20261028-1a — the baseline must still describe THIS tree: every (name, severity) pair it records
+  // must be declared in the config, and every entry must name modules the cruise still reaches.
+  for (const problem of assertBaselineIntegrity({
+    baseline: knownBaseline,
+    config: cfg,
+    cruisedModules: repoModules,
+  })) {
+    fail(problem.headline, problem.details)
+  }
+
   const absentAreas = KEY_AREAS.filter(
     (area) => !(cruise.modules ?? []).some((module) => module.source.startsWith(area)),
   )
@@ -588,7 +772,8 @@ if (problems.length > 0) {
       `    3. cruise roots wrong (\`${ROOTS.join(' ')}\`) or ${CONFIG} → \`options.exclude.path\``,
       '       too broad: every exclude entry is an unanchored regex matched against the whole',
       '       path, so `build` also excludes `lib/build-prompt.ts`. Anchor with (^|/)…(/|$).',
-      `    4. \`${BASELINE}\` or \`${MODULE_BASELINE}\` missing — record both with \`pnpm arch:baseline\`.`,
+      `    4. \`${BASELINE}\` or \`${MODULE_BASELINE}\` missing or stale — record both with \`pnpm arch:baseline\`,`,
+      '       and run `node scripts/check-architecture.mjs --self-test` to check the integrity logic itself.',
       '',
       '  the gate itself lives in scripts/check-architecture.mjs; the rules in .dependency-cruiser.cjs;',
       '  the layer map is .claude/rules/clean-architecture.md; the ratchet is this file header.',
