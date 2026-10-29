@@ -98,6 +98,20 @@ is named here — inventing one would be the exact defect this kit's `claims.md`
 behind the requirements is empirical: the gate's block messages, the doctor's exit codes, and the
 divergence between the old `sync-agents.sh` and the current kit's.
 
+## User interviews (simulated, 4 personas)
+
+These personas are this project's own users, not software roles. Each "what they said" line is derived
+from an observed artifact (the gate's block message, the missing docs paths, the 119 KB `AGENTS.md`,
+the truncated mirrors), not invented — and every line is marked SIMULATED because no human was actually
+interviewed for this change.
+
+| # | Persona | What they were asked | What they said (SIMULATED) | Decision it changed |
+|---|---|---|---|---|
+| 1 | An AI agent opening the repo cold (Hermes) | "Can you write a file in this repo?" | "No — `write_file` was refused with *no kit source reachable*, so I went around the gate through a shell." | The migration is done at all, and `panoply.sh` is committed so the gate can judge the repo (FR-001) |
+| 2 | A human maintainer reading the rules | "Where is the rule that governs what you are about to touch?" | "`AGENTS.md` is 119 KB and inlines everything; `CLAUDE.md` says the same in a different shape, and both point at `docs/claude/` files that are not in the repo." | `AGENTS.md` becomes the hub (22 KB) with one home for the text; the five absent spine files are written rather than referenced (FR-002, FR-004) |
+| 3 | A maintainer of a different agent tool (Cursor, Codex, Copilot) | "Does your tool-visible rules file match the others?" | "Mine carries a stale copy: `sync-agents.sh` is two generations behind, so my file and Claude's disagree." | The mirrors are regenerated from one source and `--check` runs in CI (FR-002) |
+| 4 | A reviewer looking at a PR | "Can a contributor skip these gates?" | "Yes — a pre-commit hook is skipped with `--no-verify`. If it is not in `verify.yml`, it is a suggestion." | The gates are required CI steps against the PR base ref (FR-006, FR-007) |
+
 ## Open questions
 
 None. Every requirement above is testable and was tested; the two items that could not be completed

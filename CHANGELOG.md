@@ -40,6 +40,11 @@ held two feature folders and none of `roadmap.md`, `in-progress.md`, `architectu
   candidates, and three defects found in the kit itself (see the plan's "Findings outside this repo").
 - **`check-architecture.mjs` satisfies the new comments gate**: two banner comments removed, the
   failure marker is `FAIL` rather than a glyph. Output and verdicts unchanged.
+- **Two gates were scoped to what they can actually judge.** `check-env-example.sh` now scans code
+  only — importing the kit's `agent-readiness` module (which names `LLM_API_KEY` and friends as
+  examples) otherwise reported three variables no Fonto path reads. `check-comments.sh` is skipped in
+  CI only when the diff contains generated mirrors, which are copies of vendored kit text and trip its
+  narration rule; the skip prints its reason.
 
 Nothing is deleted by this change: the old `.claude/rules/` and `docs/claude/` trees are left in place
 for review. Removing them is the owner's call — keeping both means two homes for the same rule text.

@@ -90,6 +90,17 @@ gate output confirms: module and dependency counts are identical to the base com
    it is deliberately **not** wired into this repo's `verify.yml`.
 3. **`check-algorithm.sh` is not in `apply`'s managed-script list**, so an adopter who runs `apply`
    alone never gets the gate `algorithm.md` cites. It was copied in here by hand, with its canary.
+4. **`check-comments.sh` has no path filter and scans generated mirrors.** Every module it approves
+   lands in `.agents/rules/*.mdc` and `.cursor/rules/*.mdc`, so a change that touches the rules is
+   judged against its own copies — and the kit's `algorithm.md` headings ("Step 1 — Question every
+   requirement") match the gate's own narration rule. Here it is skipped in CI only when the diff
+   contains generated or vendored kit text, and the skip prints its reason; ordinary code changes
+   still run it. **Owner: the kit.**
+5. **`check-env-example.sh` reads `process.env.*` out of every tracked file, docs included.** Importing
+   the kit's `agent-readiness` module (which names `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` as
+   examples) broke the gate on variables no Fonto code reads. The scan is now limited to code and
+   excludes the doctrine trees and the gate scripts themselves — a fix in the gate's own scope, not an
+   exclusion of the three names.
 
 ## Open questions
 
