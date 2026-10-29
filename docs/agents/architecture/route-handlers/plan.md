@@ -50,10 +50,13 @@ roughly half of that was query logic.
 
 ## Risks
 
-- **`lib/<feature>/` is unpoliced by the layer map.** The dependency-cruiser layers name `lib/processing/` as
-  application and `lib/db|storage|queue` as drivers; the feature modules (`lib/tags`, `lib/assets`, …) are
-  neither. Moving queries there is right by intent, but a future rule should police them too — recorded as a
-  finding on the gate, not fixed here.
+- **`lib/<feature>/` was unpoliced by the layer map — fixed in this PR.** The dependency-cruiser layers named
+  `lib/processing/` as application and `lib/db|storage|queue` as drivers; the feature modules (`lib/tags`,
+  `lib/assets`, …) were neither, so a query moved into `lib/` left the policed set instead of becoming
+  application code in the map's own terms. `drivers-no-upward` now names the repository shape
+  (`lib/[a-z0-9-]+/store\.ts$`) as a target and `.agents/rules/clean-architecture.md` maps it in the
+  Interface Adapters row. Residual: the gate still cannot print *which* edges left the measured set when a
+  baseline shrinks — that belongs to the kit batch, not to a slice.
 - **No route-level tests exist for most of these handlers**, so the move is proved by typecheck + the gate +
   the existing suite, not by behaviour tests. Slice 1 adds the first `lib/tags/tree.test.ts`; later slices
   should add a handler test where the behaviour is not obvious.
@@ -63,5 +66,6 @@ roughly half of that was query logic.
 ## Findings outside this change
 
 1. 132 of 161 route handlers reach the driver directly — the largest gap in the four-layer map.
-2. The feature-module layer (`lib/<feature>/`) is outside every rule, so a query moved there leaves the
-   policed set rather than becoming application code in the map's own terms. The gate should name it.
+2. The feature-module layer (`lib/<feature>/`) was outside every rule, so a query moved there left the
+   policed set rather than becoming application code in the map's own terms. **Named and policed in this
+   PR.** What is still missing is the audit: the gate reports the new count, not the edges that left it.

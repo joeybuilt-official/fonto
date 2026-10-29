@@ -7,6 +7,26 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Fixed — `lib/<feature>/store.ts` is a declared layer, not an unpoliced path
+
+Slice 1 dropped the baseline 235 → 230 by removing five `app/api/v1/tags` → `lib/db` edges. Nothing in the
+map declared what `lib/tags/store.ts` *is*, so those same five edges could have left the measured set by
+being parked in `lib/` rather than resolved — the count would have fallen identically. The only rule that
+touched `lib/` was `lib-no-ui`, which forbids exactly one thing: reaching the UI.
+
+- **`drivers-no-upward` now names the repository shape** — `lib/[a-z0-9-]+/store\.ts$` is a target, so a
+  driver importing a feature's store fails the gate. A shape, not a list: a new feature repository is
+  covered the day it is created.
+- **`.agents/rules/clean-architecture.md`** maps the role in the Interface Adapters row and states the
+  contract both ways — may import the drivers (that is the point of the move), may not import
+  `app/`/`components/`, and no driver may import it. Pure helpers beside it (`lib/tags/tree.ts`) stay pure.
+- **The edge audit, written here because the gate cannot print it yet:** 5 edges left the measured set —
+  `app/api/v1/tags/route.ts` ×2 (`@/lib/db`, `@/lib/db/seq`), `[id]/route.ts` ×2 (same), `top/route.ts` ×1
+  (`@/lib/db`) — and 2 of them reappear inside `lib/tags/store.ts` as permitted repository edges. Making the
+  gate print this for every ratchet is the next kit-batch item.
+- Canary: a planted `lib/db/__canary-store-inversion.ts` importing `@/lib/tags/store` fails with
+  `error drivers-no-upward: … → lib/tags/store.ts`, exit 1. Removed after the probe.
+
 ### Changed — route handlers stop owning queries (1c, slice 1: tags)
 
 `adapters-no-drivers` measured 172 edges in 132 of 161 route files — handlers importing `@/lib/db`,

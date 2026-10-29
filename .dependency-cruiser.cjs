@@ -87,10 +87,18 @@ module.exports = {
     {
       // Drivers never depend on the layers above them. db/queue/storage importing a feature module
       // inverts the arrow: the driver would then change when the business changes.
+      //
+      // `lib/<feature>/store.ts` is that feature's repository — the one file allowed to import the
+      // drivers, which is the whole point of moving a query out of a route handler. It is named here
+      // because nothing else matches the path: `lib-no-ui` only forbids `lib/` reaching the UI, so
+      // without this line a driver importing a feature's store would pass every rule in the map. The
+      // target is a SHAPE, not a list, so a new feature repository is covered the day it is created.
       name: "drivers-no-upward",
       severity: "error",
       from: { path: "^lib/(db|queue|storage)/" },
-      to: { path: "^lib/(processing|fusion|evidence|temporal|stacks|classify|faces)/" },
+      to: {
+        path: "^(lib/(processing|fusion|evidence|temporal|stacks|classify|faces)/|lib/[a-z0-9-]+/store\\.ts$)",
+      },
     },
     {
       // A cycle means no layer ordering exists at all. This rule found one real cycle when it
