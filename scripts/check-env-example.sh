@@ -28,8 +28,14 @@ cd "$REPO_ROOT"
 # Runtime/harness-provided or test-only variables: not operator knobs.
 EXCLUDE_RE='^(NODE_ENV|NEXT_RUNTIME|BASE_URL|OUT|PLAYWRIGHT_[A-Z_]+|R2_(CONNECTION|SOCKET)_TIMEOUT_MS|__ADMIN)$'
 
+# The scan is about variables the CODE reads, so the doctrine trees and the gate scripts themselves are
+# excluded: `.agents/rules/` and `docs/` discuss env vars generically (the kit's agent-readiness module
+# names LLM_API_KEY as an example), and the gates under scripts/ carry `process\.env\.` as a search
+# pattern. Without this, importing the kit reported three variables that no Fonto code path reads.
 code_vars="$(
   git ls-files -z \
+      ':!:.agents/**' ':!:docs/**' ':!:scripts/check-*.sh' ':!:scripts/panoply.sh' \
+      ':!:scripts/sync-agents.sh' ':!:scripts/doc-map.sh' ':!:scripts/factory-detect.sh' \
     | xargs -0 grep -hoE 'process\.env\.[A-Z_][A-Z0-9_]{2,}' 2>/dev/null \
     | sed 's/process\.env\.//' \
     | sort -u \

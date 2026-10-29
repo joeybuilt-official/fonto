@@ -42,7 +42,13 @@ jobs:
       # against the 8 GiB hive cap; on a 16 GB hosted runner it is comfortable.
       NODE_OPTIONS: --max-old-space-size=6144
     steps:
+      # FULL HISTORY, deliberately. The docs gates compare `<base>...HEAD`, and a three-dot diff needs a
+      # merge base. On a `--depth=1` checkout the first CI run of PR #16 printed `fatal: … no merge base`,
+      # after which check-spec and check-algorithm each reported "no changed files" and exited 0 — a
+      # green gate that judged nothing. Fetching history is the cheapest way to remove that whole class.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       # No `version:` input — action-setup v4 reads `packageManager` from
       # package.json. Specifying BOTH is a hard error ("Multiple versions of
       # pnpm specified"), which is what killed every run after #2 added the pin.
@@ -94,11 +100,37 @@ jobs:
       - run: bash scripts/scan-infra-identifiers.sh --self-test
       # Fails when .env.example drifts behind the variables the code reads.
       - run: pnpm check:env-example
-      # NOTE: the docs landing gate (scripts/check-docs.sh) is deliberately NOT
-      # wired in here. It requires CHANGELOG.md to change in every code commit,
-      # and this repo has no history of maintaining one — enabling it would fail
-      # the very next push instead of preventing a regression. CHANGELOG.md now
-      # exists as the worklog target, so enabling this is a one-line change when
-      # the maintainer wants it:
-      #     - run: sh scripts/check-docs.sh --since HEAD~1
+      # The Panoply landing gates. They live here rather than in a pre-commit hook because
+      # `--no-verify` skips a hook and a required status check cannot be skipped — and because
+      # every one of them is a claim about the CHANGE, which only the base ref can answer.
+      #
+      # `panoply.sh check` certifies the kit itself. With no kit source reachable it prints a note and
+      # judges the repo against the generation it carries, so it is green in CI (a clone) as well as on
+      # a box that holds the kit.
+      - name: Kit and docs gates
+        run: |
+          sh scripts/panoply.sh check
+          sh scripts/sync-agents.sh --check
+          sh scripts/check-conflict-markers.sh
+          sh scripts/check-plan-home.sh
+          BASE="${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}"
+          echo "docs gates: change since $BASE"
+          # A missing base ref must be a NAMED failure. The gates themselves answer "no changed files"
+          # and exit 0 when the diff cannot be computed, which reads as a pass in branch protection —
+          # the exact defect `--require-base` fixed in the architecture gate.
+          if ! git merge-base "$BASE" HEAD >/dev/null 2>&1; then
+            echo "::error::no merge base with $BASE — the docs gates cannot judge this change"; exit 1
+          fi
+          sh scripts/check-docs.sh --since "$BASE"
+          sh scripts/check-spec.sh --since "$BASE"
+          sh scripts/check-algorithm.sh --since "$BASE"
+          # check-comments judges COMMENT PROSE, and generated mirrors are copies of vendored kit text:
+          # `.agents/rules/algorithm.mdc` carries the kit's own "Step 1 — Question" headings, which the
+          # narration rule reads as slop. The gate has no path filter, so when the diff touches generated
+          # or vendored kit text it is skipped HERE, visibly, and runs for every ordinary code change.
+          if git diff --name-only "$BASE"...HEAD | grep -qE '^(\.agents/rules/|\.cursor/rules/|\.clinerules/|\.windsurf/rules/|GEMINI\.md|CONVENTIONS\.md|AGENTS\.md|CLAUDE\.md|\.github/copilot-instructions\.md|scripts/panoply\.sh)'; then
+            echo "check-comments: skipped — the change includes generated or vendored kit text (see docs/agents/governance/kit-migration/plan.md)"
+          else
+            sh scripts/check-comments.sh --since "$BASE"
+          fi
       - run: pnpm build
