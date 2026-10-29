@@ -87,10 +87,25 @@ This is an **adopt-as-target** map, not a claim that the repository is fully lay
 | --- | --- | --- |
 | Entities / Domain | `lib/fusion/` (and pure feature modules: `lib/evidence/`, `lib/temporal/`, `lib/stacks/`, `lib/classify/`, `lib/faces/`) | Imports nothing from the three rows below. No database, HTTP, queue, storage, env, or vendor imports at all. |
 | Use Cases / Application | `lib/processing/` | Asset-processing operations and ports. Imports the domain layer only. Declares its ports here. |
-| Interface Adapters | `app/api/` | Route handlers translate transport input/output and enforce authz; `lib/openapi/` owns published route contracts. Imports the two inner rows; implements the ports; owns DTOs and mappers. |
+| Interface Adapters | `app/api/`, `lib/<feature>/store.ts` | Route handlers translate transport input/output and enforce authz; `lib/openapi/` owns published route contracts. **`lib/<feature>/store.ts` is that feature's repository** — the single place its queries live, and the one `lib/` shape allowed to import the drivers, so a handler can call an operation instead of writing SQL. Imports the two inner rows; implements the ports; owns DTOs and mappers. |
 | Frameworks & Drivers | `lib/db/` | Drizzle schema/client. Other drivers: `lib/storage/`, `lib/queue/`, `lib/intelligence/adapters/`, `worker/`, `ops/`. May import anything. Nothing imports it except the composition root. |
 
 Monorepo note: this map covers the root app. The shared `packages/fonto-sdk` is inner-layer code (types + hooks) for whichever app imports it; the Flutter app under `mobile/` has its own client-side split (screens + api client + state stores).
+
+**The feature repository (`lib/<feature>/store.ts`) — the one role the gate had to learn.** A route
+handler owns transport and authz, not queries; when a handler's query is moved behind a function, that
+function has to live somewhere, and `lib/<feature>/store.ts` is where. Its contract, both halves:
+
+- **May import the drivers** (`lib/db`, `lib/queue`, `lib/storage`) — that permission is the whole
+  point of the move, and it is why `application-no-drivers` does not apply here.
+- **May not import `app/` or `components/`** (`lib-no-ui`), and **no driver may import it**
+  (`drivers-no-upward`). The rule names the store *shape* rather than listing features, so a new
+  feature repository is covered the day it is created.
+
+Pure helpers beside it (`lib/tags/tree.ts` — path arithmetic, zero imports) stay pure: only
+`store.ts` carries the persistence permission. Without this declared role, "moved to `lib/`" and "fixed"
+are indistinguishable to the gate — the violation leaves the policed set instead of being resolved, and
+a count that falls for that reason is a number we would be defending later rather than trusting.
 
 ## Enforcement — the gate, not just the checklist
 

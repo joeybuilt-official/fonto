@@ -9,49 +9,22 @@
 // T1.3' (docs/claude/platform/completed/perf-audit/perf-audit-plan.md) — class-B aggregate. Embeds per-tag asset
 // counts so it's tagged BOTH `:tags` (so tag CRUD evicts) AND `:assets`
 // (so asset CRUD / asset_tags link/unlink evicts). See CACHE-CONVENTION.md.
-export const revalidate = 300;
 
 import { NextRequest, NextResponse } from "next/server";
 import { unstable_cache } from "next/cache";
 import { getAuthUser } from "@/lib/auth/server";
 import { getUserWorkspaces } from "@/lib/workspace";
-import { db, schema } from "@/lib/db";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { listTopTags } from "@/lib/tags/store";
 
 const loadTopTags = (workspaceIds: string[], limit: number) => {
   const sortedIds = [...workspaceIds].sort();
   return unstable_cache(
-    async () => {
-      const countExpr = sql<number>`count(distinct ${schema.assetTags.assetId})::int`;
-      return db
-        .select({
-          id: schema.tags.id,
-          name: schema.tags.name,
-          color: schema.tags.color,
-          aiSuggested: schema.tags.aiSuggested,
-          count: countExpr,
-          sampleAssetId: sql<
-            string | null
-          >`(array_agg(${schema.assetTags.assetId} ORDER BY ${schema.assetTags.addedAt} DESC))[1]`,
-        })
-        .from(schema.tags)
-        .innerJoin(schema.assetTags, eq(schema.assetTags.tagId, schema.tags.id))
-        .innerJoin(schema.assets, eq(schema.assets.id, schema.assetTags.assetId))
-        .where(
-          and(
-            inArray(schema.tags.workspaceId, workspaceIds),
-            eq(schema.assets.lifecycleState, "active")
-          )
-        )
-        .groupBy(schema.tags.id)
-        .orderBy(desc(countExpr))
-        .limit(limit);
-    },
+    () => listTopTags(workspaceIds, limit),
     ["tags-top", sortedIds.join(","), String(limit)],
     {
       tags: sortedIds.flatMap((id) => [`ws:${id}:tags`, `ws:${id}:assets`]),
       revalidate: 300,
-    },
+    }
   )();
 };
 

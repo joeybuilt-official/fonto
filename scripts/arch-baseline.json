@@ -1,5 +1,5 @@
 {
-  "measured_at": "aaebfca",
+  "measured_at": "0be8977",
   "repo_modules": [
     "app/(app)/app/_components/asset-ask-panel.tsx",
     "app/(app)/app/_components/asset-grid.tsx",
@@ -309,6 +309,7 @@
     "lib/authz/instance.ts",
     "lib/cache/metrics.ts",
     "lib/cache/valkey.ts",
+    "lib/classify/classify.test.ts",
     "lib/classify/classify.ts",
     "lib/classify/classifyHelpers.ts",
     "lib/classify/kind.test.ts",
