@@ -87,10 +87,8 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// ---------------------------------------------------------------------------------------------
-// 20261028-1a — the baseline's two honesty checks, written as pure functions so `--self-test` can
-// drive them without a tree, a cruise, or a mutation. The gate calls the same code on real data.
-// ---------------------------------------------------------------------------------------------
+// The baseline's two honesty checks, written as pure functions so `--self-test` can drive them
+// without a tree, a cruise, or a mutation. The gate calls the same code on real data.
 /** rule name -> the severity `.dependency-cruiser.cjs` declares for it. */
 function configRuleSeverities(config) {
   const map = new Map()
@@ -286,10 +284,10 @@ const POLICED_PREFIXES = [
 ]
 /** Cruise roots that must each contribute at least one cruised module. */
 const KEY_AREAS = ['lib/', 'app/']
-// No typed "healthy" module/dependency pair lives here any more. It was printed as `baseline 620/2566`
-// beside `repo modules 544 (baseline 544)` — two different quantities both called "baseline", the
-// first of which asserted nothing and had been stale since the last dependency change. A number this
-// file prints must be derived from the run it is printing (20261028-005).
+// No typed "healthy" module/dependency pair lives here any more. It printed `baseline 620/2566` beside
+// `repo modules 544 (baseline 544)` — two different quantities both called "baseline", neither asserted,
+// and stale since the last dependency change. A number this file prints must come from the run it is
+// printing (20261028-005).
 
 const problems = []
 const fail = (headline, details) => problems.push({ headline, details })
@@ -323,9 +321,7 @@ const BASE_REF = (() => {
  */
 const REQUIRE_BASE = process.argv.includes('--require-base')
 
-// ---------------------------------------------------------------------------------------------
 // Preconditions: the inputs whose absence degrades depcruise silently.
-// ---------------------------------------------------------------------------------------------
 const require = createRequire(path.join(ROOT, 'package.json'))
 
 try {
@@ -766,7 +762,7 @@ if (cruise) {
 if (problems.length > 0) {
   console.error('\narch-gate: FAIL — the architecture gate could not verify its own coverage.\n')
   for (const { headline, details } of problems) {
-    console.error(`  ✖ ${headline}`)
+    console.error(`  FAIL ${headline}`)
     for (const line of details ?? []) console.error(`      ${line}`)
   }
   console.error(
@@ -794,7 +790,7 @@ if (problems.length === 0 && !WRITE_BASELINE && floorFailure) {
   // required and missing", and a headline that names the first for both would be the same defect
   // this file was just repaired for — a label that reads as a checked fact.
   console.error('\narch-gate: FAIL — the baseline floor could not be satisfied.\n')
-  console.error(`  ✖ ${floorFailure.headline}\n`)
+  console.error(`  FAIL ${floorFailure.headline}\n`)
   for (const line of floorFailure.details) console.error(`      ${line}`)
   console.error('')
 }

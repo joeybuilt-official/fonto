@@ -1,0 +1,47 @@
+# API & Event Payload Design
+
+> **Applies when:** the project exposes an API, RPC surface, or event/socket stream that another process or client consumes.
+> **Delete this file (and its `@` import in CLAUDE.md) if:** the project has no server-to-client or service-to-service boundary of its own.
+
+## Where this surface sits
+
+- **Request and response DTOs live in Interface Adapters.** They speak the transport's vocabulary — envelopes, field names, status codes, pagination — and they must be free to change when the API changes without any use case changing. See `clean-architecture.md`.
+- **Use cases take and return plain application types**, never a framework request/response object and never a DTO. A use case that accepts the framework's request object cannot be called from a job or a CLI, and testing it then requires booting a server.
+- The handler stays thin: validate and parse into an application type, call one use case, map its result — or its domain error — to a DTO and a status. A business rule inside a handler is a layer violation, not a shortcut, and it is unavailable to every other caller.
+
+## Data availability principle
+
+- **When the server already holds the enriched data at the point of emission, send it.** Do not emit a bare ID or a skeleton object and leave the client to fetch what you were already holding in memory. The client then blocks on a round-trip, renders a spinner or a flash of empty state, and the user waits — that is a UX regression, not a simplification.
+- This applies identically to socket/event payloads, webhook bodies, REST responses, and RPC results. "The client can just call the detail endpoint" is the failure mode, not the design.
+- **Exactly three conditions justify a lean payload:**
+  1. Enriching would require extra queries the server has not already loaded — you would be adding database work to every emission to save a request the client may never make.
+  2. The event is high-frequency and bandwidth-sensitive (cursor positions, presence, progress ticks), where per-message size dominates cost.
+  3. The client genuinely does not need the data yet — it is for a view that may never open.
+- **"It is simpler to implement" is not one of them.** Neither is "the client already has a fetch hook." If you ship a lean payload, name which of the three conditions applies, in the PR description or a comment next to the emit.
+- Cost check before enriching: if the extra data means one more query over data already in scope, send it. If it means an N+1 across a list, restructure the query — do not push the N+1 onto the client.
+- The principle is unchanged by the layering; it is simply **an adapter-layer composition decision**. The use case returns what it computed; the adapter decides how much of that goes on the wire. Compose the richer payload from what the adapter already holds — never satisfy it by pushing transport-shaped data requirements down into a use case.
+
+## Response shape consistency
+
+- Give every endpoint of the same kind the same envelope. Collections return the same wrapper with the same pagination fields; single records return the same object shape everywhere they appear. A client should never need per-endpoint unwrapping logic.
+- One canonical shape per entity. If a list view needs fewer fields, return a documented subset with the same field names and types — never rename or retype a field between endpoints.
+- Errors use one typed shape across the whole surface: a stable machine-readable code, a human-readable message, and optional field-level details. Clients branch on the code, never on message text.
+- Use HTTP status codes (or their transport equivalent) honestly: 400 for malformed input, 401/403 for auth, 404 for missing, 409 for conflict, 422 for semantic validation failure, 5xx only for genuine server faults. Never return 200 with an error body — every caller's error handling misses it.
+- Absent versus empty must be unambiguous: pick `null` or omission for "no value" and apply it consistently. Do not mix empty string, `null`, and missing key for the same concept.
+- Additive changes only on a published surface. Removing or retyping a field breaks consumers you cannot see — add the new field, migrate callers, then remove.
+- Timestamps go over the wire as unambiguous instants in a single documented format. Never send a naive local time.
+
+## Where validation belongs
+
+- Validate at the boundary, before any business logic runs: request params, body, query strings, and event payloads from other services. Parse into a typed value and pass that inward — do not re-check the same field at three depths.
+- Validate with a schema, not scattered `if` statements, so that the accepted shape is inspectable and the rejection message names the offending field.
+- Treat everything crossing the boundary as untrusted, including payloads from internal services and third-party webhooks. Verify webhook signatures before parsing.
+- Enforce authorization at the boundary too, and enforce it per record, not just per route. "The client only shows their own records" is not authorization.
+- Do not re-check *shape and format* between internal modules that share types — trust the type system inside the trust boundary. Over-defensive internal checks hide the real boundary and rot. Domain *invariants* are different: entities and use cases enforce those themselves regardless of what the boundary checked, because every other entrypoint skips the boundary (see the validation split in `clean-architecture.md`).
+- Never leak internals in error responses: no stack traces, no SQL, no upstream vendor payloads. Log the full detail server-side with enough context to debug (route, actor, params, error), return the typed shape to the caller.
+
+## Boundary changes
+
+- Update the shared/generated types in the same change as the handler. A response shape and its type declaration must never disagree.
+- Every new endpoint or event ships with tests in the same change. What those tests must assert is defined once, in `testing.md` ("What an endpoint test asserts") — that list is the single home for it.
+- When you change a response shape, update the consumers in the same change and grep for every reader of the changed field. A dropped or renamed field that still typechecks on the server is a silent client break.

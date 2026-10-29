@@ -94,11 +94,23 @@ jobs:
       - run: bash scripts/scan-infra-identifiers.sh --self-test
       # Fails when .env.example drifts behind the variables the code reads.
       - run: pnpm check:env-example
-      # NOTE: the docs landing gate (scripts/check-docs.sh) is deliberately NOT
-      # wired in here. It requires CHANGELOG.md to change in every code commit,
-      # and this repo has no history of maintaining one — enabling it would fail
-      # the very next push instead of preventing a regression. CHANGELOG.md now
-      # exists as the worklog target, so enabling this is a one-line change when
-      # the maintainer wants it:
-      #     - run: sh scripts/check-docs.sh --since HEAD~1
+      # The Panoply landing gates. They live here rather than in a pre-commit hook because
+      # `--no-verify` skips a hook and a required status check cannot be skipped — and because
+      # every one of them is a claim about the CHANGE, which only the base ref can answer.
+      #
+      # `panoply.sh check` certifies the kit itself. With no kit source reachable it prints a note and
+      # judges the repo against the generation it carries, so it is green in CI (a clone) as well as on
+      # a box that holds the kit.
+      - name: Kit and docs gates
+        run: |
+          sh scripts/panoply.sh check
+          sh scripts/sync-agents.sh --check
+          sh scripts/check-conflict-markers.sh
+          sh scripts/check-plan-home.sh
+          BASE="${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}"
+          echo "docs gates: change since $BASE"
+          sh scripts/check-docs.sh --since "$BASE"
+          sh scripts/check-spec.sh --since "$BASE"
+          sh scripts/check-algorithm.sh --since "$BASE"
+          sh scripts/check-comments.sh --since "$BASE"
       - run: pnpm build

@@ -7,6 +7,43 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Changed — the repo runs the current Panoply kit, and its gates now run in CI
+
+The repo was on the kit's old layout: rules under `.claude/rules/`, docs under `docs/claude/`, and no
+`scripts/panoply.sh` at all. So the kit could not judge the repo, the agent gate refused every
+`write_file`/`patch` with "no kit source reachable", and three of the kit scripts in `scripts/` were two
+generations behind. The docs spine `AGENTS.md` told every agent to read did not exist: `docs/claude/`
+held two feature folders and none of `roadmap.md`, `in-progress.md`, `architecture.md`,
+`key-patterns.md`.
+
+- **`docs/claude/` → `docs/agents/`, `.claude/rules/` → `.agents/rules/`** (14 adapted rule modules
+  carried forward; 6 the repo never had were seeded: `algorithm`, `spec`, `claims`, `factory-phases`,
+  `agent-readiness`, `wireframe-first`).
+- **`AGENTS.md` is now the hub it claims to be: 119,605 → 22,460 bytes.** It inlined every rule body
+  verbatim, so the same text lived in two places and had already drifted. It now carries the project
+  facts (stack, commands, structure, the Next.js version warning, the credential rule) and a generated
+  index of the modules. `CLAUDE.md` is a generated mirror again.
+- **The doctor exists and certifies the repo:** `sh scripts/panoply.sh check` → `panoply: OK — kit
+  unreleased applied and current`. It also certifies a clone with no kit source reachable, which is
+  what makes it usable as a CI step.
+- **23 gate scripts installed**, including the ones this repo never had: `check-plan-home`,
+  `check-spec`, `check-algorithm`, `check-comments`, `check-conflict-markers`, `check-wireframe`,
+  `check-coverage`, `check-milestone-evidence`. Each ships its own `--self-test` canary.
+- **`verify.yml` runs the docs gates as required steps**: kit certificate, mirror sync,
+  conflict markers, plan home, then `check-docs` / `check-spec` / `check-algorithm` / `check-comments`
+  against the PR's base ref. A pre-commit hook can be skipped with `--no-verify`; a required status
+  check cannot.
+- **Plans folded into the canonical home**: `docs/claude/architecture-gate/plan.md` →
+  `docs/agents/architecture/gate/plan.md`, `docs/claude/fleet-decoupling/plan.md` →
+  `docs/agents/platform/fleet-decoupling/plan.md`, each with a row in the new `docs/agents/roadmap.md`.
+- **`docs/agents/governance/kit-migration/{spec,plan}.md`** records the migration, its deletion
+  candidates, and three defects found in the kit itself (see the plan's "Findings outside this repo").
+- **`check-architecture.mjs` satisfies the new comments gate**: two banner comments removed, the
+  failure marker is `FAIL` rather than a glyph. Output and verdicts unchanged.
+
+Nothing is deleted by this change: the old `.claude/rules/` and `docs/claude/` trees are left in place
+for review. Removing them is the owner's call — keeping both means two homes for the same rule text.
+
 ### Changed — the ratchet's first 6 violations fixed, and the write path can run again
 
 Phase 1a baselined 242 coupling violations and promised the baseline could only shrink. This is the
