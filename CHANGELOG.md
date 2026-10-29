@@ -7,6 +7,23 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Changed — route handlers stop owning queries (1c, slice 1: tags)
+
+`adapters-no-drivers` measured 172 edges in 132 of 161 route files — handlers importing `@/lib/db`,
+`@/lib/storage`, and `@/lib/queue` directly. Slice 1 moves the tag tree's persistence out of transport.
+
+- **`lib/tags/store.ts`** now owns the tag operations: `listTags`, `findTag`, `listTopTags`, `createTag`,
+  `updateTag`. The depth cap, the self-parent check, the cycle guard and the subtree path rewrite moved with
+  the SQL that can break them; a refusal is a typed `TagRuleError` with a stable `code`, and the handler maps
+  it to the same 400 message it always sent. The three routes now do authz → parse → call → serialise.
+- **`lib/tags/tree.test.ts`** pins the invariants the store depends on, including the depth boundary and the
+  `"/ab/"` vs `"/a/"` prefix case the cycle guard could otherwise mis-read.
+- **The baseline shrank 235 → 230** (5 edges: `route.ts` and `[id]/route.ts` each carried two, `top` one).
+  Nothing was replaced by a pass-through facade — re-exporting `db` from a feature module would satisfy the
+  rule's letter and leave the query where it was.
+- Wire contract unchanged: same fields, same status codes, same error strings. `pnpm test` 165 passed across
+  18 files; `pnpm arch` 0 new, 230 known; `pnpm lint` 0 errors.
+
 ### Changed — the repo runs the current Panoply kit, and its gates now run in CI
 
 The repo was on the kit's old layout: rules under `.claude/rules/`, docs under `docs/claude/`, and no
