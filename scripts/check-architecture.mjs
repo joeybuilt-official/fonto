@@ -734,12 +734,19 @@ if (cruise) {
 
   // 20261028-1a — the baseline must still describe THIS tree: every (name, severity) pair it records
   // must be declared in the config, and every entry must name modules the cruise still reaches.
-  for (const problem of assertBaselineIntegrity({
-    baseline: knownBaseline,
-    config: cfg,
-    cruisedModules: repoModules,
-  })) {
-    fail(problem.headline, problem.details)
+  //
+  // Skipped under `--write-baseline`, which IS the act of re-recording: that run loads no baseline at
+  // all, so these checks would read `null` and fail the gate on the one action the baseline exists to
+  // allow. Before this guard the write path could not run once a single entry was dead — the ratchet
+  // recorded a baseline it was then forbidden to move, which is a floor nobody can lower.
+  if (!WRITE_BASELINE) {
+    for (const problem of assertBaselineIntegrity({
+      baseline: knownBaseline,
+      config: cfg,
+      cruisedModules: repoModules,
+    })) {
+      fail(problem.headline, problem.details)
+    }
   }
 
   const absentAreas = KEY_AREAS.filter(

@@ -7,6 +7,43 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Changed — the ratchet's first 6 violations fixed, and the write path can run again
+
+Phase 1a baselined 242 coupling violations and promised the baseline could only shrink. This is the
+first slice of paying them down, and the first time it moved: **242 → 235**, in the PR that fixes them.
+`lib/classify/` goes from 7 baselined violations to 0.
+
+Fixed, all in the classify layer:
+
+- **`lib/classify/vectors.ts` is gone.** A domain module was doing three outward things — reading the
+  filesystem, reading `os.homedir()` and an env var to pick a cache path, and calling the vision
+  vendor — to build the taxonomy embedding matrix. The loader now lives in
+  `lib/processing/taxonomyVectorsStore.ts`. The domain keeps only the `TaxonomyVector` / `TaxonomyCache`
+  types, in `lib/classify/classify.ts`, and every classifier takes the matrix as a parameter
+  (`classifyAsset(vec, llmFallback, cache)`). Callers load once per asset, so the argmax fallback now
+  reuses the same matrix instead of re-entering the loader. Four baseline entries deleted
+  (`fs/promises`, `os`, `path`, `@/lib/intelligence/client`).
+- **`classifyHelpers.ts` moved into the domain.** `lib/classify/kind.ts` imported six pure predicates
+  from `lib/processing/`, the application layer — an inner module reaching outward. The file is pure
+  (no I/O, no vendor, no framework), so it moved to `lib/classify/classifyHelpers.ts` and its former
+  importers now point inward at it. One entry deleted.
+- **The domain no longer imports `prom-client`.** `classify.ts` observed `zeroShotConfidenceBuckets`
+  from `lib/metrics.ts`; observability is an adapter concern. `processAsset.ts` records the histogram
+  now, from the `confidence` the classifier already returns — the same number, one layer out. One
+  entry deleted.
+
+**The seventh was a false positive, and the rule was wrong, not the file.** `domain-stays-pure`
+flagged `lib/classify/kind.test.ts → vitest`: a test naming its own runner is not a production
+dependency. The rule now carries `pathNot: "\.(test|spec)\.tsx?$"` on its `from` — a test file may
+import the harness; the production files beside it stay policed, which is where the 39 remaining
+`domain-stays-pure` violations are. That entry is retired with the rule, not baselined around.
+
+The write path was also broken, and that is the defect that would have held the number at 242 forever:
+`--write-baseline` loads no baseline, so the integrity checks added in 1a read `null` and failed the
+gate on the one action the baseline exists to allow. `pnpm arch:baseline` now skips those three checks
+(they judge the *old* baseline) and exits 0. Proven by running it: 235 entries written, plus 544
+ratchet paths.
+
 ### Changed — every layer rule blocks now, and the backlog it grandfathers can only shrink
 
 The gate that landed yesterday encoded the four-layer map but held three of its ten rules at `warn`:

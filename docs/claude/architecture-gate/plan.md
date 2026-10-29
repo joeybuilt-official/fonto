@@ -78,3 +78,39 @@ Run on the real tree, each restored afterwards; the gate's exit code and the mes
 - The `domain-stays-pure` entries that are **`drizzle-orm` imports in `lib/fusion/`, `lib/evidence/`
   and `lib/classify/`** — that is a vendor ORM inside the domain layer, the single worst class in the
   set, and it needs a port rather than a re-record.
+
+## Phase 1b — the first shrinkage slice (2026-10-29)
+
+Status: implemented, awaiting review. Branch `chore/arch-gate-1a-blocking` (this PR), commit range after
+`aaebfca`.
+
+1a promised the baseline could only shrink. 1b makes it shrink once, for real, and the ratchet moves in
+the same commit as the fix: **242 → 235** entries. `lib/classify/` was 7 of the 242 and is now 0.
+
+| violation | was | fix |
+| --- | --- | --- |
+| `domain-stays-pure: lib/classify/vectors.ts → fs/promises`, `→ os`, `→ path`, `→ @/lib/intelligence/client` | 4 | loader moved to `lib/processing/taxonomyVectorsStore.ts`; domain keeps the types and takes the matrix as a parameter |
+| `domain-stays-pure: lib/classify/kind.ts → lib/processing/classifyHelpers.ts` | 1 | the module is pure, so it moved inward to `lib/classify/classifyHelpers.ts` |
+| `domain-stays-pure: lib/classify/classify.ts → lib/metrics.ts` | 1 | histogram recorded by `processAsset.ts` from the returned `confidence` |
+| `domain-stays-pure: lib/classify/kind.test.ts → vitest` | 1 | rule scope: `pathNot` test/spec files — a test naming its runner is not a production dependency |
+
+Deletion candidates, and what happened to each:
+
+- `lib/classify/vectors.ts` — **deleted**. The loader is not a domain object; the file's three outward
+  imports were the violation, and moving the code was cheaper than widening the rule.
+- `_resetTaxonomyCacheForTests()` — **deleted** with it. Zero callers held it, so it was an export kept
+  alive by habit.
+- `lib/processing/classifyHelpers.ts` — **moved, not deleted**; its importers now point inward.
+- `HEALTHY_BASELINE` — already deleted in 1a.
+- "widen `domain-stays-pure` to allow `lib/metrics`" — **rejected**. Metrics is an adapter concern;
+  the classifier already returns the number the histogram needs, so no rule needed touching.
+
+The second defect, found while moving the ratchet: `--write-baseline` could not run. It loads no
+baseline, and 1a's integrity checks read `null` and failed — so the baseline was recordable exactly
+once, and never again after the first dead entry. Fixed by skipping the three "does the old baseline
+still describe the tree" checks under `--write-baseline` (they judge the baseline being replaced), and
+proven by running the write: 235 entries, 544 ratchet paths, exit 0.
+
+Not done, deliberately: the remaining 235. The mechanical batch is the 172 route-handler violations in
+`app/api/`; the `drizzle-orm` imports inside `lib/fusion/`, `lib/evidence/`, `lib/classify/`'s siblings
+need a port, not a re-record.

@@ -22,7 +22,8 @@ import {
   describeDocumentWithAi,
   suggestTagsWithAi,
 } from "@/lib/intelligence/prompts";
-import { assetProcessingDurationSeconds } from "@/lib/metrics";
+import { assetProcessingDurationSeconds, zeroShotConfidenceBuckets } from "@/lib/metrics";
+import { loadTaxonomyVectors } from "@/lib/processing/taxonomyVectorsStore";
 import { emitWebhook } from "@/lib/webhooks/emit";
 import { classifyAsset, classifyAssetArgmax } from "@/lib/classify/classify";
 import { deriveKind, classifyTextCodeByMime } from "@/lib/classify/kind";
@@ -56,7 +57,7 @@ export {
   ocrLooksLikePaperDocument,
   looksLikeCameraPhoto,
   type CameraEvidence,
-} from "./classifyHelpers";
+} from "@/lib/classify/classifyHelpers";
 import {
   isScreenshotByName,
   isScreenshotByAspect,
@@ -64,7 +65,7 @@ import {
   ocrLooksLikePaperDocument,
   looksLikeCameraPhoto,
   type CameraEvidence,
-} from "./classifyHelpers";
+} from "@/lib/classify/classifyHelpers";
 
 export interface ProcessAssetParams {
   assetId: string;
@@ -185,6 +186,9 @@ async function processAssetInner(
       let preDescribeLabels: string[] = [];
       let preDescribeOcrText: string | null = null;
 
+      // The taxonomy vectors load once per asset: classifyAsset and its
+      // argmax fallback score against the same matrix.
+      const taxonomyVectors = await loadTaxonomyVectors();
       const clipResult = await classifyAsset(clipVec, {
         classify: async () => {
           const attempt = await tryGenerative(() =>
@@ -198,7 +202,8 @@ async function processAssetInner(
           if (attempt.ok) return { topLevel: attempt.value };
           // No completion tier. CLIP already scored this image; take its
           // argmax rather than failing the asset over a label.
-          const argmax = await classifyAssetArgmax(clipVec);
+          const argmax = await classifyAssetArgmax(clipVec, taxonomyVectors);
+          if (argmax.confidence > 0) zeroShotConfidenceBuckets.observe(argmax.confidence);
           enrichmentSource = EnrichmentSource.ClipArgmax;
           console.warn(
             "[fonto] classify degraded to CLIP argmax for",
@@ -207,7 +212,8 @@ async function processAssetInner(
           );
           return { topLevel: argmax.topLevel ?? "photo" };
         },
-      });
+      }, taxonomyVectors);
+      if (clipResult.confidence > 0) zeroShotConfidenceBuckets.observe(clipResult.confidence);
       classification = clipResult.topLevel;
       subClassification = clipResult.subLevel;
       classifyMethodLabel = clipResult.method;

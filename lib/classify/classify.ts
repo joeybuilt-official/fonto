@@ -15,8 +15,18 @@
 // removed, for the bulk enrichment path where there is no LLM to defer to.
 
 import { TAXONOMY, type SubCategory, legacyClassificationFor } from "./taxonomy";
-import { loadTaxonomyVectors } from "./vectors";
-import { zeroShotConfidenceBuckets } from "@/lib/metrics";
+
+export interface TaxonomyVector {
+  /** `top:<key>` or `sub:<topKey>:<subKey>` */
+  id: string;
+  vec: number[];
+}
+
+export interface TaxonomyCache {
+  modelId: string;
+  embeddedAt: string;
+  vectors: TaxonomyVector[];
+}
 
 export interface ClassifyResult {
   /** Legacy `classification` string (compatible with existing code). */
@@ -103,6 +113,7 @@ interface LlmFallback {
 export async function classifyAsset(
   clipVec: number[] | null | undefined,
   llmFallback: LlmFallback,
+  cache: TaxonomyCache | null,
 ): Promise<ClassifyResult> {
   const t = threshold();
 
@@ -110,7 +121,6 @@ export async function classifyAsset(
     return runFallback(llmFallback, 0);
   }
 
-  const cache = await loadTaxonomyVectors();
   if (!cache) {
     return runFallback(llmFallback, 0);
   }
@@ -129,8 +139,6 @@ export async function classifyAsset(
 
   const winner = topScores[0];
   const runnerUp = topScores[1]?.score ?? 0;
-  zeroShotConfidenceBuckets.observe(winner.score);
-
   if (winner.score < t || winner.score - runnerUp < runnerUpDelta()) {
     return runFallback(llmFallback, winner.score);
   }
@@ -172,12 +180,12 @@ export async function classifyAsset(
  */
 export async function relaxedTaxonomyTags(
   clipVec: number[] | null | undefined,
-  opts: { floor?: number; maxTags?: number } = {},
+  opts: { floor?: number; maxTags?: number },
+  cache: TaxonomyCache | null,
 ): Promise<string[]> {
   const floor = opts.floor ?? RELAXED_FLOOR;
   const maxTags = opts.maxTags ?? 2;
   if (!clipVec || clipVec.length === 0) return [];
-  const cache = await loadTaxonomyVectors();
   if (!cache) return [];
   const scored: { score: number; tags: string[] }[] = [];
   for (const top of TAXONOMY) {
@@ -240,6 +248,7 @@ export interface ArgmaxClassifyResult {
  */
 export async function classifyAssetArgmax(
   clipVec: number[] | null | undefined,
+  cache: TaxonomyCache | null,
 ): Promise<ArgmaxClassifyResult> {
   const empty: ArgmaxClassifyResult = {
     topLevel: null,
@@ -250,7 +259,6 @@ export async function classifyAssetArgmax(
   };
   if (!clipVec || clipVec.length === 0) return empty;
 
-  const cache = await loadTaxonomyVectors();
   if (!cache) return empty;
 
   const topScores: { topKey: string; score: number }[] = [];
@@ -263,12 +271,10 @@ export async function classifyAssetArgmax(
   topScores.sort((a, b) => b.score - a.score);
 
   const winner = topScores[0];
-  zeroShotConfidenceBuckets.observe(winner.score);
-
   // Tags come from the relaxed pass, which scores SUB-categories across the
   // whole taxonomy rather than only under the winner — a discovery surface
   // benefits from the second-best neighbourhood, and it costs no extra I/O.
-  const suggestedTags = await relaxedTaxonomyTags(clipVec);
+  const suggestedTags = await relaxedTaxonomyTags(clipVec, {}, cache);
 
   if (winner.score < argmaxFloor()) {
     return { ...empty, confidence: winner.score, suggestedTags };
@@ -300,9 +306,6 @@ export async function classifyAssetArgmax(
 }
 
 async function runFallback(llm: LlmFallback, observedConfidence: number): Promise<ClassifyResult> {
-  if (observedConfidence > 0) {
-    zeroShotConfidenceBuckets.observe(observedConfidence);
-  }
   const result = await llm.classify();
   return {
     topLevel: result.topLevel,

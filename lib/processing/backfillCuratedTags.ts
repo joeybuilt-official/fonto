@@ -15,6 +15,7 @@
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { relaxedTaxonomyTags } from "@/lib/classify/classify";
+import { loadTaxonomyVectors } from "@/lib/processing/taxonomyVectorsStore";
 import { isJunkLabel } from "@/lib/processing/labelStoplist";
 
 export interface CuratedTagBackfillResult {
@@ -57,10 +58,11 @@ export async function backfillCuratedTags(batchSize: number): Promise<CuratedTag
   let tagged = 0;
   for (const row of rows) {
     try {
-      const tags = await relaxedTaxonomyTags(row.clipVec as number[] | null, {
-        floor: 0.2,
-        maxTags: 2,
-      });
+      const tags = await relaxedTaxonomyTags(
+        row.clipVec as number[] | null,
+        { floor: 0.2, maxTags: 2 },
+        await loadTaxonomyVectors()
+      );
       const names = Array.from(
         new Set(tags.map((n) => n.trim()).filter((n) => n.length > 0 && !isJunkLabel(n)))
       );

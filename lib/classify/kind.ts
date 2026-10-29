@@ -29,7 +29,7 @@ import {
   isPhotoOfArt,
   ocrLooksLikePaperDocument,
   hasOverlayText,
-} from "../processing/classifyHelpers";
+} from "./classifyHelpers";
 
 export const KIND = ["moment", "screenshot", "graphics", "document", "video"] as const;
 export type Kind = (typeof KIND)[number];

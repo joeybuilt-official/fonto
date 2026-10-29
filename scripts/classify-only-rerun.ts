@@ -21,6 +21,7 @@
 
 import postgres from "postgres";
 import { classifyAsset } from "@/lib/classify/classify";
+import { loadTaxonomyVectors } from "@/lib/processing/taxonomyVectorsStore";
 import { deriveKind } from "@/lib/classify/kind";
 import { intelligence } from "@/lib/intelligence/client";
 import { classifyAssetWithAi } from "@/lib/intelligence/prompts";
@@ -35,7 +36,7 @@ import {
   ocrLooksLikePaperDocument,
   isDocumentByOcr,
   type CameraEvidence,
-} from "@/lib/processing/classifyHelpers";
+} from "@/lib/classify/classifyHelpers";
 
 function arg(name: string): string | true | null {
   const flag = process.argv.find(
@@ -116,7 +117,7 @@ async function decideForRow(
       );
       return { topLevel };
     },
-  });
+  }, await loadTaxonomyVectors());
 
   // CLIP uncertain + LLM fallback disabled → keep existing classification.
   if (result.topLevel === CLIP_UNCERTAIN_SENTINEL) {
