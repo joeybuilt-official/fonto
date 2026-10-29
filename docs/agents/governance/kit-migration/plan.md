@@ -101,6 +101,12 @@ gate output confirms: module and dependency counts are identical to the base com
    examples) broke the gate on variables no Fonto code reads. The scan is now limited to code and
    excludes the doctrine trees and the gate scripts themselves — a fix in the gate's own scope, not an
    exclusion of the three names.
+6. **A failed `git diff <base>...HEAD` reads as a pass in every docs gate.** On a shallow CI checkout the
+   three-dot diff has no merge base, and `check-spec`, `check-algorithm`, and `check-comments` each print
+   "no changed files" / "nothing to compare" and exit 0 — a green gate that judged nothing. PR #16's
+   first green-by-luck run proved it; `verify.yml` now fetches full history AND fails loudly when
+   `git merge-base` cannot resolve the base. **Owner: the kit** — the gates should distinguish "no files
+   changed" from "I could not compute the change".
 
 ## Open questions
 

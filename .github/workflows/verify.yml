@@ -42,7 +42,13 @@ jobs:
       # against the 8 GiB hive cap; on a 16 GB hosted runner it is comfortable.
       NODE_OPTIONS: --max-old-space-size=6144
     steps:
+      # FULL HISTORY, deliberately. The docs gates compare `<base>...HEAD`, and a three-dot diff needs a
+      # merge base. On a `--depth=1` checkout the first CI run of PR #16 printed `fatal: … no merge base`,
+      # after which check-spec and check-algorithm each reported "no changed files" and exited 0 — a
+      # green gate that judged nothing. Fetching history is the cheapest way to remove that whole class.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       # No `version:` input — action-setup v4 reads `packageManager` from
       # package.json. Specifying BOTH is a hard error ("Multiple versions of
       # pnpm specified"), which is what killed every run after #2 added the pin.
@@ -109,6 +115,12 @@ jobs:
           sh scripts/check-plan-home.sh
           BASE="${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}"
           echo "docs gates: change since $BASE"
+          # A missing base ref must be a NAMED failure. The gates themselves answer "no changed files"
+          # and exit 0 when the diff cannot be computed, which reads as a pass in branch protection —
+          # the exact defect `--require-base` fixed in the architecture gate.
+          if ! git merge-base "$BASE" HEAD >/dev/null 2>&1; then
+            echo "::error::no merge base with $BASE — the docs gates cannot judge this change"; exit 1
+          fi
           sh scripts/check-docs.sh --since "$BASE"
           sh scripts/check-spec.sh --since "$BASE"
           sh scripts/check-algorithm.sh --since "$BASE"

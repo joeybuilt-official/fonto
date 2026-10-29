@@ -33,6 +33,9 @@ held two feature folders and none of `roadmap.md`, `in-progress.md`, `architectu
   conflict markers, plan home, then `check-docs` / `check-spec` / `check-algorithm` / `check-comments`
   against the PR's base ref. A pre-commit hook can be skipped with `--no-verify`; a required status
   check cannot.
+  Checkout now fetches **full history**: on a shallow clone the gates' `<base>...HEAD` diff has no merge
+  base, and three of them answered "no changed files" and exited 0 — a green gate that judged nothing.
+  The step also asserts `git merge-base` before running them, so a missing base is a named failure.
 - **Plans folded into the canonical home**: `docs/claude/architecture-gate/plan.md` →
   `docs/agents/architecture/gate/plan.md`, `docs/claude/fleet-decoupling/plan.md` →
   `docs/agents/platform/fleet-decoupling/plan.md`, each with a row in the new `docs/agents/roadmap.md`.
