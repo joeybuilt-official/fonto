@@ -97,12 +97,20 @@ may never run it, so CI is the plane that actually holds.
   run through `scripts/check-architecture.mjs`. It encodes the intelligence boundary (only
   `lib/intelligence/adapters/` may import the provider SDK or the vision-client module; adapters are
   reached only via `lib/intelligence/client`), the single home for credential encryption
-  (`lib/crypto/secret-box.ts`), **and the four-layer map above** — `lib-no-ui`, `drivers-no-upward`
-  and `no-circular` as blocking `error` rules, `domain-stays-pure`, `application-no-drivers` and
-  `adapters-no-drivers` as `warn` rules carrying a counted backlog. Measured 2026-10-28 over 627
-  modules: 0 errors, 242 warnings (172 of them `adapters-no-drivers`, 46 `domain-stays-pure`, 24
-  `application-no-drivers`). A `warn` rule moves to `error` the day its count reaches zero; nothing
-  is grandfathered into a baseline file.
+  (`lib/crypto/secret-box.ts`), **and the four-layer map above**. **All ten rules are `error`** — the
+  three layer rules (`domain-stays-pure`, `application-no-drivers`, `adapters-no-drivers`) were
+  `warn` until 2026-10-28, which meant the rule that names the exact coupling this repo is built to
+  prevent could not fail anything; it printed 242 times and blocked nothing.
+- **The backlog is a baseline, not a severity.** `.dependency-cruiser-known-violations.json` records
+  the 242 violations that existed when the rules were promoted (172 `adapters-no-drivers`, 46
+  `domain-stays-pure`, 24 `application-no-drivers`, measured over 627 modules). A violation in that
+  file is counted and named as known; **anything new fails the gate**. The file may only shrink — a
+  fixed violation's entry is deleted in the PR that fixes it. Two ways it could rot are checked every
+  run: every `(rule name, severity)` pair it records must still be declared in the config at that
+  severity (a rename or a demotion without re-recording fails by name), and every entry must name
+  modules the cruise still reaches (a baselined file that was deleted or renamed leaves an entry that
+  can never fire). `node scripts/check-architecture.mjs --self-test` drives both checks with ten
+  cases, six of them expected to fail.
 - **The wrapper is not ceremony:** `pnpm arch` used to be a bare `depcruise`, which printed
   "no violations found" and exit 0 whether or not it had cruised anything. `scripts/check-architecture.mjs`
   now asserts its own coverage first — `typescript` resolves, the tsconfig the config names exists,
@@ -126,15 +134,22 @@ may never run it, so CI is the plane that actually holds.
   growth; it does not stop silent shrinkage, which stays visible in the diff and in the
   existence check above. The base count is over *every* tracked source, not just the cruise roots,
   because the ratchet's entries come from all of `git ls-files` — a narrower denominator would fail a
-  correct baseline.
+  correct baseline. **A base ref that is required must also be required to exist:** CI passes
+  `--require-base` on `pull_request`, so a failed fetch exits non-zero instead of printing a skip.
+  A skip is right on a push or a local shallow clone, where there is no base; it is wrong on a pull
+  request, where it would leave the required check green with the ratchet switched off — the log
+  reader would see the skip, the merge button would not.
 - **When it runs:** `pnpm arch` runs in the pre-commit gate beside typecheck and test
   (`git-workflow.md`) and — the binding copy — as a **required** CI check
   (`scripts/templates/ci-verify.yml`). Green is the only passing score; no agent may merge past it red.
 - **Report-only ramp for a non-conforming repo:** if the layer map still has `target:` rows (business
   logic in controllers, ORM models imported inward), start the linter in **report-only** mode so the
   violation count is visible without blocking, then flip it to blocking once the count reaches zero.
-  This repo is on that ramp today: the three `warn` rules above are a real, counted backlog.
-  This is exactly where the check earns its keep — do not skip it on the messy repos that need it most.
+  **This repo left that ramp on 2026-10-28**: the three layer rules were promoted to `error` with
+  their backlog recorded as a baseline, because a `warn` rule is a rule nobody can fail — the count
+  has to be visible *and* the gate has to block on anything new, or neither happens. The baseline is
+  a ramp exit, not a permanent excuse: it can only shrink. This is exactly where the check earns its
+  keep — do not skip it on the messy repos that need it most.
 - **Wiring:** the kit NAMES this gate and CHECKS for it (`/audit-claude-setup` Check 6); it does not
   generate a layout-coupled config for you. Use the `arch-enforce` skill to encode the filled layer
   map above into `.dependency-cruiser.cjs` (add forbidden rows for the four layers), then keep

@@ -1,36 +1,27 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Joeybuilt LLC
 //
-// Phase 4.6 — pre-computed text embeddings for the zero-shot taxonomy.
+// Builds and caches the taxonomy embedding matrix the CLIP classifier scores
+// against. Moved out of `lib/classify/` — a domain module may name the cache
+// (./classify.ts holds the types) but may not read the filesystem, read
+// the environment, or call the vision vendor. Those three are this file's
+// whole job, and it sits in the use-case layer where the I/O belongs.
 //
-// At process boot (lazily, on first classify request) we embed every
-// taxonomy prompt via `embedText()` and cache the resulting vectors in
-// memory. We also persist the cache to disk so successive boots skip the
-// embed round-trips. The cache file embeds the `modelId` so model changes
-// invalidate the cache automatically.
+// At process boot (lazily, on first classify request) we embed every taxonomy
+// prompt via `embedText()` and cache the resulting vectors in memory. We also
+// persist the cache to disk so successive boots skip the embed round-trips.
+// The cache file embeds the `modelId` so model changes invalidate it.
 //
-// If the vision service is unreachable, the loader logs a warning and
-// returns `null`. The caller (`classifyAsset` in ./classify.ts) treats
-// this as "CLIP unavailable" and falls through to the LLM classifier —
-// see Phase 4.6 plan, fallback section.
+// If the vision service is unreachable, the loader logs a warning and returns
+// `null`. Callers treat that as "CLIP unavailable" and fall through to the LLM
+// classifier — see Phase 4.6 plan, fallback section.
 
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { allPrompts, TAXONOMY_PROMPT_COUNT } from "./taxonomy";
+import { allPrompts, TAXONOMY_PROMPT_COUNT } from "@/lib/classify/taxonomy";
+import type { TaxonomyCache, TaxonomyVector } from "@/lib/classify/classify";
 import { intelligence, CapabilityUnavailableError } from "@/lib/intelligence/client";
-
-export interface TaxonomyVector {
-  /** `top:<key>` or `sub:<topKey>:<subKey>` */
-  id: string;
-  vec: number[];
-}
-
-export interface TaxonomyCache {
-  modelId: string;
-  embeddedAt: string;
-  vectors: TaxonomyVector[];
-}
 
 function defaultCachePath(): string {
   if (process.env.CLASSIFY_VECTOR_CACHE_PATH) {
@@ -150,10 +141,4 @@ export async function loadTaxonomyVectors(): Promise<TaxonomyCache | null> {
   } finally {
     inflight = null;
   }
-}
-
-/** Test/utility — drop the in-memory cache. Disk cache untouched. */
-export function _resetTaxonomyCacheForTests(): void {
-  memoryCache = null;
-  inflight = null;
 }

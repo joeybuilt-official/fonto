@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "arch": "node scripts/check-architecture.mjs",
+    "arch:self-test": "node scripts/check-architecture.mjs --self-test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bash scripts/db-migrate-refuses.sh",
     "db:setup": "bash scripts/db-apply.sh",

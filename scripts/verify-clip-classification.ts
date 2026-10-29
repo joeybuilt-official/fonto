@@ -37,7 +37,7 @@
 
 import postgres from "postgres";
 import { classifyAsset } from "@/lib/classify/classify";
-import { loadTaxonomyVectors } from "@/lib/classify/vectors";
+import { loadTaxonomyVectors } from "@/lib/processing/taxonomyVectorsStore";
 
 function arg(name: string): string | true | null {
   const flag = process.argv.find(
@@ -131,7 +131,7 @@ async function main(): Promise<void> {
             "CLIP confidence below threshold — fell through to LLM fallback"
           );
         },
-      });
+      }, cache);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[verify-clip] FAIL — ${msg}`);

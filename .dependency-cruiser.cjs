@@ -103,26 +103,36 @@ module.exports = {
     {
       // Domain purity, written as a path exclusion rather than a dependencyTypes list: a type list
       // is silently incomplete (a devDependency classifies as `npm-dev`), a path rule is not.
-      // Backlog: 46 violations in 15 files, the largest being drizzle-orm and node:fs imports in
-      // lib/fusion/, lib/evidence/ and lib/classify/.
+      // Backlog: 39 violations in 11 files, the largest being drizzle-orm imports in lib/fusion/ and
+      // lib/evidence/ — recorded in .dependency-cruiser-known-violations.json when this rule was
+      // promoted from `warn`. Anything not in that file fails the gate. lib/classify/ is at zero.
       name: "domain-stays-pure",
-      severity: "warn",
-      from: { path: "^lib/(fusion|evidence|temporal|stacks|classify|faces)/" },
+      severity: "error",
+      from: {
+        path: "^lib/(fusion|evidence|temporal|stacks|classify|faces)/",
+        // A test file naming its own runner is not a production dependency: the rule exists to keep
+        // SHIPPED code free of outward imports, and a `describe` that imports `vitest` points the
+        // harness, not the product, at a devDependency. This exception covers test files only — the
+        // production modules beside them stay policed, which is where the 40 remaining violations are.
+        pathNot: "\\.(test|spec)\\.tsx?$",
+      },
       to: { pathNot: "^lib/(fusion|evidence|temporal|stacks|classify|faces)/" },
     },
     {
       // Use cases reach persistence and the queue through ports, not by importing the driver.
-      // Backlog: 24 violations in 13 files, all `@/lib/db`, `@/lib/queue/*` and `@/lib/storage`.
+      // Backlog: 24 violations in 13 files, all `@/lib/db`, `@/lib/queue/*` and `@/lib/storage`,
+      // recorded in .dependency-cruiser-known-violations.json when this rule was promoted from `warn`.
       name: "application-no-drivers",
-      severity: "warn",
+      severity: "error",
       from: { path: "^lib/processing/" },
       to: { path: "^lib/(db|storage|queue|intelligence/adapters)/" },
     },
     {
       // Route handlers translate transport; they own authz and DTOs, not queries. Backlog: 172
       // violations in 132 of 161 route files — the largest gap in the map and the next ratchet.
+      // Recorded in .dependency-cruiser-known-violations.json when this rule was promoted from `warn`.
       name: "adapters-no-drivers",
-      severity: "warn",
+      severity: "error",
       from: { path: "^(app/api|lib/openapi)/" },
       to: { path: "^lib/(db|storage|queue)/" },
     },

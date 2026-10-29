@@ -7,7 +7,93 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
-### Fixed — the ratchet can no longer be raised to make a red gate green
+### Changed — the ratchet's first 6 violations fixed, and the write path can run again
+
+Phase 1a baselined 242 coupling violations and promised the baseline could only shrink. This is the
+first slice of paying them down, and the first time it moved: **242 → 235**, in the PR that fixes them.
+`lib/classify/` goes from 7 baselined violations to 0.
+
+Fixed, all in the classify layer:
+
+- **`lib/classify/vectors.ts` is gone.** A domain module was doing three outward things — reading the
+  filesystem, reading `os.homedir()` and an env var to pick a cache path, and calling the vision
+  vendor — to build the taxonomy embedding matrix. The loader now lives in
+  `lib/processing/taxonomyVectorsStore.ts`. The domain keeps only the `TaxonomyVector` / `TaxonomyCache`
+  types, in `lib/classify/classify.ts`, and every classifier takes the matrix as a parameter
+  (`classifyAsset(vec, llmFallback, cache)`). Callers load once per asset, so the argmax fallback now
+  reuses the same matrix instead of re-entering the loader. Four baseline entries deleted
+  (`fs/promises`, `os`, `path`, `@/lib/intelligence/client`).
+- **`classifyHelpers.ts` moved into the domain.** `lib/classify/kind.ts` imported six pure predicates
+  from `lib/processing/`, the application layer — an inner module reaching outward. The file is pure
+  (no I/O, no vendor, no framework), so it moved to `lib/classify/classifyHelpers.ts` and its former
+  importers now point inward at it. One entry deleted.
+- **The domain no longer imports `prom-client`.** `classify.ts` observed `zeroShotConfidenceBuckets`
+  from `lib/metrics.ts`; observability is an adapter concern. `processAsset.ts` records the histogram
+  now, from the `confidence` the classifier already returns — the same number, one layer out. One
+  entry deleted.
+
+**The seventh was a false positive, and the rule was wrong, not the file.** `domain-stays-pure`
+flagged `lib/classify/kind.test.ts → vitest`: a test naming its own runner is not a production
+dependency. The rule now carries `pathNot: "\.(test|spec)\.tsx?$"` on its `from` — a test file may
+import the harness; the production files beside it stay policed, which is where the 39 remaining
+`domain-stays-pure` violations are. That entry is retired with the rule, not baselined around.
+
+The write path was also broken, and that is the defect that would have held the number at 242 forever:
+`--write-baseline` loads no baseline, so the integrity checks added in 1a read `null` and failed the
+gate on the one action the baseline exists to allow. `pnpm arch:baseline` now skips those three checks
+(they judge the *old* baseline) and exits 0. Proven by running it: 235 entries written, plus 544
+ratchet paths.
+
+### Changed — every layer rule blocks now, and the backlog it grandfathers can only shrink
+
+The gate that landed yesterday encoded the four-layer map but held three of its ten rules at `warn`:
+`domain-stays-pure`, `application-no-drivers`, `adapters-no-drivers`. A `warn` rule is a rule nobody
+can fail — it printed 242 violations on every run and blocked none of them, which is the same shape as
+the defect the gate was built to remove. All ten rules are now `error`.
+
+**The 242 violations are not fixed, and this entry does not pretend they are.** They are recorded in
+`.dependency-cruiser-known-violations.json` (172 `adapters-no-drivers`, 46 `domain-stays-pure`, 24
+`application-no-drivers`), generated from the tree after the promotion so every entry carries the
+severity the config now declares. What changes is the 243rd: it fails. The baseline may only shrink,
+one entry per fixed violation, in the PR that fixes it.
+
+Two ways that file can stop describing the tree are now checked on every run, because both used to be
+silent:
+
+- **`(rule name, severity)` set equality.** A rule renamed, or its severity moved, leaves baseline
+  entries that match nothing while the run line still counts them as known. A mismatch fails by name.
+- **No dead entries.** A baselined file that is deleted or renamed leaves an entry that can never
+  fire again, inflating "known" forever. Every entry's repo-side `from`/`to` must still be cruised.
+
+`pnpm arch:self-test` drives both checks with ten cases, six of them expected to fail, and runs in
+`verify` before the gate. Verified end-to-end on the real tree with seven probes (each restored): a
+new `lib/fusion/` → `@/lib/db` import fails naming `domain-stays-pure`; the same shape in
+`lib/processing/` and `app/api/**/route.ts` fails naming its rule; a renamed rule fails as undeclared;
+a hand-edited severity fails as drift; a baselined `from` pointed at a removed file fails as dead; and
+an unresolvable import still fails outright. Clean tree: exit 0, `242 known violations ignored`.
+
+`HEALTHY_BASELINE` is deleted. It printed `baseline 620/2566` beside `repo modules 544 (baseline 544)`
+— two different quantities, both called "baseline", the first of which asserted nothing and was
+already stale against the 627 modules / 2,580 dependencies the same run measured. The run line now
+prints the measured length of the file that exists.
+
+### Fixed — the ratchet can no longer be raised to make a red gate green, or skipped to make it green
+
+Two follow-up defects, both in the gate itself:
+
+- **One number, two stories.** The header said the internal-edge measurement was 1,563 (after the
+  builtin fix) and the constant's own comment said 1,724 (before it), then called 1,400 "~90%" of
+  that — which is 81.2%. A maintainer reading the constant would believe a tolerance the gate does
+  not have, or raise the floor against the wrong base. Both comments now carry no percentage at
+  all — the floor and its measurement are two constants, and the gate **computes** the ratio for its
+  log line, so no comment can drift from the arithmetic.
+- **A skip that looked green to the merge button.** On a pull request a failed `git fetch` of the
+  base ref made `assertBaselineFloor()` print its SKIP and return `null`, and the gate exited 0.
+  The skip is visible in the log and invisible to branch protection, which reads only the required
+  `verify` conclusion — so the ratchet could be switched off and the check still pass. The CI
+  `pull_request` step now passes `--require-base`, which turns a missing or unfetchable base ref
+  into a named failure. Push and local runs still skip, with a printed line, because there is no
+  base there.
 
 `pnpm arch:baseline` was one command away from erasing any deletion the module ratchet was meant to
 make visible: when the gate went red, re-recording the baseline was the cheap way out. On a pull
@@ -57,8 +143,9 @@ A ratio floor cannot see that. Three assertions now do:
 - **Zero unresolvable imports.** dependency-cruiser marks an import it could not resolve with
   `couldNotResolve` and still reports no violation. Each one is a dependency the rules cannot see,
   so any of them fails the gate with the `file -> specifier` line.
-- **Internal-edge floor (`MIN_INTERNAL_EDGES = 1550`).** Measured **1,724** internal edges today,
-  floored at ~90%, because files can be cruised while their imports stop becoming edges.
+- **Internal-edge floor (`MIN_INTERNAL_EDGES = 1400`).** Measured **1,563** internal edges today,
+  and the floor sits just under it — a ratio the gate computes and prints rather than a number a
+  comment asserts, because files can be cruised while their imports stop becoming edges.
 
 Canaried against this tree, each restored clean afterwards:
 
@@ -70,7 +157,9 @@ Canaried against this tree, each restored clean afterwards:
 - one baseline module retired by a temporarily broadened `options.exclude.path` → exit 1,
   *1 module in the ratchet is still in the tree but was NOT cruised*.
 
-Restoring each returns `arch-gate: OK` at 557 modules / 1,724 internal edges.
+Restoring each returns `arch-gate: OK` at 557 modules / 1,724 internal edges — the counts as they
+stood then; 161 of those "edges" were Node builtins and were removed later, and the numbers in this
+entry predate the builtin fix, the module ratchet and the internal-edge floor.
 
 ### Changed — the architecture gate now checks the map it claims
 

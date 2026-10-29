@@ -60,15 +60,26 @@ jobs:
       - run: pnpm lint
       # BENCH-10: the ratchet may never be raised above the module count at the PR's base commit,
       # so on a pull_request the gate gets the base ref and compares. `--depth=1` on the checkout
-      # means `origin/<base>` usually has to be fetched first; a failed fetch is not fatal — the
-      # gate prints its own SKIP line saying the floor was not checked, which is visible in the log
-      # rather than mistaken for a pass. On a push there is no base and it skips for the same reason.
+      # means `origin/<base>` usually has to be fetched first.
+      #
+      # `--require-base` is what makes that a check and not a suggestion. A failed fetch here used to
+      # produce the gate's own SKIP line and exit 0 — loud in the log, invisible to branch
+      # protection, which reads only the conclusion of the required `verify` context. The ratchet
+      # would be switched off and the check painted green. Now the pull_request path fails when the
+      # base ref cannot be obtained; the fetch keeps `|| true` so the failure arrives as the gate's
+      # own named error rather than a bare shell exit. On a push there is no base, and `pnpm arch`
+      # still skips the floor with a printed line, which is correct there.
+      # The gate's own checks can rot the way it was built to catch: a "cleanup" that makes the
+      # baseline-integrity assertions match nothing would leave a green gate over a dead baseline.
+      # Ten cases, six expected to fail, run before the gate — the same shape as scan:infra's
+      # --self-test step below.
+      - run: pnpm arch:self-test
       - name: Architecture boundaries and baseline floor
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             git fetch --no-tags --depth=1 origin \
               "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}" || true
-            node scripts/check-architecture.mjs --base "origin/${{ github.base_ref }}"
+            node scripts/check-architecture.mjs --base "origin/${{ github.base_ref }}" --require-base
           else
             pnpm arch
           fi
