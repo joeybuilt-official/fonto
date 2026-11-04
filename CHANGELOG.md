@@ -7,6 +7,32 @@ changes code must update this file in the same commit.
 
 ## Unreleased
 
+### Security — next 16.4.2 → 16.4.5, and we call the API the first advisory names
+
+`next` 16.4.5 is the release that closes seven advisories published 2026-11-03 (all Moderate in the
+vendor release notes): GHSA-mfr8-8qww-v76h (cross-tenant disclosure in `use cache` when called through
+`unstable_cache`), GHSA-vc7v-qv4w-wrv8, GHSA-vvgp-ww4w-46vf, GHSA-rhh4-g77r-r9qj,
+GHSA-pc58-hwjq-p385 (cross-client response injection when a self-hosted app forwards fetched
+responses), GHSA-7qx7-33qx-rqx2 (SVG rejection bypass in image optimization) and GHSA-f3mh-rxg3-f5g2
+(HttpOnly cookie exposure on Edge runtime routes).
+
+The cache advisories are usually dismissed because they need `cacheComponents`, which this app does
+not set. That reasoning does not apply to the first one: its precondition is `unstable_cache`, and 16
+files here call it. So this bump is not hygiene for Fonto — it closes an advisory whose precondition
+we meet.
+
+Pin is exact (`16.4.5`, no caret) so the lockfile resolves one copy; `grep -E '^\s{2,6}next@'
+pnpm-lock.yaml` now yields exactly `16.4.5`.
+
+Evidence, base (`f34b0e5`) and after, all on this host:
+
+    typecheck    rc 0 → rc 0
+    lint         rc 0 → rc 0   (63 warnings, 0 errors, unchanged)
+    arch         rc 0 → rc 0   (627 modules / 2580 deps, 0 errors, 242 baselined warnings)
+    conformance  rc 0 → rc 0
+    test         rc 0 → rc 0   (16 files, 155 tests)
+    build        —   → rc 0   (`next build --webpack`)
+
 ### Fixed — the ratchet can no longer be raised to make a red gate green
 
 `pnpm arch:baseline` was one command away from erasing any deletion the module ratchet was meant to
